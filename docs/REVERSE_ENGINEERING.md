@@ -165,14 +165,35 @@ Decoder-Aufruf.
 - 68030-Sprachdefinition: `68000:BE:32:MC68030` (nicht `68000:BE:32:
   default`, das ist 68040).
 
+## Eigene System-Global-/Exception-Tabellen-Definition
+
+[`src/q9sysglob.a`](../src/q9sysglob.a) / [`src/q9sysglob.h`](../src/q9sysglob.h)
+legen den kompletten System-Global-Bereich (`Q9_D_*`, bis `Q9_D_End` =
+`$1000`) und die Exception-Sprungtabelle (`Q9_T_*`, bis `Q9_T_End` =
+`$400`) als eigene, umbenannte Struktur an — Grundgerüst aus dem
+Technical Manual bzw. der Struktur des lizenzierten SDKs abgeleitet
+(nur als Fakten-Check verwendet, keine Übernahme von Microwares
+Originaltext), aber mit eigenen Namen/Beschreibungen. Nur 17 Felder
+sind bisher per eigener Disassemblierung tatsächlich verifiziert
+(`VERIFIZIERT`-Markierung); der Rest ist `PLATZHALTER`/`HANDBUCH` und
+muss noch einzeln bestätigt werden, bevor man sich darauf verlässt.
+
+Bemerkenswert: `Q9_T_E1111` (Line-1111/F-Line-Emulator, Vektor 11) fällt
+mit `Q9_T_FpUnData` (FP: nicht implementierter Datentyp) zusammen als
+wahrscheinlichster Installationsort für unseren `0xb04`-Handler — beide
+sind naheliegende Kandidaten für den FPU-Emulations-Einstieg, aber noch
+nicht gegeneinander verifiziert.
+
 ## Nächste Schritte
 
 1. Aufrufer von `0xb04` finden (VBR-Vektor-Installation im Init-Code
-   suchen, vermutlich Vektor 11/Line-F für FPU-Emulation).
+   suchen, vermutlich `Q9_T_E1111` oder `Q9_T_FpUnData`).
 2. Restliche Sub-Modi von Mode 7 (`0xb8e`+) vollständig disassemblieren.
-3. Die übrigen ~40 % unerreichten Code planvoll disassemblieren (nicht
+3. Weitere `PLATZHALTER`-Felder in `q9sysglob.a`/`.h` einzeln per
+   Disassemblierung verifizieren (nicht blind übernehmen).
+4. Die übrigen ~40 % unerreichten Code planvoll disassemblieren (nicht
    mehr blind an geratenen Blockgrenzen, sondern von gefundenen
    Exception-Vektoren aus kontrollflussbasiert).
-4. Sobald ein Bereich vollständig verstanden ist: als eigene `.s`-Quelle
+5. Sobald ein Bereich vollständig verstanden ist: als eigene `.s`-Quelle
    nachbauen, mit `vasm`/echtem `r68` assemblieren, Bytes gegen das
    Original diffen (siehe Zieldefinition oben).
