@@ -1,5 +1,10 @@
 # Q9-OS
 
+## Projektübergreifender Kontext
+
+Der gemeinsame projektübergreifende Kontext und die verbindlichen Namen
+stehen in [Q9Forge/AI_CONTEXT.md](../Q9Forge/AI_CONTEXT.md).
+
 Port von echtem, proprietärem Microware OS-9/68K für die Q9-Plattform
 ([Q9-Flux](https://github.com/Q9-Forge/Q9-Flux) emuliert die Zielhardware).
 Kein Neubau eines eigenen Betriebssystems — dafür siehe
