@@ -63,6 +63,50 @@ bekannten Code erreichbar. Vermutlich separate Exception-Handler-
 Cluster, die nur über die CPU-eigene Vektortabelle (VBR-relativ)
 erreicht werden, nicht über normale Aufrufe im Modul selbst.
 
+## Fund: System-Global-Zeiger über VBR (grundlegend, gilt vermutlich
+   modulweit)
+
+Wiederkehrendes Idiom an mehreren Stellen (`0xac4`, `0xbc4`, `0xc52`,
+`0xc62`, `0x454`, `0x47a`, ...):
+
+```
+movec   VBR,A6        ; A6 = Basis der CPU-Vektortabelle
+movea.l (A6),A6        ; A6 = *(A6)  -- Inhalt von Vektor 0 (Reset-SSP!)
+movea.l (0x4c,A6),A4   ; A4 = Zeiger aus Offset 0x4C dieses Bereichs
+```
+
+Deckt sich exakt mit dem Technical Manual (Kapitel 2, "System
+Initialization"): *"The Reset SSP vector points to the system global
+area... Each time an exception occurs, OS-9 uses this vector to find
+the base address of system global data."* D.h. OS-9 zweckentfremdet
+den Reset-Initial-SSP-Eintrag (Vektor 0 der CPU-Vektortabelle) nicht
+als Stackpointer-Wert, sondern als **Zeiger auf den System-Global-
+Bereich** (die `D_`-präfigierten Variablen). `A4 = *(A6+0x4C)` danach
+ist ein häufig gecachter Zeiger daraus.
+
+**Verifiziert** gegen die Offset-Namen aus dem lizenzierten SDK
+(`MWOS/OS9/SRC/DEFS/sysglob.a` — Microware-Copyright, nur zum
+Quer-Check der eigenen, unabhängig per Disassemblierung gefundenen
+Offsets verwendet, nicht als Quelle kopiert):
+
+| Offset | Name | Bedeutung |
+|---|---|---|
+| `0x4C` | `D_Proc` | Zeiger auf den aktuellen Prozessdeskriptor |
+| `0x58` | `D_FProc` | Prozess, dessen Kontext gerade in den FPU-Registern steht |
+| `0x68` | `D_ExcJmp` | **Exception Jump Table Ptr** — die "Sprungtabelle" aus der urspr. Frage; liegt als Zeiger im System-Global-Bereich, wird zur Bootzeit vom Kernel im RAM aufgebaut, nicht statisch im Modul |
+
+Damit ist der FPU/FPSP-Verdacht von oben bestätigt: der Code bei
+`0xac4`–`0xaec` liest `D_FProc` (Offset `0x58`, exakt der bei `0xad8`
+gelesene Wert) und vergleicht ihn mit dem aktuellen Prozess — klassischer
+**Lazy-FPU-Context-Switch**: nur speichern/restaurieren, wenn der
+FPU-Registersatz gerade einem ANDEREN Prozess gehört.
+
+`D_ExcJmp` (`0x68`) wäre der nächste konkrete Ansatzpunkt, um die
+eigentliche Syscall-/Interrupt-Sprungtabelle im RAM-Layout zu finden —
+dafür müsste man den Kernel live im Emulator laufen lassen und den
+Speicher an `*(VBR-Inhalt) + 0x68` inspizieren, da diese Tabelle nicht
+statisch im Modul-File steht.
+
 ## Fund: Adressierungsart-Decoder bei `0xb3a`
 
 Kein Syscall-Dispatch, sondern ein **generischer Effective-Address-
