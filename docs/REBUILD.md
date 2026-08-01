@@ -77,15 +77,93 @@ Diese Zuordnung ist jetzt **werkzeugseitig bestätigt** (nicht nur aus
 der Disassemblierung geraten) — `psect` + `r68` + `l68` erzeugen exakt
 dieses Layout, wenn die Parameter stimmen.
 
-## Kernel-spezifische Header-Erweiterung (0x30–0x53)
+## Kernel-spezifische Header-Erweiterung (0x30–0x53) — gelöst
 
-Noch **nicht** über `psect` reproduziert — die Sitzung hat nur den
-Standardteil (0x00–0x2F) validiert. `M$Exec` bei `0x30` und die
-übrigen, teils noch unklaren Felder (`b0bd b0bd` bei `0x40` usw.,
-siehe `REVERSE_ENGINEERING.md`) müssen als nächstes geklärt werden —
-vermutlich über weitere `psect`-Parameter (`entrypt` sollte `M$Exec`
-setzen) oder explizite `dc.w`/`dc.l`-Direktiven, falls `psect` sie nicht
-automatisch erzeugt.
+`l68`s automatische Header-Synthese (egal mit welcher `psect`/Flag-
+Kombination, auch `-i` probiert) erzeugt für diesen 36-Byte
+"M$Exec-Erweiterungsblock"-Typ **nie** das richtige Byte-Muster — weder
+ohne `-i` (12 Byte, falscher Inhalt) noch mit `-i` (32 Byte, inkl.
+unerwünschtem doppeltem eingebettetem Namensstring). Vermutlich kennt
+`l68`s Synthese-Logik diese spezielle Erweiterungsform schlicht nicht,
+für keine der ausprobierten `psect`-Parameterkombinationen.
+
+**Lösung: `l68 -r` (Rohbinär-Ausgabemodus).** Dieser Modus überspringt
+die automatische Header-Synthese vollständig — auch für den
+Standardteil (0x00–0x2F), der vorher noch korrekt automatisch erzeugt
+wurde. Im Gegenzug bekommen wir volle Byte-Kontrolle: der komplette
+Header (0x00–0x53, beide Teile) wird jetzt in `kernel.r` selbst als
+`dc.b`-Datenkonstanten geschrieben, 1:1 aus dem Original übernommen
+(reine Strukturfakten: Größe, Typ/Sprache, Parität, Einsprungoffset —
+keine geschützten Werksausdrücke).
+
+`psect` bleibt syntaktisch weiterhin Pflicht (Name/Typ/Sprache/
+Attribute/Edition/Einsprungpunkt-Label für Assembler/Linker,
+Relocation-Buchführung), hat im Raw-Modus aber **keinen Einfluss mehr
+auf die tatsächlichen Header-Bytes im Output** — die `typelang`/
+`attrev`/`edition`-Werte in der `psect`-Zeile sind nur noch
+Dokumentation/Konsistenz zu den parallel von Hand geschriebenen
+`dc.b`-Werten.
+
+Build-Befehle (Wrapper-Skripte `r68`/`l68` in `~/.local/bin`,
+kapseln den Wine-Aufruf):
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+cd src/kernel
+r68 -m3 -b -o=kernel.r68o kernel.r
+l68 -t=os9_68k -n=kernel -gu=0.0 -r -o=kernel.out -s=kernel.symmap kernel.r68o
+```
+
+`-b` = kurze Branches automatisch aufweiten statt Fehler (r68);
+`-r` = Rohbinär statt Modul-Header-Synthese (l68); `-s=` = Symbolkarte
+für die Drift-Analyse (siehe unten).
+
+## Ergebnis: Byte-exakter Nachbau erreicht (2026-08-01)
+
+`kernel.out` = 28476 Bytes (`0x6F3C`), **0 abweichende Bytes** gegen
+`vendor/68020/dker030s`. Drei Klassen von Restproblemen mussten dafür
+noch gelöst werden, nachdem Header + Rohbytes standen:
+
+1. **68020-Voll- vs. Brief-Erweiterungswort bei indizierter/Speicher-
+   indirekter Adressierung.** `r68` wählt bei einfacher
+   `disp(An,Xn)`-Syntax immer das kürzeste Brief-Format (8-Bit-
+   Displacement), auch wenn das Original ein 68020-Vollformat mit
+   16-/32-Bit-Displacement nutzt. Fix laut Handbuch (*OS-9
+   Assembler-Linker 1991*, Kapitel 1, Adressierungsmodi-Tabelle):
+   äußere Klammern erzwingen Vollformat mit 32-Bit-Displacement als
+   Default (`(disp,An,Xn.s*S)`), `(disp).w` davon erzwingt 16-Bit statt
+   32-Bit. Betraf 3 Stellen im Kernel (ein `bset.b`, zwei `lea` mit
+   Speicher-indirekter Adressierung).
+2. **`r68` optimiert Branches mit explizitem `.w`-Suffix trotzdem auf
+   Kurzform**, sobald das Ziel in ein vorzeichenbehaftetes Byte passt —
+   unabhängig vom expliziten Größensuffix (per Testfall verifiziert,
+   nicht im Handbuch dokumentiert). Das Original nutzt an mehreren
+   Stellen aber echt die Wortform, vermutlich weil der ursprüngliche
+   Compiler keine Branch-Größenoptimierung durchführt. Fix: Opcode-Wort
+   direkt aus den Ghidra-Rohbytes als `dc.w` übernehmen, gefolgt von
+   einem separat berechneten `dc.w ZIEL-*` als Displacement — das
+   Sternchen (`*`) steht dabei für die Adresse des Displacement-Worts
+   selbst, genau wie bei der normalen 68k-PC-relativ-Konvention. Betraf
+   5 Branch-Stellen.
+3. **Ghidra-Fehldisassemblierung von Datenbereichen als Scheincode**
+   (`ori.b`/`andi.b`/`cmpi.b`/`subi.b`/`btst.b` mit Immediate).
+   Erkennbar daran, dass das vermeintliche Byte-Immediate ein von Null
+   verschiedenes oberes Wort-Byte hat — bei einer echten `.b`-
+   Instruktion ist das laut ISA immer 0, unser Assembler erzeugt dort
+   also korrekterweise 0, während das Original den rohen Datenbyte-Wert
+   an der Stelle hat. Betraf 25 Einzelbytes an über 20 Adressen, per
+   `FORCE_RAW_BYTES` im Konverter (`tools/ghidra_to_r68.py`) als
+   Rohbytes statt Instruktion ausgegeben.
+
+**Diagnosemethode für (1) und (2):** `l68 -s=kernel.symmap` erzeugt
+eine Symbolkarte mit der tatsächlichen Linkadresse jedes Labels. Da
+jedes Label `LxxxxxX` per Namenskonvention die *Original*-Adresse
+codiert, zeigt ein Vergleich Name-Adresse vs. tatsächliche Adresse
+genau, ab welchem Punkt wie viele Bytes Drift entstanden sind — die
+Stelle, an der sich das Delta ändert, ist die (oder eine von wenigen)
+fehlerhafte Instruktion. Für (3) reichte am Ende ein einfacher
+Volltext-Bytevergleich der fertigen, größenkorrekten Datei gegen das
+Original.
 
 ## Vorgehen: Adressreihenfolge, kleine verifizierbare Schritte
 

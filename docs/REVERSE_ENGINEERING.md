@@ -1474,6 +1474,74 @@ Freigeben, Arena-Verwaltung, Pool-Lookup, Interrupt-Maskierung,
 generischer Deallokations-Tail und sogar ein Debug-Tracing-Hook — alle
 Bausteine gelesen und nachvollzogen.
 
+## Fund: `0xB2`–`0xDD` — Padding + neue indizierte Trampolin-Dispatch-Funktion (im Rahmen des `.s`-Nachbaus entdeckt)
+
+Beim adressweisen Nachbau (siehe `docs/REBUILD.md`) direkt nach dem
+ID-String gefunden, bisher nicht Teil der Dispatcher-Analyse:
+
+- **`0xB2`–`0xB7` (6 Byte): reines Padding.** `TRAPF.L #0` — ein
+  68020+-Opcode, der *niemals* auslöst (Bedingungscode "immer falsch"),
+  hier offenbar zweckentfremdet als 6-Byte-Füllsequenz, um die
+  nachfolgende Funktion auf eine 4-Byte-Adresse (`0xB8`) auszurichten
+  (der ID-String hat keine zu einer 4er-Grenze passende Länge).
+- **`0xB8`–`0xDD` (Funktion, `Q9_post_idstring_b2` vorläufig benannt):**
+  Erhöht den **IRQ-Verschachtelungszähler `(0x8bc,A6)`** (dasselbe Feld
+  wie in `Q9_disp_180`/`Q9_disp_8d0`) — deutet auf einen weiteren
+  IRQ-/Exception-nahen Kontext hin. Liest einen Index `D0` vom
+  Aufrufer-Stack (`(0xe,SP)`), und springt per **Trampolin** (PEA
+  Rücksprungadresse + gepushtes Sprungziel + `RTS`) indiziert in eine
+  **neue Tabelle bei `(0x8e4,A6)`** — Index wird *nicht* skaliert
+  (direkte Byte-Addition), der Aufrufer muss also bereits einen
+  passend skalierten Offset übergeben. Nach dem Laden des Sprungziels
+  wird `A2` zusätzlich aus `(0x400,A2)` neu geladen — **dasselbe
+  "Sekundärarray bei +0x400"-Muster**, das wir schon von den
+  Syscall-Tabellen (`Q9_disp_488`) kennen.
+- `(0x8e4,A6)` wurde schon einmal beiläufig in der Boot-Init-Funktion
+  gesehen (`0x6ade: move.l A1,(0x8e4,A6)`, direkt nach dem Setzen von
+  `(0x40,A6)` mit demselben Wert) — Zusammenhang/Zweck noch nicht
+  geklärt, könnte Zufall der Boot-Reihenfolge sein oder eine echte
+  gemeinsame Bedeutung haben.
+
+**Noch offen:** Wer ruft diese Funktion auf (noch keine Xref-Suche
+gemacht), was genau `(0x8e4,A6)` ist, und ob der Funktionsname
+`Q9_post_idstring_b2` durch einen passenderen ersetzt werden sollte,
+sobald der Aufrufer/Zweck klar ist.
+
+## Fund: Byte-exakter `.s`-Nachbau abgeschlossen, Einstiegspunkte umbenannt
+
+Der in `docs/REBUILD.md` beschriebene adressweise Nachbau (`src/kernel/kernel.r`,
+generiert über `tools/ghidra_to_r68.py`) ist fertig: `kernel.out` = 28476
+Byte, **0 abweichende Bytes** gegen `vendor/68020/dker030s`. Details zu
+den drei dafür nötigen Bugklassen (68020-Voll-/Brief-Format,
+r68-Branch-Autooptimierung trotz explizitem `.w`, Ghidra-
+Fehldisassemblierung einzelner Datenbytes) stehen in `REBUILD.md`, nicht
+hier — das ist reine Werkzeug-/Assembler-Mechanik, keine Kernel-Semantik.
+
+Im selben Zug wurden alle in dieser Datei dokumentierten, klar
+identifizierten Funktions-/Block-Einstiegspunkte in `kernel.r` von den
+generischen `Lxxxxxx`-Labels auf sprechende `Q9_*`-Namen umgestellt, mit
+einer Ein-Zeilen-Kommentarzeile darüber (eigene Formulierung, keine
+Übernahme von Microware-Text). Die Zuordnung Adresse→Name→Kommentar
+liegt zentral in `tools/ghidra_to_r68.py` (`LABEL_NAMES`/`FUNC_HEADER`),
+nicht in `kernel.r` selbst editiert, da die Datei bei jedem Lauf des
+Konverters neu generiert wird. Umfasst u. a.: alle 8 Exception-
+Dispatcher, den Scheduler (`Q9_scheduler_183a`), die komplette
+Speicherverwaltung (`Q9_mem_alloc_5440`, `Q9_mem_free_5a22`,
+`Q9_arena_lookup_5bac`, `Q9_freelist_bysize_5712`, u. a.), die
+Prozess-Terminierungskette (`Q9_proc_slot_cleanup_25f8`,
+`Q9_exc_default_action_24d8`, `Q9_proc_id_free_3370`, ...), die
+Panik-/Konsolen-Ausgabe (`Q9_panic_report_7f6`, `Q9_console_puts_850`,
+...) und die Trampolin-Mechanismen (`Q9_reschedule_trampolin_3140`,
+`Q9_trampolin_slot88_4078`, ...). Nur Funktions-*Einstiegspunkte*
+wurden umbenannt, nicht jede einzelne Instruktion darin — Details zu
+einzelnen Feldern/Schritten bleiben in den jeweiligen Fund-Abschnitten
+oben nachzuschlagen, nicht im Assembler-Kommentar dupliziert.
+
+**Noch offen für eine spätere Runde:** Adressen ohne eigenen Fund-
+Abschnitt (kleinere Hilfsfunktionen, `Q9_gap_*`/`Q9_gap2_*`-Inseln,
+Tabellen wie der EA-Decoder bei `0xb3a`) bleiben vorerst generisch
+benannt.
+
 ## Werkzeug-Hinweise (Ghidra headless)
 
 - Java: Homebrew-OpenJDK wird nicht automatisch gefunden —
@@ -1553,8 +1621,18 @@ ausgabe, Prozess-Terminierungslogik (`FUN_000024d8`, löst
    markiert (siehe Fund-Abschnitt). Noch offen: restliche
    `PLATZHALTER`-Felder einzeln verifizieren, echte Größe von
    `Q9_D_VctIrq` klären.
-8. Sobald ein Bereich vollständig verstanden ist: als eigene
-   `.s`-Quelle nachbauen, mit `vasm`/echtem `r68` assemblieren, Bytes
-   gegen das Original diffen (siehe Zieldefinition oben) — **das ist
-   jetzt der nächste große Schritt**, die Verstehensphase ist an einem
-   sehr weit fortgeschrittenen Punkt.
+8. **Erledigt:** `.r`-Quelle byte-exakt nachgebaut und mit den echten
+   Microware-Werkzeugen (`r68`/`l68`) assembliert/gelinkt, 0 abweichende
+   Bytes gegen das Original (siehe `docs/REBUILD.md` für die
+   Werkzeug-Mechanik, sowie den Fund-Abschnitt oben zu den umbenannten
+   Einstiegspunkten). Das war der ursprünglich hier als "nächster großer
+   Schritt" markierte Punkt.
+
+**Neuer nächster Schritt:** Adressen ohne eigenen Fund-Abschnitt
+weiterlesen und benennen (`Q9_gap_*`/`Q9_gap2_*`-Inseln aus Punkt 5,
+EA-Decoder-Tabelle `0xb3a`, `0x32fa`/`0x1ab8`/`0x5cd2` und weitere in
+den Fund-Abschnitten erwähnte, aber noch nicht gelesene Adressen), dann
+jeweils in `tools/ghidra_to_r68.py` (`LABEL_NAMES`/`FUNC_HEADER`)
+ergänzen und `kernel.r` neu generieren — Byte-Exaktheit bleibt dabei
+automatisch erhalten, solange nur Labels umbenannt und Kommentare
+ergänzt werden.
