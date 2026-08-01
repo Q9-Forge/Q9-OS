@@ -1,0 +1,4 @@
+.DS_Store
+build/
+*.r68o
+src/**/*.out
