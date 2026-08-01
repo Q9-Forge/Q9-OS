@@ -20,6 +20,15 @@ Weitere Tools folgen, sobald sie feststehen — bis dahin bleibt die Struktur
 flach (`src/`, kein Modulverzeichnis pro Tool), siehe `Q9-Forge`s
 Namenskonvention: ein Modul = flach, mehrere Module = Unterverzeichnisse.
 
+## Referenzmaterial
+
+- [`vendor/`](vendor/README.md) — Original-Kernelmodule (`aker*`/`dker*`)
+  aus dem Microware/RadiSys OS-9/68K SDK, unverändert, als Referenz für
+  den eigenen Kernel-Nachbau.
+- [`docs/KERNEL.md`](docs/KERNEL.md) — Notizen zu Kernel-Aufbau/-Arbeitsweise
+  (Kernel-Typen, Speicherallokatoren, Init-Modul, Prozesserzeugung,
+  Exception-Verarbeitung), aus dem offiziellen Technical Manual extrahiert.
+
 ## Build
 
 ```sh
