@@ -128,7 +128,7 @@ Tabelle bei `0xb3a` (8 Worte, direkt gefolgt von den 8 Handlern ab
 | 4 -(An) | `0x0016` | `0xb50` | `subq.l #2,...` zuerst, dann EA=An | Pre-Decrement |
 | 5 (d16,An) | `0x002a` | `0xb64` | EA=An `+ adda.w (A0)+,A1` | Displacement aus Instruktionsstrom (A0) |
 | 6 (d8,An,Xn) | `0x0032` | `0xb6c` | liest Extension-Word, Word/Long-Index je nach Bit, addiert 8-Bit-Displacement | volle Brief-Extension-Word-Dekodierung |
-| 7 Extended | `0x0054` | `0xb8e` | Sub-Mode-Prüfung (`cmpi.w #4`), `>4` = Fehler | nur Sub-Mode 0 (abs. short) im bisher gedumpten Ausschnitt verifiziert, Rest noch offen |
+| 7 Extended | `0x0054` | `0xb8e` | Sub-Mode-Prüfung (`cmpi.w #4`), `>4` = Fehler | **vollständig verifiziert** (Update): Sub-Modi 0–3 (abs. short, abs. long, `(d16,PC)`, `(d8,PC,Xn)`) teilen sich **dieselbe generische Behandlung** (`movea.w (A0)+,A1` — liest ein vorzeichenbehaftetes Wort aus dem Instruktionsstrom), Sub-Modus 4 (Immediate) springt zu `0xb9a` (Fehlerpfad, unmittelbare Daten sind kein gültiges Ziel für einen Schreibzugriff), `>4` ebenfalls Fehler bei `0xb9e` |
 
 Fehlerkommunikation an den Aufrufer über das **Carry-Flag** (Mode 1
 setzt es, Aufrufer prüft direkt danach `bcs.b` → Fehlerpfad) — passt
@@ -480,11 +480,73 @@ Lösung wie bei `D_ExcJmp` existiert.
   Kernel-zu-Kernel-Aufrufe (analog zum bereits bei `0x3140` beobachteten
   Slot-90-Trampolin).
 
-## Fund: `FUN_000025f8` — Prozess-Exit-/Aufräumroutine (vollständig gelesen)
+## Fund: `FUN_000025f8` — Prozessdeskriptor-Slot zurücksetzen/freigeben (vollständig gelesen)
 
 Der einzige Aufrufer von `0x1390` (`0x2602`, innerhalb `0x25f8`–`0x26b1`,
-184 Byte). Entpuppt sich als **vollständige Prozess-Terminierungslogik**,
-kein Modul-Lade-Code:
+184 Byte). Entpuppt sich als **vollständige Aufräumlogik für einen
+Prozessdeskriptor-Slot**, kein Modul-Lade-Code — und (Update nach
+Xref-Suche, 3 Aufrufer gefunden) **allgemeiner als reine
+Terminierungsroutine für den laufenden Prozess**: Alle drei Aufrufer
+(`0x19c4`, `0x25f0`, `0x2966`) übergeben eine explizite
+Prozessdeskriptor-Adresse in `A0`/`A4`, nicht implizit "der aktuell
+laufende Prozess". `0x19c4` liegt in der schon bekannten
+Prozess-Erzeugungsfunktion (`0x19d8`ff. zeroing) — dort wird
+offenbar ein wiederverwendeter Deskriptor-Slot zuerst aufgeräumt,
+bevor er für den neuen Prozess neu initialisiert wird. `0x25f0` und
+`0x2966` liegen in noch nicht vollständig gelesenem Code, der nach dem
+Aufruf jeweils `bsr 0x1e18` ausführt.
+
+**Update — `0x1e18`→`0x3370` gelesen, schließt den Kreis:** `0x1e18`
+(18 Byte) ist nur ein Weiterreicher (`A0 = (0x44,A6)`, dann `bsr
+0x3370`). `0x3370` (86 Byte, vollständig gelesen) ist die
+**Prozess-ID-Tabellen-Freigabe**: `(0x44,A6)` ist die Basis einer
+ID→Deskriptor-Zeiger-Tabelle (Wort-Index `D0` = Prozess-ID, `*4` für
+Langwort-Einträge), mit eigener **Freiliste wiederverwendbarer IDs**
+(Kette über Wortfelder innerhalb der Tabelle selbst, ähnlich den
+anderen bereits gesehenen Freilisten-Mustern). Ungültige ID (0, zu
+groß, oder Slot bereits leer) → Fehlercode `0xE0`. Bei Erfolg wird der
+Tabelleneintrag genullt und die ID in die Freiliste zurückgelegt.
+
+**Einordnung:** Damit sind `0x25f0` und `0x2966` als **echte
+Prozess-Terminierungsaufrufer** bestätigt (sie geben die Prozess-ID
+frei) — nicht nur generisches Slot-Recycling wie zunächst vermutet.
+`FUN_000025f8` selbst bleibt aber weiterhin die allgemeinere
+"Deskriptor-Slot aufräumen"-Primitive, die sowohl bei echter
+Terminierung als auch (über `0x19c4`) bei Prozess-Neuerzeugung auf
+einem wiederverwendeten Slot verwendet wird.
+
+**Versuch, die umschließenden öffentlichen Syscall-Funktionen von
+`0x25f0`/`0x2966` zu finden (teilweise erfolglos, ehrlich
+dokumentiert):**
+
+- Direkt vor `0x25f0` liegt `0x2590` (26 Byte, jetzt als eigene
+  Funktion angelegt) — **derselbe Trampolin-Mechanismus** wie
+  `0x3140`/`0x4078` (Tabelle1-Slot **89**, `(0x164,A3)`/`(0x564,A3)`,
+  festes `D0=6`). Wird aus der `0x25f0`-Umgebung heraus in einer
+  Schleife aufgerufen (`bsr.b 0x2590` bei `0x25d0`) — vermutlich ein
+  Vorab-Check pro Kandidat, bevor `0x25f8` den eigentlichen Slot
+  aufräumt.
+- Die genaue **Startadresse** der Funktion, die `0x25f0` umschließt,
+  ließ sich mit den bisherigen Mitteln (Rückwärtssuche nach
+  `RTS`/`RTE` bzw. Prolog-Mustern) **nicht zuverlässig bestimmen** —
+  die Rückwärtssuche landet in Schleifenkörpern anderer, vermutlich
+  benachbarter Funktionen. Ghidras automatische Grenzerkennung
+  (`createFunction`) an einem naheliegenden Kandidaten (`0x27d6`)
+  ergab eine sauber begrenzte, aber **andere, thematisch nicht
+  zusammenhängende Funktion** (146 Byte): eine
+  **Prozess-/Modultabellen-Suche** — durchläuft 16-Byte-Einträge ab
+  einer Basis bis zur Grenze `(0x40,A6)` (derselbe Bereich wie die
+  Prozess-ID-Tabelle aus `0x3370`!), vergleicht zwei Filter-Bytes
+  gegen Tabelleneintrag-Felder `(0x12)`/`(0x13)`, ruft dabei `0x32fa`
+  und `0x1ab8` (Vergleichs-Helfer) auf. Nützlicher Nebenfund, aber
+  **nicht** der gesuchte Aufrufer von `0x2966`.
+- **Fazit:** Die tatsächlichen öffentlichen Syscall-Einstiegspunkte für
+  die Prozessterminierung bleiben vorerst nicht lokalisiert — die
+  präzise Funktionsgrenzenbestimmung in diesem Codeabschnitt braucht
+  entweder einen volleren Ghidra-Autoanalyse-Lauf oder gezieltere
+  Kontrollfluss-Verfolgung ab bekannten Einstiegspunkten (z. B. den
+  6 Registrierungs-Kategorien bei `0x1424` usw.), nicht nur lokale
+  Rückwärtssuche.
 
 1. `EXG A0,A4` tauscht den zu terminierenden Prozess (Parameter in `A0`)
    nach `A4`, ruft dann `0x1390` mit Kategorie `D1=0` auf (Zweck der
@@ -528,9 +590,25 @@ Ressourcenliste 1 (15 Langworte), `(0x1a8,A0)` abwärts = Tabelle offener
 Pfade (Wort-Einträge, per `TRAP #0` geschlossen), `(0x1c,A0)` Bit 0 =
 weiteres Prozessflag, `(0x38,A0)` = weitere Ressourcenliste.
 
-**Noch offen:** Was `0x1390`-Kategorie-0 (`0x1424`) und `0x4078` konkret
-tun; Zweck von Tabellen-Slot 64 (mutmaßlich Deskriptor-Deallokation);
-ob und wie sich der Kernel selbst beim Boot in Slot 90 (Reschedule,
+**Update — `0x4078` gelesen (24 Byte, trivial):** Derselbe
+Trampolin-Mechanismus wie schon bei `0x3140` (Slot 90) und dem
+Abschluss von `FUN_000025f8` (Slot 64) — hier **Tabelle1-Slot 88**
+(`(0x160,A3)`/`(0x560,A3)` = `0x400+0x160`), mit fest verdrahteten
+Parametern `D0=0x30`, `D1=1`. Bemerkenswert: Der vom Aufrufer in `D0`
+übergebene Ressourcenzeiger (`(0x38,A0)` aus dem Prozessdeskriptor)
+wird **überschrieben und nicht weitergereicht** — er diente im
+Aufrufer nur als Null-Check ("gibt es überhaupt etwas zu tun"), das
+eigentliche Freigeben von *was auch immer* Slot 88 tut, geschieht
+implizit über den aktuellen `D_Proc`-Kontext, nicht über einen
+expliziten Adressparameter. Bestätigt das bei `0x3140` aufgestellte
+Muster: diese Trampoline sind **interne, kontextbezogene
+Suboperationscodes**, keine generischen Funktionsaufrufe mit
+Adressparameter.
+
+**Noch offen:** Was `0x1390`-Kategorie-0 (`0x1424`) konkret tut; Zweck
+von Tabellen-Slot 64/88/90 (mutmaßlich Deskriptor-Deallokation/interne
+Kernel-Suboperationen); ob und wie sich der Kernel selbst beim Boot in
+Slot 90 (Reschedule,
 siehe `0x3140`-Fund) einträgt, bleibt weiterhin ungeklärt.
 
 ## Fund: `FUN_000062da` — Speicher-/Ressourcen-Freigabe eines Prozesses (vollständig gelesen)
@@ -790,6 +868,612 @@ Vermutung, dass die Ready-Queue-Insert-Routine von vielen Stellen
 `0x2bc` (bekannt, `Q9_disp_180`), `0x3a5c`, `0x3ad2` — noch nicht
 einzeln untersucht.
 
+## Fund: `Q9_disp_452`/`0x472` (Spurious/Uninitialized Interrupt) + Nebenfund: periodischer Uhr-Tick-Handler
+
+**Hinweis zur Methode:** Erneutes `createFunction(0x452)` ließ Ghidra
+die Funktionsgrenze über den kompletten erreichbaren Bereich bis
+`0x81d` ausdehnen und dabei mehrere, bereits separat dokumentierte
+Bereiche (u. a. `Q9_disp_488`) mit einschließen, weil sie sich
+Code/Sprungziele teilen. Die folgenden Punkte beziehen sich nur auf
+den tatsächlich *neuen* Inhalt, nicht auf Wiederholungen bereits
+bekannter Funktionen.
+
+**`Q9_disp_452`/`0x472` selbst (`0x452`–`0x487`, kurz):** Erhöht einen
+Spurious-Zähler `(0x84,A6)` (mit Sättigung, `bcc`-Korrektur bei
+Überlauf), prüft Flag-Bit 6 in `(0x2e,A6)` — gesetzt: sofortige
+Rückkehr (`RTE`, "ignorieren"); gelöscht: maskiert Interrupts, holt
+`D_Proc`-Basis erneut und springt in die gemeinsame
+Panik-/Logging-Infrastruktur bei `0x804`. Sehr knapp und robust — passt
+zu einem Handler, der (per Definition) auf ein Ereignis reagiert, das
+im Normalfall gar nicht auftreten sollte.
+
+**Nebenfund — periodischer Uhr-Tick-Handler (`0x6a8`–`0x76c`):**
+
+- Erhöht einen laufenden Tick-Zähler `(0x54,A6)`.
+- Dekrementiert einen Countdown `(0x774,A6)`; bei Erreichen von 0 wird
+  er aus `(0x28,A6)` neu geladen (Ticks-pro-Sekunde-Konstante?) und ein
+  gröberer Sekunden-Zähler `(0x34,A6)` dekrementiert.
+- Erreicht **dieser** 0, wird er mit `0x15180` (**86400 = Sekunden pro
+  Tag**) neu geladen, ein Tageszähler `(0x30,A6)` erhöht und
+  `(0x2a,A6)` genullt — **eindeutig die Fortschreibung von Systemzeit/
+  -datum** (Sekunden-des-Tages-Rollover → Tageszähler hoch).
+- Danach (`0x6ce`–`0x70a`): maskiert Interrupts, ruft bei Bedarf
+  `bsr 0x70c` auf (Sub-Helfer, s.u.), aktualisiert Präemptions-
+  Statistikfelder `(0x2b4,A2)`/`(0x2b8,A2)` je nach einem Echtzeit-Flag
+  (Bit 7 in `(0x1c,A2)` — dasselbe Flag wie beim Scheduler-Sortier-
+  schlüssel in `Q9_scheduler_183a`!), und setzt bei Ablauf einer
+  Zeitscheibe `(0x778,A6)` das **Reschedule-Flag** (Bit 5 in
+  `(0x1c,A2)`) — **das ist die Zeitscheiben-Ablauf-Erkennung des
+  Multitasking-Schedulers**, direkt im Tick-Handler.
+- `0x70c`–`0x76c`: **Selbstregistrierung als IRQ-Dispatcher-Hook** —
+  prüft/setzt ein Bit in einer eigenen Deskriptor-Struktur bei
+  `(0x900,A6)`, trägt sich (falls noch nicht geschehen) direkt in
+  `(0x8c0,A6)` ein — **exakt der optionale Scheduler-Tick-Hook, den
+  `Q9_disp_180` beim IRQ-Empfang aufruft** — oder hängt sich sonst ans
+  Ende einer bereits bestehenden Hook-Kette (einfach verkettete Liste
+  über Offset `0`). Damit ist geklärt, **wer** den Hook installiert und
+  **was** er tut: der periodische Zeit-/Scheduler-Tick.
+
+**Noch offen:** Genauer Trigger-Mechanismus (welcher Interrupt-Vektor
+ruft `0x6a8` überhaupt auf — vermutlich ein Hardware-Timer-Interrupt,
+noch nicht per Xref verifiziert), die Panik-/Logging-Unterfunktionen
+`0x850`/`0x868`/`0x84a` bei `0x804`ff., sowie die
+Self-Modifying-Code-Erkennung bei `0x7be`–`0x804` (derselbe
+`0x4AFC`-Platzhalter-Mechanismus wie in `0x3140`, hier aber mit
+Sprung in den Scheduler-Kontext `(0x140,A4)`/`(0x144,A4)` statt reinem
+Cache-Flush — noch nicht im Detail verstanden).
+
+## Fund: `Q9_disp_5d0` — TRAP-#1–15-Dispatcher mit prozesseigenen Handlern (vollständig gelesen, sauber begrenzt)
+
+182 Byte (`0x5d0`–`0x6a3`). Klar abgegrenzter, eigenständiger
+Mechanismus: OS-9-Prozesse können sich **eigene Handler für die
+TRAP-Instruktionen #1–15** installieren (klassisches Feature z. B. für
+Sprach-Laufzeiten oder Debugger, die eigene Software-Interrupts
+brauchen).
+
+- `A6` wird hier (anders als sonst) direkt auf `D_Proc` umgebogen
+  (`movea.l (0x4c,A6),A6`) — der ganze Dispatcher arbeitet
+  prozessrelativ.
+- Trap-Nummer (`D1w`, aus dem Exception-Frame) indiziert eine Tabelle
+  bei `D_Proc+8` — **prozesseigene Trap-Handler-Deskriptoren**, je
+  4 Byte. Ist der Eintrag `0`, kein eigener Handler installiert →
+  Fallback (siehe unten).
+- Bei installiertem Handler: rettet `USP` in `D_Proc+0xc`, lädt einen
+  zweiten, ebenfalls trap-nummer-indizierten Wert aus `D_Proc+0x44`
+  (Kontext-/Flags-Array parallel zur Handler-Tabelle), prüft Bit 5 in
+  dessen Feld `+0x14` und berechnet die tatsächliche Handler-
+  Einsprungadresse als Basis `+` Offset-Feld `+0x30` — zwei leicht
+  unterschiedliche Aufbauwege für den synthetischen Aufruf-Frame
+  (`0x606`ff. vs. `0x652`ff., vermutlich je nachdem ob der Handler
+  einen direkten oder "umschlossenen" Trap-Frame erwartet).
+- **Zustellung an User-Code**: baut auf dem **User-Stack** (`USP`)
+  einen synthetischen Rücksprung-Frame (Trap-Nummer, alte
+  Rücksprungadresse, etc.) und schaltet dorthin um — der
+  Trap-Handler läuft dann als normaler Unterprogrammaufruf im
+  User-Kontext des Prozesses, nicht im Kernel.
+- Nach der Umschaltung: falls Bit 7 im geretteten Statuswort gesetzt
+  war (Trace-Modus aktiv), wird zusätzlich zum `Q9_disp_ba4`
+  (Trace-Handler) verzweigt (`bra.w 0xba4`) — Interaktion zwischen
+  Trap-Zustellung und Einzelschritt-Debugging.
+- **Fallback-Kette** (`0x67e`ff., kein prozesseigener Handler): läuft
+  eine Kette von Trap-Deskriptoren ab `D_Proc+0x38` ab (Offset-Feld
+  `+0x34` als "weiter"-Verkettung, vermutlich Vererbung vom
+  Elternprozess), fällt in denselben `0x652`-Zustellungspfad, sobald
+  ein gültiger Eintrag gefunden wird. Bleibt die Kette leer/erfolglos →
+  Fehlercode `0x85` ("kein Handler installiert"), Carry gesetzt.
+
+## Fund: `Q9_disp_8d0` — Sammel-Handler: FPU-Exceptions, Software-Breakpoints, generisches Prozess-Vektor-System, Signal-Zustellung (großer Meilenstein)
+
+564 Byte (`0x8d0`–`0xb03`), reichhaltigster bisher gelesener Dispatcher.
+Bedient laut Vektortabelle Illegal Instr., Zero Div, CHK, TRAPV, Priv.
+Violation, Line-A/F, reservierte Vektoren, FPU-Exceptions und
+MMU-Fehler — entsprechend vielseitig ist der Code:
+
+- **FPU-Exception-Vorverarbeitung** (`0x8de`–`0x91c`, Vektor-Offset
+  `0xC0`–`0xD8` = genau die 7 FPU-Vektoren 48–54): ruft `bsr 0xfe0`
+  (FPU-Kontext-Hilfsfunktion) auf, prüft System-Flag `(0x2f,A6)==2`
+  und pflegt ein "ausstehende FPU-Exception"-Feld pro Prozess
+  (`(0x74,A1)`/`(0x75,A1)`).
+- **`0xb04` bestätigt als FPSP-Einstieg** (frühere Vermutung
+  verifiziert!): bei Exception-Frame-Format `4` **und** Vektor genau
+  `0xC0` (Vektor 48, "Branch/Set on Unordered") wird `bsr 0xb04`
+  aufgerufen (`0x9a6`–`0x9ac`) — die anderen 6 FPU-Vektoren (49–54)
+  laufen stattdessen durch den generischen Signal-Zustellungspfad
+  (siehe unten).
+- **Software-Breakpoints über Illegal Instruction** (`0x95e`–`0x994`,
+  Vektor `0x10`=4 und `0x20`=8): durchsucht eine pro Prozess gepflegte
+  Liste (`(0x2ac,A4)`, Einträge mit fester Adress-Vergleichs-Semantik)
+  nach der fehlerhaften PC-Adresse (`(0x42,SP)`); Treffer → markiert
+  "Breakpoint getroffen" (`(0x8,A5)=1`) und springt zum gemeinsamen
+  Zustellungs-Ziel `0xc74` — klassisches Debugger-Feature (Code wird
+  mit einer ILLEGAL-Instruktion überschrieben, dieser Handler erkennt
+  den Treffer anhand der PC-Adresse).
+- **Generisches, pro Prozess installierbares Vektor-Handler-System**
+  (`0x9d2`–`0xa44`): **nicht nur** für TRAP #1–15 (siehe
+  `Q9_disp_5d0`), sondern für praktisch **alle** hier bedienten
+  Vektoren — zwei parallele kleine Tabellen pro Prozess, eine für
+  niedrige Vektoren (`D_Proc+0x34`/`D_Proc+0x5c`, Vektor `<8`) und eine
+  für den FPU-/MMU-Bereich (`D_Proc+0x278`/`D_Proc+0x1c`, indiziert mit
+  `Vektor+0x278` bzw. `+0x1c`). Ist ein Eintrag gesetzt, wird direkt
+  dorthin verzweigt (derselbe Zustellungsmechanismus wie bei
+  `Q9_disp_5d0`).
+- **Fallback: Signal-Zustellung an den Prozess** (`0xa08`–`0xa44`):
+  ohne installierten Vektor-Handler wird eine **Signalnummer**
+  `D1 = (Vektor >> 2) + 0x64` berechnet (systematische Vektor→Signal-
+  Abbildung, Basis `0x64`=100) und — falls der Prozess einen
+  Signal-/Exception-Handler registriert hat (`(0x2ac,A4)`, dasselbe
+  Feld wie bei den Breakpoints, hier generisch als "Exception-Handler-
+  Deskriptor" interpretiert) — an ihn zugestellt: Prozessorkontext
+  (`D0`–`D2`, `D6`, PC, Format) wird in einen `0x40`-Byte-Frame auf dem
+  **User-Stack** kopiert, Signalnummer bei `(0x8,A5)` hinterlegt, ein
+  Prozessflag (Bit 1 in `(0x1c,A4)`) gesetzt, `USP` umgeschaltet — der
+  Handler läuft dann im User-Kontext, analog zu `Q9_disp_5d0`. Ohne
+  jeglichen Handler (`(0x2ac,A4)==0`) → Sprung nach `0xfc4`
+  (vermutlich Default-Terminierung, noch nicht gelesen).
+- **FPU-Ownership-Aufräumen beim Wiedereintritt** (`0xad2`–`0xaec`):
+  exakt dasselbe Muster wie in der Prozess-Exit-Routine (`D_FProc`
+  `(0x58,A6)` gegen aktuellen Prozess prüfen, `FRESTORE` bei Bedarf) —
+  bestätigt erneut die Lazy-FPU-Context-Switch-Architektur, diesmal im
+  Exception-Wiedereintrittspfad statt beim Prozessende.
+
+**Noch offen:** `0xfe0` (FPU-Kontext-Hilfsfunktion), `0x30a0`
+(Frame-Größen-Anpassung), `0x134a` (Kopier-Hilfsfunktion für den
+Signal-Frame), `0x1034`, `0xbc0`, `0xfc4` (Default-Terminierungspfad
+ohne Handler) — alle noch nicht gelesen.
+
+## Fund: `Q9_disp_888` (Bus/Address Error) und `Q9_disp_ba4` (Trace) — beide fertig, alle 8 Dispatcher jetzt gelesen
+
+**`Q9_disp_888`** (`0x888`–`0x8cf`, ~66 Byte eigener Code): dünner
+Wrapper, kein eigener Mechanismus. Maskiert Interrupts, sichert
+Kontext, extrahiert die zusätzlichen 68030-Langformat-Frame-Felder, die
+nur Bus-/Address-Error-Exceptions mitliefern (`D3=(0x4a,SP)`,
+`D4=(0x50,SP)`, `D5=(0x4c,SP)` — Spezialfeld-Wort und zwei Langworte,
+vermutlich Fehleradresse/Statuswort des Fault), fällt danach **direkt
+durch in denselben Code wie `Q9_disp_8d0`** (ab `0x8d0`) — Software-
+Breakpoints, generisches Vektor-Handler-System, Signal-Zustellung
+gelten hier identisch, nur mit den zusätzlichen Fault-Frame-Feldern in
+`D3`–`D5` verfügbar für den Fall einer Signal-Zustellung.
+
+**`Q9_disp_ba4`** (`0xba4`–`0xbb4`, nur 12 Byte eigener Code):
+minimaler Trace-Bit-Epilog — prüft Bit 5 in einem Statusbyte
+`(0x4,SP)`; gesetzt: löscht Bit 7 im geretteten Statuswort (Trace-Modus
+für den nächsten Einzelschritt deaktivieren) und kehrt direkt per `RTE`
+zurück; sonst Fallthrough nach `0xbc0` (gemeinsam genutzter Code,
+u. a. von `Q9_disp_8d0` per `bsr` aufgerufen, noch nicht gelesen). Die
+frühere Größenschätzung (698 B, aus dem allerersten
+`FollowDispatchTargets`-Lauf) war die anfängliche, noch nicht bereinigte
+Ghidra-Funktionsgrenze, bevor `Q9_disp_5d0`/`8d0` als eigene Funktionen
+abgetrennt wurden — der tatsächlich eigenständige Trace-Code ist
+minimal.
+
+**Meilenstein: Alle 8 Exception-Dispatch-Funktionen (`Q9_disp_180`,
+`452`/`472`, `488`, `5d0`, `888`, `8d0`, `ba4`) sind jetzt vollständig
+gelesen.** Gemeinsame Infrastruktur, die von mehreren Dispatchern
+geteilt wird und noch nicht gelesen ist: `0xfe0`, `0x30a0`, `0x134a`,
+`0x1034`, `0xbc0`, `0xfc4`, `0x850`/`0x868`/`0x84a` (Panik-/Logging).
+
+## Fund: `0xfe0`/`0x1034` — das vollständige FPU-Save/Restore-Paar (Lazy-Context-Switch komplett)
+
+Beide vollständig gelesen, sehr kurz und symmetrisch:
+
+- **`0xfe0` (Save, aufgerufen aus `Q9_disp_8d0`/`888` bei FPU-Exceptions
+  mit `A1` = betroffener Prozess):** Falls `(0x334,A1)` (Zeiger auf den
+  FPU-Save-Bereich des Prozesses) gesetzt ist: `bsr 0x1004` (noch nicht
+  gelesen), `FSAVE (0x74,A1)` (interner FPU-Zustand), `D_FProc`
+  `(0x58,A6)` löschen (niemand besitzt mehr den FPU-Registersatz), und
+  falls das gesicherte Format-Byte `(0x74,A1)` nicht leer ist, zusätzlich
+  die Datenregister (`FMOVEM.X` nach `(0x8,A1)`) und Kontrollregister
+  (`FMOVEM.L` nach `(0x68,A1)`) sichern.
+- **`0x1034` (Restore, aus `Q9_disp_8d0`s Wiedereintrittspfad):**
+  spiegelbildlich — lädt bei Bedarf Daten-/Kontrollregister zurück,
+  `FRESTORE (0x74,A1)`, setzt `D_FProc = A4` (aktueller Prozess
+  übernimmt den FPU-Registersatz).
+
+Damit ist die Lazy-FPU-Context-Switch-Architektur (erstmals ganz am
+Anfang der Untersuchung vermutet, mehrfach indirekt bestätigt) jetzt
+**vollständig in beiden Richtungen** nachvollzogen: `(0x334,Proc)` =
+FPU-Save-Bereich-Zeiger, `(0x74,Bereich)` = gesichertes Format-Byte,
+`(0x8,Bereich)` = Datenregister, `(0x68,Bereich)` = Kontrollregister.
+
+## Fund: `0xbc0` — Signal-/Breakpoint-Pending-Verwaltung
+
+Vollständig gelesen (`0xbc0`–`0xc4c`). Gemeinsamer Signal-Zustellungs-
+Baustein, den `Q9_disp_ba4` per Fallthrough und `Q9_disp_8d0` explizit
+per `bsr` erreichen. Liest `D_Proc`, sichert dessen Flags `(0x1c,A5)`
+lokal, setzt bei bestimmten Bedingungen (Prozess nicht im Zustand
+`'a'` **oder** `(0x26,A5)` gesetzt — dasselbe Feld, das `0xfc4` als
+Fallback-Signalnummer benutzt) ein "Pending"-Bit (Bit 4). Erhöht einen
+Statistik-Zähler `(0x2b0,A5)`, durchsucht dann die Signal-/Breakpoint-
+Deskriptor-Kette bei `(0x2ac,A5)` nach einem zum aktuellen Ereignis
+passenden Eintrag (Vergleichsschleife gegen Stack-Daten), markiert
+Treffer (`(0x8,Eintrag)=1` oder `3`), und wendet auf nicht getroffene
+Einträge dieselbe **Aging-Technik** an, die wir schon vom Scheduler
+kennen (Countdown `(0x4,Eintrag)`, Neuladen mit `0x7fff0000`-Maske bei
+Erschöpfung) — offenbar ein generisches Aging-Muster, das im Kernel an
+mehreren Stellen für Prioritäts-/Pending-Queues wiederverwendet wird.
+
+## Fund: `0xfc4` — Fallback ohne jeglichen Handler, führt zu Prozess-Terminierungs-Code
+
+Kurz (`0xfc4`–`0xfd6`): hinterlegt die berechnete Signalnummer `D1` in
+`(0x26,A4)`, maskiert Interrupts, liest sie zurück, löscht das Feld
+wieder und springt **nach `0x24d8`**. Das ist ein wichtiger neuer
+Anknüpfungspunkt: `0x24d8` liegt genau in dem Codebereich, dessen
+genaue Funktionsgrenzen wir bei der Suche nach den öffentlichen
+`F$Exit`/`F$Kill`-Syscalls (`0x25f0`/`0x2966`-Umgebung) nicht sauber
+bestimmen konnten. Der Kernel liefert also ein Signal, für das der
+Prozess **weder einen eigenen Vektor-Handler noch überhaupt einen
+Signal-Handler** registriert hat, offenbar direkt an dieselbe
+Prozess-Terminierungslogik aus — starker Kandidat, um von dort aus
+doch noch die genaue Grenze der Terminierungsfunktion(en) zu finden.
+
+## Fund: `FUN_000024d8` — Standardaktion für unbehandelte Exceptions (löst das offene `0x25f0`-Rätsel)
+
+Vollständig gelesen (`0x24d8`–`0x258f`, 184 Byte, sauber begrenzt).
+Aufgerufen aus `0xfc4` (Fallback-Pfad von `Q9_disp_8d0`, wenn ein
+Prozess weder einen Vektor- noch einen Signal-Handler hat). Zwei Fälle:
+
+**Fall A — Prozess hat gar keinen Signal-Handler (`(0x2ac,A4)==0`,
+`0x24f6`ff.): der Prozess stirbt.**
+1. Baut einen temporären Stack direkt im Prozessdeskriptor auf.
+2. FPU-Save-Bereich als "nicht in Benutzung" markieren, Fehlercode
+   `D1` in `(0x26,A4)` hinterlegen.
+3. **Ruft `0x2590`** (dieselbe Tabelle1-Slot-89-Trampolin-Funktion, die
+   auch aus der `0x25f0`-Umgebung heraus aufgerufen wird!) — Beleg,
+   dass Slot 89 speziell für "Prozess stirbt gleich"-Vorbereitung
+   zuständig ist.
+4. Setzt Prozesszustand `(0x20,A4) = 0x2d` (`'-'`) — **neuer,
+   eigenständiger Zustandscode** ("Zombie"/"stirbt", zusätzlich zu
+   `'a'`=aktiv aus `Q9_scheduler_183a`).
+5. **Eltern-Benachrichtigung** (falls `(0x2,A4)` — vermutlich Parent-
+   Prozess-ID/-Zeiger — gesetzt ist): `bsr 0x2cee` liefert eine
+   Benachrichtigung an den Elternprozess; bei Erfolg wird dessen Flag
+   Bit 3 gesetzt, und falls der Elternprozess im Zustand `0x77` (`'w'`
+   = wartend) ist, wird er über seine Wait-Deskriptor-Kette
+   (`bsr 0x4518`) aufgeweckt und per `bsr 0x183a` in die Ready-Queue
+   eingefügt — **klassisches `SIGCHLD`/`wait()`-Aufweck-Muster**.
+6. Wechselt `D_Proc` temporär auf den "System-Prozess" `(0x50,A6)`,
+   schaltet den Stack um, **ruft `0x1e18`→`0x3370`** — genau die
+   bereits bekannte **Prozess-ID-Freigabe**.
+7. Endet mit `bra.w 0x3140` (Cache-Flush + Slot-90-Trampolin, ebenfalls
+   schon bekannt).
+
+**Fall B — Prozess hat einen Signal-Handler (`0x2566`ff.):** normale
+Signal-Zustellung statt Terminierung — Sonderbehandlung für
+Prozesszustand `0x6` (Fehlercode `0x80`), setzt Flag, Signalnummer,
+springt zum gemeinsamen Zustellungs-Tail `0xc74`.
+
+**Auflösung des offenen `0x25f0`-Rätsels:** Die Instruktionsfolge um
+`0x25f0` (siehe oben, Aufrufer von `FUN_000025f8`) enthält **exakt
+dieselbe Sequenz** — Aufruf von `0x2590`, danach `0x25f8` (die
+Deskriptor-Aufräumroutine). Das bestätigt: `0x24d8` und der
+`0x25f0`-Bereich sind zwei eng verwandte, sich überschneidende
+Varianten derselben Prozess-Terminierungslogik (vermutlich "stirbt
+durch unbehandelte Exception" vs. "stirbt durch expliziten
+`F$Exit`-artigen Aufruf"), die denselben Cleanup-Codepfad
+(`0x2590`→`0x25f8`→ID-Freigabe) teilen. Die exakte umschließende
+Funktion um `0x25f0` bleibt zwar weiterhin nicht als eigene
+Ghidra-Funktion abgegrenzt, aber ihr **Zweck und Kontext sind jetzt
+geklärt** — das war das eigentliche Ziel der Untersuchung.
+
+## Fund: Panik-/Diagnose-Ausgabe (`0x850`, `0x84a`, `0x868`) + generische Hilfsfunktionen (`0x30a0`, `0x134a`)
+
+Alle vollständig gelesen, runden die Panik-Infrastruktur ab, die von
+mehreren Dispatch-Funktionen (`0x7f6`, `0x804`ff.) genutzt wird:
+
+- **`0x850`** — Zeichenketten-Ausgabe auf die Systemkonsole: läuft
+  über eine nullterminierte ASCII-Zeichenkette bei `A0` und ruft für
+  jedes Byte `JSR (0x8,A1)` auf, wobei `A1 = (0x64,A6)` ein
+  Geräte-Deskriptor mit Funktionszeiger an Offset `0x8` ist (klassische
+  OS-9-Treiber-Aufruftabellen-Konvention, hier vermutlich die
+  Konsolen-"Write"-Funktion). `0x84a` ist nur ein kleiner Aufrufer
+  davon.
+- **`0x868`** — Hexadezimal-Ausgabe eines 32-Bit-Werts (`D0`): druckt
+  rekursiv alle 8 Nibbles über wiederholtes `ROR.L`/`BSR` auf sich
+  selbst (elegantes klassisches Muster: 8 rekursive Aufrufe schälen
+  nacheinander je ein Nibble heraus, wandeln es in ein ASCII-Hexzeichen
+  um `0`–`9`/`A`–`F`) und gibt jede Ziffer ebenfalls über
+  `JMP (0x8,A1)` aus.
+- Zusammen mit den bereits bekannten PC-relativen `LEA`+`BSR
+  0x850`-Aufrufen bei `0x804`ff. ergibt sich ein klares Bild: der
+  Kernel besitzt eine **eingebaute Panik-/Diagnoseausgabe**, die
+  Klartext-Meldungen (im Modul eingebettete ASCII-Strings) und
+  Hex-Werte (vermutlich Fehlervektor, PC, Faultadresse) direkt auf die
+  Konsole schreibt — bevor vermutlich angehalten oder in einen
+  Fehlerzustand übergegangen wird.
+- **`0x30a0`** — generisches, überlappungssicheres `memmove()`: prüft
+  Kopierrichtung (`A2>A0` → rückwärts ab Ende, sonst vorwärts ab
+  Anfang), mit Byte-/Wort-/Langwort-Optimierung je nach Ausrichtung.
+  Wird u. a. in `Q9_disp_8d0` zum Verschieben des Exception-Frames nach
+  Formatanpassung verwendet.
+- **`0x134a`** — kleiner Wrapper um `bsr 0x5d68` (noch nicht gelesen,
+  vermutlich Prüfsummen-/Bereichs-Validierung), setzt Carry-Flag bei
+  Nichtnull-Rückgabe.
+
+## Fund: `0x1424` (Kategorie-0-Handler) — löst das `0xB0BD`-Rätsel vom Modul-Header
+
+Vollständig gelesen. `D0` = Prozess-/Deskriptor-Zeiger (`A2`); ist er
+`0`, wird stattdessen eine **Liste angehängter Module/Deskriptoren**
+beim aktuellen Prozess durchlaufen (`(0x37c,A4)`, Next-Zeiger bei
+Offset `0x14` je Eintrag). Für jeden Eintrag wird zunächst ein
+**Magic-Word bei Offset 0 gegen `0xB0BD` geprüft** (`cmpi.w
+#-0x4f43,(0,A2)` — `-0x4F43` als vorzeichenloses Word ist exakt
+`0xB0BD`!). **Das ist derselbe Musterwert, den wir ganz am Anfang der
+Untersuchung im Modul-Header bei Offset `0x40`–`0x43` als "unbekannt —
+Musterwert oder Füllwert" markiert hatten** — jetzt geklärt: `0xB0BD`
+ist eine **Struktur-Signatur** zur Validierung von Einträgen in dieser
+Deskriptor-Liste, kein Zufallswert. Bei gültiger Signatur werden zwei
+Statusbits (`(0x28,A2)` Bit 1/2) geprüft, ggf. ein Prozessfeld
+`(0x14,A4)` in den Eintrag kopiert und `bsr 0x14ae` (noch nicht
+gelesen) aufgerufen — passt zum Kontext aus `FUN_000025f8` (Kategorie
+0 mit `D1=0`): vermutlich Benachrichtigung angehängter Module beim
+Prozess-Aufräumen.
+
+## Fund (Korrektur einer Fehlannahme): `0x4978` ist KEIN Allocator, sondern reine Konstanten-Initialisierung
+
+Ursprünglich (ganz am Anfang der Untersuchung) als "Allocator für
+`D_ExcJmp`" interpretiert — das ist **falsch**. Der tatsächliche Code
+(`0x4978`–`0x498c`, 6 Instruktionen) setzt lediglich drei feste
+System-Global-Konstanten und gibt **keinen berechneten Zeiger**
+zurück:
+
+```
+moveq   #0x10,D0
+move.l  D0,(0x70,A6)      ; Alignment-/Quantum-Konstante = 16
+move.l  #0x100,(0x7c,A6)   ; Größenkonstante = 256
+move.b  #0x1,(0x8f5,A6)    ; Flag = 1 (Zweck offen)
+rts
+```
+
+`(0x70,A6)=0x10` ist die **Speicher-Ausrichtungsgranularität**, die
+`0x5440`/`0x5a22` durchgängig für ihr `neg.l`/`and.l`-Rundungsmuster
+verwenden — diese Funktion initialisiert also nur die globale
+Konstante, allokiert selbst nichts. `(0x7c,A6)=0x100` ist dieselbe
+Größenkonstante, die auch in `Q9_disp_488` als Kontext-Stack-Tiefe
+gelesen wird. Die tatsächliche Herkunft des in der Boot-Init-Funktion
+bei `0x68e8` in `D_ExcJmp` gespeicherten Zeigers muss separat erneut
+untersucht werden — die frühere Aussage "wird hier alloziert" war
+voreilig.
+
+## Fund: `0x7f6` — der vollständige Panik-Reporter
+
+Vollständig gelesen (`0x7f6`–`0x848`, zwei Einstiegspunkte). Direkter
+Einstieg bei `0x7f6` sichert SR + alle Register, maskiert Interrupts,
+druckt eine Kopfmeldung (`bsr 0x84a`) und springt zu `0x81e`. Der
+**zweite, häufiger genutzte Einstieg bei `0x804`** (von mehreren
+Dispatch-Funktionen direkt per `bra.w 0x804` angesprungen, Kontext
+bereits vom Aufrufer gesichert) druckt zusätzlich:
+
+- eine Meldung, dann den Vektor-Offset (`(0x3c,SP)`) in Hex,
+- eine zweite Meldung, dann die fehlerhafte PC-Adresse (`(0x42,SP)`)
+  in Hex,
+- eine dritte Meldung (`bsr 0x84c`, teilt sich den Fallthrough-Code
+  mit `0x850`).
+
+Beide Einstiege laufen bei `0x81e` zusammen: druckt eine
+Abschlussmeldung, hinterlegt zusätzlich den **`D_ExcJmp`-Zeigerwert**
+`(0x8ec,A6)` auf dem Stack (wird mit ausgegeben — nützlich fürs
+Debuggen der Tabellen selbst), und ruft `bsr 0x834` — eine
+**Verzögerungs-/Warteschleife** (`D0=0x320000`, testet dabei ein Bit an
+`(0x1,SP)` — vermutlich Polling auf Tastatur-/Konsolen-Bereitschaft
+mit Timeout-Fallback). Danach: alle Register wiederherstellen, den
+zuvor gesicherten SR-Wert von Stack entfernen, **`RTS`** — die Routine
+**hält das System nicht an**, sondern kehrt zum Aufrufer zurück
+("protokollieren und weitermachen", kein echter Halt).
+
+## Fund: `0x7be`–`0x804` — Rettungsanker für unterbrochene interne Trampolin-Aufrufe
+
+Vollständig gelesen (bereits vollständig mitgeloggt im `Q9_disp_452`-
+Dump, jetzt ausgewertet). Prüft drei Bedingungen, um zu entscheiden, ob
+statt einer Panik ein **kontrollierter Ausstieg** möglich ist:
+
+1. Ein Feld bei Offset `0` des System-Global-Bereichs (`(0,A6)`) muss
+   noch den Platzhalterwert `0x4AFC` enthalten (derselbe Wert wie das
+   Modul-Header-`M$ID`-Wort und der Fehler-Stub in der Syscall-Tabelle
+   — offenbar ein modulweit wiederverwendetes "noch nicht
+   gepatcht/abgeschlossen"-Signal, exakte Feldbedeutung noch offen).
+2. Bit 12 des Statusregisters (`M`-Bit, Master-/Interrupt-Stack-
+   Auswahl beim 68030) muss gesetzt sein — wir befinden uns im
+   Master-Stack-Kontext.
+3. Der gesicherte Rücksprungzeiger `(0x144,A4)` (**dasselbe Feld, das
+   `Q9_disp_488` beim Aufbau seines Trampolin-Aufrufs setzt!**) muss
+   gültig (ungleich 0) sein.
+
+Sind alle drei erfüllt: berechnet dieselbe Vektor→Signalnummer-Formel
+wie in `Q9_disp_8d0`s Fallback (`D1 = (D7>>2)+0x64`), setzt das
+Carry-Flag (signalisiert dem Empfänger "Fehler"), schaltet den Stack
+auf den gesicherten `(0x140,A4)`-Wert um, löscht das Master-Stack-Bit
+und **springt direkt zum gesicherten Rücksprungziel `(0x144,A4)`**
+(`JMP (A0)`) — ist eine der Bedingungen nicht erfüllt, fällt der Code
+stattdessen in die volle Panik-Ausgabe bei `0x804`.
+
+**Einordnung:** Das ist ein **eleganter Rettungsanker**: Passiert eine
+Exception, während der Kernel gerade mitten in einem der internen
+Trampolin-Aufrufe (`Q9_disp_488`, `0x3140`, `0x4078`, `0x2590`, ...)
+steckt — erkennbar an den bereits bekannten `(0x140,A4)`/`(0x144,A4)`-
+Kontextfeldern —, wird der Aufruf **kontrolliert mit einem
+synthetisierten Fehlercode abgebrochen**, statt den Kernel in einem
+undefinierten Zustand hängen zu lassen. Nur wenn dieser Rettungsanker
+nicht greift (kein aktiver Trampolin-Kontext, oder das
+Platzhalter-/Master-Stack-Kriterium passt nicht), kommt die volle
+`0x7f6`/`0x804`-Panik-Ausgabe zum Zug.
+
+## Fund: fünf weitere Hilfsfunktionen (`0x1004`, `0x2cee`, `0x4518`, `0x5d68`, `0x14ae`)
+
+Alle vollständig gelesen:
+
+- **`0x2cee`** — **Prozess-ID-Lookup/-Validierung**, das Lese-Gegenstück
+  zur bereits bekannten Freigabe `0x3370`: prüft `D0` (ID) gegen die
+  Tabellengröße `(0x44,A6)` und einen Generationsz��hler im Eintrag
+  selbst (typisches "Index+Generation"-ID-Schema gegen versehentliche
+  Wiederverwendung), Fehlercode `0xE0` bei ungültiger ID — **derselbe
+  Code wie bei `0x3370`**.
+- **`0x4518`** — Teil der Eltern-Benachrichtigung aus `FUN_000024d8`:
+  baut einen kleinen Benachrichtigungsdatensatz (ID/Typ- und
+  Pending-Signal-Feld des sterbenden Kindprozesses), durchsucht dann
+  die Wait-Deskriptor-Liste des Elternprozesses per `bsr 0x2cee` nach
+  einem passenden Eintrag — Kernstück des `SIGCHLD`/`wait()`-artigen
+  Aufweck-Mechanismus.
+- **`0x5d68`** — **Adressbereich-Eigentums-Validator**: prüft, ob eine
+  gegebene Adresse+Größe innerhalb eines der Speicherblöcke liegt, die
+  der *aktuelle Prozess* besitzt (durchläuft dieselbe
+  Speicherblock-Chunk-Liste `(0x2d8,A0)` wie `0x62da`) — Fehlercode
+  `0xD2` bei Adressen außerhalb des eigenen Speichers. Aufgerufen aus
+  `Q9_disp_8d0`s Breakpoint-Pfad über `0x134a` — Sicherheitsprüfung,
+  dass eine Signal-/Breakpoint-Adresse tatsächlich zum Prozess gehört.
+- **`0x1004`** — kleiner Helfer aus `0xfe0` (FPU-Save): migriert bei
+  Bedarf den Inhalt eines belegten FPU-Save-Bereichs, bevor er
+  überschrieben wird.
+- **`0x14ae`** — aus dem Kategorie-0-Handler `0x1424` aufgerufen:
+  erneute `0xB0BD`-Signaturprüfung, Wiedereintritts-Schutz über
+  Statusbit `(0x28,A2)` Bit 2 ("wird schon bearbeitet" → überspringen),
+  dann **Aushängen aus zwei parallelen doppelt verketteten Listen
+  gleichzeitig** (Felder `0xc`/`0x10` und `0x14`/`0x18` — ein Eintrag
+  ist offenbar gleichzeitig Mitglied einer globalen und einer
+  prozessbezogenen Modul-Liste), abschließend `bra.w 0x131c` — ein
+  gemeinsames Tail-Ziel, das auch `0x5bac`s Fallback-Pfad nutzt und
+  damit als generischer **"gib diese jetzt ausgehängte Struktur
+  frei"**-Aufruf identifiziert ist.
+
+## Fund: die 10 Aufrufer von `Q9_scheduler_183a` charakterisiert
+
+Kontext aller 10 Aufrufer überflogen (nicht jeder Registerpfad im
+Detail nachvollzogen, aber Zweck jeweils klar erkennbar):
+
+- **`0xd7e`**: setzt Prozesszustand `(0x20,A4) = 0x64` (`'d'`) —
+  weiterer neuer Zustandscode, Kontext deutet auf **Prozess-Erzeugung**
+  (neu erstellter Prozess wird erstmals in die Ready-Queue
+  eingefügt) hin.
+- **`0xdce`**: löscht das Echtzeit-/Boost-Flag `(0x1c,A4)` Bit 7 vor
+  dem Einfügen — vermutlich **Rückgabe einer temporären Prioritäts-
+  anhebung** (Priority-Inheritance-Release).
+- **`0x182c`**: winziger, generischer Wrapper (Fehlercode über Carry
+  zurückgegeben) — sieht nach der **öffentlichen Syscall-Implementierung
+  selbst** aus (etwas wie `F$Ready`/`F$Wake`, expliziter Aufruf mit
+  Prozess-Parameter in `D0`).
+- **`0x216c`**: innerhalb einer Schleife über eine verkettete Liste
+  (Next-Zeiger `0x30`, wie die Ready-Queue selbst strukturiert),
+  markiert Einträge mit Fehlercode `0xA7` und einem Flag, bevor sie neu
+  eingefügt werden — passt zu einem **Timer-/Alarm-Listen-Scan**
+  (abgelaufene Timer werden geweckt).
+- **`0x2548`**: bereits bekannt — Teil von `FUN_000024d8`
+  (Eltern-Aufweck-Mechanismus bei Kindprozess-Tod).
+- **`0x2886`/`0x28a6`**: benachbart, in derselben Funktion — kopiert
+  Felder zwischen zwei Prozessdeskriptoren (`0x14`, `0x18`, `0x148`ff.)
+  und setzt/löscht Flag-Bits an beiden — starker Kandidat für
+  **Prozess-Fork/-Duplizierung** (Eltern- und Kindprozess werden beide
+  wieder in die Ready-Queue eingereiht).
+- **`0x3a5c`/`0x3ad2`**: beide in derselben Nachbarschaft, prüfen die
+  Ready-Queue auf Leerheit (`(0x30,A3)`-Selbstschleifen-Test) und setzen
+  alternativ Prozesszustand `0x73` (`'s'`, vermutlich "sleeping") —
+  passt zu **Sleep-Timer-Ablauf** (ein zeitgesteuert schlafender Prozess
+  wird geweckt und zurück in die Ready-Queue gestellt).
+
+**Gesamtbild bestätigt:** Die Aufrufer decken genau die erwarteten
+Kategorien ab — Prozess-Erzeugung, expliziter Wake-Syscall, Timer-/
+Alarm-Ablauf, Fork, Sleep-Ende, Eltern-Benachrichtigung. Für den
+`.s`-Nachbau reicht dieses Verständnis; eine vollständige
+Instruktion-für-Instruktion-Analyse jedes einzelnen Aufrufers wäre
+nur für ein noch tieferes Verständnis der jeweiligen Host-Funktionen
+nötig (nicht mehr primär für den Scheduler selbst).
+
+## Fund: `Q9_syscall_27d6` — Modultabellen-Suche nach Signatur-Bytes
+
+Vollständig gelesen (146 Byte, sauber begrenzt, bereits beim ersten
+Dump vollständig erfasst). Durchläuft eine **16-Byte-Eintrags-Tabelle**
+bei Basis `(0x3c,A6)` bis zur Grenze `(0x40,A6)` (eigene Tabelle,
+nicht identisch mit der Prozess-ID-Tabelle bei `(0x44,A6)`/`0x3370`,
+aber strukturell ähnlich — vermutlich die **Liste geladener
+Module/Deskriptoren**). Für jeden Eintrag: ruft `bsr 0x32fa` (noch
+nicht gelesen) und vergleicht zwei vom Aufrufer übergebene Filter-Bytes
+`(0x2,SP)`/`(0x3,SP)` gegen Eintragsfelder `(0x12,A1)`/`(0x13,A1)`
+(`bsr 0x1ab8` als Vergleichshelfer) — bei Treffer werden Felder
+`(0x12)`/`(0x14)` des gefundenen Eintrags in ein Ausgabe-Wortpaar
+kopiert. Passt zu einer **Modul-Lookup-Funktion nach Typ-/Revisions-
+Signatur** (ähnlich `F$Find`/Modul-Verzeichnis-Suche), aber ohne
+Kenntnis von `0x32fa`/`0x1ab8` nicht bis ins letzte Detail verifiziert.
+
+## Fund: Verbleibende undefinierte Blöcke fast vollständig aufgelöst (88 % Code-Abdeckung)
+
+Alle 31 zuvor gelisteten undefinierten Blöcke (>16 Byte) per
+`disassemble()`/`createFunction()` verarbeitet. Fast alle enthielten
+**echten, gültigen 68k-Code** (keine Zufallsdaten) — bestätigt die
+ganz am Anfang der Untersuchung aufgestellte Vermutung. Ergebnis:
+**Code-Abdeckung 78 % → 88 %**, undefiniert 17 % → 7 % (~2254 von
+28476 Byte). Die neuen Code-Inseln wurden als `Q9_gap_*`/`Q9_gap2_*`-
+Funktionen angelegt, aber **noch nicht inhaltlich gelesen** — reine
+Abdeckungsarbeit, keine Verständnisarbeit.
+
+Bemerkenswert: `0x3816`–`0x3983` (einer der größten verbliebenen
+Blöcke) ließ sich **nicht** disassemblieren, weil es sich um
+**Rohdaten handelt** — konkret um die Fortsetzung der bereits bekannten
+kompakten Dispatch-Quelltabelle bei `0x3802` (dieselben
+`(count,offset)`-Wortpaare, die die 256-Einträge-Exception-Tabelle
+`D_ExcJmp` befüllen). Zu Recht als "undefiniert" markiert, da es Daten
+und kein Code sind.
+
+**Noch offen:** Die verbliebenen ~2254 Byte in kleineren Inseln
+(`0x20c0`, `0x23d0`, `0x244c`, `0x2dfc`, `0x2eb2`, `0x3047`, `0x35f4`,
+`0x36ec`, `0x39b2`, `0x3dee`, `0x6de2`) einzeln prüfen — vermutlich
+weitere Daten- oder sehr kurze, isolierte Code-Fragmente. Alle neu
+erschlossenen `Q9_gap_*`-Funktionen sind inhaltlich noch nicht
+gelesen.
+
+## Fund: `PLATZHALTER`-Felder in `q9sysglob.a`/`.h` gegen heutige Funde abgeglichen
+
+Direkte Korrekturen in `src/q9sysglob.a`/`.h` vorgenommen (nicht nur
+hier dokumentiert):
+
+**Auf `VERIFIZIERT` hochgestuft** (Offset und Feldbedeutung stimmen
+mit per Disassemblierung gefundenen Zugriffsmustern überein):
+`Q9_D_ModDir` (`0x3c`/`0x40`), `Q9_D_PrcDbt` (`0x44`), `Q9_D_SysPrc`
+(`0x50`), `Q9_D_SysRom` (`0x64`, war schon `HANDBUCH` — jetzt zusätzlich
+per Disassemblierung bestätigt: Konsolen-Ausgabe über einen
+Funktionszeiger bei Offset `+8`, siehe `0x850`/`0x868`),
+`Q9_D_SysDis`/`Q9_D_UsrDis` (`0x3a4`/`0x3a8`, die beiden Syscall-
+Tabellen aus `Q9_disp_488`), `Q9_D_ActAge` (`0x3c4`, der Aging-Zähler
+aus `Q9_scheduler_183a`).
+
+**Echter Strukturkonflikt gefunden und markiert** (nicht blind
+gefixt): Die per Disassemblierung zweifelsfrei gefundene Ready-Queue
+liegt bei System-Global-Offset `0x37c` — das liegt **mitten** im
+bisher angenommenen 768-Byte-Bereich von `Q9_D_VctIrq`
+(`0xa4`–`0x3a3`), nicht bei `Q9_D_ActivQ` (`0x3ac`), wie die Datei
+bisher annahm. `(0x3ac,A4)` (Prozessdeskriptor-relativ, nicht
+System-Global) ist stattdessen ein anderes, ebenfalls verifiziertes
+Feld: die Verschachtelungstiefe für Syscalls/IRQs aus `Q9_disp_488`.
+Beide betroffenen Einträge sind jetzt mit `[KONFLIKT]` markiert und
+mit einem erklärenden Kommentar versehen — die tatsächliche Größe von
+`Q9_D_VctIrq` muss separat verifiziert werden, bevor der Bereich
+zwischen ihrem echten Ende und `Q9_D_SysDis` (`0x3a4`) neu benannt
+werden kann.
+
+## Fund: letzte offene Speicherverwaltungs-Details (`0x131c`, Rest von `0x526c`/`0x55a4`) — Thema jetzt vollständig abgeschlossen
+
+- **`0x131c`** — der gesuchte gemeinsame Deallokations-Tail: dispatcht
+  je nach Parameter auf `0x5a22` (Haupt-Freigabe), `0x5cd2`
+  (alternative Freigabe-Variante, noch nicht gelesen) oder führt über
+  `0x5d68` eine Bereichs-Validierung durch. Bestätigt: dies ist der
+  generische `free(ptr, flag)`-Wrapper, den `0x5bac`, `0x14ae` und
+  andere Aufräum-Pfade gemeinsam nutzen.
+- **Rest von `0x526c`**: nach einem gescheiterten/erfolgreichen
+  Allokationsversuch wird eine zweite Arena-Deskriptor-Freiliste beim
+  "System-Prozess"-Pool-Anker `(0x50,A6)+0x390` durchsucht, mit
+  angrenzenden freien Bereichen verschmolzen (dieselbe Coalescing-
+  Logik wie in `0x5440`), über `0x5712` neu registriert und die
+  Interrupt-Maskierung sauber über `0x10f2` aufgehoben.
+- **Rest von `0x55a4`**: nach erfolgreicher Pool-Zuordnung wird über
+  `0x5712` registriert, danach ein **Debug-Tracing-Feature** sichtbar:
+  ein globales Flag-Bit `(0x2e,A6)` Bit 4 wird geprüft — ist es
+  gesetzt, wird der ASCII-String `"free"` (als Langwort-Konstante
+  `0x66726565`) auf den Stack gepusht, vermutlich als Markierung für
+  einen Speicher-Debugging-/Tracing-Modus (analog vermutlich ein
+  `"aloc"`-Pendant beim Allozieren, noch nicht gefunden).
+
+**Speicherverwaltung damit vollständig dokumentiert**: Allozieren,
+Freigeben, Arena-Verwaltung, Pool-Lookup, Interrupt-Maskierung,
+generischer Deallokations-Tail und sogar ein Debug-Tracing-Hook — alle
+Bausteine gelesen und nachvollzogen.
+
 ## Werkzeug-Hinweise (Ghidra headless)
 
 - Java: Homebrew-OpenJDK wird nicht automatisch gefunden —
@@ -835,37 +1519,42 @@ nicht gegeneinander verifiziert.
    gelesen und verstanden**. Restliche offene Detailfragen dort (siehe
    "Fazit" oben): `0x526c` ab `0x5326` zu Ende, `0x55a4` ab `0x5644`
    zu Ende, exakte Statuswort-Felder `(0x24/0x26/0x28,Arena)`.
-2. `0x4078` lesen (weitere Ressourcenfreigabe aus `FUN_000025f8`).
-3. Kategorie-0-Handler `0x1424` lesen (was `0x1390` mit `D1=0` im
-   Exit-Pfad tatsächlich bewirkt).
-4. Tabellen-Slot 64 (Abschluss-Trampolin in `FUN_000025f8`) und Slot 90
-   (Reschedule-Trampolin in `0x3140`) — beide Zieladressen bleiben ohne
-   Laufzeit-Speicherinspektion unbekannt; ggf. im Emulator nachsehen,
-   sobald einer läuft.
-5. Aufrufer von `FUN_000025f8` suchen (wer terminiert Prozesse?) —
-   nächster Baustein für das Gesamtbild des Prozess-Lebenszyklus.
-6. Die 10 gefundenen Aufrufer von `Q9_scheduler_183a` einzeln
-   untersuchen (`0xd7e`, `0xdce`, `0x182c`, `0x216c`, `0x2548`,
-   `0x2886`, `0x28a6`, `0x3a5c`, `0x3ad2`) — vermutlich Timer-,
-   Signal- und I/O-Completion-Pfade, die Prozesse aufwecken.
-7. Die übrigen neu erschlossenen Dispatch-Funktionen inhaltlich lesen:
-   `Q9_disp_452` (76 B, inkl. `0x472`), `Q9_disp_5d0` (TRAP #1–15,
-   880 B), `Q9_disp_8d0` (Sammel-Handler für CPU-/FPU-/MMU-Exceptions,
-   1258 B — vermutlich hier auch der schon vermutete FPSP-Einstieg bei
-   `0xb04`), `Q9_disp_888` (1354 B), `Q9_disp_ba4` (698 B).
-8. Verbleibende undefinierte Blöcke (siehe Liste oben, insgesamt nur
-   noch 17 %/5102 B) einzeln prüfen — vermutlich überwiegend Daten-
-   tabellen, aber nicht blind annehmen.
-9. Allocator-Routine `0x4978` verstehen (liefert den Speicher für
-   `D_ExcJmp`, `moveq #0x10,D0` / Größe `0x100` deuten auf einen
-   generischen Systempool-Request hin — evtl. `F$SRqMem`-Analogon).
-10. Panic-/Fehlerroutine `0x7f6` (aufgerufen bei Tabellen-Inkonsistenzen
-    und diversen Bound-Checks) verstehen — wichtig für Robustheits-
-    Annahmen beim eigenen Nachbau.
-11. Restliche Sub-Modi von EA-Mode 7 (`0xb8e`+) vollständig
-    disassemblieren.
-12. Weitere `PLATZHALTER`-Felder in `q9sysglob.a`/`.h` einzeln per
-    Disassemblierung verifizieren (nicht blind übernehmen).
-13. Sobald ein Bereich vollständig verstanden ist: als eigene `.s`-Quelle
-    nachbauen, mit `vasm`/echtem `r68` assemblieren, Bytes gegen das
-    Original diffen (siehe Zieldefinition oben).
+2. `0x4078` ist gelesen (interner Trampolin-Aufruf, Slot 88).
+**Erledigt in dieser Sitzung** (Details siehe jeweilige Fund-Abschnitte
+oben): Kategorie-0-Handler `0x1424` (löst `0xB0BD`-Rätsel), `0x4978`
+(Korrektur: kein Allocator, nur Konstanten-Init), alle 8
+Exception-Dispatch-Funktionen, FPU-Save/Restore-Paar, Panik-/Diagnose-
+ausgabe, Prozess-Terminierungslogik (`FUN_000024d8`, löst
+`0x25f0`-Rätsel), Speicherverwaltungs-Kern.
+
+**Noch offen:**
+
+1. Tabellen-Slot 64/88/89/90 (interne Trampolin-Ziele) — Zieladressen
+   bleiben ohne Laufzeit-Speicherinspektion unbekannt; ggf. im
+   Emulator nachsehen, sobald einer läuft.
+2. `0x1004`, `0x2cee`, `0x4518`, `0x5d68`, `0x14ae`, `0x131c`, Rest von
+   `0x526c`/`0x55a4` sind alle gelesen — Speicherverwaltung komplett.
+   Nur noch offen: exakte Statuswort-Felder `(0x24/0x26/0x28,Arena)`,
+   `0x5cd2` (alternative Freigabe-Variante).
+3. Die 10 Aufrufer von `Q9_scheduler_183a` sind charakterisiert
+   (Prozess-Erzeugung, Wake-Syscall, Timer/Alarm, Fork, Sleep-Ende).
+4. `Q9_syscall_27d6` ist gelesen (Modultabellen-Suche, Details siehe
+   Fund-Abschnitt).
+5. Code-Abdeckung auf 88 % gebracht (war 78 %). Neu erschlossene
+   `Q9_gap_*`/`Q9_gap2_*`-Funktionen inhaltlich lesen; verbliebene
+   ~7 % (12 kleinere Inseln) einzeln prüfen — vermutlich überwiegend
+   weitere Datentabellen (wie bei `0x3816` bestätigt), aber nicht
+   blind annehmen.
+6. EA-Mode 7 ist vollständig verifiziert (siehe aktualisierte Tabelle
+   oben).
+7. `PLATZHALTER`-Felder in `q9sysglob.a`/`.h` mit heutigen Funden
+   abgeglichen — mehrere auf `VERIFIZIERT` hochgestuft, ein echter
+   Strukturkonflikt bei `Q9_D_VctIrq`/`Q9_D_ActivQ` gefunden und
+   markiert (siehe Fund-Abschnitt). Noch offen: restliche
+   `PLATZHALTER`-Felder einzeln verifizieren, echte Größe von
+   `Q9_D_VctIrq` klären.
+8. Sobald ein Bereich vollständig verstanden ist: als eigene
+   `.s`-Quelle nachbauen, mit `vasm`/echtem `r68` assemblieren, Bytes
+   gegen das Original diffen (siehe Zieldefinition oben) — **das ist
+   jetzt der nächste große Schritt**, die Verstehensphase ist an einem
+   sehr weit fortgeschrittenen Punkt.
