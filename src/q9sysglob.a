@@ -1,0 +1,171 @@
+*****************************************************************
+* q9sysglob.a -- Q9-OS eigene Definition des OS-9/68K-Kernel-
+*                System-Global-Bereichs und der Exception-Sprung-
+*                tabelle.
+*
+* Eigenstaendig per Disassemblierung des Original-Kernels (dker030s,
+* Development/Standard-Allocator, siehe vendor/68020/dker030s)
+* rekonstruiert. Offsets/Groessen sind funktionale Fakten, die fuer
+* Interoperabilitaet mit echten OS-9/68K-Kernelmodulen notwendig sind.
+* Alle Namen und Beschreibungstexte sind eigene Formulierungen, kein
+* Abdruck der Microware-Originalquelle.
+*
+* Statuskennzeichnung je Feld:
+*   VERIFIZIERT   -- per eigener Disassemblierung bestaetigt
+*   HANDBUCH      -- aus dem oeffentlichen OS-9/68K Technical Manual bekannt
+*   PLATZHALTER   -- Struktur uebernommen, einzeln noch nicht verifiziert
+*
+* Siehe docs/REVERSE_ENGINEERING.md fuer den Analyse-Hintergrund.
+*****************************************************************
+
+*-------------------------------------------------------------
+* System-Global-Bereich (Basis: *(VBR-Inhalt), siehe REVERSE_ENGINEERING.md)
+*-------------------------------------------------------------
+			org 0
+Q9_D_Id:        do.w 1    Sync-Kennzeichen, nach Coldstart gesetzt [PLATZHALTER]
+Q9_D_NoSleep:   do.w 1    Ungleich 0 verhindert, dass der Systemprozess schlafen geht [PLATZHALTER]
+                do.b 28   reserviert [PLATZHALTER]
+Q9_D_Init:      do.l 1    Zeiger auf das Init-Konfigurationsmodul [HANDBUCH]
+Q9_D_Clock:     do.l 1    Adresse der Tick-Routine [PLATZHALTER]
+Q9_D_TckSec:    do.w 1    Ticks pro Sekunde [PLATZHALTER]
+Q9_D_Year:      do.w 1    Jahr [PLATZHALTER]
+Q9_D_Month:     do.b 1    Monat [PLATZHALTER]
+Q9_D_Day:       do.b 1    Tag [PLATZHALTER]
+Q9_D_Compat:    do.b 1    Kompatibilitaets-Flags (1) [PLATZHALTER]
+Q9_D_Fpu:       do.b 1    FPU-Typ: 0=keine, 1=68881, 2=68882, 40=68040, 60=68060 [PLATZHALTER]
+Q9_D_Julian:    do.l 1    laufende Tagesnummer im Jahr [PLATZHALTER]
+Q9_D_Second:    do.l 1    verbleibende Sekunden bis Mitternacht [PLATZHALTER]
+Q9_D_SysConf:   do.w 1    Systemkonfigurations-Flags [PLATZHALTER]
+Q9_D_IrqFlag:   do.b 1    IRQ-Statusflag [PLATZHALTER]
+Q9_D_UnkIrq:    do.b 1    Zaehler fuer unbekannte IRQs in Folge [PLATZHALTER]
+Q9_D_ModDir:    do.b 8    Modulverzeichnis: Start-/Endzeiger [PLATZHALTER]
+Q9_D_PrcDbt:    do.l 1    Zeiger auf die Prozessdeskriptor-Tabelle [PLATZHALTER]
+Q9_D_PthDbt:    do.l 1    Zeiger auf die Pfaddeskriptor-Tabelle [PLATZHALTER]
+Q9_D_Proc:      do.l 1    Zeiger auf den aktuell laufenden Prozessdeskriptor [VERIFIZIERT]
+Q9_D_SysPrc:    do.l 1    Zeiger auf den Systemprozess-Deskriptor [PLATZHALTER]
+Q9_D_Ticks:     do.l 1    fortlaufender Systemtick-Zaehler [PLATZHALTER]
+Q9_D_FProc:     do.l 1    Prozess, dessen Kontext gerade in den FPU-Registern steckt [VERIFIZIERT]
+Q9_D_AbtStk:    do.l 1    Abort-Stackpointer/Ruecksprungadresse fuer Systemzustands-Bus-Traps [PLATZHALTER]
+Q9_D_SysStk:    do.l 1    System-IRQ-Stackpointer [PLATZHALTER]
+Q9_D_SysRom:    do.l 1    Einsprungpunkt des Boot-ROMs [HANDBUCH]
+Q9_D_ExcJmp:    do.l 1    Zeiger auf die Exception-Sprungtabelle (siehe Q9_T_*-Struktur) [VERIFIZIERT]
+Q9_D_TotRam:    do.l 1    vom Boot-ROM ermittelte Gesamt-RAM-Groesse [PLATZHALTER]
+Q9_D_MinBlk:    do.l 1    minimale allozierbare Blockgroesse pro Prozess [PLATZHALTER]
+Q9_D_FreMem:    do.b 8    Kopf der freien Speicherliste [PLATZHALTER]
+Q9_D_BlkSiz:    do.l 1    minimale allozierbare Systemblockgroesse [PLATZHALTER]
+Q9_D_DevTbl:    do.l 1    Zeiger auf die I/O-Gerätetabelle [PLATZHALTER]
+Q9_D_SpurIrq:   do.l 1    Zaehler fuer Spurious IRQs [PLATZHALTER]
+Q9_D_AutIrq2:   do.b 28   Polling-Tabellenkoepfe fuer On-Chip-Autovektor-IRQs (68070) [PLATZHALTER]
+Q9_D_VctIrq:    do.b 768  Zeigertabelle fuer vektorisierte Interrupt-Geraete [PLATZHALTER]
+Q9_D_SysDis:    do.l 1    Zeiger auf die System-Service-Dispatch-Tabelle [PLATZHALTER]
+Q9_D_UsrDis:    do.l 1    Zeiger auf die User-Service-Dispatch-Tabelle [PLATZHALTER]
+Q9_D_ActivQ:    do.b 8    Kopf der Warteschlange aktiver Prozesse [PLATZHALTER]
+Q9_D_SleepQ:    do.b 8    Kopf der Warteschlange schlafender Prozesse [PLATZHALTER]
+Q9_D_WaitQ:     do.b 8    Kopf der Warteschlange wartender Prozesse [PLATZHALTER]
+Q9_D_ActAge:    do.l 1    Alterungszaehler der aktiven Warteschlange [PLATZHALTER]
+Q9_D_MpuTyp:    do.l 1    erkannter CPU-Typ (68000/010/020/030/040/060/070/CPU32) [PLATZHALTER]
+Q9_D_EvTbl:     do.b 8    Start-/Endzeiger der System-Event-Tabelle [PLATZHALTER]
+Q9_D_EvId:      do.l 1    naechste, fortlaufende Event-ID [PLATZHALTER]
+Q9_D_SpuMem:    do.l 1    Zeiger auf SPU-Globaldaten (0 = nicht aktiv) [PLATZHALTER]
+Q9_D_AddrLim:   do.l 1    hoechste beim Start gefundene Adresse [PLATZHALTER]
+Q9_D_Compat2:   do.b 1    Cache-Kompatibilitaets-/Konfigurationsflags [PLATZHALTER]
+Q9_D_SnoopD:    do.b 1    ungleich 0, wenn alle Daten-Caches kohaerent/snoopy sind [PLATZHALTER]
+Q9_D_ProcSz:    do.w 1    Groesse eines Prozessdeskriptors [PLATZHALTER]
+Q9_D_PolTbl:    do.b 32   Polling-Tabellenkoepfe fuer Autovektor-IRQs [PLATZHALTER]
+Q9_D_FreeMem:   do.b 8    Kopf der farbklassifizierten freien Speicherliste [PLATZHALTER]
+Q9_D_Ipid:      do.w 1    Multiprozessor-Identifikationsnummer [PLATZHALTER]
+                do.w 1    reserviert (Multiprozessor) [PLATZHALTER]
+Q9_D_Cpus:      do.l 1    Zeiger auf ein Array von CPU-Deskriptor-Listenkoepfen [PLATZHALTER]
+Q9_D_IpCmd:     do.b 8    Kopf der Inter-Prozessor-Kommandowarteschlange [PLATZHALTER]
+Q9_D_CachMode:  do.l 1    CACR-Cachemodus (68020/030/040/060) [PLATZHALTER]
+Q9_D_DisInst:   do.l 1    Verschachtelungstiefe der Instruktions-Cache-Deaktivierung [PLATZHALTER]
+Q9_D_DisData:   do.l 1    Verschachtelungstiefe der Daten-Cache-Deaktivierung [PLATZHALTER]
+Q9_D_ClkMem:    do.l 1    Zeiger auf die statischen Daten des Tick-Threads [PLATZHALTER]
+Q9_D_Tick:      do.w 1    aktueller Tick-Zaehler [PLATZHALTER]
+Q9_D_TSlice:    do.w 1    Ticks pro Zeitscheibe [PLATZHALTER]
+Q9_D_Slice:     do.w 1    verbleibende Ticks der aktuellen Zeitscheibe [PLATZHALTER]
+                do.w 1    reserviert [PLATZHALTER]
+Q9_D_Elapse:    do.l 1    Ticks bis der Systemprozess geweckt wird [PLATZHALTER]
+Q9_D_Thread:    do.b 8    Kopf der System-Thread-Warteschlange (sofort/absolute Zeit) [PLATZHALTER]
+Q9_D_AlarTh:    do.b 8    Kopf der zeitgesteuerten Alarm-Threads (relative Zeit) [PLATZHALTER]
+Q9_D_SStkLm:    do.l 1    untere Grenze des System-IRQ-Stacks [PLATZHALTER]
+Q9_D_Forks:     do.l 1    Anzahl aktuell aktiver (geforkter) Prozesse [PLATZHALTER]
+Q9_D_BootRam:   do.l 1    beim Boot-ROM-Scan gefundene RAM-Groesse (Integritaetscheck) [PLATZHALTER]
+Q9_D_FpuSize:   do.l 1    maximale Groesse eines FPU-Zustandsrahmens [VERIFIZIERT]
+Q9_D_FpuMem:    do.l 1    Zeiger auf die Globaldaten des FPU-Emulators [VERIFIZIERT]
+Q9_D_IoGlob:    do.b 256  hardwareabhaengige System-I/O-Flags [PLATZHALTER]
+Q9_D_DevSiz:    do.w 1    Groesse eines Eintrags der IOMan-Geraetetabelle [HANDBUCH]
+Q9_D_MinPty:    do.w 1    minimale Systemprozesspriorität [HANDBUCH]
+Q9_D_MaxAge:    do.w 1    maximales Prioritaets-Alterungslimit [HANDBUCH]
+Q9_D_Sieze:     do.w 1    Prozess-ID des Prozesses, der die CPU exklusiv belegt [PLATZHALTER]
+Q9_D_Cigar:     do.l 1    grobe Groessenschaetzung aus Sysglob-/Prozess-/Moduldefinitionen [PLATZHALTER]
+Q9_D_MoveMin:   do.l 1    Mindestanzahl fuer DMA-/move16-Speicheroperationen [PLATZHALTER]
+Q9_D_Preempt:   do.l 1    Systemzustands-Preemption-Sperre (0 = erlaubt) [PLATZHALTER]
+Q9_D_FDispQ:    do.l 1    Zeiger auf die Fast-Dispatch-Warteschlange [PLATZHALTER]
+Q9_D_FDisp:     do.l 1    Adresse der Einfuege-Routine fuer Fast-Dispatch-Eintraege [PLATZHALTER]
+Q9_D_ProfMem:   do.l 1    Speicherzeiger des Profilers [PLATZHALTER]
+                do.b 24   reserviert [PLATZHALTER]
+Q9_D_FirqVct:   do.l 1    Zeiger auf die schnelle IRQ-Routinen-/Datentabelle [PLATZHALTER]
+Q9_D_VctJmp:    do.l 1    Sicherungstabelle fuer schnelle IRQ-Vektoren/Sprungziele [PLATZHALTER]
+Q9_D_SysDbg:    do.l 1    Einsprungadresse des Systemdebuggers [PLATZHALTER]
+Q9_D_DbgMem:    do.l 1    Speicherzeiger des Systemdebuggers [PLATZHALTER]
+Q9_D_DbgFlg:    do.b 1    Aktiv-Flag des Systemdebuggers [PLATZHALTER]
+Q9_D_AllocType: do.b 1    Typ des verwendeten Speicherallokators [VERIFIZIERT]
+Q9_D_DevCnt:    do.w 1    Anzahl der Systemgeraete [PLATZHALTER]
+Q9_D_Cache:     do.l 1    Kopf des Disk-Cache-Puffers [PLATZHALTER]
+Q9_D_NumSigs:   do.w 1    Standard-Maximaltiefe fuer Signale [PLATZHALTER]
+Q9_D_PrcDescStack:do.w 1    Standard-Stackgroesse eines Prozessdeskriptors [PLATZHALTER]
+Q9_D_FDispSys:  do.b 32   system-eigener Fast-Dispatch-Block [PLATZHALTER]
+Q9_D_KerTyp:    do.b 1    Kerneltyp (Development oder Atomic) [VERIFIZIERT]
+Q9_D_InIrq:     do.b 1    Flag: befinden wir uns im IRQ-Kontext [PLATZHALTER]
+Q9_D_FirqOff:   do.b 1    FIRQ-System: Offset zum Stack-Frame [PLATZHALTER]
+Q9_D_IrqOff:    do.b 1    IRQ-System: Offset zum Stack-Frame [PLATZHALTER]
+Q9_D_IrqSpOff:  do.b 1    IRQ-System: Offset zum (ISP-)Stackpointer [PLATZHALTER]
+                do.b 3    reserviert [PLATZHALTER]
+Q9_D_Mbar:      do.l 1    Modul-Basisadresse (CPU32-Familie) [PLATZHALTER]
+Q9_D_Crystal:   do.l 1    Boot-Flags [PLATZHALTER]
+Q9_D_Idle:      do.l 1    Callout-Routine fuer die Idle-Schleife [PLATZHALTER]
+Q9_D_IdleData:  do.l 1    Datenzeiger fuer die Idle-Callout-Routine [PLATZHALTER]
+Q9_D_Switches:  do.l 1    Zaehler fuer Kontextwechsel (Idle-Pruefung) [PLATZHALTER]
+                do.b 20   reserviert [PLATZHALTER]
+Q9_D_IrqHeads:  do.b 32   IRQ-Kopfregionen (fuer Nicht-MSP-Kernel) [PLATZHALTER]
+
+Q9_D_End:		equ $1000			Ende des System-Global-Bereichs
+
+*-------------------------------------------------------------
+* Exception-Sprungtabelle (Zeiger darauf: Q9_D_ExcJmp)
+*-------------------------------------------------------------
+			org 0
+Q9_T_ColdSp:    do.l 1    Reset: initialer Supervisor-Stackpointer [HANDBUCH]
+Q9_T_ColdPc:    do.l 1    Reset: initialer Programmzaehler (Coldstart-Einsprung) [HANDBUCH]
+Q9_T_BusErr:    do.l 1    Bus Error [HANDBUCH]
+Q9_T_AddErr:    do.l 1    Address Error [HANDBUCH]
+Q9_T_IllIns:    do.l 1    Illegal Instruction [HANDBUCH]
+Q9_T_ZerDiv:    do.l 1    Integer-Division durch Null [HANDBUCH]
+Q9_T_Chk:       do.l 1    CHK/CHK2-Instruktion [HANDBUCH]
+Q9_T_Trapv:     do.l 1    TRAPV/TRAPcc/FTRAPcc-Instruktion [HANDBUCH]
+Q9_T_Priv:      do.l 1    Privilegverletzung [HANDBUCH]
+Q9_T_Trace:     do.l 1    Trace-Exception [HANDBUCH]
+Q9_T_E1010:     do.l 1    Line-1010-Emulator (A-Line) [HANDBUCH]
+Q9_T_E1111:     do.l 1    Line-1111-Emulator (F-Line) -- vermutlich hier der EA-Decoder-Aufrufer [VERIFIZIERT]
+                do.l 1    reserviert [HANDBUCH]
+Q9_T_CProto:    do.l 1    Koprozessor-Protokollverletzung [HANDBUCH]
+Q9_T_StkFmt:    do.l 1    Stack-Frame-Formatfehler [HANDBUCH]
+Q9_T_UnIrq:     do.l 1    uninitialisierter Interrupt-Vektor [HANDBUCH]
+                do.b 32   reserviert [HANDBUCH]
+Q9_T_SpurIo:    do.l 1    Spurious Interrupt [HANDBUCH]
+Q9_T_AutIrq:    do.b 28   Autovektor-Interrupts Level 1-7 [HANDBUCH]
+Q9_T_Trap:      do.b 64   TRAP #0-#15 Vektoren (Systemaufrufe liegen hier, TRAP #0 = Offset 0) [VERIFIZIERT]
+Q9_T_FpUnordC:  do.l 1    FP: Branch/Set bei unordered Condition [VERIFIZIERT]
+Q9_T_FpInxact:  do.l 1    FP: ungenaues Ergebnis [VERIFIZIERT]
+Q9_T_FpDivZer:  do.l 1    FP: Division durch Null [VERIFIZIERT]
+Q9_T_FpUndrFl:  do.l 1    FP: Unterlauf [VERIFIZIERT]
+Q9_T_FpOprErr:  do.l 1    FP: Operandenfehler [VERIFIZIERT]
+Q9_T_FpOverFl:  do.l 1    FP: Ueberlauf [VERIFIZIERT]
+Q9_T_FpNotNum:  do.l 1    FP: signalisierendes NaN [VERIFIZIERT]
+Q9_T_FpUnData:  do.l 1    FP: nicht implementierter Datentyp -- vermutlich unser 0xb04-Handler [VERIFIZIERT]
+Q9_T_MmuConf:   do.l 1    PMMU-Konfigurationsfehler [HANDBUCH]
+Q9_T_AutIrq2:   do.b 28   68070 On-Chip Autovektor-Interrupts Level 1-7 [PLATZHALTER]
+Q9_T_VctIrq:    do.b 768  vektorisierte Interrupts (nutzerdefiniert) [HANDBUCH]
+
+Q9_T_End:		equ $400			Ende der Exception-Sprungtabelle

@@ -15,6 +15,15 @@ unabhängiger früher Versuch).
   volle Historie erhalten).
   - `src/mbr` — vorkompiliertes OS-9-Kommando
   - `src/mbr.r` — OS-9-Relocatable-Binary
+- **`src/q9sysglob.a`** / **`src/q9sysglob.h`** — eigene Definition des
+  Kernel-System-Global-Bereichs und der Exception-Sprungtabelle
+  (`Q9_D_*`/`Q9_T_*`), per Disassemblierung des Original-Kernels
+  rekonstruiert. Kein Abdruck der proprietären Microware-Quelle — eigene
+  Namen/Beschreibungen, Offsets/Größen als verifizierte oder aus dem
+  Handbuch bekannte Fakten übernommen, unbestätigte Felder klar als
+  `PLATZHALTER` markiert. Siehe
+  [`docs/REVERSE_ENGINEERING.md`](docs/REVERSE_ENGINEERING.md) für den
+  Hintergrund.
 
 Weitere Tools folgen, sobald sie feststehen — bis dahin bleibt die Struktur
 flach (`src/`, kein Modulverzeichnis pro Tool), siehe `Q9-Forge`s
