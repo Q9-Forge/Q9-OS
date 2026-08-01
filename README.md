@@ -28,6 +28,9 @@ Namenskonvention: ein Modul = flach, mehrere Module = Unterverzeichnisse.
 - [`docs/KERNEL.md`](docs/KERNEL.md) — Notizen zu Kernel-Aufbau/-Arbeitsweise
   (Kernel-Typen, Speicherallokatoren, Init-Modul, Prozesserzeugung,
   Exception-Verarbeitung), aus dem offiziellen Technical Manual extrahiert.
+- [`docs/REVERSE_ENGINEERING.md`](docs/REVERSE_ENGINEERING.md) —
+  Arbeitsstand der Disassemblierung (Ziel: byte-exakter Nachbau als
+  Assembly-Quellcode), Modul-Header-Layout, bisherige Funde.
 
 ## Build
 
