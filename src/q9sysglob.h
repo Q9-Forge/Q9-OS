@@ -27,16 +27,16 @@
 #define Q9_D_SYSCONF        0x0038  /* Systemkonfigurations-Flags [PLATZHALTER] */
 #define Q9_D_IRQFLAG        0x003A  /* IRQ-Statusflag [PLATZHALTER] */
 #define Q9_D_UNKIRQ         0x003B  /* Zaehler fuer unbekannte IRQs in Folge [PLATZHALTER] */
-#define Q9_D_MODDIR         0x003C  /* Modulverzeichnis: Start-/Endzeiger [PLATZHALTER] */
-#define Q9_D_PRCDBT         0x0044  /* Zeiger auf die Prozessdeskriptor-Tabelle [PLATZHALTER] */
+#define Q9_D_MODDIR         0x003C  /* Modulverzeichnis: Start-/Endzeiger [VERIFIZIERT -- (0x3c,A6)/(0x40,A6) in Q9_syscall_27d6 bestaetigt] */
+#define Q9_D_PRCDBT         0x0044  /* Zeiger auf die Prozessdeskriptor-Tabelle [VERIFIZIERT -- ID-zu-Deskriptor-Tabelle in 0x3370/0x2cee bestaetigt] */
 #define Q9_D_PTHDBT         0x0048  /* Zeiger auf die Pfaddeskriptor-Tabelle [PLATZHALTER] */
 #define Q9_D_PROC           0x004C  /* Zeiger auf den aktuell laufenden Prozessdeskriptor [VERIFIZIERT] */
-#define Q9_D_SYSPRC         0x0050  /* Zeiger auf den Systemprozess-Deskriptor [PLATZHALTER] */
+#define Q9_D_SYSPRC         0x0050  /* Zeiger auf den Systemprozess-Deskriptor [VERIFIZIERT -- parallel zu D_Proc beim Boot gesetzt] */
 #define Q9_D_TICKS          0x0054  /* fortlaufender Systemtick-Zaehler [PLATZHALTER] */
 #define Q9_D_FPROC          0x0058  /* Prozess, dessen Kontext gerade in den FPU-Registern steckt [VERIFIZIERT] */
 #define Q9_D_ABTSTK         0x005C  /* Abort-Stackpointer/Ruecksprungadresse fuer Systemzustands-Bus-Traps [PLATZHALTER] */
 #define Q9_D_SYSSTK         0x0060  /* System-IRQ-Stackpointer [PLATZHALTER] */
-#define Q9_D_SYSROM         0x0064  /* Einsprungpunkt des Boot-ROMs [HANDBUCH] */
+#define Q9_D_SYSROM         0x0064  /* Einsprungpunkt des Boot-ROMs [VERIFIZIERT -- (0x64,A6), Konsolen-Ausgabe ueber (0x8,A1)-Funktionszeiger in 0x850/0x868 bestaetigt] */
 #define Q9_D_EXCJMP         0x0068  /* Zeiger auf die Exception-Sprungtabelle (siehe Q9_T_*-Struktur) [VERIFIZIERT] */
 #define Q9_D_TOTRAM         0x006C  /* vom Boot-ROM ermittelte Gesamt-RAM-Groesse [PLATZHALTER] */
 #define Q9_D_MINBLK         0x0070  /* minimale allozierbare Blockgroesse pro Prozess [PLATZHALTER] */
@@ -45,13 +45,13 @@
 #define Q9_D_DEVTBL         0x0080  /* Zeiger auf die I/O-Gerätetabelle [PLATZHALTER] */
 #define Q9_D_SPURIRQ        0x0084  /* Zaehler fuer Spurious IRQs [PLATZHALTER] */
 #define Q9_D_AUTIRQ2        0x0088  /* Polling-Tabellenkoepfe fuer On-Chip-Autovektor-IRQs (68070) [PLATZHALTER] */
-#define Q9_D_VCTIRQ         0x00A4  /* Zeigertabelle fuer vektorisierte Interrupt-Geraete [PLATZHALTER] */
-#define Q9_D_SYSDIS         0x03A4  /* Zeiger auf die System-Service-Dispatch-Tabelle [PLATZHALTER] */
-#define Q9_D_USRDIS         0x03A8  /* Zeiger auf die User-Service-Dispatch-Tabelle [PLATZHALTER] */
-#define Q9_D_ACTIVQ         0x03AC  /* Kopf der Warteschlange aktiver Prozesse [PLATZHALTER] */
+#define Q9_D_VCTIRQ         0x00A4  /* Zeigertabelle fuer vektorisierte Interrupt-Geraete [KONFLIKT -- Groesse/Lage unsicher, echte Ready-Queue liegt bei 0x37C mitten in diesem Bereich, siehe q9sysglob.a] */
+#define Q9_D_SYSDIS         0x03A4  /* Zeiger auf die System-Service-Dispatch-Tabelle [VERIFIZIERT -- Syscall-Tabelle fuer verschachtelte Aufrufe, siehe Q9_disp_488] */
+#define Q9_D_USRDIS         0x03A8  /* Zeiger auf die User-Service-Dispatch-Tabelle [VERIFIZIERT -- Syscall-Tabelle fuer normale User-Aufrufe, siehe Q9_disp_488] */
+#define Q9_D_ACTIVQ         0x03AC  /* Kopf der Warteschlange aktiver Prozesse [KONFLIKT -- echte Ready-Queue per Disassemblierung bei 0x37C gefunden, siehe q9sysglob.a und REVERSE_ENGINEERING.md] */
 #define Q9_D_SLEEPQ         0x03B4  /* Kopf der Warteschlange schlafender Prozesse [PLATZHALTER] */
 #define Q9_D_WAITQ          0x03BC  /* Kopf der Warteschlange wartender Prozesse [PLATZHALTER] */
-#define Q9_D_ACTAGE         0x03C4  /* Alterungszaehler der aktiven Warteschlange [PLATZHALTER] */
+#define Q9_D_ACTAGE         0x03C4  /* Alterungszaehler der aktiven Warteschlange [VERIFIZIERT -- Aging-Countdown in Q9_scheduler_183a bestaetigt] */
 #define Q9_D_MPUTYP         0x03C8  /* erkannter CPU-Typ (68000/010/020/030/040/060/070/CPU32) [PLATZHALTER] */
 #define Q9_D_EVTBL          0x03CC  /* Start-/Endzeiger der System-Event-Tabelle [PLATZHALTER] */
 #define Q9_D_EVID           0x03D4  /* naechste, fortlaufende Event-ID [PLATZHALTER] */
