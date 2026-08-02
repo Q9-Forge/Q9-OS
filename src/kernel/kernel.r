@@ -71,7 +71,7 @@ L001b9c	EQU	L001b9a+2
 L001ba8	EQU	L001ba4+4
 L0035ea	EQU	L0035e8+2
 L0035f2	EQU	L0035f0+2
-
+L006e12	EQU	L006e10+2
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L000054:
 	dc.w	$6000
@@ -98,7 +98,12 @@ L000084:
 	dc.b	$43,$6f,$70,$79,$72,$69,$67,$68,$74,$20,$28,$63,$29,$20,$31,$39
 	dc.b	$39,$39,$20,$62,$79,$20,$4d,$69,$63,$72,$6f,$77,$61,$72,$65,$20
 	dc.b	$53,$79,$73,$74,$65,$6d,$73,$20,$43,$6f,$72,$70,$2e,$00
-* TRAPF.L-Padding (6 Byte, Ausrichtung) gefolgt von einem indizierten Trampolin-Dispatch ueber Tabelle (0x8e4,A6).
+*----------------------------------------------------------------------
+* Q9_post_idstring_b2  (0x0000b2)
+* TRAPF.L-Padding (6 Byte, Ausrichtung) gefolgt von einem indizierten Trampolin-Dispatch ueber Tabelle (0x8e4,A6). Index kommt unskaliert vom Aufrufer-Stack.
+* Aufrufer/genauer Zweck von (0x8e4,A6) noch nicht geklaert (siehe REVERSE_ENGINEERING.md).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_post_idstring_b2:
 	trapf.l	#$0
 L0000b8:
@@ -225,7 +230,13 @@ L00017e:
 	dc.b	$00
 L00017f:
 	dc.b	$00
-* IRQ-Dispatcher: Autovektoren 1-7 + User-Defined Vectors, verkettete Handler-Deskriptorlisten, Reschedule-Trigger.
+*----------------------------------------------------------------------
+* Q9_disp_180  (0x000180)
+* IRQ-Dispatcher: Sammel-Handler fuer Interrupt-Autovektoren 1-7 und alle User-Defined Vectors (199 von 256 Tabelleneintraegen).
+* Register: D0=Vektornummer (aus Exception-Frame). Ruft jeden Handler der Kette per JSR (A0) auf; Carry=1 heisst 'naechster in der Kette', Carry=0 'behandelt'.
+* Enthaelt zusaetzlich den optionalen Scheduler-Tick-Hook (0x8c0,A6) und den Reschedule-Aufruf von Q9_scheduler_183a.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_disp_180:
 	movem.l	a6/a3/a2/a0/d1/d0,-(sp)
 L000184:
@@ -668,7 +679,12 @@ L00044c:
 	movem.l	(sp)+,d0/d1/d2/d3/d4/d5/d6/d7/a0/a1/a2/a3/a4/a5/a6/sp
 L000450:
 	rte
-* Spurious/Uninitialized-Interrupt-Handler (Vektoren 15, 24).
+*----------------------------------------------------------------------
+* Q9_disp_452  (0x000452)
+* Spurious/Uninitialized-Interrupt-Handler (CPU-Vektoren 15 und 24).
+* Erhoeht einen Spurious-Zaehler (0x84,A6) mit Saettigung; ignoriert das Ereignis falls Flag-Bit 6 in (0x2e,A6) gesetzt ist, sonst Sprung in die Panik-Infrastruktur bei 0x804.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_disp_452:
 	move.l	a6,-(sp)
 L000454:
@@ -711,7 +727,14 @@ L000486:
 	dc.b	$00
 L000487:
 	dc.b	$00
-* TRAP #0 -- OS-9-Syscall-Dispatcher: liest Funktionsnummer aus dem Codestrom, Trampolin-Aufruf in eine der zwei Syscall-Tabellen.
+*----------------------------------------------------------------------
+* Q9_disp_488  (0x000488)
+* TRAP #0 -- der eigentliche OS-9-Syscall-Dispatcher, hier landet jeder F$-Aufruf.
+* Liest die Funktionsnummer als inline Wort direkt nach der TRAP-Instruktion (aus dem geretteten PC), D7=Funktionsnummer.
+* Zwei parallele Syscall-Tabellen (0x3a4,A6)/(0x3a8,A6), Auswahl ueber Bit 5 des geretteten Statusworts. Dispatch per PEA+RTS-Trampolin.
+* Fehlercode 0xD0 bei Funktionsnummer >= 0x100. Stack-Kanarienvogel 'Jimi' (0x4A696D69) wird nach Handler-Rueckkehr geprueft.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_disp_488:
 	movem.l	a6/a5/a4/a3/a2/a1/a0/d7/d6/d5/d4/d3/d2/d1/d0,-(sp)
 L00048c:
@@ -914,7 +937,13 @@ L0005ce:
 	dc.b	$00
 L0005cf:
 	dc.b	$00
-* TRAP #1-15 -- Dispatcher fuer prozesseigene, selbst installierte Trap-Handler.
+*----------------------------------------------------------------------
+* Q9_disp_5d0  (0x0005d0)
+* TRAP #1-15 -- Dispatcher fuer prozesseigene, selbst installierte Trap-Handler (z.B. fuer Sprach-Laufzeiten/Debugger).
+* Trap-Nummer indiziert eine Tabelle bei D_Proc+8; Zustellung ueber einen synthetischen Rueckkehr-Frame auf dem User-Stack.
+* Fallback-Kette ueber D_Proc+0x38 falls kein eigener Handler; Fehlercode 0x85 wenn niemand zustaendig ist.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_disp_5d0:
 	movem.l	a6/a1/a0/d1/d0,-(sp)
 L0005d4:
@@ -1049,7 +1078,12 @@ L0006a6:
 	dc.b	$00
 L0006a7:
 	dc.b	$00
-* Periodischer Uhr-Tick-Handler: Systemzeit-Fortschreibung, Zeitscheiben-Ablauf-Erkennung des Schedulers.
+*----------------------------------------------------------------------
+* Q9_clock_tick_6a8  (0x0006a8)
+* Periodischer Uhr-Tick-Handler: erhoeht den Tick-Zaehler (0x54,A6), schreibt Sekunden-/Tageszaehler fort, erkennt Zeitscheiben-Ablauf
+* und setzt bei Bedarf das Reschedule-Flag (Bit 5 in (0x1c,A2)) -- die Zeitscheiben-Ablauf-Erkennung des Multitasking-Schedulers.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_clock_tick_6a8:
 	addq.l	#$1,$54(a6)
 L0006ac:
@@ -1106,7 +1140,11 @@ L000704:
 	bset.b	#$5,$1c(a2)
 L00070a:
 	rts
-* Selbstregistrierung als IRQ-Dispatcher-Tick-Hook (Scheduler-Tick).
+*----------------------------------------------------------------------
+* Q9_clock_hook_install_70c  (0x00070c)
+* Selbstregistrierung als IRQ-Dispatcher-Tick-Hook: traegt sich in (0x8c0,A6) ein (der Hook, den Q9_disp_180 pro Interrupt aufruft), oder haengt sich ans Ende einer bestehenden Kette.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_clock_hook_install_70c:
 	movem.l	a6/a1/a0/d7/d0,-(sp)
 L000710:
@@ -1208,7 +1246,12 @@ L0007bc:
 	dc.b	$00
 L0007bd:
 	dc.b	$00
-* Rettungsanker: bricht einen unterbrochenen internen Trampolin-Aufruf kontrolliert ab, statt in Panik zu enden.
+*----------------------------------------------------------------------
+* Q9_trampolin_rescue_7be  (0x0007be)
+* Rettungsanker: bricht einen unterbrochenen internen Trampolin-Aufruf (erkennbar an (0x144,A4), demselben Feld wie in Q9_disp_488) kontrolliert mit synthetisiertem
+* Fehlercode ab, statt in die volle Panik-Ausgabe (Q9_panic_report_7f6) zu fallen. Bedingungen: 0x4AFC-Platzhalter an (0,A6), Master-Stack-Bit gesetzt, gueltiger Ruecksprungzeiger.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_trampolin_rescue_7be:
 	ori	#$700,sr
 L0007c2:
@@ -1245,7 +1288,12 @@ L0007f2:
 	jmp	(a0)
 L0007f4:
 	movea.l	d0,a0
-* Panik-/Diagnose-Reporter mit zwei Einstiegspunkten -- protokolliert und kehrt zurueck, haelt das System nicht an.
+*----------------------------------------------------------------------
+* Q9_panic_report_7f6  (0x0007f6)
+* Panik-/Diagnose-Reporter mit zwei Einstiegspunkten: 0x7f6 (sichert Kontext selbst) und 0x804 (Kontext schon vom Aufrufer gesichert, druckt zusaetzlich Vektor-Offset + fehlerhafte PC-Adresse in Hex).
+* Kein echter Halt -- protokolliert (ueber Q9_console_puts_850/Q9_console_puthex_868) und kehrt per RTS zum Aufrufer zurueck.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_panic_report_7f6:
 	move	sr,-(sp)
 L0007f8:
@@ -1288,7 +1336,11 @@ L000830:
 	addq.l	#$2,sp
 L000832:
 	rts
-* Verzoegerungs-/Timeout-Schleife, pollt auf Konsolen-Bereitschaft.
+*----------------------------------------------------------------------
+* Q9_panic_delay_834  (0x000834)
+* Verzoegerungs-/Timeout-Schleife, pollt auf Konsolen-Bereitschaft (D0=0x320000 als Timeout-Zaehler). Von Q9_panic_report_7f6 genutzt.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_panic_delay_834:
 	move.l	#$320000,d0
 L00083a:
@@ -1307,7 +1359,11 @@ L00084a:
 	bsr.b	Q9_console_puts_850
 L00084c:
 	lea	L0007b9(pc),a0
-* Gibt einen nullterminierten ASCII-String auf der Systemkonsole aus.
+*----------------------------------------------------------------------
+* Q9_console_puts_850  (0x000850)
+* Gibt einen nullterminierten ASCII-String (A0=Zeiger) auf der Systemkonsole aus, ueber die Treiber-Aufruftabelle (0x64,A6)+8.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_console_puts_850:
 	movea.l	$64(a6),a1
 L000854:
@@ -1328,7 +1384,11 @@ L000864:
 	bsr.b	Q9_console_puthex_868
 L000866:
 	move.w	(sp)+,d0
-* Gibt einen 32-Bit-Wert hexadezimal aus (rekursiv, ein Nibble pro Aufruf ueber ROR.L).
+*----------------------------------------------------------------------
+* Q9_console_puthex_868  (0x000868)
+* Gibt einen 32-Bit-Wert (D0) hexadezimal aus -- rekursiv, ein Nibble pro Aufruf ueber ROR.L, Ausgabe via Q9_console_puts_850s Treiberzeiger.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_console_puthex_868:
 	ror.l	#$8,d0
 L00086a:
@@ -1353,7 +1413,11 @@ L000880:
 	addi.b	#$30,d0
 L000884:
 	jmp	$8(a1)
-* Bus/Address-Error-Handler: sichert Fault-Frame-Zusatzfelder, faellt dann durch in Q9_disp_8d0.
+*----------------------------------------------------------------------
+* Q9_disp_888  (0x000888)
+* Bus/Address-Error-Handler: sichert die zusaetzlichen 68030-Langformat-Frame-Felder (D3-D5), faellt dann direkt durch in Q9_disp_8d0.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_disp_888:
 	ori	#$700,sr
 L00088c:
@@ -1420,7 +1484,13 @@ L0008ce:
 	dc.b	$00
 L0008cf:
 	dc.b	$1a
-* Sammel-Handler fuer Illegal Instr/Zero Div/CHK/TRAPV/Priv.Violation/Line-A-F/FPU/MMU: Software-Breakpoints, generisches Vektor-Handler-System, Signal-Zustellung.
+*----------------------------------------------------------------------
+* Q9_disp_8d0  (0x0008d0)
+* Sammel-Handler fuer Illegal Instr/Zero Div/CHK/TRAPV/Priv.Violation/Line-A-F/reservierte Vektoren/FPU-Exceptions/MMU-Fehler.
+* Bedient: FPU-Exception-Vorverarbeitung (ruft Q9_fpu_save_fe0 + FPSP-Einstieg Q9_fpsp_handler_b04), Software-Breakpoints ueber Illegal Instruction,
+* generisches pro-Prozess-Vektor-Handler-System, und als Fallback Signal-Zustellung (Signalnummer = (Vektor>>2)+0x64) oder Sprung nach Q9_exc_no_handler_fc4.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_disp_8d0:
 	movem.l	a6/a5/a4/a3/a2/a1/a0/d7/d6/d5/d4/d3/d2/d1/d0,-(sp)
 L0008d4:
@@ -1772,7 +1842,11 @@ L000afe:
 	dc.w	Q9_signal_pending_bc0-*
 L000b02:
 	rte
-* FPSP-Handler (Floating-Point Software Package) fuer Vektor 48 (Branch/Set on Unordered), nutzt den EA-Decoder bei 0xb3a.
+*----------------------------------------------------------------------
+* Q9_fpsp_handler_b04  (0x000b04)
+* FPSP-Handler (Floating-Point Software Package) fuer Vektor 48 (Branch/Set on Unordered), nutzt den EA-Decoder bei 0xb3a zur Zieladressberechnung.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_fpsp_handler_b04:
 	move	usp,a1
 L000b06:
@@ -1907,7 +1981,11 @@ L000b9e:
 	ori	#$1,ccr
 L000ba2:
 	rts
-* Trace-Exception-Handler (Single-Step-Debugging), minimaler Epilog.
+*----------------------------------------------------------------------
+* Q9_disp_ba4  (0x000ba4)
+* Trace-Exception-Handler (Single-Step-Debugging), minimaler Epilog: loescht bei Bedarf das Trace-Bit im geretteten Statuswort, sonst Fallthrough nach Q9_signal_pending_bc0.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_disp_ba4:
 	btst.b	#$5,$4(sp)
 L000baa:
@@ -1922,7 +2000,11 @@ L000bb6:
 	bclr.b	#$7,$1c(a4)
 L000bbc:
 	movem.l	(sp)+,d0/d1/d2/d3/d4/d5/d6/d7/a0/a1/a2/a3/a4/a5/a6
-* Signal-/Breakpoint-Pending-Verwaltung mit Prioritaets-Aging der Deskriptorkette.
+*----------------------------------------------------------------------
+* Q9_signal_pending_bc0  (0x000bc0)
+* Signal-/Breakpoint-Pending-Verwaltung: durchsucht die Deskriptorkette (0x2ac,A5) nach einem passenden Eintrag, markiert Treffer, wendet auf Nichttreffer dasselbe Aging-Muster wie Q9_scheduler_183a an.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_signal_pending_bc0:
 	movem.l	a6/a5/a4,-(sp)
 L000bc4:
@@ -2552,7 +2634,11 @@ L000fbc:
 	ori.b	#$1,$41(a0)
 L000fc2:
 	bra.b	L000fc8
-* Fallback ohne installierten Vektor-/Signal-Handler -- fuehrt zur Standard-Terminierungslogik.
+*----------------------------------------------------------------------
+* Q9_exc_no_handler_fc4  (0x000fc4)
+* Fallback ohne installierten Vektor-/Signal-Handler -- hinterlegt die Signalnummer in (0x26,A4) und springt nach Q9_exc_default_action_24d8.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_exc_no_handler_fc4:
 	move.w	d1,$26(a4)
 L000fc8:
@@ -2579,7 +2665,12 @@ L000fde:
 	dc.b	$00
 L000fdf:
 	dc.b	$00
-* FPU-Kontext sichern (Lazy-Context-Switch, Save-Haelfte).
+*----------------------------------------------------------------------
+* Q9_fpu_save_fe0  (0x000fe0)
+* FPU-Kontext sichern (Lazy-Context-Switch, Save-Haelfte). Parameter: A1=betroffener Prozess.
+* Falls (0x334,A1) gesetzt: FSAVE nach (0x74,A1), loescht D_FProc (0x58,A6), sichert bei Bedarf Daten-/Kontrollregister.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_fpu_save_fe0:
 	tst.l	$334(a1)
 L000fe4:
@@ -2600,7 +2691,11 @@ L000ffc:
 	fmovem.l	fpcr/fpsr/fpiar,$68(a1)
 L001002:
 	rts
-* Migriert den Inhalt eines bereits belegten FPU-Save-Bereichs, bevor er ueberschrieben wird.
+*----------------------------------------------------------------------
+* Q9_fpu_migrate_1004  (0x001004)
+* Migriert den Inhalt eines bereits belegten FPU-Save-Bereichs, bevor er ueberschrieben wird. Von Q9_fpu_save_fe0 aufgerufen.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_fpu_migrate_1004:
 	movea.l	$334(a1),a1
 L001008:
@@ -2631,7 +2726,11 @@ L00102e:
 	clr.l	$4(a1)
 L001032:
 	rts
-* FPU-Kontext wiederherstellen (Restore-Haelfte, Gegenstueck zu Q9_fpu_save_fe0).
+*----------------------------------------------------------------------
+* Q9_fpu_restore_1034  (0x001034)
+* FPU-Kontext wiederherstellen (Restore-Haelfte, Gegenstueck zu Q9_fpu_save_fe0): FRESTORE (0x74,A1), setzt D_FProc = A4.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_fpu_restore_1034:
 	tst.l	$334(a4)
 L001038:
@@ -2754,7 +2853,11 @@ L0010e4:
 	dc.b	$4e
 L0010e5:
 	dc.b	$75
-* Interrupts bedingt maskieren (IPL 7), alte SR als Rueckgabewert.
+*----------------------------------------------------------------------
+* Q9_irq_mask_10e6  (0x0010e6)
+* Interrupts bedingt maskieren. Register: D0=Boolean ('ueberhaupt maskieren?'). Hebt IPL auf 7 an falls D0!=0. Rueckgabe: alte SR in D0w.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_irq_mask_10e6:
 	tst.l	d0
 L0010e8:
@@ -2765,7 +2868,11 @@ L0010ec:
 	ori	#$700,sr
 L0010f0:
 	rts
-* SR wiederherstellen -- Gegenstueck zu Q9_irq_mask_10e6.
+*----------------------------------------------------------------------
+* Q9_irq_unmask_10f2  (0x0010f2)
+* SR wiederherstellen -- Gegenstueck zu Q9_irq_mask_10e6. Register: D1w=alte SR (von Q9_irq_mask_10e6 zurueckgegeben).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_irq_unmask_10f2:
 	move	d1,sr
 L0010f4:
@@ -3100,7 +3207,14 @@ L0012b2:
 	dc.b	$4e
 L0012b3:
 	dc.b	$75
-L0012b4:
+*----------------------------------------------------------------------
+* Q9_fixed_alloc_wrap_12b4  (0x0012b4)
+* Generischer Wrapper: alloziert einen Block ueber Q9_arena_alloc_526c (Klassen-Tag D1=0, Groesse vom Aufrufer per Stack-Parameter),
+* setzt Carry bei Fehlschlag. Direkter Aufrufer von Q9_alarm_desc_alloc_162c; benachbarte Varianten (0x12d8, 0x12fa) allozieren+kopieren
+* bzw. nutzen einen anderen Allocator-Einstieg (0x57be) -- eine kleine Familie generischer Alloc-Wrapper, nicht selbst timerspezifisch.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_fixed_alloc_wrap_12b4:
 	movem.l	a2/d1/d0,-(sp)
 L0012b8:
 	moveq	#$0,d1
@@ -3127,7 +3241,7 @@ L0012d2:
 L0012d6:
 	rts
 L0012d8:
-	bsr.b	L0012b4
+	bsr.b	Q9_fixed_alloc_wrap_12b4
 L0012da:
 	bcs.b	L0012ee
 L0012dc:
@@ -3192,7 +3306,13 @@ L00131a:
 	dc.b	$60
 L00131b:
 	dc.b	$e8
-* Gemeinsamer Deallokations-Tail-Wrapper (dispatcht auf Q9_mem_free_5a22 oder Bereichsvalidierung).
+*----------------------------------------------------------------------
+* Q9_dealloc_tail_131c  (0x00131c)
+* Zwei separate, benachbarte Freigabe-Einstiegspunkte (kein Parameter-Dispatch, wie zunaechst vermutet): 0x131c ruft Q9_mem_free_5a22 direkt
+* (mit Flag 1 auf dem Stack), 0x1330 ruft stattdessen die eigentumsgeprueften Q9_dealloc_owned_5cd2. Beide springen zum selben Austrittspunkt 0x12c6.
+* Von Q9_arena_lookup_5bac und Q9_alarm_unlink_14ae genutzt.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_dealloc_tail_131c:
 	movem.l	a2/d1/d0,-(sp)
 L001320:
@@ -3214,7 +3334,7 @@ L001334:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L001336:
 	dc.w	$6100
-	dc.w	L005cd2-*
+	dc.w	Q9_dealloc_owned_5cd2-*
 L00133a:
 	bra.b	L0012c6
 L00133c:
@@ -3245,7 +3365,11 @@ L001348:
 	dc.b	$ff
 L001349:
 	dc.b	$54
-* Wrapper um Q9_owns_range_5d68 -- setzt Carry-Flag bei ungueltigem Adressbereich.
+*----------------------------------------------------------------------
+* Q9_range_check_wrap_134a  (0x00134a)
+* Wrapper um Q9_owns_range_5d68 -- setzt Carry-Flag bei ungueltigem Adressbereich. Von Q9_disp_8d0s Breakpoint-Pfad genutzt.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_range_check_wrap_134a:
 	move.l	d0,-(sp)
 L00134c:
@@ -3312,8 +3436,14 @@ L00138e:
 	dc.b	$00
 L00138f:
 	dc.b	$00
-* Genereller Kategorie-Dispatcher fuer kernel-interne Primitive (6 Kategorien, ueber Slot 8 der Syscall-Tabellen erreichbar).
-Q9_category_dispatch_1390:
+*----------------------------------------------------------------------
+* Q9_alarm_dispatch_1390  (0x001390)
+* F$Alarm-Dispatcher (Register-Konvention passend zum Handbuch: D0.L=Alarm-ID, D1.W=Alarm-Funktionscode, D2.L=Signalcode, D3.L=Zeitintervall/-punkt, D4.L=Datum).
+* D1 waehlt eine von 6 Operationen (echte Sprungtabelle bei 0x13c6 dekodiert): 0=A$Delete, 1/2=A$Set, 3/4=A$Cycle, 5=nicht implementiert (Fehler-Stub). Ueber Tabellen-Slot 8 der Syscall-Tabellen erreichbar.
+* Bestaetigt durch das 0xB0BD-Signaturwort, das sowohl beim Anlegen (Q9_alarm_desc_alloc_162c-Umfeld) als auch beim Loeschen (Q9_alarm_delete_1424) verwendet wird.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_dispatch_1390:
 	movem.l	a3/a0/d2,-(sp)
 L001394:
 	lea	-$48(sp),sp
@@ -3427,8 +3557,13 @@ L001420:
 	moveq	#$0,d0
 L001422:
 	rts
-* Kategorie-0-Handler: durchlaeuft die Liste angehaengter Module/Deskriptoren, prueft die 0xB0BD-Struktursignatur.
-Q9_category0_handler_1424:
+*----------------------------------------------------------------------
+* Q9_alarm_delete_1424  (0x001424)
+* A$Delete: durchlaeuft die Alarm-Deskriptorliste (0x37c,A4, prozessrelativ), prueft je Eintrag die 0xB0BD-Struktursignatur
+* (loest damit das Modul-Header-Raetsel bei Offset 0x40 -- dieselbe Signatur, kein Zufall), ruft dann Q9_alarm_unlink_14ae.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_delete_1424:
 	movea.l	d0,a2
 L001426:
 	tst.l	d0
@@ -3459,7 +3594,7 @@ L00144e:
 L001450:
 	move.l	$14(a4),$8(a2)
 L001456:
-	bsr.b	Q9_module_unlink_14ae
+	bsr.b	Q9_alarm_unlink_14ae
 L001458:
 	bcs.b	L00146a
 L00145a:
@@ -3489,11 +3624,11 @@ L00147a:
 L00147e:
 	btst.l	#$4,d1
 L001482:
-	beq.b	Q9_module_unlink_14ae
+	beq.b	Q9_alarm_unlink_14ae
 L001484:
 	btst.b	#$7,$2e(a6)
 L00148a:
-	beq.b	Q9_module_unlink_14ae
+	beq.b	Q9_alarm_unlink_14ae
 L00148c:
 	lea	$37c(a4),a1
 L001490:
@@ -3518,8 +3653,12 @@ L0014a6:
 	bne.b	L00149a
 L0014a8:
 	move.l	$14(a4),$8(a2)
-* Haengt einen Modul-Deskriptor aus zwei parallelen verketteten Listen gleichzeitig aus und gibt ihn frei.
-Q9_module_unlink_14ae:
+*----------------------------------------------------------------------
+* Q9_alarm_unlink_14ae  (0x0014ae)
+* Haengt einen Alarm-Deskriptor aus zwei parallelen verketteten Listen gleichzeitig aus (Felder 0xc/0x10 und 0x14/0x18) und gibt ihn frei (bra.w 0x131c).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_unlink_14ae:
 	cmpi.w	#-$4f43,$0(a2)
 L0014b4:
 	bne.b	L001528
@@ -3595,7 +3734,14 @@ L00152e:
 	ori	#$1,ccr
 L001532:
 	rts
-L001534:
+*----------------------------------------------------------------------
+* Q9_alarm_cycle_1534  (0x001534)
+* A$Cycle: Kategorie 3 von Q9_alarm_dispatch_1390 (echtes Sprungtabellenziel; Kategorie 4 = Q9_alarm_cycle_1540, ueberspringt nur den Anfang).
+* Sendet ein Signal periodisch bei jedem Ablauf des Intervalls. Berechnet ueber die Konstante 0x15180 (86400 = Sekunden/Tag) und den Sekunden-/
+* Tageszaehler (0x34,A6)/(0x30,A6) einen Tick-Wert (dieselbe Formel wie im Uhr-Tick-Handler Q9_clock_tick_6a8), validiert gegen ein Limit, ruft ebenfalls Q9_alarm_desc_alloc_162c.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_cycle_1534:
 	move.l	d3,d0
 L001536:
 	move.l	d4,d1
@@ -3607,7 +3753,13 @@ L00153c:
 	move.l	d0,d3
 L00153e:
 	move.l	d1,d4
-L001540:
+*----------------------------------------------------------------------
+* Q9_alarm_cycle_1540  (0x001540)
+* Kategorie 4 von Q9_alarm_dispatch_1390 (echtes Sprungtabellenziel): identisch zu Q9_alarm_cycle_1534, ueberspringt nur den Aufruf von 0x2eea
+* (D3/D4 werden direkt uebernommen statt ueber 0x2eea aufbereitet zu werden) -- vermutlich Variante fuer einen bereits vorbereiteten Aufrufer.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_cycle_1540:
 	tst.w	$2(a6)
 L001544:
 	beq.b	L00154e
@@ -3638,7 +3790,7 @@ L001564:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L001568:
 	dc.w	$6100
-	dc.w	L00162c-*
+	dc.w	Q9_alarm_desc_alloc_162c-*
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L00156c:
 	dc.w	$6500
@@ -3650,10 +3802,22 @@ L001576:
 L00157a:
 	move.l	a2,d0
 L00157c:
-	bra.b	L0015c4
-L00157e:
+	bra.b	Q9_alarm_insert_15c4
+*----------------------------------------------------------------------
+* Q9_alarm_set_157e  (0x00157e)
+* Kategorie 1 (echtes Sprungtabellenziel, direkt bei 0x13c6 im Code dekodiert -- nicht geraten): setzt nur D1=0 vor, faellt dann in Q9_alarm_set_1580 durch.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_set_157e:
 	moveq	#$0,d1
-L001580:
+*----------------------------------------------------------------------
+* Q9_alarm_set_1580  (0x001580)
+* A$Set: Kategorie 2 von Q9_alarm_dispatch_1390 (echtes Sprungtabellenziel). Sendet ein Signal nach Ablauf des Zeitintervalls D3.
+* Prueft zwei Konfigurationsworte (0x2,A6)/(0x28,A6), validiert D0 (Vorzeichen-Test + Fehlerpfad, ruft 0x3b96),
+* ruft Q9_alarm_desc_alloc_162c und dann Q9_alarm_insert_15c4 zum Einsortieren. Fehlercodes ueber Sprung nach 0x2e4a bzw. 0x146a.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_set_1580:
 	tst.w	$2(a6)
 L001584:
 	beq.b	L00158e
@@ -3688,7 +3852,7 @@ L0015a8:
 L0015aa:
 	move.l	d0,d3
 L0015ac:
-	bsr.b	L00162c
+	bsr.b	Q9_alarm_desc_alloc_162c
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0015ae:
 	dc.w	$6500
@@ -3703,7 +3867,14 @@ L0015be:
 	lea	$77c(a6),a0
 L0015c2:
 	move.l	a2,d0
-L0015c4:
+*----------------------------------------------------------------------
+* Q9_alarm_insert_15c4  (0x0015c4)
+* Sortiertes Einfuegen eines Alarm-Deskriptors nach Faelligkeit (Vergleich gegen Felder 0x20/0x24 bestehender Eintraege), setzt dabei die
+* 0xB0BD-Struktursignatur. Registriert bei Bedarf einmalig (Lazy-Init) den periodischen Uhr-Tick-Hook Q9_clock_hook_install_70c --
+* der Kernel installiert den Zeitgeber also erst, wenn tatsaechlich ein Alarm existiert.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_insert_15c4:
 	movem.l	a2/a1/a0/d2/d1/d0,-(sp)
 L0015c8:
 	movem.l	$20(a2),d0/d1
@@ -3755,28 +3926,40 @@ L001614:
 	movem.l	(sp)+,d0/d1/d2/a0/a1/a2
 L001618:
 	rts
-L00161a:
+*----------------------------------------------------------------------
+* Q9_alarm_insert_wrap_161a  (0x00161a)
+* Duenner Wrapper um Q9_alarm_insert_15c4 (Register D0/D1 -> A0/A2 umgesetzt, Rueckgabe D0=0).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_insert_wrap_161a:
 	movem.l	a2/a0,-(sp)
 L00161e:
 	movea.l	d0,a0
 L001620:
 	movea.l	d1,a2
 L001622:
-	bsr.b	L0015c4
+	bsr.b	Q9_alarm_insert_15c4
 L001624:
 	movem.l	(sp)+,a0/a2
 L001628:
 	moveq	#$0,d0
 L00162a:
 	rts
-L00162c:
+*----------------------------------------------------------------------
+* Q9_alarm_desc_alloc_162c  (0x00162c)
+* Gemeinsamer Alarm-Deskriptor-Allocator (0x74=116 Byte): alloziert ueber Q9_fixed_alloc_wrap_12b4, nullt Statusfelder, haengt den neuen
+* Deskriptor an eine per-Prozess-Liste bei Offset 0x37c (A4, dieselbe Liste, die Q9_alarm_delete_1424 durchlaeuft) an, kopiert zuletzt
+* 72 Byte einer Aufrufer-Vorlage in den Deskriptor. Setzt NICHT die 0xB0BD-Signatur -- das passiert erst in Q9_alarm_insert_15c4.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_desc_alloc_162c:
 	movem.l	a1/a0/d0,-(sp)
 L001630:
 	move.l	#$74,d0
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L001636:
 	dc.w	$6100
-	dc.w	L0012b4-*
+	dc.w	Q9_fixed_alloc_wrap_12b4-*
 L00163a:
 	bcs.b	L00169a
 L00163c:
@@ -3833,14 +4016,27 @@ L00169a:
 	movem.l	(sp)+,d0/a0/a1
 L00169e:
 	rts
+*----------------------------------------------------------------------
+* Q9_alarm_unimplemented_16a0  (0x0016a0)
+* Echtes Sprungtabellenziel fuer Kategorie 5 von Q9_alarm_dispatch_1390: nur 'bra.w 0x1380' (der gemeinsame Fehler-Stub) --
+* Kategorie 5 (vermutlich A$AtDate/A$AtJul) ist in diesem Kernel-Build schlicht NICHT implementiert.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
-L0016a0:
+Q9_alarm_unimplemented_16a0:
 	dc.w	$6000
 	dc.w	L001380-*
 L0016a4:
 	trapf.w	#$0
 L0016a8:
 	exg	a1,a2
+*----------------------------------------------------------------------
+* L0016aa  (0x0016aa)
+* KORREKTUR: entgegen frueherer Annahme NICHT ueber Q9_alarm_dispatch_1390 erreichbar (das echte Kategorie-5-Ziel ist Q9_alarm_unimplemented_16a0, ein reiner Fehler-Stub).
+* Liest trotzdem die ID-Tabelle (0x44,A6), schreibt den Kanarienvogel 'Jimi' (0x4A696D69) und setzt zwei Zeitfelder aus Tick-/Tages-Systemzaehlern --
+* Zweck und tatsaechlicher Aufrufer wieder offen, nicht mehr als A$AtDate/A$AtJul einzuordnen.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 L0016aa:
 	bsr.b	L0016b6
 L0016ac:
@@ -4131,7 +4327,13 @@ L001834:
 	movem.l	(sp)+,d0/d1/a0/a4
 L001838:
 	rts
-* Scheduler: fuegt einen Prozess in die Ready-Queue ein, mit Prioritaets-Aging und Sortier-Schluessel-Berechnung.
+*----------------------------------------------------------------------
+* Q9_scheduler_183a  (0x00183a)
+* Scheduler: fuegt einen Prozess in die Ready-Queue ein (zirkulaere doppelt verkettete Liste, Sentinel bei (0x37c,A6)). Parameter: A0=Prozessdeskriptor.
+* Prioritaets-Aging ueber globalen Countdown (0x3c4,A6); Sortier-Schluessel aus Prioritaet (0x18,A0) + Echtzeit-/Boost-Flag (Bit 7 in (0x1c,A0)).
+* Kehrt sofort zurueck, falls der Prozess laut Zustandsbyte (0x20,A0) schon aktiv ('a') ist. 12 bekannte Aufrufer (siehe REVERSE_ENGINEERING.md).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_scheduler_183a:
 	cmpi.b	#$61,$20(a0)
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
@@ -4307,7 +4509,7 @@ L00194a:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L00194c:
 	dc.w	$6100
-	dc.w	L0012b4-*
+	dc.w	Q9_fixed_alloc_wrap_12b4-*
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L001950:
 	dc.w	$6500
@@ -4575,7 +4777,12 @@ L001ab6:
 	dc.b	$00
 L001ab7:
 	dc.b	$00
-L001ab8:
+*----------------------------------------------------------------------
+* Q9_pattern_match_1ab8  (0x001ab8)
+* Musterabgleich mit '*'-Wildcard-Unterstuetzung (0x2a='*' im Code erkennbar). Von Q9_syscall_27d6 genutzt.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_pattern_match_1ab8:
 	movem.l	a2/a1/a0/d3/d2/d0,-(sp)
 L001abc:
 	move.l	d1,d3
@@ -4693,7 +4900,13 @@ L001b48:
 	move.l	d1,d2
 L001b4a:
 	movea.l	a1,a2
-L001b4c:
+*----------------------------------------------------------------------
+* Q9_field_tag_set_1b4c  (0x001b4c)
+* Setzt ein getaggtes 24-Bit-Feld: Wert per ANDI.L #$ffffff auf 24 Bit maskiert, danach das hohe Byte per ST (Set-Byte) auf 0xFF erzwungen
+* (klassisches Tag+Wert-Packing in einem Langwort). Enthaelt die bekannten Ueberlappungs-Sprungziele 0x1b90/0x1b9c/0x1ba8.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_field_tag_set_1b4c:
 	btst.b	#$5,$40(a5)
 L001b52:
 	bne.b	L001b70
@@ -4996,7 +5209,7 @@ L001ce0:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L001ce4:
 	dc.w	$6100
-	dc.w	L0032fa-*
+	dc.w	Q9_module_name_match_32fa-*
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L001ce8:
 	dc.w	$6500
@@ -5209,7 +5422,11 @@ L001e16:
 	dc.b	$00
 L001e17:
 	dc.b	$00
-* Duenner Weiterreicher zu Q9_proc_id_free_3370.
+*----------------------------------------------------------------------
+* Q9_proc_id_free_wrap_1e18  (0x001e18)
+* Duenner Weiterreicher zu Q9_proc_id_free_3370 (A0 = (0x44,A6)).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_proc_id_free_wrap_1e18:
 	movem.l	a2/a1/a0/d0,-(sp)
 L001e1c:
@@ -5664,22 +5881,13 @@ L0020c0:
 	dc.b	$02
 L0020c1:
 	dc.b	$4c
+* Rohbytes statt Instruktion (andi.b #0x18,(A4)+) -- siehe FORCE_RAW_BYTES im Konverter
 L0020c2:
-	dc.b	$02
-L0020c3:
-	dc.b	$1c
-L0020c4:
-	dc.b	$03
-L0020c5:
-	dc.b	$18
+	dc.b	$02,$1c,$03,$18
 L0020c6:
-	dc.b	$03
-L0020c7:
-	dc.b	$24
+	btst.b	d1,-(a4)
 L0020c8:
-	dc.b	$03
-L0020c9:
-	dc.b	$94
+	bclr.b	d1,(a4)
 L0020ca:
 	dc.b	$03
 L0020cb:
@@ -5843,7 +6051,7 @@ L002182:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L002184:
 	dc.w	$6100
-	dc.w	L0032fa-*
+	dc.w	Q9_module_name_match_32fa-*
 L002188:
 	bcs.b	L0021e4
 L00218a:
@@ -5877,7 +6085,7 @@ L0021b2:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0021b4:
 	dc.w	$6100
-	dc.w	L001ab8-*
+	dc.w	Q9_pattern_match_1ab8-*
 L0021b8:
 	bcs.b	L0021d8
 L0021ba:
@@ -6059,7 +6267,7 @@ L0022d2:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0022d4:
 	dc.w	$6100
-	dc.w	L002398-*
+	dc.w	Q9_table_lookup_2398-*
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0022d8:
 	dc.w	$6500
@@ -6198,7 +6406,13 @@ L002392:
 	ori	#$1,ccr
 L002396:
 	rts
-L002398:
+*----------------------------------------------------------------------
+* Q9_table_lookup_2398  (0x002398)
+* Generischer Tabellen-Lookup: Index*32 in ein grenzgeprueftes Array (0x3cc,A6), Grenze (0x3d0,A6), prueft ein Tag-Wort im Treffer gegen (0,A5).
+* Rueckgabe ueber Carry (0=Treffer, 1=Fehler: ausserhalb der Grenze oder Tag-Mismatch, beides Sprung nach 0x2432).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_table_lookup_2398:
 	ext.l	d0
 L00239a:
 	asl.l	#$5,d0
@@ -6229,7 +6443,7 @@ L0023bc:
 L0023be:
 	rts
 L0023c0:
-	bsr.b	L002398
+	bsr.b	Q9_table_lookup_2398
 L0023c2:
 	bcs.b	L0023ce
 L0023c4:
@@ -6241,29 +6455,13 @@ L0023ca:
 L0023ce:
 	rts
 L0023d0:
-	dc.b	$61
-L0023d1:
-	dc.b	$c6
+	bsr.b	Q9_table_lookup_2398
 L0023d2:
-	dc.b	$65
-L0023d3:
-	dc.b	$06
+	bcs.b	L0023da
 L0023d4:
-	dc.b	$2b
-L0023d5:
-	dc.b	$6a
-L0023d6:
-	dc.b	$00
-L0023d7:
-	dc.b	$0e
-L0023d8:
-	dc.b	$00
-L0023d9:
-	dc.b	$04
+	move.l	$e(a2),$4(a5)
 L0023da:
-	dc.b	$4e
-L0023db:
-	dc.b	$75
+	rts
 L0023dc:
 	dc.b	$08
 L0023dd:
@@ -6454,218 +6652,90 @@ L002446:
 	dbf	d2,L002444
 L00244a:
 	rts
-L00244c:
-	dc.b	$61
-L00244d:
-	dc.b	$00
-L00244e:
-	dc.b	$ff
-L00244f:
-	dc.b	$4a
+*----------------------------------------------------------------------
+* Q9_scheduler_caller_244c  (0x00244c)
+* 11. bekannter Aufrufer von Q9_scheduler_183a: laeuft eine verkettete Liste ab, berechnet ueber Q9_table_lookup_2398 einen Pruefwert
+* (Vergleich gegen einen PC-relativen Tabellen-Anker), und weckt/reiht den gefundenen Prozess per Q9_scheduler_183a neu ein.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+Q9_scheduler_caller_244c:
+	dc.w	$6100
+	dc.w	Q9_table_lookup_2398-*
 L002450:
-	dc.b	$65
-L002451:
-	dc.b	$62
+	bcs.b	L0024b4
 L002452:
-	dc.b	$34
-L002453:
-	dc.b	$2a
-L002454:
-	dc.b	$00
-L002455:
-	dc.b	$14
+	move.w	$14(a2),d2
 L002456:
-	dc.b	$48
-L002457:
-	dc.b	$c2
+	ext.l	d2
 L002458:
-	dc.b	$d4
-L002459:
-	dc.b	$aa
-L00245a:
-	dc.b	$00
-L00245b:
-	dc.b	$0e
+	add.l	$e(a2),d2
 L00245c:
-	dc.b	$68
-L00245d:
-	dc.b	$0a
+	bvc.b	L002468
 L00245e:
-	dc.b	$74
-L00245f:
-	dc.b	$ff
+	moveq	#-$1,d2
 L002460:
-	dc.b	$e2
-L002461:
-	dc.b	$92
+	roxr.l	#$1,d2
 L002462:
-	dc.b	$6a
-L002463:
-	dc.b	$04
+	bpl.b	L002468
 L002464:
-	dc.b	$e2
-L002465:
-	dc.b	$8a
+	lsr.l	#$1,d2
 L002466:
-	dc.b	$46
-L002467:
-	dc.b	$82
+	not.l	d2
 L002468:
-	dc.b	$2b
-L002469:
-	dc.b	$6a
-L00246a:
-	dc.b	$00
-L00246b:
-	dc.b	$0e
-L00246c:
-	dc.b	$00
-L00246d:
-	dc.b	$04
+	move.l	$e(a2),$4(a5)
 L00246e:
-	dc.b	$25
-L00246f:
-	dc.b	$42
-L002470:
-	dc.b	$00
-L002471:
-	dc.b	$0e
+	move.l	d2,$e(a2)
 L002472:
-	dc.b	$47
-L002473:
-	dc.b	$ea
-L002474:
-	dc.b	$ff
-L002475:
-	dc.b	$e8
+	lea	-$18(a2),a3
 L002476:
-	dc.b	$26
-L002477:
-	dc.b	$0b
+	move.l	a3,d3
 L002478:
-	dc.b	$60
-L002479:
-	dc.b	$32
+	bra.b	L0024ac
 L00247a:
-	dc.b	$2a
-L00247b:
-	dc.b	$6b
-L00247c:
-	dc.b	$00
-L00247d:
-	dc.b	$08
+	movea.l	$8(a3),a5
 L00247e:
-	dc.b	$41
-L00247f:
-	dc.b	$fa
-L002480:
-	dc.b	$fc
-L002481:
-	dc.b	$6a
+	lea	L0020ea(pc),a0
 L002482:
-	dc.b	$b1
-L002483:
-	dc.b	$ed
-L002484:
-	dc.b	$00
-L002485:
-	dc.b	$42
+	cmpa.l	$42(a5),a0
 L002486:
-	dc.b	$66
-L002487:
-	dc.b	$04
+	bne.b	L00248c
 L002488:
-	dc.b	$2a
-L002489:
-	dc.b	$6d
-L00248a:
-	dc.b	$00
-L00248b:
-	dc.b	$34
+	movea.l	$34(a5),a5
 L00248c:
-	dc.b	$b4
-L00248d:
-	dc.b	$ad
-L00248e:
-	dc.b	$00
-L00248f:
-	dc.b	$08
+	cmp.l	$8(a5),d2
 L002490:
-	dc.b	$6d
-L002491:
-	dc.b	$1a
+	blt.b	L0024ac
 L002492:
-	dc.b	$b4
-L002493:
-	dc.b	$ad
-L002494:
-	dc.b	$00
-L002495:
-	dc.b	$0c
+	cmp.l	$c(a5),d2
 L002496:
-	dc.b	$6e
-L002497:
-	dc.b	$14
+	bgt.b	L0024ac
 L002498:
-	dc.b	$20
-L002499:
-	dc.b	$4b
+	movea.l	a3,a0
 L00249a:
-	dc.b	$26
-L00249b:
-	dc.b	$6b
-L00249c:
-	dc.b	$00
-L00249d:
-	dc.b	$30
+	movea.l	$30(a3),a3
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L00249e:
-	dc.b	$61
-L00249f:
-	dc.b	$00
-L0024a0:
-	dc.b	$fe
-L0024a1:
-	dc.b	$cc
+	dc.w	$6100
+	dc.w	L00236c-*
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0024a2:
-	dc.b	$61
-L0024a3:
-	dc.b	$00
-L0024a4:
-	dc.b	$f3
-L0024a5:
-	dc.b	$96
+	dc.w	$6100
+	dc.w	Q9_scheduler_183a-*
 L0024a6:
-	dc.b	$4a
-L0024a7:
-	dc.b	$04
+	tst.b	d4
 L0024a8:
-	dc.b	$66
-L0024a9:
-	dc.b	$06
+	bne.b	L0024b0
 L0024aa:
-	dc.b	$4e
-L0024ab:
-	dc.b	$75
+	rts
 L0024ac:
-	dc.b	$26
-L0024ad:
-	dc.b	$6b
-L0024ae:
-	dc.b	$00
-L0024af:
-	dc.b	$30
+	movea.l	$30(a3),a3
 L0024b0:
-	dc.b	$b6
-L0024b1:
-	dc.b	$8b
+	cmp.l	a3,d3
 L0024b2:
-	dc.b	$66
-L0024b3:
-	dc.b	$c6
+	bne.b	L00247a
 L0024b4:
-	dc.b	$4e
-L0024b5:
-	dc.b	$75
+	rts
 L0024b6:
 	dc.b	$61
 L0024b7:
@@ -6734,7 +6804,13 @@ L0024d6:
 	dc.b	$4e
 L0024d7:
 	dc.b	$75
-* Standardaktion fuer unbehandelte Exceptions: Prozess-Terminierung inkl. Eltern-Benachrichtigung, oder Signal-Zustellung falls ein Handler existiert.
+*----------------------------------------------------------------------
+* Q9_exc_default_action_24d8  (0x0024d8)
+* Standardaktion fuer unbehandelte Exceptions (aus Q9_exc_no_handler_fc4 erreicht). Zwei Faelle:
+* Fall A (kein Signal-Handler): Prozess stirbt -- Zustand '-' (Zombie), Eltern-Benachrichtigung via Q9_parent_notify_4518, Prozess-ID-Freigabe, endet mit Q9_reschedule_trampolin_3140.
+* Fall B (Signal-Handler vorhanden): normale Signal-Zustellung statt Terminierung.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_exc_default_action_24d8:
 	addq.l	#$1,$3ac(a4)
 L0024dc:
@@ -6847,7 +6923,11 @@ L002588:
 L00258c:
 	dc.w	$6000
 	dc.w	L000c74-*
-* Trampolin Tabellen-Slot 89 -- Vorbereitung kurz vor dem Sterben eines Prozesses.
+*----------------------------------------------------------------------
+* Q9_proc_die_prep_2590  (0x002590)
+* Trampolin Tabellen-Slot 89 -- Vorbereitung kurz vor dem Sterben eines Prozesses, aus Q9_exc_default_action_24d8 und der 0x25f0-Umgebung genutzt.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_proc_die_prep_2590:
 	movem.l	a2/a1/a0/d7/d2/d1/d0,-(sp)
 L002594:
@@ -6920,7 +7000,13 @@ L0025f2:
 	movem.l	(sp)+,d0/d1/d2/d7/a0/a1/a2
 L0025f6:
 	rts
-* Prozessdeskriptor-Slot aufraeumen: Ressourcenlisten, offene Pfade (echter TRAP #0-Close), FPU-Ownership.
+*----------------------------------------------------------------------
+* Q9_proc_slot_cleanup_25f8  (0x0025f8)
+* Prozessdeskriptor-Slot aufraeumen: Ressourcenliste 1 (0xc8-0x100,A0), Tabelle offener Pfade (0x1a8,A0 abwaerts, echtes TRAP #0-Close),
+* FPU-Ownership-Aufraeumen, Ressourcenliste 2 (0x38,A0). Parameter: A0/A4=zu bereinigender Prozessdeskriptor.
+* Verwendet sowohl bei echter Terminierung (0x25f0/0x2966) als auch bei Prozess-Neuerzeugung auf einem wiederverwendeten Slot (0x19c4).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_proc_slot_cleanup_25f8:
 	movem.l	a3/a2/a1/a0/d1,-(sp)
 L0025fc:
@@ -6932,7 +7018,7 @@ L002600:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L002602:
 	dc.w	$6100
-	dc.w	Q9_category_dispatch_1390-*
+	dc.w	Q9_alarm_dispatch_1390-*
 L002606:
 	exg	a4,a0
 L002608:
@@ -7262,12 +7348,18 @@ L0027d2:
 	rts
 L0027d4:
 	suba.l	a2,a2
-L0027d6:
+*----------------------------------------------------------------------
+* Q9_syscall_27d6  (0x0027d6)
+* Modultabellen-Suche nach Signatur-Bytes (F$Find-artig): durchlaeuft eine 16-Byte-Eintrags-Tabelle (0x3c,A6) bis (0x40,A6),
+* vergleicht zwei Filter-Bytes gegen Eintragsfelder ueber Q9_module_name_match_32fa und Q9_pattern_match_1ab8.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_syscall_27d6:
 	movem.l	a2/a1/a0/d3/d2/d1/d0,-(sp)
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0027da:
 	dc.w	$6100
-	dc.w	L0032fa-*
+	dc.w	Q9_module_name_match_32fa-*
 L0027de:
 	bcs.b	L00283a
 L0027e0:
@@ -7295,7 +7387,7 @@ L002800:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L002802:
 	dc.w	$6100
-	dc.w	L001ab8-*
+	dc.w	Q9_pattern_match_1ab8-*
 L002806:
 	bcs.b	L00282c
 L002808:
@@ -8045,7 +8137,7 @@ L002c5e:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L002c62:
 	dc.w	$6000
-	dc.w	L001b4c-*
+	dc.w	Q9_field_tag_set_1b4c-*
 L002c66:
 	trapf
 L002c68:
@@ -8071,8 +8163,14 @@ L002c7e:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L002c80:
 	dc.w	$6000
-	dc.w	L001b4c-*
-L002c84:
+	dc.w	Q9_field_tag_set_1b4c-*
+*----------------------------------------------------------------------
+* Q9_proc_priority_calc_2c84  (0x002c84)
+* Berechnet einen Prioritaets-/Sortierwert fuer einen Prozess: Q9_proc_id_lookup_2cee, dann derselbe Sortierschluessel (0x2e0,A1) und
+* Aging-Zaehler (0x3c4,A6) wie in Q9_scheduler_183a, geklemmt gegen die zweite Schwelle (0x8a8,A6). Springt danach in Q9_field_tag_set_1b4c.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_proc_priority_calc_2c84:
 	trapf.w	#$0
 L002c88:
 	move.w	#$e0,d1
@@ -8135,7 +8233,7 @@ L002cda:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L002cde:
 	dc.w	$6000
-	dc.w	L001b4c-*
+	dc.w	Q9_field_tag_set_1b4c-*
 L002ce2:
 	rts
 L002ce4:
@@ -8158,7 +8256,11 @@ L002cec:
 	dc.b	$fa
 L002ced:
 	dc.b	$1e
-* Prozess-ID-Lookup/-Validierung (Index+Generation-Schema gegen versehentliche Wiederverwendung).
+*----------------------------------------------------------------------
+* Q9_proc_id_lookup_2cee  (0x002cee)
+* Prozess-ID-Lookup/-Validierung (Index+Generation-Schema gegen versehentliche Wiederverwendung). Fehlercode 0xE0 bei ungueltiger ID (derselbe wie Q9_proc_id_free_3370).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_proc_id_lookup_2cee:
 	movea.l	$44(a6),a0
 L002cf2:
@@ -8331,162 +8433,62 @@ L002df4:
 	move.w	$18(a4),$a(a5)
 L002dfa:
 	rts
-L002dfc:
-	dc.b	$51
-L002dfd:
-	dc.b	$fa
-L002dfe:
-	dc.b	$00
-L002dff:
-	dc.b	$00
+*----------------------------------------------------------------------
+* Q9_irq_chain_lookup_2dfc  (0x002dfc)
+* IRQ-Handler-Ketten-Slot-Lookup: bildet einen Vektorwert (D0) auf einen Kettenkopf ab -- dieselben Offsets A6+D0+0x384 (Vektor <0x80)
+* bzw. A6+D0-0x5c (Vektor >=0x80) wie in Q9_disp_180. Vorstufe zur Registrierung eines Handlers, Fallthrough nach Q9_irq_chain_insert_2eb2.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_irq_chain_lookup_2dfc:
+	trapf.w	#$0
 L002e00:
-	dc.b	$02
-L002e01:
-	dc.b	$40
-L002e02:
-	dc.b	$00
-L002e03:
-	dc.b	$ff
+	andi.w	#$ff,d0
 L002e04:
-	dc.b	$e5
-L002e05:
-	dc.b	$40
+	asl.w	#$2,d0
 L002e06:
-	dc.b	$0c
-L002e07:
-	dc.b	$40
-L002e08:
-	dc.b	$00
-L002e09:
-	dc.b	$64
+	cmpi.w	#$64,d0
 L002e0a:
-	dc.b	$65
-L002e0b:
-	dc.b	$3e
+	bcs.b	L002e4a
 L002e0c:
-	dc.b	$41
-L002e0d:
-	dc.b	$f6
-L002e0e:
-	dc.b	$00
-L002e0f:
-	dc.b	$00
+	lea	$0(a6,d0.w*1),a0
 L002e10:
-	dc.b	$d0
-L002e11:
-	dc.b	$fc
-L002e12:
-	dc.b	$03
-L002e13:
-	dc.b	$84
+	adda.w	#$384,a0
 L002e14:
-	dc.b	$0c
-L002e15:
-	dc.b	$40
-L002e16:
-	dc.b	$00
-L002e17:
-	dc.b	$80
+	cmpi.w	#$80,d0
 L002e18:
-	dc.b	$65
-L002e19:
-	dc.b	$0e
+	bcs.b	L002e28
 L002e1a:
-	dc.b	$0c
-L002e1b:
-	dc.b	$40
-L002e1c:
-	dc.b	$00
-L002e1d:
-	dc.b	$e4
+	cmpi.w	#$e4,d0
 L002e1e:
-	dc.b	$65
-L002e1f:
-	dc.b	$2a
+	bcs.b	L002e4a
 L002e20:
-	dc.b	$41
-L002e21:
-	dc.b	$f6
-L002e22:
-	dc.b	$00
-L002e23:
-	dc.b	$00
+	lea	$0(a6,d0.w*1),a0
 L002e24:
-	dc.b	$d0
-L002e25:
-	dc.b	$fc
-L002e26:
-	dc.b	$ff
-L002e27:
-	dc.b	$a4
+	adda.w	#-$5c,a0
 L002e28:
-	dc.b	$4a
-L002e29:
-	dc.b	$ad
-L002e2a:
-	dc.b	$00
-L002e2b:
-	dc.b	$20
+	tst.l	$20(a5)
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L002e2c:
-	dc.b	$67
-L002e2d:
-	dc.b	$00
-L002e2e:
-	dc.b	$00
-L002e2f:
-	dc.b	$84
+	dc.w	$6700
+	dc.w	Q9_irq_chain_insert_2eb2-*
 L002e30:
-	dc.b	$4a
-L002e31:
-	dc.b	$a8
-L002e32:
-	dc.b	$00
-L002e33:
-	dc.b	$00
+	tst.l	$0(a0)
 L002e34:
-	dc.b	$67
-L002e35:
-	dc.b	$1e
+	beq.b	L002e54
 L002e36:
-	dc.b	$4a
-L002e37:
-	dc.b	$01
+	tst.b	d1
 L002e38:
-	dc.b	$67
-L002e39:
-	dc.b	$0a
+	beq.b	L002e44
 L002e3a:
-	dc.b	$22
-L002e3b:
-	dc.b	$68
-L002e3c:
-	dc.b	$00
-L002e3d:
-	dc.b	$00
+	movea.l	$0(a0),a1
 L002e3e:
-	dc.b	$4a
-L002e3f:
-	dc.b	$29
-L002e40:
-	dc.b	$00
-L002e41:
-	dc.b	$10
+	tst.b	$10(a1)
 L002e42:
-	dc.b	$66
-L002e43:
-	dc.b	$10
+	bne.b	L002e54
 L002e44:
-	dc.b	$32
-L002e45:
-	dc.b	$3c
-L002e46:
-	dc.b	$00
-L002e47:
-	dc.b	$d4
+	move.w	#$d4,d1
 L002e48:
-	dc.b	$60
-L002e49:
-	dc.b	$04
+	bra.b	L002e4e
 L002e4a:
 	move.w	#$e1,d1
 L002e4e:
@@ -8545,94 +8547,38 @@ L002eac:
 	move.w	#$ca,d1
 L002eb0:
 	bra.b	L002e4e
-L002eb2:
-	dc.b	$26
-L002eb3:
-	dc.b	$48
+*----------------------------------------------------------------------
+* Q9_irq_chain_insert_2eb2  (0x002eb2)
+* Durchsucht die von Q9_irq_chain_lookup_2dfc gefundene Kette und haengt einen neuen IRQ-Handler-Deskriptor ein.
+* Interrupt-Maskierung hier inline (move SR,-(SP) / ori #0x700,SR) statt ueber Q9_irq_mask_10e6/Q9_irq_unmask_10f2.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_irq_chain_insert_2eb2:
+	movea.l	a0,a3
 L002eb4:
-	dc.b	$20
-L002eb5:
-	dc.b	$28
-L002eb6:
-	dc.b	$00
-L002eb7:
-	dc.b	$00
+	move.l	$0(a0),d0
 L002eb8:
-	dc.b	$67
-L002eb9:
-	dc.b	$90
+	beq.b	L002e4a
 L002eba:
-	dc.b	$20
-L002ebb:
-	dc.b	$40
+	movea.l	d0,a0
 L002ebc:
-	dc.b	$b5
-L002ebd:
-	dc.b	$e8
-L002ebe:
-	dc.b	$00
-L002ebf:
-	dc.b	$08
+	cmpa.l	$8(a0),a2
 L002ec0:
-	dc.b	$66
-L002ec1:
-	dc.b	$f0
+	bne.b	Q9_irq_chain_insert_2eb2
 L002ec2:
-	dc.b	$27
-L002ec3:
-	dc.b	$68
-L002ec4:
-	dc.b	$00
-L002ec5:
-	dc.b	$00
-L002ec6:
-	dc.b	$00
-L002ec7:
-	dc.b	$00
+	move.l	$0(a0),$0(a3)
 L002ec8:
-	dc.b	$59
-L002ec9:
-	dc.b	$8f
+	subq.l	#$4,sp
 L002eca:
-	dc.b	$40
-L002ecb:
-	dc.b	$ef
-L002ecc:
-	dc.b	$00
-L002ecd:
-	dc.b	$00
+	move	sr,$0(sp)
 L002ece:
-	dc.b	$00
-L002ecf:
-	dc.b	$7c
-L002ed0:
-	dc.b	$07
-L002ed1:
-	dc.b	$00
+	ori	#$700,sr
 L002ed2:
-	dc.b	$21
-L002ed3:
-	dc.b	$6e
-L002ed4:
-	dc.b	$03
-L002ed5:
-	dc.b	$e4
-L002ed6:
-	dc.b	$00
-L002ed7:
-	dc.b	$00
+	move.l	$3e4(a6),$0(a0)
 L002ed8:
-	dc.b	$2d
-L002ed9:
-	dc.b	$48
-L002eda:
-	dc.b	$03
-L002edb:
-	dc.b	$e4
+	move.l	a0,$3e4(a6)
 L002edc:
-	dc.b	$60
-L002edd:
-	dc.b	$c6
+	bra.b	L002ea4
 L002ede:
 	dc.b	$51
 L002edf:
@@ -8912,37 +8858,15 @@ L003040:
 L003047:
 	dc.b	$0c
 L003048:
-	dc.b	$64
-L003049:
-	dc.b	$04
+	bcc.b	L00304e
 L00304a:
-	dc.b	$53
-L00304b:
-	dc.b	$69
-L00304c:
-	dc.b	$00
-L00304d:
-	dc.b	$0c
+	subq.w	#$1,$c(a1)
 L00304e:
-	dc.b	$22
-L00304f:
-	dc.b	$4a
+	movea.l	a2,a1
 L003050:
-	dc.b	$d3
-L003051:
-	dc.b	$ea
-L003052:
-	dc.b	$00
-L003053:
-	dc.b	$30
+	adda.l	$30(a2),a1
 L003054:
-	dc.b	$02
-L003055:
-	dc.b	$3c
-L003056:
-	dc.b	$ff
-L003057:
-	dc.b	$fe
+	andi	#-$2,ccr
 L003058:
 	movem.l	(sp)+,d0/d1/d2/d3
 L00305c:
@@ -9135,7 +9059,12 @@ L00313e:
 	dc.b	$00
 L00313f:
 	dc.b	$00
-* Cache-Flush-Schleife (patcht/invalidiert selbstmodifizierten Code) + Trampolin-Sprung in Tabellen-Slot 90 (Kontextwechsel-Einstieg).
+*----------------------------------------------------------------------
+* Q9_reschedule_trampolin_3140  (0x003140)
+* Cache-Flush-Schleife (patcht selbstmodifizierten Code, erkennbar am 0x4AFC-Platzhalterwort, invalidiert die Datencache-Zeile einzeln) +
+* Trampolin-Sprung in Syscall-Tabellen-Slot 90 (Kontextwechsel-Einstieg, Zieladresse nicht statisch im Modul sichtbar).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_reschedule_trampolin_3140:
 	addq.l	#$1,$3ac(a4)
 L003144:
@@ -9410,7 +9339,12 @@ L0032f4:
 	cmpi.b	#$2f,d0
 L0032f8:
 	bne.b	L0032fc
-L0032fa:
+*----------------------------------------------------------------------
+* Q9_module_name_match_32fa  (0x0032fa)
+* Zeichen-fuer-Zeichen-Vergleichshelfer (A0=String), zaehlt in D1 die verglichenen Zeichen, Rueckgabe ueber Carry/Bit 31. Von Q9_syscall_27d6 genutzt.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_module_name_match_32fa:
 	move.b	(a0)+,d0
 L0032fc:
 	lea	-$1(a0),a1
@@ -9498,7 +9432,11 @@ L00336e:
 	dc.b	$51
 L00336f:
 	dc.b	$fc
-* Gibt eine Prozess-ID in der ID-Tabelle frei (eigene Freiliste wiederverwendbarer IDs).
+*----------------------------------------------------------------------
+* Q9_proc_id_free_3370  (0x003370)
+* Gibt eine Prozess-ID in der ID-Tabelle (0x44,A6) frei, eigene Freiliste wiederverwendbarer IDs. Fehlercode 0xE0 bei ungueltiger ID.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_proc_id_free_3370:
 	cmp.w	(a0),d0
 L003372:
@@ -9902,7 +9840,7 @@ L0035c8:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0035ca:
 	dc.w	$6100
-	dc.w	L0012b4-*
+	dc.w	Q9_fixed_alloc_wrap_12b4-*
 L0035ce:
 	bcs.b	L003622
 L0035d0:
@@ -9934,70 +9872,32 @@ L0035f4:
 	dc.b	$00
 L0035f5:
 	dc.b	$0a
-L0035f6:
-	dc.b	$33
-L0035f7:
-	dc.b	$41
-L0035f8:
-	dc.b	$00
-L0035f9:
-	dc.b	$26
+*----------------------------------------------------------------------
+* Q9_scheduler_caller_35f6  (0x0035f6)
+* 12. bekannter Aufrufer von Q9_scheduler_183a: prueft Prozesszustand 0x61 ('a', aktiv) und Listenende, setzt Flag-Bit 7 in (0x371,A1),
+* weckt einen schlafenden Prozess und reiht ihn per Q9_scheduler_183a neu in die Ready-Queue ein.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_scheduler_caller_35f6:
+	move.w	d1,$26(a1)
 L0035fa:
-	dc.b	$b3
-L0035fb:
-	dc.b	$e9
-L0035fc:
-	dc.b	$00
-L0035fd:
-	dc.b	$30
+	cmpa.l	$30(a1),a1
 L0035fe:
-	dc.b	$67
-L0035ff:
-	dc.b	$08
+	beq.b	L003608
 L003600:
-	dc.b	$0c
-L003601:
-	dc.b	$29
-L003602:
-	dc.b	$00
-L003603:
-	dc.b	$61
-L003604:
-	dc.b	$00
-L003605:
-	dc.b	$20
+	cmpi.b	#$61,$20(a1)
 L003606:
-	dc.b	$66
-L003607:
-	dc.b	$08
+	bne.b	L003610
 L003608:
-	dc.b	$08
-L003609:
-	dc.b	$e9
-L00360a:
-	dc.b	$00
-L00360b:
-	dc.b	$07
-L00360c:
-	dc.b	$03
-L00360d:
-	dc.b	$71
+	bset.b	#$7,$371(a1)
 L00360e:
-	dc.b	$60
-L00360f:
-	dc.b	$06
+	bra.b	L003616
 L003610:
-	dc.b	$20
-L003611:
-	dc.b	$49
+	movea.l	a1,a0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L003612:
-	dc.b	$61
-L003613:
-	dc.b	$00
-L003614:
-	dc.b	$e2
-L003615:
-	dc.b	$26
+	dc.w	$6100
+	dc.w	Q9_scheduler_183a-*
 L003616:
 	move	d3,sr
 L003618:
@@ -10012,7 +9912,13 @@ L003626:
 	ori.w	#$1,d3
 L00362a:
 	bra.b	L003616
-L00362c:
+*----------------------------------------------------------------------
+* Q9_module_patch_362c  (0x00362c)
+* Weiterer 0x4AFC-Platzhalter-Patch-Mechanismus wie Q9_reschedule_trampolin_3140 (prueft (A0) gegen 0x4AFC, patcht bei Bedarf),
+* aber mit anderer Zielstruktur (Checksummen-/Namensfeld-Manipulation statt reinem Cache-Flush) -- Details nicht letztgueltig verifiziert.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_module_patch_362c:
 	trapf.w	#$0
 L003630:
 	move.l	a0,-(sp)
@@ -11488,26 +11394,17 @@ L0039ac:
 	ori	#$1,ccr
 L0039b0:
 	rts
-L0039b2:
-	dc.b	$32
-L0039b3:
-	dc.b	$3c
-L0039b4:
-	dc.b	$00
-L0039b5:
-	dc.b	$ab
+*----------------------------------------------------------------------
+* Q9_err_ab_stub_39b2  (0x0039b2)
+* Fehler-0xAB-Rueckgabe-Stub (Speicher-Allokationsfehler 'keine Arena mit ausreichend freiem Speicher', siehe Q9_mem_alloc_5440).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_err_ab_stub_39b2:
+	move.w	#$ab,d1
 L0039b6:
-	dc.b	$00
-L0039b7:
-	dc.b	$3c
-L0039b8:
-	dc.b	$00
-L0039b9:
-	dc.b	$01
+	ori	#$1,ccr
 L0039ba:
-	dc.b	$4e
-L0039bb:
-	dc.b	$75
+	rts
 L0039bc:
 	dc.b	$4a
 L0039bd:
@@ -12331,17 +12228,11 @@ L003dee:
 L003def:
 	dc.b	$4a
 L003df0:
-	dc.b	$43
-L003df1:
-	dc.b	$25
+	chk.l	-(a5),d1
 L003df2:
-	dc.b	$05
-L003df3:
-	dc.b	$1e
+	btst.b	d2,(a6)+
 L003df4:
-	dc.b	$11
-L003df5:
-	dc.b	$17
+	move.b	(sp),-(a0)
 L003df6:
 	dc.b	$0a
 L003df7:
@@ -13560,7 +13451,11 @@ L004076:
 	dc.b	$51
 L004077:
 	dc.b	$fc
-* Internes Trampolin, Tabellen-Slot 88.
+*----------------------------------------------------------------------
+* Q9_trampolin_slot88_4078  (0x004078)
+* Internes Trampolin, Tabellen-Slot 88 (feste Parameter D0=0x30, D1=1). Der uebergebene Ressourcenzeiger dient nur als Null-Check, nicht als Adressparameter.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_trampolin_slot88_4078:
 	moveq	#$30,d0
 L00407a:
@@ -14126,7 +14021,7 @@ L0043be:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0043c0:
 	dc.w	$6100
-	dc.w	L0012b4-*
+	dc.w	Q9_fixed_alloc_wrap_12b4-*
 L0043c4:
 	bcs.b	L00440a
 L0043c6:
@@ -14252,7 +14147,7 @@ L004464:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L004468:
 	dc.w	$6100
-	dc.w	L0032fa-*
+	dc.w	Q9_module_name_match_32fa-*
 L00446c:
 	bcs.b	L00447c
 L00446e:
@@ -14361,7 +14256,12 @@ L004512:
 	ori	#$1,ccr
 L004516:
 	rts
-* Eltern-Benachrichtigung beim Kindprozess-Tod, weckt einen wartenden Elternprozess (SIGCHLD/wait-artig).
+*----------------------------------------------------------------------
+* Q9_parent_notify_4518  (0x004518)
+* Eltern-Benachrichtigung beim Kindprozess-Tod: durchsucht die Wait-Deskriptor-Liste des Elternprozesses via Q9_proc_id_lookup_2cee,
+* weckt einen wartenden Elternprozess (Zustand 'w') ueber Q9_scheduler_183a -- SIGCHLD/wait()-artiges Muster.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_parent_notify_4518:
 	clr.w	$0(a5)
 L00451c:
@@ -14691,7 +14591,7 @@ L0046d8:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0046da:
 	dc.w	$6100
-	dc.w	L00161a-*
+	dc.w	Q9_alarm_insert_wrap_161a-*
 L0046de:
 	moveq	#$1,d0
 L0046e0:
@@ -15116,7 +15016,11 @@ L004955:
 	dc.b	$2e,$00
 L004977:
 	dc.b	$00
-* Initialisiert feste System-Global-Konstanten (Speicher-Alignment=16, Groessenkonstante=256) -- kein Allocator.
+*----------------------------------------------------------------------
+* Q9_const_init_4978  (0x004978)
+* Initialisiert feste System-Global-Konstanten: (0x70,A6)=0x10 (Speicher-Alignment), (0x7c,A6)=0x100 (Groessenkonstante). Kein Allocator (fruehere Fehlannahme korrigiert).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_const_init_4978:
 	moveq	#$10,d0
 L00497a:
@@ -16937,7 +16841,11 @@ L005268:
 	unlk	a5
 L00526a:
 	rts
-* Arena-Deskriptor-Allocator mit Fallback auf den zweiten Speicherpool.
+*----------------------------------------------------------------------
+* Q9_arena_alloc_526c  (0x00526c)
+* Arena-Deskriptor-Allocator: rundet die Zielgroesse aus, alloziert ueber Q9_mem_alloc_5440, mit Fallback auf den zweiten Speicherpool bei Fehlercode 0xED.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_arena_alloc_526c:
 	link.w	a5,#-$4
 L005270:
@@ -17314,7 +17222,14 @@ L00543c:
 	unlk	a5
 L00543e:
 	rts
-* Speicher-Allokations-Primitive: First-Fit ueber Arena-Ketten, Split-von-hinten bei Restflaeche.
+*----------------------------------------------------------------------
+* Q9_mem_alloc_5440  (0x005440)
+* Speicher-Allokations-Primitive (Gegenstueck zu Q9_mem_free_5a22). Register: D0=Groesse, D1=Klassen-/Typ-Tag, Stack: Ausgabe-Zeiger, Arena-Listenkopf, Interrupt-Maskieren-Flag.
+* Algorithmus: First-Fit ueber die Arena-Kette (passender Klassen-Tag + aktiviert + nicht gesperrt), innerhalb der Arena First-Fit in deren Freiliste.
+* Exakter Treffer: Block komplett aushaengen. Restflaeche: Split von hinten (Freilisten-Eintrag behaelt seine Adresse, Ergebnis ist das hintere Ende).
+* Fehlercodes: 0xAB (keine Arena mit genug Platz), 0xE1 (Groesse 0), 0xED (Arena-Liste leer).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_mem_alloc_5440:
 	link.w	a5,#$0
 L005444:
@@ -17609,7 +17524,11 @@ L00559e:
 	movem.l	(sp)+,d1/a0/a1
 L0055a2:
 	rts
-* Pool-Lookup: findet den zustaendigen Speicherpool-Deskriptor fuer eine Adresse/Groesse.
+*----------------------------------------------------------------------
+* Q9_pool_lookup_55a4  (0x0055a4)
+* Pool-Lookup: findet den zustaendigen Speicherpool-Deskriptor fuer eine Adresse/Groesse (Bitmasken-Vergleich gegen Pool-Grenzen). Fehlercode 0xDB bei Nichttreffer.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_pool_lookup_55a4:
 	link.w	a5,#-$4
 L0055a8:
@@ -17916,7 +17835,11 @@ L00570e:
 	unlk	a5
 L005710:
 	rts
-* Groessen-/klassensortierte Freiliste auf Arena-Ebene (Einfuegen und Schrumpfen bestehender Eintraege).
+*----------------------------------------------------------------------
+* Q9_freelist_bysize_5712  (0x005712)
+* Groessen-/klassensortierte Freiliste auf Arena-Ebene: Parameter <=0 schrumpft einen bestehenden Eintrag, >0 fuegt sortiert (Klasse, dann Groesse) neu ein.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_freelist_bysize_5712:
 	link.w	a5,#$0
 L005716:
@@ -18495,7 +18418,13 @@ L005a1c:
 	movea.l	$4(a4),a4
 L005a20:
 	bra.b	L0059c0
-* Zentrale Speicherfreigabe-Primitive: zwei Pools nacheinander versucht, Boundary-Tag-Coalescing.
+*----------------------------------------------------------------------
+* Q9_mem_free_5a22  (0x005a22)
+* Zentrale Speicherfreigabe-Primitive (Gegenstueck zu Q9_mem_alloc_5440). Register: D0=Groesse, D1=Adresse, Stack-Parameter 1 (Pool-Typ, vermutet).
+* Rundet die Groesse aus, versucht Pool (0x3fc,A6), bei Ablehnung (Fehlercode 0xDB) Pool (0x50,A6)+0x390. Boundary-Tag-Coalescing beim Einfuegen.
+* Interrupt-Maskierung sauber auf allen Ausstiegspunkten via Q9_irq_mask_10e6/Q9_irq_unmask_10f2.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_mem_free_5a22:
 	link.w	a5,#-$c
 L005a26:
@@ -18766,7 +18695,12 @@ L005ba8:
 	unlk	a5
 L005baa:
 	rts
-* Arena-Lookup-oder-Erzeugen fuer eine freizugebende Adresse (legt bei Bedarf einen neuen Arena-Deskriptor an).
+*----------------------------------------------------------------------
+* Q9_arena_lookup_5bac  (0x005bac)
+* Arena-Lookup-oder-Erzeugen fuer eine freizugebende Adresse. Register: D0=Groesse, D1=Adresse, Stack: Pool-Header, Ausgabe-Zeiger.
+* Sucht die Arena, deren Adressbereich die Adresse abdeckt; bei Bedarf neuer 42-Byte-Arena-Deskriptor via Q9_dealloc_tail_131c. Fehlercode 0xD2 bei unbekannter Region.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_arena_lookup_5bac:
 	link.w	a5,#-$8
 L005bb0:
@@ -18917,7 +18851,11 @@ L005c76:
 L005c78:
 	dc.w	$6000
 	dc.w	L0060f8-*
-* Genereller, nach Klassen-/Typ-Tag sortierter Doppelverkettungs-Insert (auch fuer Arenen genutzt).
+*----------------------------------------------------------------------
+* Q9_sorted_list_insert_5c7c  (0x005c7c)
+* Genereller, nach Klassen-/Typ-Tag sortierter Doppelverkettungs-Insert (auch fuer Arenen in Q9_arena_lookup_5bac genutzt).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_sorted_list_insert_5c7c:
 	movem.l	a2/a1/a0,-(sp)
 L005c80:
@@ -18968,7 +18906,13 @@ L005ccc:
 	movem.l	(sp)+,a0/a1/a2
 L005cd0:
 	rts
-L005cd2:
+*----------------------------------------------------------------------
+* Q9_dealloc_owned_5cd2  (0x005cd2)
+* Alternative Freigabe-Variante: rundet Groesse/Adresse aus wie Q9_mem_alloc_5440, prueft Eigentum via Q9_owns_range_5d68 (Fehlercode 0xD2 bei Nicht-Eigentum)
+* bevor tatsaechlich freigegeben wird. Von Q9_dealloc_tail_131c als Alternative zu Q9_mem_free_5a22 angesprungen.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_dealloc_owned_5cd2:
 	link.w	a5,#-$8
 L005cd6:
 	movem.l	a2/a1/a0/d7/d6,-(sp)
@@ -19086,7 +19030,11 @@ L005d64:
 	unlk	a5
 L005d66:
 	rts
-* Prueft, ob ein Adressbereich zu den vom aktuellen Prozess gehaltenen Speicherbloecken gehoert.
+*----------------------------------------------------------------------
+* Q9_owns_range_5d68  (0x005d68)
+* Prueft, ob ein Adressbereich zu den vom aktuellen Prozess gehaltenen Speicherbloecken gehoert (durchlaeuft dieselbe Chunk-Liste (0x2d8,A0) wie Q9_proc_resource_free_62da). Fehlercode 0xD2 bei Bereichen ausserhalb.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_owns_range_5d68:
 	link.w	a5,#$0
 L005d6c:
@@ -19922,7 +19870,7 @@ L00620e:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L006210:
 	dc.w	$6100
-	dc.w	L005cd2-*
+	dc.w	Q9_dealloc_owned_5cd2-*
 L006214:
 	tst.l	d0
 L006216:
@@ -20075,7 +20023,12 @@ L0062d6:
 	unlk	a5
 L0062d8:
 	rts
-* Gibt die pro Prozess gehaltenen Speicherblock- und Fixgroessen-Ressourcenlisten beim Exit frei.
+*----------------------------------------------------------------------
+* Q9_proc_resource_free_62da  (0x0062da)
+* Gibt die pro Prozess gehaltenen Ressourcen beim Exit frei: Speicherblock-Chunk-Liste (0x2d8,A4) und Fixgroessen-Ressourcenliste (0x390,A4),
+* je Eintrag ueber Q9_mem_free_5a22. Parameter: D0=Prozessdeskriptor. Aufgerufen aus Q9_proc_slot_cleanup_25f8.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_proc_resource_free_62da:
 	movem.l	a4/a3/a2/a1/a0/d1,-(sp)
 L0062de:
@@ -20546,7 +20499,13 @@ L00677c:
 	dc.b	$6c,$65,$00
 L00679f:
 	dc.b	$00
-* Zentraler Kernel-Bootstrap: alloziert und befuellt die Exception-Sprungtabelle sowie die Syscall-Tabellen im RAM.
+*----------------------------------------------------------------------
+* Q9_kernel_init_67a0  (0x0067a0)
+* Zentraler Kernel-Bootstrap (~1600 Byte). Alloziert die 256-Eintrags-Exception-Sprungtabelle D_ExcJmp (0x68,A6) und befuellt sie aus einer
+* kompakten Quelltabelle im Modul (0x3802). Alloziert und kopiert die zwei Syscall-Tabellen (0x3a4,A6)/(0x3a8,A6) aus derselben PC-relativen
+* Quelle bei 0x1380 (Fehler-Stub + F$Alarm-Dispatcher Q9_alarm_dispatch_1390, nicht Adresslisten). Fortsetzung: Q9_boot_finalize_6de4.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 Q9_kernel_init_67a0:
 	btst.l	#$4,d3
 L0067a4:
@@ -21470,7 +21429,7 @@ L006d66:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L006d6a:
 	dc.w	$6100
-	dc.w	L0032fa-*
+	dc.w	Q9_module_name_match_32fa-*
 L006d6e:
 	bcs.b	L006d7e
 L006d70:
@@ -21563,126 +21522,54 @@ L006de2:
 	dc.b	$ff
 L006de3:
 	dc.b	$74
-L006de4:
-	dc.b	$61
-L006de5:
-	dc.b	$00
-L006de6:
-	dc.b	$bf
-L006de7:
-	dc.b	$08
+*----------------------------------------------------------------------
+* Q9_boot_finalize_6de4  (0x006de4)
+* Letzter Abschnitt des Kernel-Bootstraps (Fortsetzung von Q9_kernel_init_67a0): Prozess-ID-Validierung via Q9_proc_id_lookup_2cee,
+* invalidiert zwei Deskriptorfelder, bedingter TRAP-#0-Modulaufruf, setzt System-Global-Flag bei Offset 0x2, raeumt Tabellen-Slot-90-Bereich
+* auf (0x168/0x16a/0x16c, je per TRAP #0), und endet mit Sprung in Q9_reschedule_trampolin_3140 -- der Kernel startet damit den Scheduler.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+Q9_boot_finalize_6de4:
+	dc.w	$6100
+	dc.w	Q9_proc_id_lookup_2cee-*
 L006de8:
-	dc.b	$64
-L006de9:
-	dc.b	$06
+	bcc.b	L006df0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L006dea:
-	dc.b	$61
-L006deb:
-	dc.b	$00
-L006dec:
-	dc.b	$00
-L006ded:
-	dc.b	$ca
+	dc.w	$6100
+	dc.w	L006eb6-*
 L006dee:
-	dc.b	$60
-L006def:
-	dc.b	$04
+	bra.b	L006df4
 L006df0:
-	dc.b	$42
-L006df1:
-	dc.b	$69
-L006df2:
-	dc.b	$00
-L006df3:
-	dc.b	$02
+	clr.w	$2(a1)
 L006df4:
-	dc.b	$70
-L006df5:
-	dc.b	$ff
+	moveq	#-$1,d0
 L006df6:
-	dc.b	$39
-L006df7:
-	dc.b	$40
-L006df8:
-	dc.b	$00
-L006df9:
-	dc.b	$18
+	move.w	d0,$18(a4)
 L006dfa:
-	dc.b	$39
-L006dfb:
-	dc.b	$40
-L006dfc:
-	dc.b	$00
-L006dfd:
-	dc.b	$1a
+	move.w	d0,$1a(a4)
 L006dfe:
-	dc.b	$08
-L006dff:
-	dc.b	$2e
-L006e00:
-	dc.b	$00
-L006e01:
-	dc.b	$05
-L006e02:
-	dc.b	$00
-L006e03:
-	dc.b	$2e
+	btst.b	#$5,$2e(a6)
 L006e04:
-	dc.b	$66
-L006e05:
-	dc.b	$0c
+	bne.b	L006e12
 L006e06:
-	dc.b	$70
-L006e07:
-	dc.b	$00
+	moveq	#$0,d0
 L006e08:
-	dc.b	$22
-L006e09:
-	dc.b	$3c
-L006e0a:
-	dc.b	$07
-L006e0b:
-	dc.b	$6c
-L006e0c:
-	dc.b	$00
-L006e0d:
-	dc.b	$00
+	move.l	#$76c0000,d1
 L006e0e:
-	dc.b	$4e
-L006e0f:
-	dc.b	$40
+	trap	#$0
+* Rohbytes statt Instruktion (ori.b #0x7c,(A6)) -- siehe FORCE_RAW_BYTES im Konverter
 L006e10:
-	dc.b	$00
-L006e11:
-	dc.b	$16
-L006e12:
-	dc.b	$3d
-L006e13:
-	dc.b	$7c
+	dc.b	$00,$16,$3d,$7c
 L006e14:
-	dc.b	$00
-L006e15:
-	dc.b	$01
-L006e16:
-	dc.b	$00
-L006e17:
-	dc.b	$02
+	ori.b	#$2,d1
 L006e18:
-	dc.b	$30
-L006e19:
-	dc.b	$2c
-L006e1a:
-	dc.b	$01
-L006e1b:
-	dc.b	$68
+	move.w	$168(a4),d0
 L006e1c:
-	dc.b	$67
-L006e1d:
-	dc.b	$1c
+	beq.b	L006e3a
 L006e1e:
-	dc.b	$4e
-L006e1f:
-	dc.b	$40
+	trap	#$0
 L006e20:
 	dc.b	$00
 L006e21:
@@ -21735,14 +21622,10 @@ L006e38:
 	dc.b	$01
 L006e39:
 	dc.b	$6c
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L006e3a:
-	dc.b	$60
-L006e3b:
-	dc.b	$00
-L006e3c:
-	dc.b	$c3
-L006e3d:
-	dc.b	$04
+	dc.w	$6000
+	dc.w	Q9_reschedule_trampolin_3140-*
 L006e3e:
 	andi.l	#$ffff,d0
 L006e44:
