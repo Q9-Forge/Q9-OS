@@ -2,3 +2,7 @@
 build/
 *.r68o
 src/**/*.out
+src/**/*.out2
+src/**/*.map
+src/**/*.symmap
+src/kernel/kernel_body_auto.r
