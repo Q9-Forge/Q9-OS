@@ -840,7 +840,7 @@ L000530:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L000532:
 	dc.w	$6100
-	dc.w	L003a06-*
+	dc.w	Q9_sleep_3a06-*
 L000536:
 	addq.l	#$8,sp
 L000538:
@@ -1573,7 +1573,7 @@ L000950:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L000954:
 	dc.w	$6100
-	dc.w	L0030a0-*
+	dc.w	Q9_move_30a0-*
 L000958:
 	movea.l	a2,sp
 L00095a:
@@ -3157,7 +3157,13 @@ L001288:
 	movem.l	(sp)+,d1/d2/a0/a4/a5
 L00128c:
 	rts
-L00128e:
+*----------------------------------------------------------------------
+* Q9_trans_128e  (0x00128e)
+* Baut D0=A5 (Basisadresse), D1=A5+0x20 auf und ruft eine Hilfsroutine bei 0x63f0 auf; Fehler wird ueber das Carry-Ori-Muster ($ori #1) signalisiert.
+* Entspricht F$Trans (Code 0x60), Adressuebersetzung fuer den aufrufenden Prozess.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_trans_128e:
 	moveq	#$20,d0
 L001290:
 	add.l	a5,d0
@@ -3179,7 +3185,13 @@ L0012a0:
 	ori	#$1,ccr
 L0012a4:
 	rts
-L0012a6:
+*----------------------------------------------------------------------
+* Q9_srqmem_12a6  (0x0012a6)
+* Duenner Wrapper: ruft Q9_fixed_alloc_wrap_12b4 auf und uebertraegt Adresse (D0) und Groesse/Restwert (A2) in den Parameterblock ((0,A5)/(0x28,A5)).
+* Entspricht F$SRqMem (Code 0x28), Supervisor-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_srqmem_12a6:
 	dc.b	$61
 L0012a7:
 	dc.b	$0c
@@ -3262,13 +3274,25 @@ L0012ec:
 	move.l	(sp)+,d0
 L0012ee:
 	rts
-L0012f0:
+*----------------------------------------------------------------------
+* Q9_srqcmem_12f0  (0x0012f0)
+* Pusht eine PC-relative Adresse als Parameter, sichert Register und springt in eine gemeinsame Fortsetzung bei 0x12ba (nicht separat benannt).
+* Entspricht F$SRqCMem (Code 0x5c), Supervisor-Tabellen-Eintrag -- die kontinuierliche/nicht-kontinuierliche Variante von F$SRqMem.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_srqcmem_12f0:
 	pea	L0012a8(pc)
 L0012f4:
 	movem.l	a2/d1/d0,-(sp)
 L0012f8:
 	bra.b	L0012ba
-L0012fa:
+*----------------------------------------------------------------------
+* Q9_srqmem_user_12fa  (0x0012fa)
+* User-Tabellen-Variante von F$SRqMem: baut den Aufrufparameterblock auf dem Stack auf (D0=SP) und ruft die volle Allokationsroutine bei 0x57be auf,
+* statt des Kurzwrappers, den die Supervisor-Variante (Q9_srqmem_12a6) nutzt. Entspricht F$SRqMem (Code 0x28), User-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_srqmem_user_12fa:
 	pea	L0012a8(pc)
 L0012fe:
 	movem.l	a2/d1/d0,-(sp)
@@ -3286,7 +3310,13 @@ L00130e:
 	addq.l	#$4,sp
 L001310:
 	bra.b	L0012c6
-L001312:
+*----------------------------------------------------------------------
+* Q9_srqcmem_user_1312  (0x001312)
+* User-Tabellen-Variante von F$SRqCMem: pusht eigene Parameter und springt dann mitten in den Koerper von Q9_srqmem_user_12fa (ab dessen Parameteraufbau),
+* nutzt also dieselbe Allokationsroutine 0x57be wie F$SRqMem. Entspricht F$SRqCMem (Code 0x5c), User-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_srqcmem_user_1312:
 	dc.b	$48
 L001313:
 	dc.b	$7a
@@ -3327,7 +3357,13 @@ L00132c:
 	addq.l	#$4,sp
 L00132e:
 	bra.b	L0012c6
-L001330:
+*----------------------------------------------------------------------
+* Q9_srtmem_user_1330  (0x001330)
+* User-Tabellen-Variante von F$SRtMem: ruft statt der direkten Freigabe Q9_dealloc_owned_5cd2 auf, das vorher per Q9_owns_range_5d68 prueft,
+* ob der freizugebende Bereich dem aufrufenden Prozess tatsaechlich gehoert. Entspricht F$SRtMem (Code 0x29), User-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_srtmem_user_1330:
 	movem.l	a2/d1/d0,-(sp)
 L001334:
 	move.l	a2,d1
@@ -3337,7 +3373,13 @@ L001336:
 	dc.w	Q9_dealloc_owned_5cd2-*
 L00133a:
 	bra.b	L0012c6
-L00133c:
+*----------------------------------------------------------------------
+* Q9_mem_query_133c  (0x00133c)
+* Liefert D0=A5 (Basisadresse) und D1=A5+0x24 (obere Grenze) an eine Hilfsroutine und teilt sich danach die Fehlerbehandlungs-Rueckkehr mit Q9_trans_128e.
+* Entspricht F$Mem (Code 0x07): liefert Speichergrenzen/-bedarf des aufrufenden Prozesses.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_mem_query_133c:
 	dc.b	$20
 L00133d:
 	dc.b	$0d
@@ -3392,7 +3434,13 @@ L001360:
 	ori	#$1,ccr
 L001364:
 	rts
-L001366:
+*----------------------------------------------------------------------
+* Q9_gblkmp_1366  (0x001366)
+* Ruft eine Hilfsroutine bei 0x6232 mit Parametern A5 (Blockadresse) und A0 auf; Fehler ueber das uebliche Carry-Ori-Muster.
+* Entspricht F$GBlkMp (Code 0x19): liefert Block-Map-Information (Speicherbelegung) zurueck.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_gblkmp_1366:
 	pea	$0(a5)
 L00136a:
 	move.l	a0,-(sp)
@@ -3410,7 +3458,13 @@ L001376:
 	ori	#$1,ccr
 L00137a:
 	rts
-L00137c:
+*----------------------------------------------------------------------
+* Q9_chkmem_user_137c  (0x00137c)
+* Trivialer Stub: setzt D1=0 (kein Fehlercode) und kehrt sofort zurueck, ohne den Speicherbereich tatsaechlich zu pruefen.
+* Entspricht F$ChkMem (Code 0x58), User-Tabellen-Eintrag -- in diesem Kernel-Build fuer User-Aufrufe faktisch eine Nulloperation.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_chkmem_user_137c:
 	dc.b	$72
 L00137d:
 	dc.b	$00
@@ -3464,7 +3518,7 @@ L0013b4:
 L0013b8:
 	moveq	#$0,d2
 L0013ba:
-	bsr.b	L0013d2
+	bsr.b	Q9_alarm_dispatch_core_13d2
 L0013bc:
 	lea	$48(sp),sp
 L0013c0:
@@ -3495,7 +3549,14 @@ L0013d0:
 	dc.b	$02
 L0013d1:
 	dc.b	$da
-L0013d2:
+*----------------------------------------------------------------------
+* Q9_alarm_dispatch_core_13d2  (0x0013d2)
+* Der eigentliche Kategorie-Dispatch-Kern von F$Alarm (D1.W=Alarm-Funktionscode, Sprungtabelle bei 0x13c6, siehe Q9_alarm_dispatch_1390).
+* Supervisor-Tabellen-Eintrag: verschachtelte F$Alarm-Aufrufe springen direkt hierher und ueberspringen den aeusseren Parameterblock-Aufbau,
+* den der User-Tabellen-Eintrag (Q9_alarm_dispatch_1390, per bsr von dort aus aufgerufen) zusaetzlich durchlaeuft.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_alarm_dispatch_core_13d2:
 	add.w	d1,d1
 L0013d4:
 	cmpi.w	#$c,d1
@@ -3748,7 +3809,7 @@ L001536:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L001538:
 	dc.w	$6100
-	dc.w	L002eea-*
+	dc.w	Q9_date_decompose_2eea-*
 L00153c:
 	move.l	d0,d3
 L00153e:
@@ -4028,7 +4089,13 @@ Q9_alarm_unimplemented_16a0:
 	dc.w	L001380-*
 L0016a4:
 	trapf.w	#$0
-L0016a8:
+*----------------------------------------------------------------------
+* Q9_allprc_16a8  (0x0016a8)
+* Tauscht A1/A2, ruft Q9_procdesc_alloc_16b6 auf und schreibt bei Erfolg den neuen Deskriptor nach (0x28,A5).
+* Entspricht F$AllPrc (Code 0x4b), Supervisor-Tabellen-Eintrag: alloziert einen neuen Prozessdeskriptor.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_allprc_16a8:
 	exg	a1,a2
 *----------------------------------------------------------------------
 * L0016aa  (0x0016aa)
@@ -4038,7 +4105,7 @@ L0016a8:
 * Details/Kontext: docs/REVERSE_ENGINEERING.md
 *----------------------------------------------------------------------
 L0016aa:
-	bsr.b	L0016b6
+	bsr.b	Q9_procdesc_alloc_16b6
 L0016ac:
 	bcs.b	L0016b4
 L0016ae:
@@ -4047,7 +4114,13 @@ L0016b0:
 	move.l	a2,$28(a5)
 L0016b4:
 	rts
-L0016b6:
+*----------------------------------------------------------------------
+* Q9_procdesc_alloc_16b6  (0x0016b6)
+* Gemeinsame Prozessdeskriptor-Allokationsroutine: liest den Modulzeiger aus (0x44,A6), ruft mit einer Typkennung (D1.W, hier 0xe5) Q9_desc_slot_alloc_171a auf
+* und verknuepft den neuen Deskriptor. Von F$AllPrc, F$Fork und F$DFork gemeinsam genutzt (nicht selbst ueber die Syscall-Tabelle erreichbar).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_procdesc_alloc_16b6:
 	movem.l	a2/a0/d2/d0,-(sp)
 L0016ba:
 	movea.l	$44(a6),a0
@@ -4056,7 +4129,7 @@ L0016be:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L0016c2:
 	dc.w	$6100
-	dc.w	L00171a-*
+	dc.w	Q9_desc_slot_alloc_171a-*
 L0016c6:
 	bcs.b	L001702
 L0016c8:
@@ -4089,10 +4162,16 @@ L001702:
 	movem.l	(sp)+,d0/d2/a0/a2
 L001706:
 	rts
-L001708:
+*----------------------------------------------------------------------
+* Q9_allpd_1708  (0x001708)
+* Ruft Q9_desc_slot_alloc_171a mit Typkennung 0xc8 auf und schreibt bei Erfolg Adresse (D0) und Deskriptorzeiger (A1) in den Parameterblock.
+* Entspricht F$AllPD (Code 0x30), Supervisor-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_allpd_1708:
 	move.w	#$c8,d1
 L00170c:
-	bsr.b	L00171a
+	bsr.b	Q9_desc_slot_alloc_171a
 L00170e:
 	bcs.b	L001718
 L001710:
@@ -4101,7 +4180,13 @@ L001714:
 	move.l	a1,$24(a5)
 L001718:
 	rts
-L00171a:
+*----------------------------------------------------------------------
+* Q9_desc_slot_alloc_171a  (0x00171a)
+* Allociert einen Tabellenplatz fuer einen getaggten Deskriptor, parametrisiert ueber eine Typkennung in D1.W (0xc8 bei F$AllPD, 0xe5 bei Prozesserzeugung),
+* ruft dafuer 0x12d8 auf (nicht separat benannt). Von Q9_procdesc_alloc_16b6 und F$AllPD (Q9_allpd_1708) gemeinsam genutzt.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_desc_slot_alloc_171a:
 	movem.l	a3/a2/d2/d1,-(sp)
 L00171e:
 	subq.l	#$8,sp
@@ -4484,7 +4569,13 @@ L001920:
 	rts
 L001922:
 	trapf.l	#$0
-L001928:
+*----------------------------------------------------------------------
+* Q9_chain_1928  (0x001928)
+* Erhoeht einen Verschachtelungszaehler (0x3ac,A4), markiert ggf. einen Eintrag in der Prozessliste (0x2ac,A4) und alloziert ueber Q9_fixed_alloc_wrap_12b4.
+* Entspricht F$Chain (Code 0x05): laedt ein neues Programmabbild in den aktuellen Prozess (Chain to New Program).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_chain_1928:
 	addq.l	#$1,$3ac(a4)
 L00192c:
 	move.l	$2ac(a4),d0
@@ -4896,7 +4987,13 @@ L001b44:
 	rts
 L001b46:
 	trapf
-L001b48:
+*----------------------------------------------------------------------
+* Q9_cpymem_1b48  (0x001b48)
+* Dispatcht ueber die Systemglobal-Tabelle ((0x160,A3)/(0x560,A3), A3=(0x3a4,A6)) an eine dort registrierte Handlerroutine (dasselbe Muster wie F$Sema).
+* Entspricht F$CpyMem (Code 0x1b): kopiert Speicher zwischen Adressraeumen (MMU-bewusst).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_cpymem_1b48:
 	move.l	d1,d2
 L001b4a:
 	movea.l	a1,a2
@@ -4950,7 +5047,13 @@ L001b84:
 	movea.l	(sp)+,a3
 L001b86:
 	rts
-L001b88:
+*----------------------------------------------------------------------
+* Q9_crc_1b88  (0x001b88)
+* Maskiert D1 auf 24 Bit (typisches OS-9-CRC24-Format) und ruft eine CRC-Berechnungsroutine bei ca. 0x1bc4 auf.
+* Entspricht F$CRC (Code 0x17): berechnet/prueft eine 24-Bit-Pruefsumme ueber einen Speicherbereich.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_crc_1b88:
 	move.l	d0,d3
 L001b8a:
 	move.l	a0,d0
@@ -5161,7 +5264,7 @@ L001c94:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L001c96:
 	dc.w	$6100
-	dc.w	L003a06-*
+	dc.w	Q9_sleep_3a06-*
 L001c9a:
 	movem.l	(sp)+,d0/d1/a1/a5
 L001c9e:
@@ -5183,7 +5286,7 @@ L001cb4:
 L001cb8:
 	move.l	a2,$4c(a6)
 L001cbc:
-	bsr.b	L001cd0
+	bsr.b	Q9_datmod_1cd0
 L001cbe:
 	subq.l	#$4,sp
 L001cc0:
@@ -5196,7 +5299,13 @@ L001ccc:
 	addq.l	#$4,sp
 L001cce:
 	rts
-L001cd0:
+*----------------------------------------------------------------------
+* Q9_datmod_1cd0  (0x001cd0)
+* Sucht per Q9_syscall_27d6 (Modultabellen-Suche) und Q9_module_name_match_32fa nach einem Modul und liefert dessen Datenbereichsadresse ((0x20,A5)).
+* Entspricht F$DatMod (Code 0x25): liefert den Datenbereich eines geladenen Moduls.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_datmod_1cd0:
 	movem.l	d4/d3,-(sp)
 L001cd4:
 	bclr.l	#$f,d2
@@ -5441,14 +5550,26 @@ L001e28:
 	rts
 L001e2a:
 	trapf.l	#$0
-L001e30:
+*----------------------------------------------------------------------
+* Q9_deltsk_user_1e30  (0x001e30)
+* Sehr kurzer Stub (loescht ein CCR-Flag, kehrt sofort zurueck) -- der eigentliche Aufgaben-Loeschcode wird hier nicht aufgerufen.
+* Entspricht F$DelTsk (Code 0x40), User-Tabellen-Eintrag; wirkt in diesem Kernel-Build fuer User-Aufrufe faktisch als Nulloperation.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_deltsk_user_1e30:
 	andi	#-$2,ccr
 L001e34:
 	rts
 L001e36:
 	trapf
+*----------------------------------------------------------------------
+* Q9_dexec_1e38  (0x001e38)
+* Loest per Q9_proc_id_lookup_2cee einen Prozessdeskriptor auf, vergleicht die Eltern-Kind-Beziehung ((0x2ac,A1) gegen A4) und mehrere Statusbits.
+* Entspricht F$DExec (Code 0x23): liefert Debug-/Ausfuehrungsstatus eines Prozesses.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
-L001e38:
+Q9_dexec_1e38:
 	dc.w	$6100
 	dc.w	Q9_proc_id_lookup_2cee-*
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
@@ -5746,8 +5867,14 @@ L001ffe:
 	dc.b	$00
 L001fff:
 	dc.b	$00
+*----------------------------------------------------------------------
+* Q9_dexit_2000  (0x002000)
+* Aehnliches Muster wie Q9_dexec_1e38 (Prozessdeskriptor-Validierung ueber Q9_proc_id_lookup_2cee), endet aber mit Sprung in Q9_proc_id_free_wrap_1e18.
+* Entspricht F$DExit (Code 0x24): beendet einen unter Debugger-Kontrolle laufenden Prozess.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
-L002000:
+Q9_dexit_2000:
 	dc.w	$6100
 	dc.w	Q9_proc_id_lookup_2cee-*
 L002004:
@@ -5786,10 +5913,16 @@ L002032:
 	rts
 L002034:
 	trapf.w	#$0
+*----------------------------------------------------------------------
+* Q9_dfork_2038  (0x002038)
+* Alloziert einen neuen Prozessdeskriptor ueber Q9_procdesc_alloc_16b6, verknuepft ihn mit dem Elternprozess (0x2ac,A1) und ruft eine weitere,
+* hier nicht separat benannte Initialisierungsroutine (0x28aa) auf -- dieselbe, die auch F$Fork nutzt. Entspricht F$DFork (Code 0x22): Kindprozess unter Debugger-Kontrolle erzeugen.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
-L002038:
+Q9_dfork_2038:
 	dc.w	$6100
-	dc.w	L0016b6-*
+	dc.w	Q9_procdesc_alloc_16b6-*
 L00203c:
 	bcs.b	L0020b2
 L00203e:
@@ -5900,7 +6033,13 @@ L0020ce:
 	dc.b	$04
 L0020cf:
 	dc.b	$18
-L0020d0:
+*----------------------------------------------------------------------
+* Q9_event_20d0  (0x0020d0)
+* Adressiert eine PC-relative Tabellenstruktur ueber A1 mit D1 als Wortindex (Bereichspruefung gegen 0x18).
+* Entspricht F$Event (Code 0x53): OS-9-Event-Mechanismus (Signal-/Wartepunkt-Verwaltung).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_event_20d0:
 	dc.b	$43
 L0020d1:
 	dc.b	$fa
@@ -7180,7 +7319,13 @@ L0026e4:
 	rts
 L0026e6:
 	trapf
-L0026e8:
+*----------------------------------------------------------------------
+* Q9_findpd_26e8  (0x0026e8)
+* Sucht in einer Tabelle (A1-Basis) per bereichsgeprueftem Index D0 und liefert den zugehoerigen Deskriptorzeiger.
+* Entspricht F$FindPD (Code 0x2f), Supervisor-Tabellen-Eintrag: findet einen Prozessdeskriptor anhand einer ID.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_findpd_26e8:
 	movea.l	a0,a1
 L0026ea:
 	cmp.w	(a1),d0
@@ -7218,7 +7363,13 @@ L002710:
 	rts
 L002712:
 	trapf.l	#$0
-L002718:
+*----------------------------------------------------------------------
+* Q9_firq_2718  (0x002718)
+* Waehlt ueber einen bereichsgeprueften Index D0 (Grenzen 0x64/0x80/0x100) einen Eintrag in der IRQ-Tabelle bei (0x8e4,A6) aus.
+* Entspricht F$FIRQ (Code 0x61), Supervisor-Tabellen-Eintrag: registriert einen schnellen (Fast-)IRQ-Handler.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_firq_2718:
 	tst.b	d1
 L00271a:
 	bne.b	L00277c
@@ -7334,7 +7485,13 @@ L0027bc:
 	bra.b	L002768
 L0027be:
 	trapf
-L0027c0:
+*----------------------------------------------------------------------
+* Q9_fmodul_27c0  (0x0027c0)
+* Ruft eine kleine Vorbereitungsroutine (0x27d4, setzt A2=0) auf, die direkt in Q9_syscall_27d6 (Modultabellen-Suche) durchfaellt,
+* und uebernimmt das Ergebnis in den Parameterblock. Entspricht F$FModul (Code 0x4e), Supervisor-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_fmodul_27c0:
 	bsr.b	L0027d4
 L0027c2:
 	bcs.b	L0027d2
@@ -7444,10 +7601,16 @@ L002862:
 	movem.l	(sp)+,d0/d1/d2/d3/a0/a1/a2
 L002866:
 	rts
+*----------------------------------------------------------------------
+* Q9_fork_2868  (0x002868)
+* Alloziert einen Prozessdeskriptor (Q9_procdesc_alloc_16b6), initialisiert ihn ueber dieselbe Hilfsroutine (0x28aa) wie F$DFork und reiht den
+* neuen Prozess direkt in die Scheduler-Ready-Queue ein (Sprung in Q9_scheduler_183a bei fehlender Debug-Kontrolle). Entspricht F$Fork (Code 0x03).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
-L002868:
+Q9_fork_2868:
 	dc.w	$6100
-	dc.w	L0016b6-*
+	dc.w	Q9_procdesc_alloc_16b6-*
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L00286c:
 	dc.w	$6500
@@ -8116,7 +8279,13 @@ L002c44:
 	rts
 L002c46:
 	trapf
-L002c48:
+*----------------------------------------------------------------------
+* Q9_gmoddr_2c48  (0x002c48)
+* Berechnet eine Groesse aus zwei Systemglobal-Feldern ((0x40,A6)-(0x3c,A6)) und uebergibt sie an Q9_field_tag_set_1b4c.
+* Entspricht F$GModDr (Code 0x1a): liefert Modulverzeichnis-Information.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_gmoddr_2c48:
 	move.l	$40(a6),d2
 L002c4c:
 	sub.l	$3c(a6),d2
@@ -8140,7 +8309,13 @@ L002c62:
 	dc.w	Q9_field_tag_set_1b4c-*
 L002c66:
 	trapf
-L002c68:
+*----------------------------------------------------------------------
+* Q9_gprdbt_2c68  (0x002c68)
+* Aehnliches Muster wie Q9_gmoddr_2c48, nutzt aber (0x44,A6) als Basis und ruft ebenfalls Q9_field_tag_set_1b4c.
+* Entspricht F$GPrDBT (Code 0x1f): liefert die Basistabelle der Prozessdeskriptoren.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_gprdbt_2c68:
 	movea.l	a0,a2
 L002c6a:
 	movea.l	$44(a6),a0
@@ -8172,7 +8347,13 @@ L002c80:
 *----------------------------------------------------------------------
 Q9_proc_priority_calc_2c84:
 	trapf.w	#$0
-L002c88:
+*----------------------------------------------------------------------
+* Q9_gprdsc_2c88  (0x002c88)
+* Loest per Q9_proc_id_lookup_2cee einen Prozessdeskriptor auf und liest Status- sowie Typfelder ((0x18,A1)/(0x20,A1)) aus.
+* Entspricht F$GPrDsc (Code 0x18): liefert Prozessdeskriptor-Daten zu einer Prozess-ID.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_gprdsc_2c88:
 	move.w	#$e0,d1
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L002c8c:
@@ -8244,7 +8425,13 @@ L002ce6:
 	dc.b	$00
 L002ce7:
 	dc.b	$00
-L002ce8:
+*----------------------------------------------------------------------
+* Q9_gprocp_2ce8  (0x002ce8)
+* Duenner Wrapper: ruft unmittelbar Q9_proc_id_lookup_2cee auf und springt in eine gemeinsame Fortsetzung.
+* Entspricht F$GProcP (Code 0x37): liefert den internen Zeiger auf einen Prozessdeskriptor.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_gprocp_2ce8:
 	dc.b	$61
 L002ce9:
 	dc.b	$04
@@ -8295,7 +8482,13 @@ L002d12:
 	rts
 L002d14:
 	trapf.w	#$0
-L002d18:
+*----------------------------------------------------------------------
+* Q9_gregor_2d18  (0x002d18)
+* Wandelt eine Tageszeit in Sekunden per Division durch 3600 (Stunden) und 60 (Minuten/Sekunden) in Kalenderfelder um.
+* Entspricht F$Gregor (Code 0x54): Julianisches Datum in Gregorianische Kalenderfelder umrechnen.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_gregor_2d18:
 	movem.l	d4/d3/d2,-(sp)
 L002d1c:
 	divu.w	#$e10,d0
@@ -8413,7 +8606,13 @@ L002dca:
 	rts
 L002dcc:
 	trapf.w	#$0
-L002dd0:
+*----------------------------------------------------------------------
+* Q9_icpt_2dd0  (0x002dd0)
+* Speichert einen Interrupt-/Signal-Handler-Zeiger (A0) und einen weiteren Parameter aus dem Aufruferblock im Prozessdeskriptor (A4).
+* Entspricht F$Icpt (Code 0x09): setzt einen Signal-Intercept-Handler.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_icpt_2dd0:
 	move.l	a0,$28(a4)
 L002dd4:
 	move.l	$38(a5),$2c(a4)
@@ -8421,7 +8620,13 @@ L002dda:
 	rts
 L002ddc:
 	trapf.w	#$0
-L002de0:
+*----------------------------------------------------------------------
+* Q9_id_2de0  (0x002de0)
+* Kopiert mehrere Felder (Prozess-ID, Owner, Zugriffsrechte) aus dem Prozessdeskriptor (A4) in den Parameterblock (A5).
+* Entspricht F$ID (Code 0x0c): liefert Prozess-Identifikationsdaten des aufrufenden Prozesses.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_id_2de0:
 	clr.w	$0(a5)
 L002de4:
 	move.w	$0(a4),$2(a5)
@@ -8441,7 +8646,13 @@ L002dfa:
 *----------------------------------------------------------------------
 Q9_irq_chain_lookup_2dfc:
 	trapf.w	#$0
-L002e00:
+*----------------------------------------------------------------------
+* Q9_irq_2e00  (0x002e00)
+* Waehlt analog zu Q9_firq_2718 einen Tabelleneintrag in der IRQ-Vektor-Struktur bei (0x8e4,A6) aus, mit erweitertem Bereichscheck (bis 0x100).
+* Entspricht F$IRQ (Code 0x2a), Supervisor-Tabellen-Eintrag: registriert/entfernt einen normalen IRQ-Handler.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_irq_2e00:
 	andi.w	#$ff,d0
 L002e04:
 	asl.w	#$2,d0
@@ -8583,7 +8794,13 @@ L002ede:
 	dc.b	$51
 L002edf:
 	dc.b	$fc
-L002ee0:
+*----------------------------------------------------------------------
+* Q9_julian_2ee0  (0x002ee0)
+* Ruft die gemeinsame Datums-Zerlegungsroutine Q9_date_decompose_2eea auf und sichert das Ergebnis.
+* Entspricht F$Julian (Code 0x20): wandelt eine Sekunden-Zeitangabe in ein Julianisches Datum um.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_julian_2ee0:
 	dc.b	$61
 L002ee1:
 	dc.b	$08
@@ -8603,7 +8820,12 @@ L002ee8:
 	dc.b	$4e
 L002ee9:
 	dc.b	$75
-L002eea:
+*----------------------------------------------------------------------
+* Q9_date_decompose_2eea  (0x002eea)
+* Gemeinsame Datums-/Zeit-Zerlegungsroutine, von F$Julian (Q9_julian_2ee0) und F$STime (Q9_stime_3c08) genutzt (nicht selbst ueber die Syscall-Tabelle erreichbar).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_date_decompose_2eea:
 	movem.l	d4/d3/d2/d1/d0,-(sp)
 L002eee:
 	moveq	#$0,d2
@@ -8701,7 +8923,13 @@ L002f6a:
 	movem.l	(sp)+,d0/d1/d2/d3/d4
 L002f6e:
 	rts
-L002f70:
+*----------------------------------------------------------------------
+* Q9_link_2f70  (0x002f70)
+* Ruft eine Modul-Verknuepfungsroutine (0x2fa4, nicht separat analysiert) auf und uebernimmt die Rueckgabewerte (D0/D1, A0/A1/A2) in den Parameterblock.
+* Entspricht F$Link (Code 0x00), Supervisor-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_link_2f70:
 	bsr.b	L002fa4
 L002f72:
 	bcs.b	L002f80
@@ -8753,7 +8981,13 @@ L002fb6:
 	movea.l	(sp)+,a4
 L002fb8:
 	bra.b	L002fca
-L002fba:
+*----------------------------------------------------------------------
+* Q9_link_user_2fba  (0x002fba)
+* User-Tabellen-Variante von F$Link: erhoeht einen Verschachtelungszaehler (0x3ac,A4), sucht das Modul ueber Q9_syscall_27d6 und ruft zusaetzlich
+* eine Statusroutine (0x2fdc) auf, mit Interrupt-Sperre waehrend der kritischen Sektion. Entspricht F$Link (Code 0x00), User-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_link_user_2fba:
 	dc.b	$48
 L002fbb:
 	dc.b	$7a
@@ -8917,7 +9151,13 @@ L00309a:
 	dc.w	L003d88-*
 L00309e:
 	rts
-L0030a0:
+*----------------------------------------------------------------------
+* Q9_move_30a0  (0x0030a0)
+* Kopiert einen Speicherbereich byteweise mit Ausrichtungsbehandlung (Alignment-Test per btst/scs), Quell-/Zieladresse werden vorab verglichen.
+* Entspricht F$Move (Code 0x38): kopiert Speicher innerhalb eines Adressraums.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_move_30a0:
 	movem.l	a2/a0/d2/d0,-(sp)
 L0030a4:
 	cmpa.l	a0,a2
@@ -9323,7 +9563,13 @@ L0032d6:
 	dc.w	Q9_exc_default_action_24d8-*
 L0032da:
 	trapf.l	#$0
-L0032e0:
+*----------------------------------------------------------------------
+* Q9_prsnam_32e0  (0x0032e0)
+* Parst einen Pfadnamen ueber die Hilfsroutine 0x32f0 (ueberspringt ein fuehrendes '/'-Zeichen) und liefert Zeiger/Laenge im Parameterblock zurueck.
+* Entspricht F$PrsNam (Code 0x10): zerlegt einen Pfadnamen in seine Bestandteile.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_prsnam_32e0:
 	bsr.b	L0032f0
 L0032e2:
 	movem.l	d0/d1,$0(a5)
@@ -9509,7 +9755,13 @@ L0033c4:
 	rts
 L0033c6:
 	trapf
-L0033c8:
+*----------------------------------------------------------------------
+* Q9_rte_33c8  (0x0033c8)
+* Dekrementiert unter Interrupt-Sperre einen Verschachtelungszaehler (0x370,A4) und stellt bei Erreichen von Null gesicherte Register (D5/D6)
+* sowie den Ausfuehrungskontext wieder her (Sprung nach 0xeda). Entspricht F$RTE (Code 0x1e): kehrt aus einer verschachtelten Systemroutine zurueck.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_rte_33c8:
 	move	sr,d3
 L0033ca:
 	ori	#$700,sr
@@ -9709,7 +9961,13 @@ L0034fa:
 	moveq	#$0,d0
 L0034fc:
 	rts
-L0034fe:
+*----------------------------------------------------------------------
+* Q9_send_34fe  (0x0034fe)
+* Loest per Q9_proc_id_lookup_2cee den Zielprozess auf, prueft ein Statusbit und traegt unter Interrupt-Sperre in dessen Signalwarteschlange
+* ((0x37c,A1) ff.) ein. Entspricht F$Send (Code 0x08): sendet ein Signal an einen anderen Prozess.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_send_34fe:
 	dc.b	$4a
 L0034ff:
 	dc.b	$40
@@ -9920,7 +10178,13 @@ L00362a:
 *----------------------------------------------------------------------
 Q9_module_patch_362c:
 	trapf.w	#$0
-L003630:
+*----------------------------------------------------------------------
+* Q9_setcrc_3630  (0x003630)
+* Prueft die Modul-ID-Signatur (0x4AFC) eines Moduls, berechnet dessen CRC ueber Hilfsroutinen (0x3660/0x1ba4, siehe auch F$CRC) und schreibt sie in den Header.
+* Entspricht F$SetCRC (Code 0x26): berechnet und setzt die Modul-Pruefsumme neu (z. B. nach einem Patch).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_setcrc_3630:
 	move.l	a0,-(sp)
 L003632:
 	cmpi.w	#$4afc,(a0)
@@ -9972,7 +10236,13 @@ L003674:
 	movea.l	(sp)+,a0
 L003676:
 	rts
-L003678:
+*----------------------------------------------------------------------
+* Q9_ssvc_3678  (0x003678)
+* Decodiert einen Dienstindex (D1) und schlaegt ihn in einer Tabelle nach ((0x3a4,A6)-relativ); bei ungueltigem Index Sprung zum gemeinsamen Fehler-Stub (0x1380).
+* Entspricht F$SSvc (Code 0x32), Supervisor-Tabellen-Eintrag: indirekter Aufruf eines registrierten Systemdienstes.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_ssvc_3678:
 	dc.b	$26
 L003679:
 	dc.b	$6d
@@ -10716,7 +10986,13 @@ L00383e:
 	dc.b	$00
 L00383f:
 	dc.b	$00
-L003840:
+*----------------------------------------------------------------------
+* Q9_setsys_3840  (0x003840)
+* Prueft mehrere Statusfelder des Prozessdeskriptors, bevor ein Systemglobal-Wert geschrieben wird (Details nicht vollstaendig nachvollzogen).
+* Entspricht F$SetSys (Code 0x27): setzt einen Systemglobal-Wert.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_setsys_3840:
 	dc.b	$4a
 L003841:
 	dc.b	$6c
@@ -11292,7 +11568,13 @@ L00395e:
 	dc.b	$00
 L00395f:
 	dc.b	$00
-L003960:
+*----------------------------------------------------------------------
+* Q9_sigmask_3960  (0x003960)
+* Manipuliert eine Signalmaske im Prozessdeskriptor abhaengig von Vorzeichen und Wert der Aufrufparameter (Details nicht vollstaendig nachvollzogen).
+* Entspricht F$SigMask (Code 0x57): setzt/liest die Signalmaske eines Prozesses.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sigmask_3960:
 	dc.b	$4a
 L003961:
 	dc.b	$80
@@ -11388,7 +11670,13 @@ L0039a2:
 	rts
 L0039a4:
 	trapf.w	#$0
-L0039a8:
+*----------------------------------------------------------------------
+* Q9_sigreset_39a8  (0x0039a8)
+* Gibt bedingungslos den Fehlercode 0xAC zurueck.
+* Entspricht F$SigReset (Code 0x63), Supervisor-Tabellen-Eintrag -- in diesem Kernel-Build nicht implementiert.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sigreset_39a8:
 	move.w	#$ac,d1
 L0039ac:
 	ori	#$1,ccr
@@ -11405,7 +11693,13 @@ L0039b6:
 	ori	#$1,ccr
 L0039ba:
 	rts
-L0039bc:
+*----------------------------------------------------------------------
+* Q9_sigreset_user_39bc  (0x0039bc)
+* Prueft ein Feld im Prozessdeskriptor (0x3b4,A4); der Fehlerpfad fuehrt in Richtung des bereits dokumentierten Fehler-Stubs Q9_err_ab_stub_39b2
+* (Details nicht vollstaendig nachvollzogen). Entspricht F$SigReset (Code 0x63), User-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sigreset_user_39bc:
 	dc.b	$4a
 L0039bd:
 	dc.b	$ac
@@ -11509,7 +11803,13 @@ L0039ee:
 	dc.b	$4e
 L0039ef:
 	dc.b	$75
-L0039f0:
+*----------------------------------------------------------------------
+* Q9_sleep_user_39f0  (0x0039f0)
+* Aehnliches Verzoegerungs-/Statusmuster wie Q9_wait_user_4488: loescht/setzt ein Statusbit (0x371,A4) und faellt in den Rest von Q9_sleep_3a06.
+* Entspricht F$Sleep (Code 0x0a), User-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sleep_user_39f0:
 	dc.b	$61
 L0039f1:
 	dc.b	$00
@@ -11553,7 +11853,13 @@ L003a04:
 	dc.b	$03
 L003a05:
 	dc.b	$71
-L003a06:
+*----------------------------------------------------------------------
+* Q9_sleep_3a06  (0x003a06)
+* Prueft, ob der aktuelle Prozess (A4) mit dem Aufrufer-Kontext (0x50,A6) uebereinstimmt, und haengt ihn ueber eine Hilfsroutine (0x3b96)
+* in eine Warteliste ein, mit Interrupt-Sperre waehrend der Statusaktualisierung. Entspricht F$Sleep (Code 0x0a), Supervisor-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sleep_3a06:
 	cmpa.l	$50(a6),a4
 L003a0a:
 	bne.b	L003a14
@@ -11847,8 +12153,14 @@ L003bc2:
 	movem.l	(sp)+,d1/d2
 L003bc6:
 	rts
+*----------------------------------------------------------------------
+* Q9_sprior_3bc8  (0x003bc8)
+* Loest den Zielprozess per Q9_proc_id_lookup_2cee auf, aktualisiert dessen Prioritaetsfelder ((0x18,A1)/(0x1a,A1)) und stoesst bei aktiven
+* Prozessen (Statusbyte 0x61) eine Neueinordnung an (Sprung in den F$AProc-Bereich bei 0x1844). Entspricht F$SPrior (Code 0x0d).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
-L003bc8:
+Q9_sprior_3bc8:
 	dc.w	$6100
 	dc.w	Q9_proc_id_lookup_2cee-*
 L003bcc:
@@ -11889,7 +12201,13 @@ L003c04:
 	rts
 L003c06:
 	trapf
-L003c08:
+*----------------------------------------------------------------------
+* Q9_stime_3c08  (0x003c08)
+* Zerlegt die neue Systemzeit ueber dieselbe Hilfsroutine wie F$Julian (Q9_date_decompose_2eea) und schreibt mehrere Systemzeit-Globalfelder
+* ((0x2a/0x30/0x34,A6)). Entspricht F$STime (Code 0x16): setzt die Systemzeit.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_stime_3c08:
 	tst.w	$14(a4)
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L003c0c:
@@ -11902,7 +12220,7 @@ L003c14:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L003c18:
 	dc.w	$6100
-	dc.w	L002eea-*
+	dc.w	Q9_date_decompose_2eea-*
 L003c1c:
 	move.l	d1,$30(a6)
 L003c20:
@@ -12091,20 +12409,26 @@ L003d2e:
 L003d30:
 	move.l	a0,$0(a4,d0.w*1)
 L003d34:
-	bra.b	L003d4a
+	bra.b	Q9_strap_3d4a
 L003d36:
 	clr.l	$0(a4,d0.w*1)
 L003d3a:
-	bra.b	L003d4a
+	bra.b	Q9_strap_3d4a
 L003d3c:
 	move.l	a0,$5c(a4,d0.w*1)
 L003d40:
 	move.l	a2,$34(a4,d0.w*1)
 L003d44:
-	bne.b	L003d4a
+	bne.b	Q9_strap_3d4a
 L003d46:
 	move.l	a2,$5c(a4,d0.w*1)
-L003d4a:
+*----------------------------------------------------------------------
+* Q9_strap_3d4a  (0x003d4a)
+* Durchsucht eine Trap-Handler-Tabelle (Abbruchwert -1) und liefert bei Nichtfinden Fehlercode 0x85.
+* Entspricht F$STrap (Code 0x0e): installiert einen Handler fuer TRAP #1-15.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_strap_3d4a:
 	move.w	(a1)+,d0
 L003d4c:
 	cmpi.w	#-$1,d0
@@ -12120,7 +12444,13 @@ L003d5c:
 	rts
 L003d5e:
 	trapf
-L003d60:
+*----------------------------------------------------------------------
+* Q9_suser_3d60  (0x003d60)
+* Prueft die Elternbeziehung ((0x38,A4)) und einen Berechtigungswert ((0x3a0,A4)), bevor die User-ID im Prozessdeskriptor ((0x14,A4)) geaendert wird.
+* Entspricht F$SUser (Code 0x1c): setzt die User-ID eines Prozesses.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_suser_3d60:
 	tst.w	$14(a4)
 L003d64:
 	beq.b	L003d82
@@ -12156,13 +12486,26 @@ L003d90:
 	rts
 L003d92:
 	trapf.l	#$0
-L003d98:
+*----------------------------------------------------------------------
+* Q9_sysdbg_user_3d98  (0x003d98)
+* Bereitet den Sprung in den residenten Debugger vor: sichert A4-A6/D0 und den User-Programmzaehler ((0x8ec,A6)), stellt anschliessend alle
+* Register aus dem Parameterblock wieder her. Entspricht F$SysDbg (Code 0x52), User-Tabellen-Eintrag (mit vorgeschalteter Berechtigungspruefung).
+* Dieselbe Route loest die im Rahmen der RomBug-Untersuchung dieser Sitzung beobachtete 'Timesharing HALTED'-Meldung aus (siehe docs/REVERSE_ENGINEERING.md).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sysdbg_user_3d98:
 	tst.l	$14(a4)
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L003d9c:
 	dc.w	$6600
 	dc.w	L003d88-*
-L003da0:
+*----------------------------------------------------------------------
+* Q9_sysdbg_3da0  (0x003da0)
+* Supervisor-Tabellen-Eintrag fuer denselben Debugger-Einsprung wie Q9_sysdbg_user_3d98, springt aber direkt in den gemeinsamen Kern
+* und ueberspringt die dortige Berechtigungspruefung. Entspricht F$SysDbg (Code 0x52), Supervisor-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sysdbg_3da0:
 	moveq	#$66,d0
 L003da2:
 	bsr.b	L003dc6
@@ -12253,7 +12596,13 @@ L003dfe:
 	dc.b	$64
 L003dff:
 	dc.b	$6c
-L003e00:
+*----------------------------------------------------------------------
+* Q9_sysid_3e00  (0x003e00)
+* Liest mehrere Systemglobal-Felder aus (Details nicht vollstaendig nachvollzogen).
+* Entspricht F$SysID (Code 0x55): liefert System-Identifikationsdaten.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sysid_3e00:
 	dc.b	$4c
 L003e01:
 	dc.b	$fa
@@ -12605,7 +12954,13 @@ L003eae:
 	dc.b	$00
 L003eaf:
 	dc.b	$00
-L003eb0:
+*----------------------------------------------------------------------
+* Q9_time_3eb0  (0x003eb0)
+* Liest die Systemzeit-Felder zurueck (Gegenstueck zu F$STime, siehe Q9_stime_3c08); Details nicht vollstaendig nachvollzogen.
+* Entspricht F$Time (Code 0x15): liefert die aktuelle Systemzeit.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_time_3eb0:
 	dc.b	$20
 L003eb1:
 	dc.b	$3c
@@ -12909,7 +13264,13 @@ L003f46:
 	dc.b	$4e
 L003f47:
 	dc.b	$75
-L003f48:
+*----------------------------------------------------------------------
+* Q9_tlink_user_3f48  (0x003f48)
+* Prueft den angeforderten Traptyp (Vergleich gegen 0xf) und liefert bei Erfolg eine Kennung (0xe3) zurueck.
+* Entspricht F$TLink (Code 0x21) -- laut Syscall-Tabellen-Befund nur in der User-Tabelle registriert, die Supervisor-Tabelle zeigt hier den Fehler-Stub.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_tlink_user_3f48:
 	dc.b	$32
 L003f49:
 	dc.b	$3c
@@ -13410,7 +13771,7 @@ L00404c:
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L004052:
 	dc.w	$6100
-	dc.w	L001330-*
+	dc.w	Q9_srtmem_user_1330-*
 L004056:
 	movea.l	(a3),a2
 L004058:
@@ -13435,7 +13796,13 @@ L00406e:
 	dc.b	$00
 L00406f:
 	dc.b	$00
-L004070:
+*----------------------------------------------------------------------
+* Q9_uacct_4070  (0x004070)
+* Sehr kurzer Stub (loescht ein CCR-Flag, kehrt sofort zurueck), aehnlich Q9_chkmem_user_137c.
+* Entspricht F$UAcct (Code 0x59) -- wirkt in diesem Kernel-Build praktisch als Nulloperation.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_uacct_4070:
 	dc.b	$02
 L004071:
 	dc.b	$3c
@@ -13479,7 +13846,7 @@ L004092:
 L004094:
 	move.l	$4(a2),d0
 L004098:
-	bsr.b	L0040b4
+	bsr.b	Q9_unlink_40b4
 L00409a:
 	bcs.b	L0040b2
 L00409c:
@@ -13500,7 +13867,13 @@ L0040b1:
 	dc.b	$5f
 L0040b2:
 	rts
-L0040b4:
+*----------------------------------------------------------------------
+* Q9_unlink_40b4  (0x0040b4)
+* Durchsucht eine Modul-Tabelle ((0x3c,A6) bis (0x40,A6), 16-Byte-Eintraege) linear nach einer Adresse und meldet Fehlercode 0xDD, falls nicht gefunden.
+* Entspricht F$UnLink (Code 0x02), Supervisor-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_unlink_40b4:
 	movem.l	a3/a2/a0,-(sp)
 L0040b8:
 	move.l	a2,d1
@@ -13748,7 +14121,13 @@ L004220:
 	rts
 L004222:
 	trapf.l	#$0
-L004228:
+*----------------------------------------------------------------------
+* Q9_unload_4228  (0x004228)
+* Sucht das Modul per Q9_syscall_27d6-Kette und ruft eine Entlade-/Freigaberoutine (0x410e, nicht separat benannt) auf, mit einem
+* Verschachtelungszaehler (0x3ac,A4) waehrend der Operation. Entspricht F$UnLoad (Code 0x1d).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_unload_4228:
 	addq.l	#$1,$3ac(a4)
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
 L00422c:
@@ -13782,7 +14161,13 @@ L004254:
 	rts
 L004256:
 	trapf
-L004258:
+*----------------------------------------------------------------------
+* Q9_vmodul_4258  (0x004258)
+* Ruft eine Validierungsroutine (0x429a, nicht separat benannt) auf und behandelt speziell den Fehlercode 0xE7.
+* Entspricht F$VModul (Code 0x2e), Supervisor-Tabellen-Eintrag: prueft ein Modul auf Gueltigkeit (CRC etc.).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_vmodul_4258:
 	movem.l	d4/d3,-(sp)
 L00425c:
 	moveq	#$0,d3
@@ -14168,8 +14553,14 @@ L004482:
 	rts
 L004484:
 	trapf.w	#$0
+*----------------------------------------------------------------------
+* Q9_wait_user_4488  (0x004488)
+* Durchsucht ueber eine Hilfsroutine (0x3984) offenbar die Kindprozessliste und setzt/loescht ein Statusbit (0x371,A4) je nach Ergebnis,
+* bevor es in den gemeinsamen Rest (Q9_wait_449e) faellt. Entspricht F$Wait (Code 0x04), User-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
 * Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
-L004488:
+Q9_wait_user_4488:
 	dc.w	$6100
 	dc.w	L003984-*
 L00448c:
@@ -14177,10 +14568,16 @@ L00448c:
 L004492:
 	tst.w	$26(a4)
 L004496:
-	beq.b	L00449e
+	beq.b	Q9_wait_449e
 L004498:
 	bset.b	#$7,$371(a4)
-L00449e:
+*----------------------------------------------------------------------
+* Q9_wait_449e  (0x00449e)
+* Wartet auf ein bestimmtes Kind (D0=Kind-Prozess-ID) via Q9_proc_id_lookup_2cee, benachrichtigt bei Fund den Elternprozess
+* (Q9_parent_notify_4518) und gibt dessen Prozess-ID frei (Q9_proc_id_free_wrap_1e18). Entspricht F$Wait (Code 0x04), Supervisor-Tabellen-Eintrag.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_wait_449e:
 	move.w	$6(a4),d0
 L0044a2:
 	beq.b	L00450e
@@ -14245,7 +14642,7 @@ L004502:
 L004506:
 	move	d1,sr
 L004508:
-	bra.b	L00449e
+	bra.b	Q9_wait_449e
 L00450a:
 	move	d1,sr
 L00450c:
@@ -14835,7 +15232,13 @@ L004822:
 	rts
 L004824:
 	trapf.w	#$0
-L004828:
+*----------------------------------------------------------------------
+* Q9_sema_4828  (0x004828)
+* Dispatcht analog zu F$CpyMem (Q9_cpymem_1b48) ueber die Systemglobal-Tabelle ((0x160,A3)/(0x560,A3)) an eine dort registrierte Handlerroutine.
+* Entspricht F$Sema (Code 0x62): Semaphor-Operation (Signal/Warten).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sema_4828:
 	movem.l	a2/a1/a0/d0,-(sp)
 L00482c:
 	move	sr,$0(sp)
