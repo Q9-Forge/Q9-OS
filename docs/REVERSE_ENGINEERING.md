@@ -1474,6 +1474,425 @@ Freigeben, Arena-Verwaltung, Pool-Lookup, Interrupt-Maskierung,
 generischer Deallokations-Tail und sogar ein Debug-Tracing-Hook — alle
 Bausteine gelesen und nachvollzogen.
 
+## Fund: `0xB2`–`0xDD` — Padding + neue indizierte Trampolin-Dispatch-Funktion (im Rahmen des `.s`-Nachbaus entdeckt)
+
+Beim adressweisen Nachbau (siehe `docs/REBUILD.md`) direkt nach dem
+ID-String gefunden, bisher nicht Teil der Dispatcher-Analyse:
+
+- **`0xB2`–`0xB7` (6 Byte): reines Padding.** `TRAPF.L #0` — ein
+  68020+-Opcode, der *niemals* auslöst (Bedingungscode "immer falsch"),
+  hier offenbar zweckentfremdet als 6-Byte-Füllsequenz, um die
+  nachfolgende Funktion auf eine 4-Byte-Adresse (`0xB8`) auszurichten
+  (der ID-String hat keine zu einer 4er-Grenze passende Länge).
+- **`0xB8`–`0xDD` (Funktion, `Q9_post_idstring_b2` vorläufig benannt):**
+  Erhöht den **IRQ-Verschachtelungszähler `(0x8bc,A6)`** (dasselbe Feld
+  wie in `Q9_disp_180`/`Q9_disp_8d0`) — deutet auf einen weiteren
+  IRQ-/Exception-nahen Kontext hin. Liest einen Index `D0` vom
+  Aufrufer-Stack (`(0xe,SP)`), und springt per **Trampolin** (PEA
+  Rücksprungadresse + gepushtes Sprungziel + `RTS`) indiziert in eine
+  **neue Tabelle bei `(0x8e4,A6)`** — Index wird *nicht* skaliert
+  (direkte Byte-Addition), der Aufrufer muss also bereits einen
+  passend skalierten Offset übergeben. Nach dem Laden des Sprungziels
+  wird `A2` zusätzlich aus `(0x400,A2)` neu geladen — **dasselbe
+  "Sekundärarray bei +0x400"-Muster**, das wir schon von den
+  Syscall-Tabellen (`Q9_disp_488`) kennen.
+- `(0x8e4,A6)` wurde schon einmal beiläufig in der Boot-Init-Funktion
+  gesehen (`0x6ade: move.l A1,(0x8e4,A6)`, direkt nach dem Setzen von
+  `(0x40,A6)` mit demselben Wert) — Zusammenhang/Zweck noch nicht
+  geklärt, könnte Zufall der Boot-Reihenfolge sein oder eine echte
+  gemeinsame Bedeutung haben.
+
+**Noch offen:** Wer ruft diese Funktion auf (noch keine Xref-Suche
+gemacht), was genau `(0x8e4,A6)` ist, und ob der Funktionsname
+`Q9_post_idstring_b2` durch einen passenderen ersetzt werden sollte,
+sobald der Aufrufer/Zweck klar ist.
+
+## Fund: Byte-exakter `.s`-Nachbau abgeschlossen, Einstiegspunkte umbenannt
+
+Der in `docs/REBUILD.md` beschriebene adressweise Nachbau (`src/kernel/kernel.r`,
+generiert über `tools/ghidra_to_r68.py`) ist fertig: `kernel.out` = 28476
+Byte, **0 abweichende Bytes** gegen `vendor/68020/dker030s`. Details zu
+den drei dafür nötigen Bugklassen (68020-Voll-/Brief-Format,
+r68-Branch-Autooptimierung trotz explizitem `.w`, Ghidra-
+Fehldisassemblierung einzelner Datenbytes) stehen in `REBUILD.md`, nicht
+hier — das ist reine Werkzeug-/Assembler-Mechanik, keine Kernel-Semantik.
+
+Im selben Zug wurden alle in dieser Datei dokumentierten, klar
+identifizierten Funktions-/Block-Einstiegspunkte in `kernel.r` von den
+generischen `Lxxxxxx`-Labels auf sprechende `Q9_*`-Namen umgestellt, mit
+einer Ein-Zeilen-Kommentarzeile darüber (eigene Formulierung, keine
+Übernahme von Microware-Text). Die Zuordnung Adresse→Name→Kommentar
+liegt zentral in `tools/ghidra_to_r68.py` (`LABEL_NAMES`/`FUNC_HEADER`),
+nicht in `kernel.r` selbst editiert, da die Datei bei jedem Lauf des
+Konverters neu generiert wird. Umfasst u. a.: alle 8 Exception-
+Dispatcher, den Scheduler (`Q9_scheduler_183a`), die komplette
+Speicherverwaltung (`Q9_mem_alloc_5440`, `Q9_mem_free_5a22`,
+`Q9_arena_lookup_5bac`, `Q9_freelist_bysize_5712`, u. a.), die
+Prozess-Terminierungskette (`Q9_proc_slot_cleanup_25f8`,
+`Q9_exc_default_action_24d8`, `Q9_proc_id_free_3370`, ...), die
+Panik-/Konsolen-Ausgabe (`Q9_panic_report_7f6`, `Q9_console_puts_850`,
+...) und die Trampolin-Mechanismen (`Q9_reschedule_trampolin_3140`,
+`Q9_trampolin_slot88_4078`, ...). Nur Funktions-*Einstiegspunkte*
+wurden umbenannt, nicht jede einzelne Instruktion darin — Details zu
+einzelnen Feldern/Schritten bleiben in den jeweiligen Fund-Abschnitten
+oben nachzuschlagen, nicht im Assembler-Kommentar dupliziert.
+
+**Noch offen für eine spätere Runde:** Adressen ohne eigenen Fund-
+Abschnitt (kleinere Hilfsfunktionen, `Q9_gap_*`/`Q9_gap2_*`-Inseln,
+Tabellen wie der EA-Decoder bei `0xb3a`) bleiben vorerst generisch
+benannt.
+
+## Fund: Zweite Gap-Runde — 10 verbliebene Code-Inseln untersucht
+
+Direkt im Anschluss an die vorige Runde die 10 laut Coverage-Sweep
+größten noch unaufgelösten `D`-Bereiche (>16 Byte) einzeln untersucht.
+Methodisch neu: `disassemble()` an der vermuteten Startadresse lieferte
+bei 5 davon `true`, aber **keine** tatsächliche Instruktion (Ghidra-
+API-Falle — der Rückgabewert bedeutet nur "kein Abbruch", nicht
+"erfolgreich decodiert"). Systematisches Durchprobieren der Offsets
+`+0` bis `+7` zeigte: bei vier Adressen fehlten exakt 2 Byte
+(Datenrest/Padding) vor dem echten Code, bei einer war die vermutete
+Startadresse schlicht ungerade (68k-Instruktionen müssen auf geraden
+Adressen liegen).
+
+Ergebnis pro Insel:
+
+- **`0x23d0`–`0x23db`** und **`0x23c0`–`0x23cf`**: zwei kleine, fast
+  identische Wrapper um einen neu gefundenen generischen Helfer bei
+  **`0x2398`** (`Q9_table_lookup_2398`): skaliert einen Index `*32`,
+  prüft ihn gegen ein Zähler-Feld `(0x3d0,A6)`, indiziert in ein Array
+  bei `(0x3cc,A6)` und vergleicht ein Tag-Wort im gefundenen Eintrag
+  gegen `(0,A5)` — ein neues, bestätigtes System-Global-Feldpaar
+  (32-Byte-Einträge, grenzgeprüft). Die beiden Wrapper nutzen das
+  Ergebnis für einen einfachen Zähler-Countdown bzw. eine
+  Feld-Kopie; Fehlerpfad `0x2432`.
+- **`0x244c`–`0x24b5`** (`Q9_scheduler_caller_244c`): ein **elfter
+  Aufrufer von `Q9_scheduler_183a`** (zusätzlich zu den bereits
+  bekannten 10) — läuft eine verkettete Liste ab, berechnet über
+  `Q9_table_lookup_2398` einen Prüf-/Sortierwert (inkl. Vergleich
+  gegen einen PC-relativen Tabellen-Anker `(-0x396,PC)`), ruft danach
+  `Q9_scheduler_183a` auf.
+- **`0x2dfc`–`0x2e49`** (`Q9_irq_chain_lookup_2dfc`) und
+  **`0x2eb2`–`0x2ee9`** (`Q9_irq_chain_insert_2eb2`): bilden zusammen
+  offenbar die **Registrierungshälfte** zur bereits bei `Q9_disp_180`
+  dokumentierten IRQ-Handler-Ketten-Suche — exakt dieselben
+  Vektor-Offsets `A6+D0+0x384` (Vektor `<0x80`) bzw. `A6+D0-0x5c`
+  (Vektor `≥0x80`) tauchen hier wieder auf. `0x2dfc` bildet den
+  Vektorwert auf einen Kettenkopf ab, `0x2eb2` durchsucht die Kette
+  und hängt einen neuen Handler-Deskriptor ein (mit **inline**
+  Interrupt-Maskierung `move SR,-(SP)`/`ori #0x700,SR` statt über die
+  bekannte `Q9_irq_mask_10e6`/`Q9_irq_unmask_10f2`-Primitive — beide
+  Muster existieren also parallel im Kernel).
+- **`0x2c84`–`0x2ce3`** (`Q9_proc_priority_calc_2c84`): ruft
+  `Q9_proc_id_lookup_2cee` auf, liest denselben Sortier-Schlüssel
+  `(0x2e0,A1)` wie `Q9_scheduler_183a`, zieht den globalen
+  Aging-Zähler `(0x3c4,A6)` ab und klemmt das Ergebnis gegen die
+  bekannte zweite Schwelle `(0x8a8,A6)` — vermutlich das
+  Gegenstück "aktuelle Priorität/Restzeit eines Prozesses abfragen"
+  zum Einfüge-Sortierschlüssel. Springt danach in eine gemeinsame
+  Feld-Kopierroutine bei `0x1b4c`.
+- **`0x1b4c`–`0x1ba3`** (`Q9_field_tag_set_1b4c`, Einstieg neu benannt,
+  Körper war schon vorher disassembliert): setzt ein **getaggtes
+  24-Bit-Feld** — Wert per `andi.l #$ffffff` auf 24 Bit maskiert,
+  danach das hohe Byte per `st` (Set-Byte-Instruktion) auf `0xFF`
+  erzwungen. Klassisches Tag+Wert-Packing in einem Langwort. Enthält
+  auch die schon länger bekannten Überlappungs-Ziele `0x1b90`/`0x1b9c`/
+  `0x1ba8` aus der Byte-Rekonstruktion.
+- **`0x3047`/`0x3048`–`0x3057`**: sehr kurzes Fragment (Countdown-Test,
+  Adressberechnung, `andi #$fffe,ccr`), Einbettung/Aufrufer nicht
+  geklärt — **ehrlich als nicht vollständig verstanden markiert**.
+- **`0x35f4`/`0x35f6`–`0x3615`** (`Q9_scheduler_caller_35f6`): ein
+  **zwölfter Aufrufer von `Q9_scheduler_183a`** — prüft Prozesszustand
+  `0x61` (`'a'`, aktiv) gegen ein Listenende, setzt Flag-Bit 7 in einem
+  Statusbyte `(0x371,A1)` und weckt den Prozess (`bsr Q9_scheduler_183a`).
+- **`0x39b2`–`0x39b9`** (`Q9_err_ab_stub_39b2`): winziger
+  Fehler-Rückgabe-Stub für Fehlercode `0xAB` — derselbe Code, den
+  `Q9_mem_alloc_5440` bei "keine Arena mit ausreichend freiem
+  Speicher" setzt. Der Rest des ursprünglich vermuteten 84-Byte-Blocks
+  dahinter (`0x39bc`–`0x3a05`) bleibt **nicht aufgelöst** (auch nach
+  Offset-Diagnose kein plausibler Instruktionsstrom gefunden).
+- **`0x362c`–`0x365f`** (`Q9_module_patch_362c`): ein **weiterer
+  Self-Modifying-Code-Patch-Mechanismus** nach demselben
+  `0x4AFC`-Platzhalter-Prinzip wie `Q9_reschedule_trampolin_3140`
+  (prüft `(A0)` gegen `0x4AFC`, patcht bei Bedarf), aber mit anderer
+  Zielstruktur (Checksummen-/Namensfeld-Manipulation statt reinem
+  Cache-Flush) — Details der Zielstruktur nicht im letzten Detail
+  verifiziert.
+- **`0x3dee`–`0x403a`** (588 Byte, größte verbliebene Insel): trotz
+  Offset-Diagnose (+2 liefert kurzzeitig plausible, aber isolierte
+  Instruktionen, direkt danach wieder undefiniert) **nicht sinnvoll
+  aufgelöst** — bleibt offen für einen künftigen, gezielteren Versuch
+  (z. B. Kontrollfluss-Verfolgung von einem bekannten Aufrufer aus,
+  statt linearer Offset-Suche).
+- **`0x6de2`–`0x6e3d`** (`Q9_boot_finalize_6de4`): der **fehlende
+  Abschluss des Kernel-Bootstraps**, direkt im Anschluss an das bereits
+  dokumentierte Ende von `Q9_kernel_init_67a0` bei `0x6de1`. Validiert
+  eine Prozess-ID über `Q9_proc_id_lookup_2cee`, invalidiert zwei
+  Deskriptorfelder `(0x18,A4)`/`(0x1a,A4)`, führt bedingt einen echten
+  `TRAP #0`-Aufruf aus (Funktionscode `D0=0`, vermutlich Modul-Anmeldung
+  o. ä.), setzt ein System-Global-Flag bei Offset `0x2` (`move.w
+  #1,(0x2,A6)` — bisher nur als "immer 0x0001 beobachtet, Bedeutung
+  offen" im Modul-Header-Kontext notiert, hier aber eindeutig ein
+  **System-Global**-Feld, nicht der Header), prüft/ruft dreimal
+  Tabellen-Slot-90-Bereichseinträge (`0x168`/`0x16a`/`0x16c`) per
+  `TRAP #0` auf, und **endet mit dem Sprung in
+  `Q9_reschedule_trampolin_3140`** — der Kernel übergibt hier also
+  buchstäblich die Kontrolle an den Scheduler, um den ersten Prozess zu
+  starten. Ein Nebenfund dabei war ein von Ghidra falsch als `ori.b
+  #0x7c,(A6)` disassembliertes 6-Byte-`move.w #1,(2,A6)` bei `0x6e10`
+  (per `FORCE_RAW_BYTES` in `tools/ghidra_to_r68.py` als Rohbytes
+  reproduziert, Sprungziel `0x6e12` liegt mitten darin und wurde per
+  `EQU`-Alias in `kernel.r` aufgelöst — derselbe Überlappungs-Trick wie
+  an den bereits bekannten Stellen).
+
+**Byte-Exaktheit nach dieser Runde erneut verifiziert**: `kernel.out` =
+28476 Byte, 0 abweichende Bytes gegen `vendor/68020/dker030s`. Zwei
+neue `FORCE_RAW_BYTES`-Fälle (`0020c2`, `006e10`) und ein neuer
+`EQU`-Überlappungs-Alias (`L006e12`) waren dafür nötig, siehe
+`tools/ghidra_to_r68.py`.
+
+**Ehrlich offen geblieben:** `0x3047`-Fragment (Kontext unklar),
+`0x39bc`–`0x3a05` (nach dem Fehler-Stub), und vor allem die große
+`0x3dee`–`0x403a`-Insel (588 Byte) — bei allen dreien half auch die
+Offset-Diagnose nicht zu einem zusammenhängenden, plausiblen
+Instruktionsstrom. Wurden **nicht** umbenannt/spekulativ dokumentiert.
+
+## Fund: Kategorien 1–5 von `Q9_category_dispatch_1390` gelesen (Korrektur der Kategorie-0-Deutung)
+
+Die restlichen 5 der 6 Kategorien gelesen (Kategorie 0 war schon als
+`Q9_category0_handler_1424` bekannt):
+
+- **Kategorie 1/2** (`Q9_timedesc_setup_1580`, Kat. 2 bei `0x1584` nur
+  4 Byte später, überspringt die erste Prüfung — dasselbe
+  Fallthrough-Muster wie bei den Exception-Dispatchern) und
+  **Kategorie 3/4** (`Q9_timedesc_setup_1534`, Kat. 4 bei `0x1548`
+  landet mitten in diesem Code, braucht kein eigenes Label, da nur
+  Tabellen-Rohbytes referenziert werden): beide validieren einen
+  Parameter, berechnen über die Konstante `0x15180` (86400 =
+  Sekunden/Tag) und die Systemzähler `(0x34,A6)`/`(0x30,A6)` einen
+  Tick-Wert — **exakt dieselbe Formel wie im periodischen Uhr-Tick-
+  Handler `Q9_clock_tick_6a8`** —, und rufen beide denselben Helfer
+  `Q9_timedesc_alloc_162c` auf.
+- **`Q9_timedesc_alloc_162c`**: alloziert einen **116-Byte-Deskriptor**
+  (über einen weiteren, noch nicht gelesenen Helfer bei `0x12b4`),
+  nullt mehrere Felder, hängt ihn in eine doppelt verkettete Liste bei
+  Offset `0x37c` **prozessrelativ** (`A4`, nicht System-Global — anders
+  als der gleichnamige Offset bei der Ready-Queue!) ein, und kopiert
+  72 Byte aus einer vom Aufrufer übergebenen Vorlage in den
+  Deskriptor.
+- **Kategorie 5** (`Q9_proc_stack_guard_init_16aa`): liest die
+  Prozess-ID-Tabelle `(0x44,A6)`, schreibt den **Stack-Kanarienvogel
+  "Jimi"** (`0x4A696D69`, dasselbe Magic wie in `Q9_disp_488`) an eine
+  berechnete Position, setzt zwei Zeitfelder aus denselben Tick-/
+  Tages-Systemzählern. Wirkt eher wie ein Teil der Stack-/Zeit-
+  Initialisierung bei der **Prozesserzeugung** als wie Kategorien 1–4.
+
+**Korrektur:** Die ursprüngliche Deutung von Kategorie 0
+(`Q9_category0_handler_1424`, "Liste angehängter Module") ist im
+Licht dieses Funds **zu vorsichtig hinterfragen** — die restlichen
+Kategorien deuten stark auf ein **zeitbasiertes Ereignis-/
+Deskriptorsystem pro Prozess** hin (Sleep-/Alarm-artig), nicht auf
+Modulverwaltung. Möglich, dass die 0xB0BD-signierten Einträge in
+Kategorie 0 tatsächlich dieselben Zeit-/Alarm-Deskriptoren sind, die
+Kategorien 1–4 anlegen (Kategorie 0 wäre dann das Aufräumen/
+Abbrechen). **Nicht als Fakt hingeschrieben** — nur als plausiblere
+Arbeitshypothese für den nächsten Lese-Durchgang markiert, echte
+Bestätigung bräuchte einen Blick auf den noch ungelesenen Allocator
+bei `0x12b4` und mindestens einen konkreten Aufrufer einer der
+Kategorien.
+
+## Fund: Timer-Hypothese gestützt — Aufrufer gefunden, Allocator gelesen
+
+**Aufrufer von `Q9_category_dispatch_1390` gesucht (per Xref über den
+kompletten Disassemblierungs-Dump):** Es gibt genau **einen** —
+`0x2602`, innerhalb `Q9_proc_slot_cleanup_25f8` (der bereits bekannten
+Prozessdeskriptor-Aufräumroutine), und zwar **immer mit Kategorie
+`D1=0`** (fest verdrahtet, `EXG A0,A4` tauscht kurz den zu
+terminierenden Prozess ein). Das heißt: `Q9_category_dispatch_1390`
+wird **ausschließlich beim Aufräumen eines Prozessdeskriptors**
+aufgerufen — passt sehr gut zur Deutung "Kategorie 0 räumt
+zeitbasierte Ereignis-/Alarm-Deskriptoren des sterbenden Prozesses
+auf", die Kategorien 1–5 selbst legen also vermutlich neue solche
+Deskriptoren an anderer Stelle an (noch nicht gefunden, welche
+öffentliche Funktion/welcher Syscall das tut).
+
+**`0x12b4` gelesen** (der von `Q9_timedesc_alloc_162c` genutzte
+Allocator, jetzt `Q9_fixed_alloc_wrap_12b4`): ruft **direkt
+`Q9_arena_alloc_526c`** auf — denselben generischen Speicherallokator,
+den auch die reguläre Kernel-Speicherverwaltung nutzt. Das heißt:
+**kein eigener Timer-Objekt-Pool**, Zeit-/Alarm-Deskriptoren sind
+ganz normale Heap-Objekte. Bestätigt außerdem präzise, was
+`Q9_dealloc_tail_131c` tut: **zwei separate, benachbarte
+Einstiegspunkte** statt einer Parameter-Verzweigung, wie zunächst
+vermutet — `0x131c` ruft `Q9_mem_free_5a22` direkt, `0x1330` die
+eigentumsgeprüfte `Q9_dealloc_owned_5cd2`, beide enden bei `0x12c6`.
+
+**Fazit:** Die Timer-/Alarm-Hypothese ist jetzt durch zwei
+unabhängige Indizien gestützt (identische Tick-Formel wie
+`Q9_clock_tick_6a8`, und Aufruf-Kontext ausschließlich beim
+Prozess-Cleanup) — aber weiterhin **nicht bewiesen**, da der
+öffentliche Erzeuger-Pfad (welcher Syscall legt so einen Deskriptor
+an?) noch nicht gefunden ist.
+
+## Fund: `Q9_alarm_dispatch_1390` = `F$Alarm` (Kernaufgabe geklärt, komplette Umbenennung)
+
+Auf Nutzerwunsch gezielt nach offiziellen Syscall-Namen gesucht: das
+Technical Manual (`68k_tech.pdf`, öffentliche Dokumentation, keine
+Microware-Quelltextübernahme) listet in Kapitel 4 "Interprocess
+Communications" die **fünf** benannten Unterfunktionen des
+`F$Alarm`-Syscalls — `A$Delete`, `A$Set`, `A$Cycle`, `A$AtDate`,
+`A$AtJul` — praktisch deckungsgleich mit unseren **6** gefundenen
+Kategorien. Der Appendix-D-Eintrag für `F$Alarm (User-State)` gibt
+zusätzlich die Registerkonvention:
+
+```
+Input:  d0.l = Alarm ID (oder 0), d1.w = Alarm-Funktionscode,
+        d2.l = Signalcode, d3.l = Zeitintervall (oder Zeit),
+        d4.l = Datum (bei absoluter Zeit)
+Output: d0.l = Alarm ID
+```
+
+**Drei unabhängige Bestätigungen, keine bloße Namensähnlichkeit:**
+
+1. **Registerbelegung passt exakt**: Kategorien 1–4 nutzen durchgehend
+   `D3` (Zeitintervall) und `D4` (Datum/Limit) für ihre Tick-Berechnung
+   — genau die im Handbuch dokumentierten Parameterregister.
+2. **`0xB0BD`-Signatur schließt sich**: `Q9_alarm_insert_15c4` (neu
+   gefunden, sortiertes Einfügen nach Fälligkeit) **setzt** die
+   `0xB0BD`-Signatur beim Anlegen eines Deskriptors — exakt die
+   Signatur, die `Q9_alarm_delete_1424` beim Durchlaufen der Liste
+   **prüft**. Damit ist geklärt: die schon ganz am Anfang der
+   Untersuchung im Modul-Header bei Offset `0x40` gefundene
+   `0xB0BD`-Konstante hat über diesen Umweg tatsächlich mit
+   Alarm-Deskriptoren zu tun, nicht mit Modulverwaltung.
+3. **Lazy-Hook-Registrierung**: `Q9_alarm_insert_15c4` registriert bei
+   Bedarf einmalig den periodischen Uhr-Tick-Hook
+   (`Q9_clock_hook_install_70c`) — der Kernel installiert den
+   Zeitgeber-Interrupt-Hook also erst, wenn tatsächlich ein Alarm
+   existiert. Klassisches Lazy-Init-Muster, passend zu einem
+   optionalen Feature wie Alarmen.
+
+**Vollständige Umbenennung** (alte Namen waren zu vorsichtig/falsch):
+`Q9_category_dispatch_1390` → **`Q9_alarm_dispatch_1390`**,
+`Q9_category0_handler_1424` → **`Q9_alarm_delete_1424`** (A$Delete),
+`Q9_module_unlink_14ae` → **`Q9_alarm_unlink_14ae`**,
+`Q9_timedesc_setup_1580`/`157e` → **`Q9_alarm_set_1580`/`157e`**
+(A$Set), `Q9_timedesc_setup_1534` → **`Q9_alarm_cycle_1534`**
+(A$Cycle), `Q9_timedesc_alloc_162c` → **`Q9_alarm_desc_alloc_162c`**,
+`Q9_proc_stack_guard_init_16aa` → **`Q9_alarm_atdate_16aa`** (A$AtDate/
+A$AtJul, teilen sich vermutlich denselben Code). Neu gefunden und
+benannt: `Q9_alarm_insert_15c4` (sortiertes Einfügen + Lazy-Hook) und
+`Q9_alarm_insert_wrap_161a` (dünner Wrapper darum).
+
+**Ehrlich offen:** Die genaue Zuordnung Kategorie→Unterfunktionsname
+ist bei Kategorie 5 (A$AtDate **oder** A$AtJul, evtl. beide über
+denselben Code) nicht letztgültig getrennt. Der öffentliche
+`TRAP #0`-Einstiegspunkt selbst (der `Q9_alarm_dispatch_1390` mit dem
+passenden `D1`-Wert aufruft) wurde nicht gesucht — nur der interne
+Weg über Tabellen-Slot 8. Byte-Exaktheit nach der kompletten
+Umbenennung erneut verifiziert: 0 Diffs.
+
+## Fund (Korrektur): Echte Sprungtabelle von `Q9_alarm_dispatch_1390` dekodiert
+
+Die Bytes bei `0x13c6`–`0x13d1` (bisher als "reine Tabellen-Rohbytes"
+abgetan) sind die **echte PC-relative Sprungtabelle** der 6 Alarm-
+Kategorien (Basis `0x13c6`, 6 Displacement-Worte, direkt im Code
+sichtbar über `lea (-0x2c,PC),A1` bei `0x13f0` + `move.w
+(0,A1,D1w),D1w` + `jmp (0,A1,D1w)` bei `0x13f4`–`0x13f8`). Dekodiert:
+
+| Kategorie | Tabellenwert | Ziel |
+|---|---|---|
+| 0 | `0x005e` | `0x1424` (`Q9_alarm_delete_1424`, A$Delete) |
+| 1 | `0x01b8` | `0x157e` (`Q9_alarm_set_157e`) |
+| 2 | `0x01ba` | `0x1580` (`Q9_alarm_set_1580`, A$Set) |
+| 3 | `0x016e` | `0x1534` (`Q9_alarm_cycle_1534`, A$Cycle) |
+| 4 | `0x017a` | `0x1540` (`Q9_alarm_cycle_1540`) |
+| 5 | `0x02da` | `0x16a0` = **`bra.w 0x1380`** (Fehler-Stub!) |
+
+**Korrektur zweier vorheriger Fehlannahmen:**
+
+1. Kategorie 1/2 waren vertauscht dokumentiert (0x157e war fälschlich
+   als "dritter, unbekannter Einstieg" beschrieben — es ist das
+   **echte** Kategorie-1-Ziel). Kategorie 4 wurde fälschlich als "landet
+   mitten in Kategorie 3s Code bei 0x1548" beschrieben — das reale
+   Ziel ist die saubere Adresse `0x1540` (`Q9_alarm_cycle_1540`),
+   4 Byte weiter als angenommen.
+2. **Kategorie 5 ist in diesem Kernel-Build schlicht nicht
+   implementiert** — sie springt direkt zum gemeinsamen Fehler-Stub.
+   Die Funktion bei `0x16aa`, die zuvor als "A$AtDate/A$AtJul" gedeutet
+   wurde, ist **nicht** über `Q9_alarm_dispatch_1390` erreichbar — ihr
+   tatsächlicher Aufrufer/Zweck ist wieder offen (Umbenennung
+   zurückgenommen, Fund-Beschreibung als Korrektur markiert statt
+   gelöscht).
+
+Byte-Exaktheit nach der Korrektur erneut verifiziert: 0 Diffs.
+
+**Wichtige Erkenntnis für die eigentliche Frage "kann man den
+`TRAP #0`-Nummern-Dispatcher genauso finden":** Diese 6-Einträge-Tabelle
+konnte nur deshalb direkt aus dem Code dekodiert werden, weil sie
+**statisch im Modul** liegt (ein kleiner, lokaler Dispatcher innerhalb
+derselben Funktion). Der große **256-Einträge-`TRAP #0`-Dispatcher**
+(`Q9_disp_488`, Tabellen `0x3a4`/`0x3a8,A6`) funktioniert nachweislich
+**anders**: Die Tabellen werden zur Boot-Zeit im RAM angelegt und aus
+einer Quelle kopiert, die selbst nur Code (Fehler-Stub +
+`Q9_alarm_dispatch_1390`) enthält, keine fertige 256-Einträge-Adress-
+liste (siehe Boot-Init-Fund weiter oben). Der eigentliche Trick, der
+bei `F$Alarm` funktioniert hat, lässt sich auf die Top-Level-
+Syscall-Nummer **nicht direkt übertragen** — dafür bräuchte es entweder
+das vollständige Verfolgen der Boot-Init-Registrierungslogik, oder
+Laufzeit-Inspektion im Emulator.
+
+## Fund: Versuch, weitere Syscalls zu lokalisieren (`F$SRqMem`) — Grenze der reinen Xref-Suche
+
+Analog versucht, `F$SRqMem`/`F$SRtMem` gegen `Q9_mem_alloc_5440`/
+`Q9_mem_free_5a22` zu verifizieren. Registerkonvention passt thematisch
+(16-Byte-Blockgröße aus dem Handbuch = dieselbe Konstante, die
+`Q9_const_init_4978` als `(0x70,A6)` setzt), aber die direkten
+Aufrufer von `Q9_mem_alloc_5440`/`Q9_mem_free_5a22` (gefunden per
+Xref-Suche im Disassemblierungs-Dump) sind selbst schon interne
+Verwaltungsroutinen (z. B. `0x617c`, das mit denselben
+Prozessdeskriptor-Feldern `(0x32c,A4)`/`(0x330,A4)` wie
+`Q9_proc_resource_free_62da` arbeitet) — **keiner sieht aus wie ein
+direkter `TRAP #0`-Handler**. Anders als bei `F$Alarm` (wo der Weg über
+Tabellen-Slot 8 und eine feste Kategorie-Nummer im Code sichtbar ist)
+lässt sich der öffentliche Einstiegspunkt für Speicher-Syscalls nicht
+per einfacher Xref-Suche finden, weil die Syscall-Tabellen
+(`0x3a4`/`0x3a8,A6`) erst zur Boot-Zeit befüllt werden und der
+Modul-Code selbst keine sichtbare "Funktionsnummer → Adresse"-Tabelle
+enthält (siehe Boot-Init-Fund oben). Um weitere Syscalls auf dieselbe
+Art wie `F$Alarm` zu bestätigen, müsste entweder der noch nicht
+vollständig gelesene Rest von `Q9_kernel_init_67a0` (die eigentliche
+Tabellenbefüllung) verfolgt werden, oder ein laufender Emulator die
+Tabellen zur Laufzeit inspizieren lassen.
+
+## Fund: Richtige Funktions-Header im Quellcode + vier nachgetragene Helfer
+
+Auf Nutzerwunsch die bisherigen Ein-Zeilen-Kommentare in `kernel.r` zu
+echten, mehrzeiligen Funktions-Headern ausgebaut (Zweck, wo bekannt
+Register-Konvention/Fehlercodes/Aufrufer, plus fester Verweis auf
+diese Datei für alle Details). Umgesetzt in `tools/ghidra_to_r68.py`
+über eine neue `emit_func_header()`-Hilfsfunktion, die `FUNC_HEADER`
+jetzt als Liste von Zeilen statt als einzelnen String interpretiert —
+rein kosmetisch (Kommentare, keine Bytes), Byte-Exaktheit unverändert
+bei 0 Diffs verifiziert.
+
+Dabei außerdem drei früher schon gelesene, aber nie in
+`LABEL_NAMES`/`FUNC_HEADER` übernommene Helferfunktionen nachgetragen
+(waren aus einer sehr frühen Diagnose-Sitzung noch offen):
+
+- **`Q9_module_name_match_32fa`** und **`Q9_pattern_match_1ab8`**
+  (Musterabgleich mit `*`-Wildcard): beide von `Q9_syscall_27d6`
+  aufgerufen, das selbst ebenfalls nachgetragen wurde (war schon aus
+  einer früheren Sitzung benannt, aber nie ins Konverter-Skript
+  übernommen worden).
+- **`Q9_dealloc_owned_5cd2`**: die in der Speicherverwaltungs-Runde als
+  "alternative Freigabe-Variante, noch nicht gelesen" vermerkte
+  Funktion — prüft vor der Freigabe per `Q9_owns_range_5d68`, ob der
+  Speicherblock wirklich dem aufrufenden Prozess gehört (Fehlercode
+  `0xD2` sonst), erst dann normale Freigabe. Wird von
+  `Q9_dealloc_tail_131c` als Alternative zu `Q9_mem_free_5a22`
+  angesprungen.
+
 ## Werkzeug-Hinweise (Ghidra headless)
 
 - Java: Homebrew-OpenJDK wird nicht automatisch gefunden —
@@ -1553,8 +1972,213 @@ ausgabe, Prozess-Terminierungslogik (`FUN_000024d8`, löst
    markiert (siehe Fund-Abschnitt). Noch offen: restliche
    `PLATZHALTER`-Felder einzeln verifizieren, echte Größe von
    `Q9_D_VctIrq` klären.
-8. Sobald ein Bereich vollständig verstanden ist: als eigene
-   `.s`-Quelle nachbauen, mit `vasm`/echtem `r68` assemblieren, Bytes
-   gegen das Original diffen (siehe Zieldefinition oben) — **das ist
-   jetzt der nächste große Schritt**, die Verstehensphase ist an einem
-   sehr weit fortgeschrittenen Punkt.
+8. **Erledigt:** `.r`-Quelle byte-exakt nachgebaut und mit den echten
+   Microware-Werkzeugen (`r68`/`l68`) assembliert/gelinkt, 0 abweichende
+   Bytes gegen das Original (siehe `docs/REBUILD.md` für die
+   Werkzeug-Mechanik, sowie den Fund-Abschnitt oben zu den umbenannten
+   Einstiegspunkten). Das war der ursprünglich hier als "nächster großer
+   Schritt" markierte Punkt.
+
+**Neuer nächster Schritt:** Adressen ohne eigenen Fund-Abschnitt
+weiterlesen und benennen (`Q9_gap_*`/`Q9_gap2_*`-Inseln aus Punkt 5,
+EA-Decoder-Tabelle `0xb3a`, `0x32fa`/`0x1ab8`/`0x5cd2` und weitere in
+den Fund-Abschnitten erwähnte, aber noch nicht gelesene Adressen), dann
+jeweils in `tools/ghidra_to_r68.py` (`LABEL_NAMES`/`FUNC_HEADER`)
+ergänzen und `kernel.r` neu generieren — Byte-Exaktheit bleibt dabei
+automatisch erhalten, solange nur Labels umbenannt und Kommentare
+ergänzt werden.
+
+## Fund: Laufzeit-Verifikation im Emulator — komplette Syscall-Tabelle benannt
+
+Auf Nutzeranregung eine Debug-Sondertaste in den `Q9-Flux`-Emulator
+eingebaut (separates Projekt, `Q9-Forge/Q9-Flux`, nicht Teil dieses
+Repos): `Ctrl-^` liest physischen RAM direkt über `q9_cb030_read32`
+(am emulierten CPU-Kern vorbei, keine MMU-Übersetzung, kein
+User-State-Privilegienproblem) und schreibt einen Dump nach
+`local_images/q9dbg_dump.txt`. Zwei Runden Live-Daten aus dem
+laufenden, bootenden `dker030s`-Kernel (identisch zu
+`vendor/68020/dker030s`, per Byte-Vergleich vorher bestätigt):
+
+**System-Global-Zeiger** bei physischer Adresse `0`: `0x00004a00`.
+Erste 4 Byte dort: `4a fc 00 01` — bestätigt live den in
+`Q9_trampolin_rescue_7be` dokumentierten Platzhalterwert `0x4AFC` an
+genau dieser Stelle.
+
+**Kernel-Basisadresse aus der Syscall-Tabelle abgeleitet:** Der mit
+Abstand häufigste Wert im `D_SysDis`-Array ist `0x00008480` (~150 von
+256 Slots) — das ist der gemeinsame Fehler-Stub (Modul-Offset `0x1380`,
+s. o.). Damit: **Kernel-Basis = `0x8480 − 0x1380 = 0x7100`**.
+
+### `D_ExcJmp`-Format entschlüsselt und Vektor-Tabelle 100 % bestätigt
+
+Jeder 10-Byte-Eintrag: `48 78 VVVV 4e f9 ZZZZZZZZ` = `PEA (VVVV).W ;
+JMP.L ZZZZZZZZ` — ein Trampolin, das eine mit der Vektornummer
+wachsende Kennung auf den Stack legt und zu einer festen Adresse
+springt. **Wichtig: Der Array-Index ist Vektor−2** (Vektoren 0/1 =
+Reset-SSP/PC laufen nie über diese Tabelle) — das ist der Punkt, an
+dem eine erste Auswertung mit sieben Stichproben eine scheinbare
+Diskrepanz zu unserer dokumentierten Tabelle zeigte, die sich nach
+Korrektur des Index-Fehlers vollständig auflöste. Alle Vektoren 2–63
+gelesen, jede einzelne Gruppengröße stimmt exakt:
+
+| Vektoren | Ziel (Kernel-Basis + …) | Dispatcher |
+|---|---|---|
+| 2–6, 8–12, 14–21, 46–61 | `+0x8d0` | `Q9_disp_8d0` |
+| 7 | `+0xba4` | `Q9_disp_ba4` (Trace) |
+| 13 | `+0x472` | `Q9_disp_452`-Körper (Uninit. Interrupt) |
+| 22 | `+0x452` | `Q9_disp_452` (Spurious) |
+| 23–29 | `+0x180` | `Q9_disp_180` (Autovektoren, 7 Stück) |
+| 30 | `+0x488` | `Q9_disp_488` (**TRAP #0**) |
+| 31–45 | `+0x5d0` | `Q9_disp_5d0` (TRAP #1–15, 15 Stück) |
+| 62–255 (Stichproben bis 200) | `+0x180` | `Q9_disp_180` (User-Defined) |
+
+Vektor 255 lieferte Ziel `0`, vermutlich weil dort das gültige
+Tabellenende bereits erreicht/überschritten ist (254 Einträge für
+Vektoren 2–255) — nicht weiter untersucht, keine praktische
+Relevanz.
+
+### Komplette Syscall-Tabelle (`D_SysDis`/`D_UsrDis`) namentlich zugeordnet
+
+Die offiziellen numerischen `F$`/`I$`-Funktionscodes (Standard-OS-9-API,
+öffentliche Aufrufkonvention) wurden **nur als privater Zahlen-Fakten-
+Check** herangezogen (analog zum bisherigen Vorgehen mit `sysglob.a`) —
+keine Textübernahme, eigene Formulierung. Ergebnis: **jeder** im
+Standard definierte Code hat einen echten, vom Fehler-Stub (`0x8480`)
+verschiedenen Slot-Wert; **jede** Codelücke zeigt exakt den Fehler-Stub.
+Kein einziger Ausreißer in ~100 geprüften Zuordnungen.
+
+`D_SysDis` @`0x54a10` (Supervisor/verschachtelter Aufruf) und `D_UsrDis`
+@`0x55210` (normaler User-Aufruf) — exakt `0x800` (2048) Byte
+auseinander, wie schon aus der `Q9_disp_488`-Disassemblierung
+hergeleitet. Werte unten sind die vollen physischen Adressen; Kernel-
+relativer Offset = Wert − `0x7100`.
+
+| Code | Name | D_SysDis | D_UsrDis | Bemerkung |
+|---|---|---|---|---|
+| `0x00` | F$Link | `0000a070` | `0000a0ba` | unterschiedlicher Einstieg je Tabelle (erwartbar, s. u.) |
+| `0x01` | F$Load | `0000e712` | `0000e712` | identisch |
+| `0x02` | F$UnLink | `0000b1b4` | `0000b178` | |
+| `0x03` | F$Fork | `00009968` | `00009968` | identisch |
+| `0x04` | F$Wait | `0000b59e` | `0000b588` | |
+| `0x05` | F$Chain | `00008a28` | `00008a28` | identisch |
+| `0x06` | F$Exit | `000095d8` | `000095d8` | identisch |
+| `0x07` | F$Mem | `0000843c` | `0000843c` | identisch |
+| `0x08` | F$Send | `0000a5fe` | `0000a5fe` | identisch |
+| `0x09` | F$Icpt | `00009ed0` | `00009ed0` | identisch |
+| `0x0a` | F$Sleep | `0000ab06` | `0000aaf0` | |
+| `0x0b` | F$SSpd | Fehler-Stub | Fehler-Stub | **nicht registriert** |
+| `0x0c` | F$ID | `00009ee0` | `00009ee0` | identisch |
+| `0x0d` | F$SPrior | `0000acc8` | `0000acc8` | identisch |
+| `0x0e` | F$STrap | `0000ae4a` | `0000ae4a` | identisch |
+| `0x0f` | F$PErr | `0000ea7e` | `0000ea7e` | identisch |
+| `0x10` | F$PrsNam | `0000a3e0` | `0000a3e0` | identisch |
+| `0x11` | F$CmpNam | `00008bb8` | `00008bb8` | identisch |
+| `0x12` | F$SchBit | `0000e542` | `0000e53c` | |
+| `0x13` | F$AllBit | `0000e486` | `0000e482` | |
+| `0x14` | F$DelBit | `0000e4ea` | `0000e4e6` | |
+| `0x15` | F$Time | `0000afb0` | `0000afb0` | identisch |
+| `0x16` | F$STime | `0000ad08` | `0000ad08` | identisch |
+| `0x17` | F$CRC | `00008c88` | `00008c88` | identisch |
+| `0x18` | F$GPrDsc | `00009d88` | `00009d88` | identisch |
+| `0x19` | F$GBlkMp | `00008466` | `00008466` | identisch |
+| `0x1a` | F$GModDr | `00009d48` | `00009d48` | identisch |
+| `0x1b` | F$CpyMem | `00008c48` | `00008c48` | identisch |
+| `0x1c` | F$SUser | `0000ae60` | `0000ae60` | identisch |
+| `0x1d` | F$UnLoad | `0000b328` | `0000b328` | identisch |
+| `0x1e` | F$RTE | `0000a4c8` | `0000a4c8` | identisch |
+| `0x1f` | F$GPrDBT | `00009d68` | `00009d68` | identisch |
+| `0x20` | F$Julian | `00009fe0` | `00009fe0` | identisch |
+| `0x21` | F$TLink | Fehler-Stub | `0000b048` | **nur User-Tabelle registriert** |
+| `0x22` | F$DFork | `00009138` | `00009138` | identisch |
+| `0x23` | F$DExec | `00008f38` | `00008f38` | identisch |
+| `0x24` | F$DExit | `00009100` | `00009100` | identisch |
+| `0x25` | F$DatMod | `00008dd0` | `00008dd0` | identisch |
+| `0x26` | F$SetCRC | `0000a730` | `0000a730` | identisch |
+| `0x27` | F$SetSys | `0000a940` | `0000a940` | identisch |
+| `0x28` | **F$SRqMem** | `000083a6` | `000083fa` | |
+| `0x29` | **F$SRtMem** | `0000841c` | `00008430` | |
+| `0x2a` | F$IRQ | `00009f00` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x2b` | F$IOQu | `0000f114` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x2c` | F$AProc | `0000893a` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x2d` | F$NProc | `0000a240` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x2e` | F$VModul | `0000b358` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x2f` | F$FindPD | `000097e8` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x30` | F$AllPD | `00008808` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x31` | F$RetPD | `0000a470` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x32` | F$SSvc | `0000a778` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x33` | F$IODel | `0000e6d6` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x37` | F$GProcP | `00009de8` | `00009de8` | identisch |
+| `0x38` | F$Move | `0000a1a0` | `0000a1a0` | identisch |
+| `0x39` | F$AllRAM | Fehler-Stub | Fehler-Stub | **nicht registriert** |
+| `0x3a` | F$Permit | `0000fb62` | `0000fb5a` | |
+| `0x3b` | F$Protect | `0000fd84` | `0000fd74` | |
+| `0x3f` | F$AllTsk | `0000faf0` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x40` | F$DelTsk | `0000fa68` | `00008f30` | deutlich unterschiedliche Adressen |
+| `0x4b` | F$AllPrc | `000087a8` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x4c` | F$DelPrc | `00008f18` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x4e` | F$FModul | `000098c0` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x52` | F$SysDbg | `0000aea0` | `0000ae98` | (das ist der Aufruf hinter dem `break`-Utility, s. u.) |
+| `0x53` | F$Event | `000091d0` | `000091d0` | identisch |
+| `0x54` | F$Gregor | `00009e18` | `00009e18` | identisch |
+| `0x55` | F$SysID | `0000af00` | `0000af00` | identisch |
+| `0x56` | **F$Alarm** | `000084d2` | `00008490` | **bestätigt `Q9_alarm_dispatch_1390`** |
+| `0x57` | F$SigMask | `0000aa60` | `0000aa60` | identisch |
+| `0x58` | F$ChkMem | `0000feba` | `0000847c` | deutlich unterschiedliche Adressen |
+| `0x59` | F$UAcct | `0000b170` | `0000b170` | identisch |
+| `0x5a` | F$CCtl | `0000f858` | `0000f83a` | |
+| `0x5b` | F$GSPUMp | `0000ff30` | `0000ff30` | identisch |
+| `0x5c` | F$SRqCMem | `000083f0` | `00008412` | |
+| `0x5d` | F$POSK | Fehler-Stub | Fehler-Stub | **nicht registriert** |
+| `0x5e` | F$Panic | Fehler-Stub | Fehler-Stub | **nicht registriert** (vermutlich intern, nicht tabellengetrieben) |
+| `0x5f` | F$MBuf | `00ee3d08` | Fehler-Stub | ungewöhnlicher Wert (oberes Byte belegt), **nur Supervisor**, nicht weiter untersucht |
+| `0x60` | F$Trans | `0000838e` | `0000838e` | identisch |
+| `0x61` | F$FIRQ | `00009818` | Fehler-Stub | **nur Supervisor-Tabelle** |
+| `0x62` | F$Sema | `0000b928` | `0000b928` | identisch |
+| `0x63` | F$SigReset | `0000aaa8` | `0000aabc` | |
+| `0x64`–`0x70` | F$DAttach…F$HLProto | Fehler-Stub | Fehler-Stub | **nicht registriert** (0x64/65/66/67/70 alle geprüft) |
+| `0x80` | I$Attach | `0000eb76` | `0000eb76` | identisch |
+| `0x81` | I$Detach | `0000ee9a` | `0000ee9a` | identisch |
+| `0x82` | I$Dup | `0000efc0` | `0000ef92` | |
+| `0x83` | I$Create | `0000f286` | `0000f264` | |
+| `0x84` | I$Open | `0000f286` | `0000f264` | **identischer Wert wie I$Create** in jeweils derselben Tabelle |
+| `0x85` | I$MakDir | `0000f1f2` | `0000f1f2` | identisch |
+| `0x86` | I$ChgDir | `0000edfa` | `0000edfa` | identisch |
+| `0x87` | I$Delete | `0000ee92` | `0000ee92` | identisch |
+| `0x88` | I$Seek | `0000f302` | `0000f2fc` | |
+| `0x89` | I$Read | `0000f2e2` | `0000f2a4` | |
+| `0x8a` | I$Write | `0000f394` | `0000f352` | |
+| `0x8b` | I$ReadLn | `0000f2e2` | `0000f2a4` | **identischer Wert wie I$Read** in jeweils derselben Tabelle |
+| `0x8c` | I$WritLn | `0000f394` | `0000f352` | **identischer Wert wie I$Write** in jeweils derselben Tabelle |
+| `0x8d` | I$GetStt | `0000efd4` | `0000efcc` | |
+| `0x8e` | I$SetStt | `0000f312` | `0000f30c` | |
+| `0x8f` | I$Close | `0000ee60` | `0000ee50` | |
+| `0x92` | I$SGetSt | `0000f062` | `0000f062` | identisch |
+
+Alle übrigen Codes im 0x00–0x92-Bereich, die hier nicht aufgeführt
+sind, sowie der komplette Bereich `0x93`–`0xff`: **Fehler-Stub in
+beiden Tabellen** (kein bekannter `F$`/`I$`-Code definiert).
+
+**Einordnung der Muster:**
+- Die meisten Funktionen haben **identische** Adressen in beiden
+  Tabellen — vermutlich, weil ihre Implementierung gar nicht zwischen
+  User- und Supervisor-Aufrufkontext unterscheiden muss.
+- Ein klarer Block reiner **Supervisor-only**-Funktionen (`F$IRQ`,
+  `F$IOQu`, `F$AProc`, `F$NProc`, `F$VModul`, `F$FindPD`, `F$AllPD`,
+  `F$RetPD`, `F$SSvc`, `F$IODel`, `F$AllTsk`, `F$AllPrc`, `F$DelPrc`,
+  `F$FModul`, `F$MBuf`, `F$FIRQ`) — passt zu Funktionen, die typischerweise
+  nur von Treibern/dem System selbst aufgerufen werden, nicht von
+  normalen User-Prozessen.
+- `F$TLink` umgekehrt **nur** in der User-Tabelle — passt zur
+  Beschreibung "Link trap subroutine package" (ein User-Prozess
+  installiert eigene Trap-Handler, s. `Q9_disp_5d0`).
+- `I$Create`/`I$Open` sowie `I$Read`/`I$ReadLn` und `I$Write`/`I$WritLn`
+  teilen sich jeweils denselben Adresswert — plausibel als interne
+  Weiterleitung (z. B. Create ruft Open mit einem Erzeugungsflag auf).
+- `F$SSpd`, `F$AllRAM`, `F$POSK`, `F$Panic` sind trotz definiertem
+  Code **nirgends** registriert — entweder in diesem Kernel-Build
+  nicht implementiert, oder anders (nicht tabellengetrieben) erreichbar.
+
+**Werkzeug:** Die Debug-Sondertaste lebt im separaten `Q9-Flux`-Projekt
+(`src/kernel/cb030run.{c,h}`, `src/hal/posix/hal_posix.c`, `Ctrl-^`),
+nicht in diesem Repository — dort als eigener Commit/PR zu behandeln,
+falls gewünscht.
