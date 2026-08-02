@@ -206,6 +206,78 @@ LABEL_NAMES = {
     "00161a": "Q9_alarm_insert_wrap_161a",  # duenner Wrapper um Q9_alarm_insert_15c4
     "0016a0": "Q9_alarm_unimplemented_16a0",  # echtes Kategorie-5-Ziel: nur bra.w zum Fehler-Stub (A$AtDate/A$AtJul nicht implementiert)
     "0012b4": "Q9_fixed_alloc_wrap_12b4",  # generischer Wrapper: alloziert ueber Q9_arena_alloc_526c, Groesse vom Aufrufer via Stack
+
+    # Laufzeitverifizierte Syscall-Tabelle (docs/REVERSE_ENGINEERING.md,
+    # "Komplette Syscall-Tabelle namentlich zugeordnet") vollstaendig im
+    # Quellcode verankert -- alle F$/I$-Einstiegspunkte, die dort noch keinen
+    # eigenen Namen hatten, plus drei zentrale, mehrfach genutzte Helfer.
+    "00128e": "Q9_trans_128e",
+    "0012a6": "Q9_srqmem_12a6",
+    "0012f0": "Q9_srqcmem_12f0",
+    "0012fa": "Q9_srqmem_user_12fa",
+    "001312": "Q9_srqcmem_user_1312",
+    "001330": "Q9_srtmem_user_1330",
+    "00133c": "Q9_mem_query_133c",
+    "001366": "Q9_gblkmp_1366",
+    "00137c": "Q9_chkmem_user_137c",
+    "0013d2": "Q9_alarm_dispatch_core_13d2",
+    "0016a8": "Q9_allprc_16a8",
+    "0016b6": "Q9_procdesc_alloc_16b6",
+    "00171a": "Q9_desc_slot_alloc_171a",
+    "001708": "Q9_allpd_1708",
+    "001928": "Q9_chain_1928",
+    "001b48": "Q9_cpymem_1b48",
+    "001b88": "Q9_crc_1b88",
+    "001cd0": "Q9_datmod_1cd0",
+    "001e30": "Q9_deltsk_user_1e30",
+    "001e38": "Q9_dexec_1e38",
+    "002000": "Q9_dexit_2000",
+    "002038": "Q9_dfork_2038",
+    "0020d0": "Q9_event_20d0",
+    "0026e8": "Q9_findpd_26e8",
+    "002718": "Q9_firq_2718",
+    "0027c0": "Q9_fmodul_27c0",
+    "002868": "Q9_fork_2868",
+    "002c48": "Q9_gmoddr_2c48",
+    "002c68": "Q9_gprdbt_2c68",
+    "002c88": "Q9_gprdsc_2c88",
+    "002ce8": "Q9_gprocp_2ce8",
+    "002d18": "Q9_gregor_2d18",
+    "002eea": "Q9_date_decompose_2eea",
+    "002dd0": "Q9_icpt_2dd0",
+    "002de0": "Q9_id_2de0",
+    "002e00": "Q9_irq_2e00",
+    "002ee0": "Q9_julian_2ee0",
+    "002f70": "Q9_link_2f70",
+    "002fba": "Q9_link_user_2fba",
+    "0030a0": "Q9_move_30a0",
+    "0032e0": "Q9_prsnam_32e0",
+    "0033c8": "Q9_rte_33c8",
+    "0034fe": "Q9_send_34fe",
+    "003630": "Q9_setcrc_3630",
+    "003678": "Q9_ssvc_3678",
+    "003840": "Q9_setsys_3840",
+    "003960": "Q9_sigmask_3960",
+    "0039a8": "Q9_sigreset_39a8",
+    "0039bc": "Q9_sigreset_user_39bc",
+    "0039f0": "Q9_sleep_user_39f0",
+    "003a06": "Q9_sleep_3a06",
+    "003bc8": "Q9_sprior_3bc8",
+    "003c08": "Q9_stime_3c08",
+    "003d4a": "Q9_strap_3d4a",
+    "003d60": "Q9_suser_3d60",
+    "003d98": "Q9_sysdbg_user_3d98",
+    "003da0": "Q9_sysdbg_3da0",
+    "003e00": "Q9_sysid_3e00",
+    "003eb0": "Q9_time_3eb0",
+    "003f48": "Q9_tlink_user_3f48",
+    "004070": "Q9_uacct_4070",
+    "0040b4": "Q9_unlink_40b4",
+    "004228": "Q9_unload_4228",
+    "004258": "Q9_vmodul_4258",
+    "004488": "Q9_wait_user_4488",
+    "00449e": "Q9_wait_449e",
+    "004828": "Q9_sema_4828",
 }
 
 # Kurze Funktions-Header-Kommentare (eine Zeile Zusammenfassung, ggf.
@@ -498,6 +570,276 @@ FUNC_HEADER = {
         "Generischer Wrapper: alloziert einen Block ueber Q9_arena_alloc_526c (Klassen-Tag D1=0, Groesse vom Aufrufer per Stack-Parameter),",
         "setzt Carry bei Fehlschlag. Direkter Aufrufer von Q9_alarm_desc_alloc_162c; benachbarte Varianten (0x12d8, 0x12fa) allozieren+kopieren",
         "bzw. nutzen einen anderen Allocator-Einstieg (0x57be) -- eine kleine Familie generischer Alloc-Wrapper, nicht selbst timerspezifisch.",
+    ],
+
+    "00128e": [
+        "Baut D0=A5 (Basisadresse), D1=A5+0x20 auf und ruft eine Hilfsroutine bei 0x63f0 auf; Fehler wird ueber das Carry-Ori-Muster ($ori #1) signalisiert.",
+        "Entspricht F$Trans (Code 0x60), Adressuebersetzung fuer den aufrufenden Prozess.",
+    ],
+    "0012a6": [
+        "Duenner Wrapper: ruft Q9_fixed_alloc_wrap_12b4 auf und uebertraegt Adresse (D0) und Groesse/Restwert (A2) in den Parameterblock ((0,A5)/(0x28,A5)).",
+        "Entspricht F$SRqMem (Code 0x28), Supervisor-Tabellen-Eintrag.",
+    ],
+    "0012f0": [
+        "Pusht eine PC-relative Adresse als Parameter, sichert Register und springt in eine gemeinsame Fortsetzung bei 0x12ba (nicht separat benannt).",
+        "Entspricht F$SRqCMem (Code 0x5c), Supervisor-Tabellen-Eintrag -- die kontinuierliche/nicht-kontinuierliche Variante von F$SRqMem.",
+    ],
+    "0012fa": [
+        "User-Tabellen-Variante von F$SRqMem: baut den Aufrufparameterblock auf dem Stack auf (D0=SP) und ruft die volle Allokationsroutine bei 0x57be auf,",
+        "statt des Kurzwrappers, den die Supervisor-Variante (Q9_srqmem_12a6) nutzt. Entspricht F$SRqMem (Code 0x28), User-Tabellen-Eintrag.",
+    ],
+    "001312": [
+        "User-Tabellen-Variante von F$SRqCMem: pusht eigene Parameter und springt dann mitten in den Koerper von Q9_srqmem_user_12fa (ab dessen Parameteraufbau),",
+        "nutzt also dieselbe Allokationsroutine 0x57be wie F$SRqMem. Entspricht F$SRqCMem (Code 0x5c), User-Tabellen-Eintrag.",
+    ],
+    "001330": [
+        "User-Tabellen-Variante von F$SRtMem: ruft statt der direkten Freigabe Q9_dealloc_owned_5cd2 auf, das vorher per Q9_owns_range_5d68 prueft,",
+        "ob der freizugebende Bereich dem aufrufenden Prozess tatsaechlich gehoert. Entspricht F$SRtMem (Code 0x29), User-Tabellen-Eintrag.",
+    ],
+    "00133c": [
+        "Liefert D0=A5 (Basisadresse) und D1=A5+0x24 (obere Grenze) an eine Hilfsroutine und teilt sich danach die Fehlerbehandlungs-Rueckkehr mit Q9_trans_128e.",
+        "Entspricht F$Mem (Code 0x07): liefert Speichergrenzen/-bedarf des aufrufenden Prozesses.",
+    ],
+    "001366": [
+        "Ruft eine Hilfsroutine bei 0x6232 mit Parametern A5 (Blockadresse) und A0 auf; Fehler ueber das uebliche Carry-Ori-Muster.",
+        "Entspricht F$GBlkMp (Code 0x19): liefert Block-Map-Information (Speicherbelegung) zurueck.",
+    ],
+    "00137c": [
+        "Trivialer Stub: setzt D1=0 (kein Fehlercode) und kehrt sofort zurueck, ohne den Speicherbereich tatsaechlich zu pruefen.",
+        "Entspricht F$ChkMem (Code 0x58), User-Tabellen-Eintrag -- in diesem Kernel-Build fuer User-Aufrufe faktisch eine Nulloperation.",
+    ],
+    "0013d2": [
+        "Der eigentliche Kategorie-Dispatch-Kern von F$Alarm (D1.W=Alarm-Funktionscode, Sprungtabelle bei 0x13c6, siehe Q9_alarm_dispatch_1390).",
+        "Supervisor-Tabellen-Eintrag: verschachtelte F$Alarm-Aufrufe springen direkt hierher und ueberspringen den aeusseren Parameterblock-Aufbau,",
+        "den der User-Tabellen-Eintrag (Q9_alarm_dispatch_1390, per bsr von dort aus aufgerufen) zusaetzlich durchlaeuft.",
+    ],
+    "0016a8": [
+        "Tauscht A1/A2, ruft Q9_procdesc_alloc_16b6 auf und schreibt bei Erfolg den neuen Deskriptor nach (0x28,A5).",
+        "Entspricht F$AllPrc (Code 0x4b), Supervisor-Tabellen-Eintrag: alloziert einen neuen Prozessdeskriptor.",
+    ],
+    "0016b6": [
+        "Gemeinsame Prozessdeskriptor-Allokationsroutine: liest den Modulzeiger aus (0x44,A6), ruft mit einer Typkennung (D1.W, hier 0xe5) Q9_desc_slot_alloc_171a auf",
+        "und verknuepft den neuen Deskriptor. Von F$AllPrc, F$Fork und F$DFork gemeinsam genutzt (nicht selbst ueber die Syscall-Tabelle erreichbar).",
+    ],
+    "00171a": [
+        "Allociert einen Tabellenplatz fuer einen getaggten Deskriptor, parametrisiert ueber eine Typkennung in D1.W (0xc8 bei F$AllPD, 0xe5 bei Prozesserzeugung),",
+        "ruft dafuer 0x12d8 auf (nicht separat benannt). Von Q9_procdesc_alloc_16b6 und F$AllPD (Q9_allpd_1708) gemeinsam genutzt.",
+    ],
+    "001708": [
+        "Ruft Q9_desc_slot_alloc_171a mit Typkennung 0xc8 auf und schreibt bei Erfolg Adresse (D0) und Deskriptorzeiger (A1) in den Parameterblock.",
+        "Entspricht F$AllPD (Code 0x30), Supervisor-Tabellen-Eintrag.",
+    ],
+    "001928": [
+        "Erhoeht einen Verschachtelungszaehler (0x3ac,A4), markiert ggf. einen Eintrag in der Prozessliste (0x2ac,A4) und alloziert ueber Q9_fixed_alloc_wrap_12b4.",
+        "Entspricht F$Chain (Code 0x05): laedt ein neues Programmabbild in den aktuellen Prozess (Chain to New Program).",
+    ],
+    "001b48": [
+        "Dispatcht ueber die Systemglobal-Tabelle ((0x160,A3)/(0x560,A3), A3=(0x3a4,A6)) an eine dort registrierte Handlerroutine (dasselbe Muster wie F$Sema).",
+        "Entspricht F$CpyMem (Code 0x1b): kopiert Speicher zwischen Adressraeumen (MMU-bewusst).",
+    ],
+    "001b88": [
+        "Maskiert D1 auf 24 Bit (typisches OS-9-CRC24-Format) und ruft eine CRC-Berechnungsroutine bei ca. 0x1bc4 auf.",
+        "Entspricht F$CRC (Code 0x17): berechnet/prueft eine 24-Bit-Pruefsumme ueber einen Speicherbereich.",
+    ],
+    "001cd0": [
+        "Sucht per Q9_syscall_27d6 (Modultabellen-Suche) und Q9_module_name_match_32fa nach einem Modul und liefert dessen Datenbereichsadresse ((0x20,A5)).",
+        "Entspricht F$DatMod (Code 0x25): liefert den Datenbereich eines geladenen Moduls.",
+    ],
+    "001e30": [
+        "Sehr kurzer Stub (loescht ein CCR-Flag, kehrt sofort zurueck) -- der eigentliche Aufgaben-Loeschcode wird hier nicht aufgerufen.",
+        "Entspricht F$DelTsk (Code 0x40), User-Tabellen-Eintrag; wirkt in diesem Kernel-Build fuer User-Aufrufe faktisch als Nulloperation.",
+    ],
+    "001e38": [
+        "Loest per Q9_proc_id_lookup_2cee einen Prozessdeskriptor auf, vergleicht die Eltern-Kind-Beziehung ((0x2ac,A1) gegen A4) und mehrere Statusbits.",
+        "Entspricht F$DExec (Code 0x23): liefert Debug-/Ausfuehrungsstatus eines Prozesses.",
+    ],
+    "002000": [
+        "Aehnliches Muster wie Q9_dexec_1e38 (Prozessdeskriptor-Validierung ueber Q9_proc_id_lookup_2cee), endet aber mit Sprung in Q9_proc_id_free_wrap_1e18.",
+        "Entspricht F$DExit (Code 0x24): beendet einen unter Debugger-Kontrolle laufenden Prozess.",
+    ],
+    "002038": [
+        "Alloziert einen neuen Prozessdeskriptor ueber Q9_procdesc_alloc_16b6, verknuepft ihn mit dem Elternprozess (0x2ac,A1) und ruft eine weitere,",
+        "hier nicht separat benannte Initialisierungsroutine (0x28aa) auf -- dieselbe, die auch F$Fork nutzt. Entspricht F$DFork (Code 0x22): Kindprozess unter Debugger-Kontrolle erzeugen.",
+    ],
+    "0020d0": [
+        "Adressiert eine PC-relative Tabellenstruktur ueber A1 mit D1 als Wortindex (Bereichspruefung gegen 0x18).",
+        "Entspricht F$Event (Code 0x53): OS-9-Event-Mechanismus (Signal-/Wartepunkt-Verwaltung).",
+    ],
+    "0026e8": [
+        "Sucht in einer Tabelle (A1-Basis) per bereichsgeprueftem Index D0 und liefert den zugehoerigen Deskriptorzeiger.",
+        "Entspricht F$FindPD (Code 0x2f), Supervisor-Tabellen-Eintrag: findet einen Prozessdeskriptor anhand einer ID.",
+    ],
+    "002718": [
+        "Waehlt ueber einen bereichsgeprueften Index D0 (Grenzen 0x64/0x80/0x100) einen Eintrag in der IRQ-Tabelle bei (0x8e4,A6) aus.",
+        "Entspricht F$FIRQ (Code 0x61), Supervisor-Tabellen-Eintrag: registriert einen schnellen (Fast-)IRQ-Handler.",
+    ],
+    "0027c0": [
+        "Ruft eine kleine Vorbereitungsroutine (0x27d4, setzt A2=0) auf, die direkt in Q9_syscall_27d6 (Modultabellen-Suche) durchfaellt,",
+        "und uebernimmt das Ergebnis in den Parameterblock. Entspricht F$FModul (Code 0x4e), Supervisor-Tabellen-Eintrag.",
+    ],
+    "002868": [
+        "Alloziert einen Prozessdeskriptor (Q9_procdesc_alloc_16b6), initialisiert ihn ueber dieselbe Hilfsroutine (0x28aa) wie F$DFork und reiht den",
+        "neuen Prozess direkt in die Scheduler-Ready-Queue ein (Sprung in Q9_scheduler_183a bei fehlender Debug-Kontrolle). Entspricht F$Fork (Code 0x03).",
+    ],
+    "002c48": [
+        "Berechnet eine Groesse aus zwei Systemglobal-Feldern ((0x40,A6)-(0x3c,A6)) und uebergibt sie an Q9_field_tag_set_1b4c.",
+        "Entspricht F$GModDr (Code 0x1a): liefert Modulverzeichnis-Information.",
+    ],
+    "002c68": [
+        "Aehnliches Muster wie Q9_gmoddr_2c48, nutzt aber (0x44,A6) als Basis und ruft ebenfalls Q9_field_tag_set_1b4c.",
+        "Entspricht F$GPrDBT (Code 0x1f): liefert die Basistabelle der Prozessdeskriptoren.",
+    ],
+    "002c88": [
+        "Loest per Q9_proc_id_lookup_2cee einen Prozessdeskriptor auf und liest Status- sowie Typfelder ((0x18,A1)/(0x20,A1)) aus.",
+        "Entspricht F$GPrDsc (Code 0x18): liefert Prozessdeskriptor-Daten zu einer Prozess-ID.",
+    ],
+    "002ce8": [
+        "Duenner Wrapper: ruft unmittelbar Q9_proc_id_lookup_2cee auf und springt in eine gemeinsame Fortsetzung.",
+        "Entspricht F$GProcP (Code 0x37): liefert den internen Zeiger auf einen Prozessdeskriptor.",
+    ],
+    "002d18": [
+        "Wandelt eine Tageszeit in Sekunden per Division durch 3600 (Stunden) und 60 (Minuten/Sekunden) in Kalenderfelder um.",
+        "Entspricht F$Gregor (Code 0x54): Julianisches Datum in Gregorianische Kalenderfelder umrechnen.",
+    ],
+    "002eea": [
+        "Gemeinsame Datums-/Zeit-Zerlegungsroutine, von F$Julian (Q9_julian_2ee0) und F$STime (Q9_stime_3c08) genutzt (nicht selbst ueber die Syscall-Tabelle erreichbar).",
+    ],
+    "002dd0": [
+        "Speichert einen Interrupt-/Signal-Handler-Zeiger (A0) und einen weiteren Parameter aus dem Aufruferblock im Prozessdeskriptor (A4).",
+        "Entspricht F$Icpt (Code 0x09): setzt einen Signal-Intercept-Handler.",
+    ],
+    "002de0": [
+        "Kopiert mehrere Felder (Prozess-ID, Owner, Zugriffsrechte) aus dem Prozessdeskriptor (A4) in den Parameterblock (A5).",
+        "Entspricht F$ID (Code 0x0c): liefert Prozess-Identifikationsdaten des aufrufenden Prozesses.",
+    ],
+    "002e00": [
+        "Waehlt analog zu Q9_firq_2718 einen Tabelleneintrag in der IRQ-Vektor-Struktur bei (0x8e4,A6) aus, mit erweitertem Bereichscheck (bis 0x100).",
+        "Entspricht F$IRQ (Code 0x2a), Supervisor-Tabellen-Eintrag: registriert/entfernt einen normalen IRQ-Handler.",
+    ],
+    "002ee0": [
+        "Ruft die gemeinsame Datums-Zerlegungsroutine Q9_date_decompose_2eea auf und sichert das Ergebnis.",
+        "Entspricht F$Julian (Code 0x20): wandelt eine Sekunden-Zeitangabe in ein Julianisches Datum um.",
+    ],
+    "002f70": [
+        "Ruft eine Modul-Verknuepfungsroutine (0x2fa4, nicht separat analysiert) auf und uebernimmt die Rueckgabewerte (D0/D1, A0/A1/A2) in den Parameterblock.",
+        "Entspricht F$Link (Code 0x00), Supervisor-Tabellen-Eintrag.",
+    ],
+    "002fba": [
+        "User-Tabellen-Variante von F$Link: erhoeht einen Verschachtelungszaehler (0x3ac,A4), sucht das Modul ueber Q9_syscall_27d6 und ruft zusaetzlich",
+        "eine Statusroutine (0x2fdc) auf, mit Interrupt-Sperre waehrend der kritischen Sektion. Entspricht F$Link (Code 0x00), User-Tabellen-Eintrag.",
+    ],
+    "0030a0": [
+        "Kopiert einen Speicherbereich byteweise mit Ausrichtungsbehandlung (Alignment-Test per btst/scs), Quell-/Zieladresse werden vorab verglichen.",
+        "Entspricht F$Move (Code 0x38): kopiert Speicher innerhalb eines Adressraums.",
+    ],
+    "0032e0": [
+        "Parst einen Pfadnamen ueber die Hilfsroutine 0x32f0 (ueberspringt ein fuehrendes '/'-Zeichen) und liefert Zeiger/Laenge im Parameterblock zurueck.",
+        "Entspricht F$PrsNam (Code 0x10): zerlegt einen Pfadnamen in seine Bestandteile.",
+    ],
+    "0033c8": [
+        "Dekrementiert unter Interrupt-Sperre einen Verschachtelungszaehler (0x370,A4) und stellt bei Erreichen von Null gesicherte Register (D5/D6)",
+        "sowie den Ausfuehrungskontext wieder her (Sprung nach 0xeda). Entspricht F$RTE (Code 0x1e): kehrt aus einer verschachtelten Systemroutine zurueck.",
+    ],
+    "0034fe": [
+        "Loest per Q9_proc_id_lookup_2cee den Zielprozess auf, prueft ein Statusbit und traegt unter Interrupt-Sperre in dessen Signalwarteschlange",
+        "((0x37c,A1) ff.) ein. Entspricht F$Send (Code 0x08): sendet ein Signal an einen anderen Prozess.",
+    ],
+    "003630": [
+        "Prueft die Modul-ID-Signatur (0x4AFC) eines Moduls, berechnet dessen CRC ueber Hilfsroutinen (0x3660/0x1ba4, siehe auch F$CRC) und schreibt sie in den Header.",
+        "Entspricht F$SetCRC (Code 0x26): berechnet und setzt die Modul-Pruefsumme neu (z. B. nach einem Patch).",
+    ],
+    "003678": [
+        "Decodiert einen Dienstindex (D1) und schlaegt ihn in einer Tabelle nach ((0x3a4,A6)-relativ); bei ungueltigem Index Sprung zum gemeinsamen Fehler-Stub (0x1380).",
+        "Entspricht F$SSvc (Code 0x32), Supervisor-Tabellen-Eintrag: indirekter Aufruf eines registrierten Systemdienstes.",
+    ],
+    "003840": [
+        "Prueft mehrere Statusfelder des Prozessdeskriptors, bevor ein Systemglobal-Wert geschrieben wird (Details nicht vollstaendig nachvollzogen).",
+        "Entspricht F$SetSys (Code 0x27): setzt einen Systemglobal-Wert.",
+    ],
+    "003960": [
+        "Manipuliert eine Signalmaske im Prozessdeskriptor abhaengig von Vorzeichen und Wert der Aufrufparameter (Details nicht vollstaendig nachvollzogen).",
+        "Entspricht F$SigMask (Code 0x57): setzt/liest die Signalmaske eines Prozesses.",
+    ],
+    "0039a8": [
+        "Gibt bedingungslos den Fehlercode 0xAC zurueck.",
+        "Entspricht F$SigReset (Code 0x63), Supervisor-Tabellen-Eintrag -- in diesem Kernel-Build nicht implementiert.",
+    ],
+    "0039bc": [
+        "Prueft ein Feld im Prozessdeskriptor (0x3b4,A4); der Fehlerpfad fuehrt in Richtung des bereits dokumentierten Fehler-Stubs Q9_err_ab_stub_39b2",
+        "(Details nicht vollstaendig nachvollzogen). Entspricht F$SigReset (Code 0x63), User-Tabellen-Eintrag.",
+    ],
+    "0039f0": [
+        "Aehnliches Verzoegerungs-/Statusmuster wie Q9_wait_user_4488: loescht/setzt ein Statusbit (0x371,A4) und faellt in den Rest von Q9_sleep_3a06.",
+        "Entspricht F$Sleep (Code 0x0a), User-Tabellen-Eintrag.",
+    ],
+    "003a06": [
+        "Prueft, ob der aktuelle Prozess (A4) mit dem Aufrufer-Kontext (0x50,A6) uebereinstimmt, und haengt ihn ueber eine Hilfsroutine (0x3b96)",
+        "in eine Warteliste ein, mit Interrupt-Sperre waehrend der Statusaktualisierung. Entspricht F$Sleep (Code 0x0a), Supervisor-Tabellen-Eintrag.",
+    ],
+    "003bc8": [
+        "Loest den Zielprozess per Q9_proc_id_lookup_2cee auf, aktualisiert dessen Prioritaetsfelder ((0x18,A1)/(0x1a,A1)) und stoesst bei aktiven",
+        "Prozessen (Statusbyte 0x61) eine Neueinordnung an (Sprung in den F$AProc-Bereich bei 0x1844). Entspricht F$SPrior (Code 0x0d).",
+    ],
+    "003c08": [
+        "Zerlegt die neue Systemzeit ueber dieselbe Hilfsroutine wie F$Julian (Q9_date_decompose_2eea) und schreibt mehrere Systemzeit-Globalfelder",
+        "((0x2a/0x30/0x34,A6)). Entspricht F$STime (Code 0x16): setzt die Systemzeit.",
+    ],
+    "003d4a": [
+        "Durchsucht eine Trap-Handler-Tabelle (Abbruchwert -1) und liefert bei Nichtfinden Fehlercode 0x85.",
+        "Entspricht F$STrap (Code 0x0e): installiert einen Handler fuer TRAP #1-15.",
+    ],
+    "003d60": [
+        "Prueft die Elternbeziehung ((0x38,A4)) und einen Berechtigungswert ((0x3a0,A4)), bevor die User-ID im Prozessdeskriptor ((0x14,A4)) geaendert wird.",
+        "Entspricht F$SUser (Code 0x1c): setzt die User-ID eines Prozesses.",
+    ],
+    "003d98": [
+        "Bereitet den Sprung in den residenten Debugger vor: sichert A4-A6/D0 und den User-Programmzaehler ((0x8ec,A6)), stellt anschliessend alle",
+        "Register aus dem Parameterblock wieder her. Entspricht F$SysDbg (Code 0x52), User-Tabellen-Eintrag (mit vorgeschalteter Berechtigungspruefung).",
+        "Dieselbe Route loest die im Rahmen der RomBug-Untersuchung dieser Sitzung beobachtete 'Timesharing HALTED'-Meldung aus (siehe docs/REVERSE_ENGINEERING.md).",
+    ],
+    "003da0": [
+        "Supervisor-Tabellen-Eintrag fuer denselben Debugger-Einsprung wie Q9_sysdbg_user_3d98, springt aber direkt in den gemeinsamen Kern",
+        "und ueberspringt die dortige Berechtigungspruefung. Entspricht F$SysDbg (Code 0x52), Supervisor-Tabellen-Eintrag.",
+    ],
+    "003e00": [
+        "Liest mehrere Systemglobal-Felder aus (Details nicht vollstaendig nachvollzogen).",
+        "Entspricht F$SysID (Code 0x55): liefert System-Identifikationsdaten.",
+    ],
+    "003eb0": [
+        "Liest die Systemzeit-Felder zurueck (Gegenstueck zu F$STime, siehe Q9_stime_3c08); Details nicht vollstaendig nachvollzogen.",
+        "Entspricht F$Time (Code 0x15): liefert die aktuelle Systemzeit.",
+    ],
+    "003f48": [
+        "Prueft den angeforderten Traptyp (Vergleich gegen 0xf) und liefert bei Erfolg eine Kennung (0xe3) zurueck.",
+        "Entspricht F$TLink (Code 0x21) -- laut Syscall-Tabellen-Befund nur in der User-Tabelle registriert, die Supervisor-Tabelle zeigt hier den Fehler-Stub.",
+    ],
+    "004070": [
+        "Sehr kurzer Stub (loescht ein CCR-Flag, kehrt sofort zurueck), aehnlich Q9_chkmem_user_137c.",
+        "Entspricht F$UAcct (Code 0x59) -- wirkt in diesem Kernel-Build praktisch als Nulloperation.",
+    ],
+    "0040b4": [
+        "Durchsucht eine Modul-Tabelle ((0x3c,A6) bis (0x40,A6), 16-Byte-Eintraege) linear nach einer Adresse und meldet Fehlercode 0xDD, falls nicht gefunden.",
+        "Entspricht F$UnLink (Code 0x02), Supervisor-Tabellen-Eintrag.",
+    ],
+    "004228": [
+        "Sucht das Modul per Q9_syscall_27d6-Kette und ruft eine Entlade-/Freigaberoutine (0x410e, nicht separat benannt) auf, mit einem",
+        "Verschachtelungszaehler (0x3ac,A4) waehrend der Operation. Entspricht F$UnLoad (Code 0x1d).",
+    ],
+    "004258": [
+        "Ruft eine Validierungsroutine (0x429a, nicht separat benannt) auf und behandelt speziell den Fehlercode 0xE7.",
+        "Entspricht F$VModul (Code 0x2e), Supervisor-Tabellen-Eintrag: prueft ein Modul auf Gueltigkeit (CRC etc.).",
+    ],
+    "004488": [
+        "Durchsucht ueber eine Hilfsroutine (0x3984) offenbar die Kindprozessliste und setzt/loescht ein Statusbit (0x371,A4) je nach Ergebnis,",
+        "bevor es in den gemeinsamen Rest (Q9_wait_449e) faellt. Entspricht F$Wait (Code 0x04), User-Tabellen-Eintrag.",
+    ],
+    "00449e": [
+        "Wartet auf ein bestimmtes Kind (D0=Kind-Prozess-ID) via Q9_proc_id_lookup_2cee, benachrichtigt bei Fund den Elternprozess",
+        "(Q9_parent_notify_4518) und gibt dessen Prozess-ID frei (Q9_proc_id_free_wrap_1e18). Entspricht F$Wait (Code 0x04), Supervisor-Tabellen-Eintrag.",
+    ],
+    "004828": [
+        "Dispatcht analog zu F$CpyMem (Q9_cpymem_1b48) ueber die Systemglobal-Tabelle ((0x160,A3)/(0x560,A3)) an eine dort registrierte Handlerroutine.",
+        "Entspricht F$Sema (Code 0x62): Semaphor-Operation (Signal/Warten).",
     ],
 }
 

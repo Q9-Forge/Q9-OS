@@ -2182,3 +2182,92 @@ beiden Tabellen** (kein bekannter `F$`/`I$`-Code definiert).
 (`src/kernel/cb030run.{c,h}`, `src/hal/posix/hal_posix.c`, `Ctrl-^`),
 nicht in diesem Repository — dort als eigener Commit/PR zu behandeln,
 falls gewünscht.
+
+## Fund: Alle laufzeitverifizierten Syscall-Einstiegspunkte im Quellcode benannt
+
+Die in "Komplette Syscall-Tabelle (`D_SysDis`/`D_UsrDis`) namentlich
+zugeordnet" gesicherten `F$`/`I$`-Adressen wurden gegen die vorhandenen
+`Q9_`-Namen in `tools/ghidra_to_r68.py` abgeglichen. Zwei Klassen von
+Treffern:
+
+1. **Bereits vorher benannt.** Ein Teil der Adressen war schon vor der
+   Laufzeitverifikation korrekt identifiziert (z. B. `F$Alarm` =
+   `Q9_alarm_dispatch_1390`, `F$AProc` = `Q9_scheduler_183a`, `F$Exit`
+   = `Q9_exc_default_action_24d8`, `F$RetPD` = `Q9_proc_id_free_3370`,
+   `F$CmpNam` = `Q9_pattern_match_1ab8`) — die Syscall-Tabelle
+   bestätigt hier nur eine bereits über Kontrollfluss-Analyse
+   gewonnene Zuordnung.
+2. **Neu benannt (dieser Fund).** Alle übrigen, innerhalb des
+   Kernel-Moduls (`0 < Offset < 0x6F3C`) liegenden Adressen — **64
+   Syscall-Einstiegspunkte** plus drei zentrale, mehrfach genutzte
+   interne Helfer (`Q9_procdesc_alloc_16b6`, `Q9_desc_slot_alloc_171a`,
+   `Q9_date_decompose_2eea`), die von mindestens zwei Syscalls
+   gemeinsam genutzt werden. Details je Funktion stehen als
+   Funktions-Header direkt im generierten Quellcode (`tools/ghidra_to_r68.py`
+   → `FUNC_HEADER`), hier nur die Muster:
+
+**Wichtige Einzelfunde:**
+- `F$SRqMem`/`F$SRtMem`/`F$SRqCMem` haben in Supervisor- und
+  User-Tabelle **unterschiedlichen Code**, nicht nur unterschiedliche
+  Adressen: die Supervisor-Variante von `F$SRtMem` ruft die direkte
+  Freigabe `Q9_mem_free_5a22`, die User-Variante dagegen die
+  eigentumsprüfende `Q9_dealloc_owned_5cd2` — ein User-Prozess darf
+  nachweislich nur Speicher freigeben, der ihm laut
+  `Q9_owns_range_5d68` auch gehört.
+- `F$ChkMem` und `F$UAcct` sind für User-Aufrufe **trivale Stubs**
+  (setzen nur ein Register bzw. Flag und kehren sofort zurück, ohne
+  irgendetwas zu prüfen) — in diesem Kernel-Build praktisch
+  Nulloperationen für diese beiden Codes.
+- `F$SigReset` (Supervisor-Tabelle) liefert **bedingungslos**
+  Fehlercode `0xAC` zurück — wie schon länger bekannt (`0x39b2`,
+  Fehlercode `0xAB`) sind mehrere `F$Sig*`-Funktionen in diesem
+  Kernel-Build nicht vollständig implementiert.
+- `F$SysDbg` (`Q9_sysdbg_user_3d98`/`Q9_sysdbg_3da0`) ist der Code,
+  der beim `break`-Kommando die in dieser Sitzung am laufenden
+  Emulator beobachtete "Timesharing HALTED"-Meldung auslöst
+  (RomBug-Sprung, sichert Register und Programmzähler, bevor alle
+  Register aus dem Parameterblock restauriert werden) — die
+  Supervisor-Tabellen-Variante überspringt dabei eine
+  Berechtigungsprüfung, die die User-Variante noch durchläuft.
+- `F$CpyMem` und `F$Sema` dispatchen beide über dieselbe
+  Systemglobal-Tabelle (`(0x160,A3)`/`(0x560,A3)`, `A3` = `(0x3a4,A6)`)
+  an eine dort registrierte Handlerroutine — derselbe generische
+  Indirektionsmechanismus für zwei inhaltlich unterschiedliche
+  Syscalls.
+- `F$Julian` und `F$STime` teilen sich eine gemeinsame
+  Datums-/Zeit-Zerlegungsroutine (`Q9_date_decompose_2eea`).
+- `F$Fork` und `F$DFork` teilen sich denselben
+  Deskriptor-Allocator (`Q9_procdesc_alloc_16b6`) und dieselbe
+  Initialisierungsroutine (`0x28aa`) — der einzige sichtbare
+  Unterschied ist, ob am Ende in den Scheduler (`Q9_scheduler_183a`)
+  eingereiht oder stattdessen die Debug-Kontrolle übernommen wird.
+
+**F$MBuf-Sonderfall (Code `0x5f`):** Der schon vorher als
+"ungewöhnlich" markierte Supervisor-Tabellenwert (`0x00EE3D08`) bleibt
+unaufgelöst — nach Abzug der Kernel-Basis ergäbe sich ein Offset weit
+außerhalb sowohl des Kernel-Moduls als auch des 16-MByte-RAM-Bereichs
+der CB030-Konfiguration. Kein Eintrag in `LABEL_NAMES` vergeben; echte
+Ursache (Datenverfälschung im Dump, oder tatsächlich ein anderer
+Adressraum) nicht weiter untersucht.
+
+**Nicht im Kernel-Modul liegende Syscalls:** Etwa ein Drittel der in
+der Tabelle referenzierten Adressen liegt (Adresse − Kernel-Basis)
+außerhalb des 28476-Byte-Moduls selbst — u. a. die komplette
+`I$`-Gruppe sowie `F$Permit`/`F$Protect`/`F$AllTsk`/`F$DelTsk`
+(Supervisor)/`F$CCtl`/`F$GSPUMp`/`F$ChkMem` (Supervisor)/`F$IOQu`/
+`F$IODel`/`F$Load`/`F$PErr`. Das ist konsistent damit, dass diese
+Funktionen von benachbart im RAM geladenen Systemmodulen (z. B.
+IOMan) bedient werden, nicht vom Kernel-Modul selbst — für eine
+Benennung dieser Adressen bräuchte man die Disassemblierung des
+jeweils zuständigen Moduls, nicht `dker030s`.
+
+**Byte-Exaktheit erneut geprüft:** Nach Einfügen aller neuen Namen
+`kernel.r` neu generiert, gebaut und verglichen — weiterhin **0
+abweichende Bytes** gegen `vendor/68020/dker030s`.
+
+**Offen für eine spätere Runde:** mehrere zweite-Ebene-Hilfsroutinen,
+die von den oben genannten Syscalls aufgerufen, aber hier bewusst
+nicht einzeln benannt wurden (u. a. `0x28aa`, `0x2fa4`, `0x3660`,
+`0x3984`, `0x410e`, `0x429a`, `0x57be`, `0x6232`, `0x63f0`) — jede
+davon wird von mindestens einem jetzt benannten Syscall referenziert
+und wäre ein natürlicher nächster Schritt.
