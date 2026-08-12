@@ -390,9 +390,10 @@ auflösen bzw. abbauen müssen) haben eigene, längere Sonderbehandlung.
    Sprung. `FUN_000014f8` vollständig gelesen und als der gemeinsame
    Callcode→Treiber-Slot-Dispatcher identifiziert (beantwortet die
    Slot-88-Frage aus Runde 3 funktional, s. Fund-Abschnitt).
-4. Offen: welcher der drei Typ-Filter (`0xf`/`0xe`/`0xd`) genau
-   "Descriptor"/"Treiber"/"File-Manager" bedeutet, gegen eine Primärquelle
-   absichern (aktuell nur aus der Aufrufreihenfolge plausibel).
+4. **Erledigt:** Typ-Filter `0xf`/`0xe`/`0xd` = Descrptr/Driver/Fmgr,
+   direkt am realen Descriptor `c0` + den Modulen `cfide`/`rbf` verifiziert
+   (M$Type-Bytes gelesen, keine Vermutung mehr) — s.
+   [`../c0-descriptor/docs/FINDINGS.md`](../c0-descriptor/docs/FINDINGS.md).
 5. Treiber-Tabellen-Slots zwischen Init (Slot 0) und Term (Slot `0xa`)
    einzeln bestätigen (Read/Write/GetStat/SetStat vermutet, nicht
    verifiziert) — bräuchte entweder ein echtes Treiber-Modul zum
