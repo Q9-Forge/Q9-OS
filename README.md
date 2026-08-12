@@ -62,8 +62,22 @@ bestehende Tool-Pfade (`tools/ghidra_to_r68.py`, `src/Makefile`) anzufassen.
   Modul (Kernel/IOMan/SysCache/SSM), per Adressvergleich aus der
   Kernel-Disassemblierung und einer Live-Vermessung im Q9-Flux-Emulator
   gewonnen.
-- [`modules/ioman/`](modules/ioman/) — IOMan-Disassemblierung, Runde 1
-  (Modulkopf verifiziert, Einsprungpunkt gefunden, Grundgerüst).
+- [`modules/ioman/`](modules/ioman/) — IOMan-Disassemblierung (4 Runden):
+  Grundgerüst, gemeinsamer Kernel-Trampolin (F$Link/F$Send/F$GProcP/
+  F$SRqMem), Treiber-Dispatch, und der OS-9-"Dreiklang"
+  Descriptor→Treiber→File-Manager vollständig nachvollzogen.
+- [`modules/c0-descriptor/`](modules/c0-descriptor/) — Geräte-Descriptor
+  `c0` (CF-Master), vollständig analysiert (148 Byte): bestätigt die
+  Modul-Typ-Codes (Descrptr=`0x0F`/Driver=`0x0E`/Fmgr=`0x0D`) und die
+  Namensfelder, die `I$Attach` ausliest.
+- [`modules/cfide-driver/`](modules/cfide-driver/) — CompactFlash-Treiber
+  `cfide`: klassische 6-Slot-Einsprungtabelle (Init/Read/Write/GetStat/
+  SetStat/Term) empirisch bestätigt.
+- [`modules/rbf-filemanager/`](modules/rbf-filemanager/) — RBF-File-Manager:
+  13-Slot-Tabelle bestätigt (passend zu den 13 `I$`-Callcodes `I$Create`–
+  `I$Close`); referenziert selbst ebenfalls den Kernel-Trampolin
+  (15 Fundstellen) — relativiert die Annahme "File-Manager ohne
+  Kernel-Calls" teilweise.
 - `modules/syscache/`, `modules/ssm/` — bisher nur Platzhalterverzeichnisse,
   noch nicht disassembliert.
 
