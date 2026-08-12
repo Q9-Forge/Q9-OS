@@ -45,8 +45,10 @@ lokal unter `/Volumes/SSD1TB/projects/Q9-OS-ghidra-ioman/`. Die verwendeten
 Skripte liegen dagegen in [`../ghidra_scripts/`](../ghidra_scripts/)
 (kleine Textdateien, unproblematisch fürs Repo). Rohe Disassemblierungs-
 Listings liegen in [`../disasm/`](../disasm/): `round2_all_functions.txt`
-(alle 17 Runde-1-Funktionen vollständig) und `round3_syscall_targets.txt`
-(alle 24 IOMan-Syscall-Zieladressen direkt angesprungen und disassembliert).
+(alle 17 Runde-1-Funktionen vollständig), `round3_syscall_targets.txt`
+(alle 24 IOMan-Syscall-Zieladressen direkt angesprungen) und
+`round4_all_functions.txt` (alle inzwischen ~32 bekannten Funktionen
+vollständig, inkl. `I$Attach`/`FUN_000014f8`).
 
 ## Modulkopf
 
@@ -282,17 +284,92 @@ IOMans **Dispatch-Stub**, nicht der Ort, an dem die eigentliche Datei-/
 Geräte-Arbeit passiert — die liegt in einem separaten, hier noch nicht
 identifizierten Treiber-/File-Manager-Modul.
 
-## Offene Funktion: `FUN_000014f8` (180 Byte, noch nicht vollständig gedeutet)
+## Fund (Runde 4): `I$Attach` bestätigt den OS-9-"Dreiklang" — drei F$Link-Aufrufe für Descriptor/Driver/File-Manager
 
-Größte der 17 Funktionen. Manipuliert das Statusregister direkt
-(`ori #0x700,SR` — hebt die Interrupt-Maske auf Ebene 7, klassischer
-"kritischer Abschnitt"), verschachtelt eine Aufrufkette in einen
-prozesslokalen Bereich (`(0x140,A4)`/`(0x144,A4)`, gerettet/wiederhergestellt
-wie ein Stapel), und ruft sowohl `FUN_0000107a`/`FUN_000010d8` (also
-`F$Send`/`F$GProcP`) als auch **noch nicht identifizierten** Code über
-`(0x1c,SP)`-relative Sprünge auf. Riecht nach einer **Wait/Event-Routine**
-(kritischer Abschnitt + Prozess-Zeiger holen + ggf. Signal senden), aber die
-genaue Semantik ist noch offen — Kandidat für Runde 3.
+`I$Attach` (jetzt vollständig gelesen, 588 Byte) ruft **dreimal** den
+Kernel-Trampolin `FUN_00000d56` (= `F$Link`, Runde 2) auf, mit
+unterschiedlichem Typ-Filter in `D0w` und unterschiedlicher Namensquelle:
+
+1. `D0w = 0xf00`, Name = der geparste Gerätename aus dem Pfad (führendes
+   `/` wird übersprungen) → linkt die **Geräte-Descriptor**-Modul.
+2. `D0w = 0xe00`, Name = String bei Offset `0x3a` **innerhalb** des gerade
+   gelinkten Descriptor-Moduls → linkt ein zweites Modul, dessen Name der
+   Descriptor selbst nennt.
+3. `D0w = 0xd00`, Name = String bei Offset `0x38` des Descriptors → linkt
+   ein drittes Modul.
+
+Das ist der aus der Fachliteratur bekannte OS-9-**"Dreiklang"**
+File-Manager/Treiber/Descriptor (vgl. bereits vorhandene Notiz in
+`Q9-Flux/docs/MODULES.md`, "OS-9-Dreiklang File-Manager/Treiber/Descriptor")
+— live im Disassemblat bestätigt: der Descriptor referenziert **zwei**
+weitere Module (Treiber und File-Manager) über eigene Namensfelder,
+`I$Attach` linkt alle drei nacheinander. **Welcher der beiden Filter (`0xe`
+vs. `0xd`) genau "Treiber" bzw. "File-Manager" bedeutet, ist noch nicht
+sicher** — die Typ-Filter-Byte-Bedeutung (0xf/0xe/0xd) ist aus dem Code
+selbst plausibel als Modultyp-Filter für `F$Link` erkennbar, aber noch
+nicht gegen eine Primärquelle abgeglichen (anders als die bereits
+verifizierten `M$Type`-Werte 1/12 aus dem Kopf-Fund).
+
+Nach erfolgreichem Dreifach-Link: Prüfung, ob das Gerät **schon** über
+einen anderen Pfad attached ist (Vergleich von Treiber- und
+Descriptor-Zeiger gegen bestehende Gerätetabellen-Einträge, Link-Count-
+Erhöhung statt Neuanlage falls Treffer — klassische OS-9-Attach-Semantik).
+Falls neu: Speicher für einen Gerätetabellen-Eintrag anfordern
+(`FUN_000015ca` = `F$SRqMem`, Runde 2), dann **derselbe PEA+RTS-Sprung
+in den Treiber wie bei `I$Detach`** (Runde 3), hier aber ohne den `+0xa`-
+Versatz — ruft also einen **anderen** Tabellen-Slot des Treibers auf:
+vermutlich **Init** (Slot 0) statt **Term** (Slot `0xa`). Damit ist die
+klassische OS-9-Treiber-Tabelle (Init an fixer Position, weitere
+Standard-Einsprungpunkte an festen Folge-Offsets) empirisch mit zwei
+Slots belegt (0 = Init, `0xa` = Term); die dazwischenliegenden Slots
+(Read/Write/GetStat/SetStat, vermutlich) noch nicht einzeln bestätigt.
+
+Fehlerpfad ruft bei Bedarf `I$Detach` selbst auf (`bsr 0xe5e`) — sauberes
+Rückabwickeln eines teilweise erfolgreichen Attach.
+
+## Fund (Runde 4): `FUN_000014f8` ist der generische I$-Dispatcher (nicht "Wait/Event")
+
+Vollständig gelesen. Aufgerufen von `I$Create(sys)` direkt per `bsr`
+(nicht über die Kernel-Trampolin-Tabelle) — Korrektur der Runde-2-Vermutung
+("vermutlich Wait/Event-Routine"): es ist der **gemeinsame Dispatcher, der
+einen I$-Callcode in den passenden Slot der Treiber-Tabelle übersetzt und
+dorthin springt** — genau der in Runde 3 vermutete "Slot-88-artige
+gemeinsame Pfad-Operations-Dispatcher", nur als direkt aufgerufene
+IOMan-Funktion gefunden statt über die Kernel-Tabelle:
+
+- **Pfad-Deskriptor-Sperre** (kritischer Abschnitt, `ori #0x700,SR`):
+  prüft `(0x8,A1)` (Pfad-Deskriptor-Feld, „wer hat den Pfad gerade
+  belegt"); ist es `0`, wird die aktuelle Prozess-ID (`(0x0,A4)`, `A4` =
+  `D_Proc`) dort UND in `(0x1c,A1)` eingetragen — klassischer
+  Belegen-oder-warten-Mechanismus für Mehrprozess-Zugriff auf denselben
+  Pfad.
+- **Ist der Pfad schon belegt** (Zweig `0x15a6`): Interrupts sofort wieder
+  freigeben, `F$GProcP` (`FUN_000010d8`) holen, einen Schwellenwert
+  `(0x26,A4)` prüfen und — falls im gültigen Bereich (`< 0x20`) — über
+  `F$Send` (`FUN_0000107a`) signalisieren/wecken; sonst zurück zum
+  Sperren-Versuch (`bra 0x1500`). Klassisches Warteschlangen-/Retry-Muster
+  für "Pfad ist gerade in Benutzung".
+- **Callcode → Treiber-Slot:** `D1 = (A5+0x3c) − 0x83`, verdoppelt als
+  Wort-Index. `0x83` ist exakt der Callcode von `I$Create` — d. h. die
+  Tabelle ist **relativ zu `I$Create` als Slot 0** organisiert:
+  `I$Create`→0, `I$Open`→1, `I$MakDir`→2, `I$ChgDir`→3, `I$Delete`→4,
+  `I$Seek`→5, `I$Read`→6, `I$Write`→7, `I$ReadLn`→8, `I$WritLn`→9,
+  `I$GetStt`→0xa, `I$SetStt`→0xb, `I$Close`→0xc (Codes 0x83–0x8f
+  durchgehend, passt exakt zur Callcode-Reihenfolge aus
+  `../SYSCALL_MODULE_MAP.md`).
+- **Treiber-Auflösung:** `A0 = *(*(A1+4)+0xc) + 0x30` — `(A1+4)` = der in
+  `I$Attach` gefundene Gerätetabellen-Eintrag, `+0xc` daraus vermutlich der
+  Treiber-Modul-Zeiger, `+0x30` dessen Offset-Tabellen-Basis (dieselbe
+  Konvention wie bei `I$Attach`/`I$Detach`). `A0 += Tabelle[Slot]` (Slot
+  wie oben berechnet), dann derselbe PEA+RTS-Sprung wie in `I$Attach`/
+  `I$Detach` direkt in den Treiber.
+
+**Damit ist die zentrale offene Frage aus Runde 3 beantwortet:** `I$Read`/
+`I$Write`/`I$Open`/... (die "einfachen" `I$`-Aufrufe, s.
+`../SYSCALL_MODULE_MAP.md`) laufen alle über GENAU DIESEN gemeinsamen
+Dispatcher (`FUN_000014f8`) in den jeweiligen Treiber-Slot — nur
+`I$Attach`/`I$Detach` (die den Treiber/File-Manager selbst erst
+auflösen bzw. abbauen müssen) haben eigene, längere Sonderbehandlung.
 
 ## Nächste Schritte (falls gewünscht)
 
@@ -307,24 +384,29 @@ genaue Semantik ist noch offen — Kandidat für Runde 3.
    Offset-Schema) — NICHT über den Kernel-Trampolin. Bestätigt, dass
    Kernel-Calls (Mechanismus 1) und Treiber-/File-Manager-Dispatch
    (Mechanismus 2) getrennte, beide vorkommende Dinge sind.
-3. Slot 88 des Kernel-Trampolins (genutzt von `I$Read` mit `D1=2`,
-   vermutlich auch `I$Write`/`I$GetStt`/`I$SetStt` mit anderen `D1`-Werten)
-   als vermuteten gemeinsamen Pfad-Operations-Dispatcher verifizieren —
-   Zieladresse nur per Laufzeit-Speicherinspektion sichtbar (gleiche
-   Einschränkung wie beim Kernel bei Slot 64/88/89/90).
-4. `I$Attach` vollständig lesen (bisher nur die ersten ~35 Instruktionen,
-   s. Runde-3-Fund-Abschnitt) — dort sollte sichtbar werden, WIE der
-   Treiber-Modul-Zeiger überhaupt aufgelöst wird (Geräte-Deskriptor →
-   Treiber-Modul, per `F$Link` zweimal, s. `0xb88`/`0xbb8`).
-5. `FUN_000014f8` (180 Byte) vollständig lesen — wird von `I$Create(sys)`
-   aufgerufen, also vermutlich eher "Pfad-Deskriptor anlegen" als
-   "Wait/Event", ursprüngliche Vermutung in Runde 2 zu korrigieren.
+3. **Erledigt (Runde 4):** `I$Attach` vollständig gelesen — bestätigt den
+   OS-9-"Dreiklang" (drei `F$Link`-Aufrufe: Descriptor, dann zwei weitere
+   Module aus dessen eigenen Namensfeldern) sowie den Init/Term-Treiber-
+   Sprung. `FUN_000014f8` vollständig gelesen und als der gemeinsame
+   Callcode→Treiber-Slot-Dispatcher identifiziert (beantwortet die
+   Slot-88-Frage aus Runde 3 funktional, s. Fund-Abschnitt).
+4. Offen: welcher der drei Typ-Filter (`0xf`/`0xe`/`0xd`) genau
+   "Descriptor"/"Treiber"/"File-Manager" bedeutet, gegen eine Primärquelle
+   absichern (aktuell nur aus der Aufrufreihenfolge plausibel).
+5. Treiber-Tabellen-Slots zwischen Init (Slot 0) und Term (Slot `0xa`)
+   einzeln bestätigen (Read/Write/GetStat/SetStat vermutet, nicht
+   verifiziert) — bräuchte entweder ein echtes Treiber-Modul zum
+   Gegenlesen oder Laufzeit-Speicherinspektion wie beim Kernel.
 6. Neues System-Global-Feld `(0x64,A6)` (Ausgabe-Vtable-Zeiger) gegen den
    Kernel gegenprüfen — taucht dort vermutlich auch auf, war im
    bisherigen Kernel-Fund aber nicht dokumentiert.
-7. Undefinierte Bereiche weiterhin systematisch schließen (Kontrollfluss-
+7. Ein echtes Treiber- oder File-Manager-Modul aus dem MWOS-SDK
+   identifizieren und mit demselben Verfahren disassemblieren — würde die
+   noch offenen Tabellen-Slots und die Typ-Filter-Frage (Punkt 4) direkt
+   beantworten.
+8. Undefinierte Bereiche weiterhin systematisch schließen (Kontrollfluss-
    Verfolgung von den jetzt ~32 bekannten Funktionen aus, wie beim Kernel).
-8. Modulkopf-Feldnamen zwischen `0x0A`–`0x12` gegen eine Primärquelle
+9. Modulkopf-Feldnamen zwischen `0x0A`–`0x12` gegen eine Primärquelle
    absichern (aktuell nur per Analogieschluss zum Kernel-Kopf bestimmt).
 
 **Erstellt**: 2026-08-12
