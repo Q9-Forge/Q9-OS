@@ -3,7 +3,7 @@
 ## Projektübergreifender Kontext
 
 Der gemeinsame projektübergreifende Kontext und die verbindlichen Namen
-stehen in [Q9Forge/AI_CONTEXT.md](../Q9Forge/AI_CONTEXT.md).
+stehen in [Q9-Forge/AI_CONTEXT.md](../AI_CONTEXT.md).
 
 Port von echtem, proprietärem Microware OS-9/68K für die Q9-Plattform
 ([Q9-Flux](https://github.com/Q9-Forge/Q9-Flux) emuliert die Zielhardware).
@@ -43,8 +43,29 @@ Namenskonvention: ein Modul = flach, mehrere Module = Unterverzeichnisse.
   (Kernel-Typen, Speicherallokatoren, Init-Modul, Prozesserzeugung,
   Exception-Verarbeitung), aus dem offiziellen Technical Manual extrahiert.
 - [`docs/REVERSE_ENGINEERING.md`](docs/REVERSE_ENGINEERING.md) —
-  Arbeitsstand der Disassemblierung (Ziel: byte-exakter Nachbau als
+  Arbeitsstand der Kernel-Disassemblierung (Ziel: byte-exakter Nachbau als
   Assembly-Quellcode), Modul-Header-Layout, bisherige Funde.
+
+## Weitere OS-9-Systemmodule (`modules/`)
+
+Seit 2026-08-12: jetzt, wo mehrere Systemmodule untersucht werden
+(Kernel bereits weit fortgeschritten, IOMan begonnen, SysCache/SSM als
+Adressbereich bekannt), bekommt jedes ein eigenes Unterverzeichnis unter
+[`modules/`](modules/) — Original-Binary, Disassemblierungs-Notizen und
+Ghidra-Skripte gebündelt. Das Kernel-Modul selbst bleibt vorerst an seinem
+bestehenden Platz (`vendor/`, `src/kernel/`, `docs/REVERSE_ENGINEERING.md`)
+statt rückwirkend nach `modules/kernel/` verschoben zu werden — vermeidet,
+bestehende Tool-Pfade (`tools/ghidra_to_r68.py`, `src/Makefile`) anzufassen.
+
+- [`modules/SYSCALL_MODULE_MAP.md`](modules/SYSCALL_MODULE_MAP.md) —
+  vollständige Zuordnung aller ~97 OS-9-Systemaufrufe zu ihrem jeweiligen
+  Modul (Kernel/IOMan/SysCache/SSM), per Adressvergleich aus der
+  Kernel-Disassemblierung und einer Live-Vermessung im Q9-Flux-Emulator
+  gewonnen.
+- [`modules/ioman/`](modules/ioman/) — IOMan-Disassemblierung, Runde 1
+  (Modulkopf verifiziert, Einsprungpunkt gefunden, Grundgerüst).
+- `modules/syscache/`, `modules/ssm/` — bisher nur Platzhalterverzeichnisse,
+  noch nicht disassembliert.
 
 ## Build
 

@@ -2039,6 +2039,11 @@ Relevanz.
 
 ### Komplette Syscall-Tabelle (`D_SysDis`/`D_UsrDis`) namentlich zugeordnet
 
+**Nachtrag 2026-08-12:** Diese Tabelle wurde per Adressvergleich gegen die
+live vermessenen Modul-Adressbereiche (`Q9-Flux/docs/OS9_SYSCALL_OWNERSHIP.md`)
+zur vollständigen Syscall→Modul-Zuordnung ausgewertet:
+[`../modules/SYSCALL_MODULE_MAP.md`](../modules/SYSCALL_MODULE_MAP.md).
+
 Die offiziellen numerischen `F$`/`I$`-Funktionscodes (Standard-OS-9-API,
 öffentliche Aufrufkonvention) wurden **nur als privater Zahlen-Fakten-
 Check** herangezogen (analog zum bisherigen Vorgehen mit `sysglob.a`) —
