@@ -43,9 +43,10 @@ Kernel keine 68030-Spezifika), Raw-Binary-Import bei Basisadresse 0.
 **Ghidra-Projekt liegt NICHT im Git-Repo** (analog zum Kernel-Projekt) —
 lokal unter `/Volumes/SSD1TB/projects/Q9-OS-ghidra-ioman/`. Die verwendeten
 Skripte liegen dagegen in [`../ghidra_scripts/`](../ghidra_scripts/)
-(kleine Textdateien, unproblematisch fürs Repo). Rohes Disassemblierungs-
-Listing (Ausgabe von `DumpAllFunctions.java`, Runde 2) liegt in
-[`../disasm/round2_all_functions.txt`](../disasm/round2_all_functions.txt).
+(kleine Textdateien, unproblematisch fürs Repo). Rohe Disassemblierungs-
+Listings liegen in [`../disasm/`](../disasm/): `round2_all_functions.txt`
+(alle 17 Runde-1-Funktionen vollständig) und `round3_syscall_targets.txt`
+(alle 24 IOMan-Syscall-Zieladressen direkt angesprungen und disassembliert).
 
 ## Modulkopf
 
@@ -206,6 +207,81 @@ Panik-Reporter (`0x7f6`) ähnlich, aber offenbar IOMan-eigen:
   &lt;D0&gt; got &lt;D1&gt;"* (Wortlaut spekulativ, Zahlen-Interpretation
   gesichert).
 
+## Fund (Runde 3): IOMan dispatcht die eigentliche I/O-Arbeit an separate Treiber-Module — NICHT über Kernel-Calls
+
+Andreas' Einwand (Buch über OS-9: ein beschriebener File-Manager enthält
+**keine** Kernel-Calls) war der Anstoß, die tatsächlichen Zieladressen aller
+24 IOMan-zugeordneten Syscalls direkt anzuspringen (`ExploreSyscallTargets.java`,
+Offsets aus `../SYSCALL_MODULE_MAP.md` in modulrelative Adressen umgerechnet,
+Basis = live gemessener IOMan-Ladeadresse `$00E03C`).
+
+**Ergebnis: Es gibt tatsächlich zwei GETRENNTE Mechanismen in IOMan, die
+beide vorkommen, aber unterschiedliche Zwecke haben:**
+
+1. **Kernel-Trampolin** (`(0x3a4,A6)`/`(0x3a8,A6)`, s. Runde 2) — IOMan nutzt
+   ihn für **eigene interne Buchhaltung**: Speicher anfordern (`F$SRqMem`,
+   in `I$Read`s Präambel z. B. Tabellenslot 88 mit `D1=2`), Signale senden
+   (`F$Send`), Modul-Linking (`F$Link`, in `I$Attach` zweimal für
+   Geräte-Deskriptor bzw. -Treiber). Das sind Dienste, die IOMan als
+   dauerhaft residente Systemkomponente selbst braucht.
+
+2. **Direkter Sprung in ein separates Treiber-Modul** — gefunden in
+   `I$Detach` (Offset `0xe5e`), am Ende der Aufräumlogik:
+
+   ```
+   movea.l (0x8,A2),A1        ; A1 = Geraete-Tabelleneintrag(?)
+   movea.l (0x0,A2),A2
+   exg     A0,A2               ; A0 = Zeiger auf den GERAETETREIBER (Modulbasis)
+   moveq   0xa,D2
+   add.l   (0x30,A0),D2        ; D2 = 10 + Langwort bei Treiber-Offset 0x30
+                                ;   (die treibereigene Einsprungpunkt-Tabelle,
+                                ;   OS-9-Standard: P$xxx-Offsets nahe Treiberstart)
+   move.w  (0x0,A0,D2*0x1),D2w ; D2 = Wort-Offset aus dieser Tabelle
+   ...
+   jmp     (0x0,A0,D2w*0x1)    ; Sprung DIREKT in den Treiber -- kein
+                                ;   RTS-Rueckweg wie beim Kernel-Trampolin!
+   ```
+
+   Das ist **kein** Aufruf über die Kernel-Tabelle bei `0x3a4`/`0x3a8` —
+   `A0` zeigt auf eine **eigenständige Moduladresse außerhalb von IOMan**
+   (Treiber-Modul, per Geräte-Deskriptor-Kette aufgelöst, nicht Teil der
+   5660-Byte-`ioman_DEV`-Datei). Der `jmp` (nicht `jsr`) plus die
+   PC-relativ am Aufrufer vorbereitete Rücksprungadresse
+   (`pea (0xa,PC)` + `move.l SP,(0x140,A4)` unmittelbar davor) entspricht
+   exakt dem klassischen OS-9-Treiber-Aufrufschema aus dem Technical
+   Manual: Treiber-Modul hat eine kleine Tabelle aus P-relativen Offsets
+   zu seinen Standard-Einsprungpunkten (Init/Read/Write/GetStat/SetStat/
+   Term) nahe Modulanfang; der Aufrufer berechnet den Offset und springt
+   direkt hinein, der Treiber kehrt selbst zurück.
+
+**Einordnung, deckt sich mit dem Buch:** Sobald man EINMAL in den Treiber
+(bzw. vermutlich analog: File-Manager) gesprungen ist, läuft dessen eigener
+Code — der hat mit IOMans Kernel-Trampolin nichts mehr zu tun, exakt wie im
+Buch beschrieben ("keine Kernel-Calls" IM File-Manager/Treiber selbst).
+IOMans Kernel-Calls (Mechanismus 1) sind ausschließlich IOMans EIGENE,
+system-globale Buchhaltung — nicht Teil der eigentlichen I/O-Ausführung.
+
+**Für `I$Read`/`I$Write`/`I$GetStt`/`I$SetStt` selbst noch nicht
+abschließend geklärt**, ob sie denselben Treiber-Sprung-Mechanismus direkt
+enthalten oder über den gemeinsamen Kernel-Tabellenslot 88 (`(0x160,A3)`/
+`(0x560,A3)`, mit `D1`-Subop-Code: `I$Read`→`D1=2`, `I$Write`→ vermutlich
+anderer Wert, noch nicht gelesen) **indirekt** dorthin gelangen — die
+Zieladresse von Slot 88 selbst ist per reiner Disassemblierung nicht
+sichtbar (dieselbe Einschränkung wie beim Kernel bei Slot 64/88/89/90,
+"bleibt ohne Laufzeit-Speicherinspektion unbekannt", s. Kernel-Fund
+"Update — 0x4078 gelesen"). Naheliegende Hypothese: Slot 88 ist ein
+**gemeinsamer generischer Pfad-Operations-Dispatcher**, der intern denselben
+Treiber-Sprung wie `I$Detach` macht, mit `D1` als Sub-Operation (Read/
+Write/GetStat/SetStat/...) — noch nicht verifiziert.
+
+**Für `../SYSCALL_MODULE_MAP.md` bedeutet das:** die dortige Modul-Spalte
+("IOMan") ist weiterhin korrekt (die Zieladresse liegt tatsächlich in
+IOMans 5660-Byte-Modul) — aber bei mehreren dieser Einträge (mindestens
+`I$Detach`, vermutlich auch `I$Read`/`I$Write`/`I$Open` u. a.) ist das nur
+IOMans **Dispatch-Stub**, nicht der Ort, an dem die eigentliche Datei-/
+Geräte-Arbeit passiert — die liegt in einem separaten, hier noch nicht
+identifizierten Treiber-/File-Manager-Modul.
+
 ## Offene Funktion: `FUN_000014f8` (180 Byte, noch nicht vollständig gedeutet)
 
 Größte der 17 Funktionen. Manipuliert das Statusregister direkt
@@ -224,21 +300,31 @@ genaue Semantik ist noch offen — Kandidat für Runde 3.
    davon als Kernel-Trampolin-Aufrufe identifiziert (F$Link/F$Send/
    F$GProcP/F$SRqMem), der Einsprungpunkt als Init-Routine mit
    Fehlerdiagnose-Ausgabe verstanden.
-2. `FUN_000014f8` (180 Byte, größte verbleibende Funktion) vollständig
-   lesen — vermutlich Wait/Event-Routine, s. Fund-Abschnitt oben.
-3. Neues System-Global-Feld `(0x64,A6)` (Ausgabe-Vtable-Zeiger) gegen den
+2. **Erledigt (Runde 3):** alle 24 IOMan-zugeordneten Syscall-Zieladressen
+   direkt angesprungen und disassembliert (`ExploreSyscallTargets.java`).
+   Zentraler Fund: `I$Detach` springt am Ende per `jmp` direkt in ein
+   separates Treiber-Modul (klassisches OS-9-P-relatives Einsprung-
+   Offset-Schema) — NICHT über den Kernel-Trampolin. Bestätigt, dass
+   Kernel-Calls (Mechanismus 1) und Treiber-/File-Manager-Dispatch
+   (Mechanismus 2) getrennte, beide vorkommende Dinge sind.
+3. Slot 88 des Kernel-Trampolins (genutzt von `I$Read` mit `D1=2`,
+   vermutlich auch `I$Write`/`I$GetStt`/`I$SetStt` mit anderen `D1`-Werten)
+   als vermuteten gemeinsamen Pfad-Operations-Dispatcher verifizieren —
+   Zieladresse nur per Laufzeit-Speicherinspektion sichtbar (gleiche
+   Einschränkung wie beim Kernel bei Slot 64/88/89/90).
+4. `I$Attach` vollständig lesen (bisher nur die ersten ~35 Instruktionen,
+   s. Runde-3-Fund-Abschnitt) — dort sollte sichtbar werden, WIE der
+   Treiber-Modul-Zeiger überhaupt aufgelöst wird (Geräte-Deskriptor →
+   Treiber-Modul, per `F$Link` zweimal, s. `0xb88`/`0xbb8`).
+5. `FUN_000014f8` (180 Byte) vollständig lesen — wird von `I$Create(sys)`
+   aufgerufen, also vermutlich eher "Pfad-Deskriptor anlegen" als
+   "Wait/Event", ursprüngliche Vermutung in Runde 2 zu korrigieren.
+6. Neues System-Global-Feld `(0x64,A6)` (Ausgabe-Vtable-Zeiger) gegen den
    Kernel gegenprüfen — taucht dort vermutlich auch auf, war im
    bisherigen Kernel-Fund aber nicht dokumentiert.
-4. Trap-/Dispatch-Tabellen-Suche für die eigentlichen `I$`-Handler
-   (`FindTrapInit.java`-Muster aus `../../kernel`-Skripten als Vorlage) —
-   die bisher gelesenen 17 Funktionen liegen alle vor Offset `0x1600`;
-   die eigentlichen Datei-Manager-/Treiber-Dispatch-Routinen liegen
-   vermutlich weiter hinten im undefinierten Bereich (weiterhin 78,6 %,
-   Runde 2 hat nur bereits erkannte Funktionen gelesen, nicht neue
-   erschlossen).
-5. Undefinierte Bereiche (78,6 %) systematisch schließen (Kontrollfluss-
-   Verfolgung von den bekannten Funktionen aus, wie beim Kernel).
-6. Modulkopf-Feldnamen zwischen `0x0A`–`0x12` gegen eine Primärquelle
+7. Undefinierte Bereiche weiterhin systematisch schließen (Kontrollfluss-
+   Verfolgung von den jetzt ~32 bekannten Funktionen aus, wie beim Kernel).
+8. Modulkopf-Feldnamen zwischen `0x0A`–`0x12` gegen eine Primärquelle
    absichern (aktuell nur per Analogieschluss zum Kernel-Kopf bestimmt).
 
 **Erstellt**: 2026-08-12
