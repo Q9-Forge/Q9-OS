@@ -43,7 +43,9 @@ Kernel keine 68030-Spezifika), Raw-Binary-Import bei Basisadresse 0.
 **Ghidra-Projekt liegt NICHT im Git-Repo** (analog zum Kernel-Projekt) —
 lokal unter `/Volumes/SSD1TB/projects/Q9-OS-ghidra-ioman/`. Die verwendeten
 Skripte liegen dagegen in [`../ghidra_scripts/`](../ghidra_scripts/)
-(kleine Textdateien, unproblematisch fürs Repo).
+(kleine Textdateien, unproblematisch fürs Repo). Rohes Disassemblierungs-
+Listing (Ausgabe von `DumpAllFunctions.java`, Runde 2) liegt in
+[`../disasm/round2_all_functions.txt`](../disasm/round2_all_functions.txt).
 
 ## Modulkopf
 
@@ -129,18 +131,114 @@ organisiert — eigene Datei-Manager-/Treiber-Dispatch-Tabelle, Pfad-
 Deskriptor-Handling usw. Das ist eigenständig interessant (Architekturbild),
 aber nicht mehr nötig, um die ursprüngliche Frage zu beantworten.
 
+## Fund (Runde 2): IOMan ruft Kernel-Primitive über dieselbe Trampolin-Tabelle wie der Kernel selbst auf
+
+Alle 17 Funktionen vollständig disassembliert (Ghidra-Textlisting,
+`DumpAllFunctions.java`). Wichtigster Fund: **vier** der Funktionen
+(`FUN_00000d56`, ein Zweig von `FUN_0000107a`, `FUN_000010d8`,
+`FUN_000015ca`) folgen exakt demselben Muster:
+
+```
+move.l   A3,-(SP)
+movea.l  (0x3a4,A6),A3      ; A3 = D_SysDis (dieselbe Systemglobal-Adresse
+                             ;   wie beim Kernel-Fund "Q9_disp_488")
+pea      (0xc,PC)            ; Rücksprungadresse pushen
+move.l   (OFFSET,A3),-(SP)   ; Primärarray-Slot als "Wert" pushen
+movea.l  (0x400+OFFSET,A3),A3 ; Sekundärarray-Slot laden
+rts                          ; "kehrt zurück" in den Sekundärarray-Wert
+```
+
+Das ist **byte-genau dasselbe PEA+RTS-Trampolin**, das im Kernel-Fund
+"`0x3140` — Cache-Flush + Sprung in Syscall-Tabellen-Slot 90" beschrieben
+wurde. `OFFSET/4` ist der Syscall-Tabellenslot (identisch zur Nummerierung
+in `../SYSCALL_MODULE_MAP.md`):
+
+| Funktion | Offset | Slot | Syscall lt. Tabelle | Interpretation |
+|---|---|---|---|---|
+| `FUN_00000d56` | `0x00` | `0x00` | F$Link | IOMan bindet ein Modul — vermutlich für den eigenen Treiber-/Dateimanager-Nachladeweg |
+| `FUN_0000107a` (unterer Zweig, `0x1090`ff.) | `0x20` | `0x08` | F$Send | Signal an einen Prozess senden — passt zu "I/O-Operation fertig, wartenden Prozess aufwecken" |
+| `FUN_000010d8` | `0xdc` | `0x37` | F$GProcP | aktuellen Prozess-Deskriptor-Zeiger holen |
+| `FUN_000015ca` | `0xa0` | `0x28` | F$SRqMem | Speicher anfordern |
+
+**Bedeutung:** IOMan hat keine eigene Kopie dieser Primitive — es nutzt
+denselben, vom Kernel bei Boot befüllten Trampolin-Mechanismus direkt,
+genau wie es der Kernel intern für sich selbst tut. Bestätigt die im
+Kernel-Fund "`0x1390`" bereits geäußerte Vermutung, dieser
+Dispatch-Mechanismus sei "aufrufbar sowohl über den öffentlichen
+`F$`-Callpfad als auch direkt für interne, performancekritische
+Kernel-zu-Kernel-Aufrufe" — jetzt am Beispiel eines ANDEREN Moduls
+(IOMan, nicht Kernel) bestätigt, also offenbar ein modulübergreifender
+Mechanismus, keine kernel-interne Abkürzung.
+
+## Fund (Runde 2): Einsprungpunkt ist die Init-Routine, mit Hex-Diagnose-Ausgabe bei Fehlern
+
+`ioman_entry_98` (234 Byte) ruft zweimal `FUN_000015ca` (= `F$SRqMem`, s.o.)
+auf — jeweils nach einer `mulu.w`/Größenberechnung (Anzahl × Elementgröße),
+mit `bcs.w 0x246` (Carry = Fehler) direkt danach. Das ist klassisches
+Init-Zeit-Verhalten: **zwei Tabellen anfordern** (vermutlich Geräte-/
+Pfaddeskriptor-Tabellen, analog zum Kernel-Fund der Deskriptor-Tabellen),
+mit Fehlerpfad bei Speichermangel.
+
+**Fehlerpfad (`0x246`–`0x272`) nutzt eine eigene kleine Diagnose-Ausgabe-
+Infrastruktur**, strukturell dem bereits beim Kernel gefundenen
+Panik-Reporter (`0x7f6`) ähnlich, aber offenbar IOMan-eigen:
+
+- `FUN_000002b8`/`FUN_000002b2`/`FUN_000002ac`: klassischer **Hex-Ziffern-
+  Formatierer** — `FUN_000002b8` wandelt die unteren 4 Bit von `D0` in ein
+  ASCII-Hex-Zeichen um (`andi #0xf`, `+7` falls `>9` für `A`-`F`, `+0x30`),
+  `FUN_000002b2`/`FUN_000002ac` rotieren `D0` um 4 bzw. 8 Bit, rufen den
+  Formatierer rekursiv auf und rotieren zurück — damit wird ein 32-Bit-Wert
+  Nibble für Nibble ausgegeben (8 Hex-Ziffern).
+- `FUN_0000029c`: **String-Ausgabe-Schleife** — liest Bytes ab einem
+  Zeiger, bis `0x00`, ruft für jedes Byte eine Ausgaberoutine über
+  `(A1+8)` (Vtable-Zeiger) auf.
+- `FUN_00000296`: lädt `A1` aus `(0x64,A6)` — **neu gefundenes
+  System-Global-Feld**, ein Zeiger auf eine Ausgabe-Vtable (analog zu
+  `D_Proc`/`D_ExcJmp` an anderen Offsets, aber bisher nicht im
+  Kernel-Fund dokumentiert; ein Kandidat für eine Folgerunde am Kernel
+  selbst).
+- `FUN_000002d4`/`FUN_000002e6`/`FUN_000002f8`/`FUN_00000312`: verketten
+  diese Bausteine zu "gib String X aus, gib Hex-Wert Y aus" — der
+  Fehlerpfad in `ioman_entry_98` (`0x24a`–`0x272`) gibt einen String
+  (Zeiger bei PC-relativ `0x119`, Inhalt noch nicht gelesen) gefolgt von
+  zwei Hex-Werten (`D0`, `D1` aus dem fehlgeschlagenen `F$SRqMem`-Aufruf)
+  aus — plausibel eine Meldung wie *"IOMan: not enough memory, wanted
+  &lt;D0&gt; got &lt;D1&gt;"* (Wortlaut spekulativ, Zahlen-Interpretation
+  gesichert).
+
+## Offene Funktion: `FUN_000014f8` (180 Byte, noch nicht vollständig gedeutet)
+
+Größte der 17 Funktionen. Manipuliert das Statusregister direkt
+(`ori #0x700,SR` — hebt die Interrupt-Maske auf Ebene 7, klassischer
+"kritischer Abschnitt"), verschachtelt eine Aufrufkette in einen
+prozesslokalen Bereich (`(0x140,A4)`/`(0x144,A4)`, gerettet/wiederhergestellt
+wie ein Stapel), und ruft sowohl `FUN_0000107a`/`FUN_000010d8` (also
+`F$Send`/`F$GProcP`) als auch **noch nicht identifizierten** Code über
+`(0x1c,SP)`-relative Sprünge auf. Riecht nach einer **Wait/Event-Routine**
+(kritischer Abschnitt + Prozess-Zeiger holen + ggf. Signal senden), aber die
+genaue Semantik ist noch offen — Kandidat für Runde 3.
+
 ## Nächste Schritte (falls gewünscht)
 
-1. Die 17 gefundenen Funktionen einzeln lesen und benennen (analog zum
-   Kernel-Vorgehen), beginnend mit `ioman_entry_98`.
-2. Trap-/Dispatch-Tabellen-Suche analog zum Kernel (`FindTrapInit.java`-
-   Muster aus `../../kernel`-Skripten als Vorlage) — IOMan braucht vermutlich
-   eine interne Verzweigung von "welcher I$-Callcode" zu "welcher
-   Datei-Manager/Treiber", analog zur `D_SysDis`/`D_UsrDis`-Zwei-Tabellen-
-   Struktur des Kernels.
-3. Undefinierte Bereiche (78,6 %) systematisch schließen (Kontrollfluss-
-   Verfolgung von den 17 bekannten Funktionen aus, wie beim Kernel).
-4. Modulkopf-Feldnamen zwischen `0x0A`–`0x12` gegen eine Primärquelle
+1. **Erledigt (Runde 2):** alle 17 gefundenen Funktionen gelesen; vier
+   davon als Kernel-Trampolin-Aufrufe identifiziert (F$Link/F$Send/
+   F$GProcP/F$SRqMem), der Einsprungpunkt als Init-Routine mit
+   Fehlerdiagnose-Ausgabe verstanden.
+2. `FUN_000014f8` (180 Byte, größte verbleibende Funktion) vollständig
+   lesen — vermutlich Wait/Event-Routine, s. Fund-Abschnitt oben.
+3. Neues System-Global-Feld `(0x64,A6)` (Ausgabe-Vtable-Zeiger) gegen den
+   Kernel gegenprüfen — taucht dort vermutlich auch auf, war im
+   bisherigen Kernel-Fund aber nicht dokumentiert.
+4. Trap-/Dispatch-Tabellen-Suche für die eigentlichen `I$`-Handler
+   (`FindTrapInit.java`-Muster aus `../../kernel`-Skripten als Vorlage) —
+   die bisher gelesenen 17 Funktionen liegen alle vor Offset `0x1600`;
+   die eigentlichen Datei-Manager-/Treiber-Dispatch-Routinen liegen
+   vermutlich weiter hinten im undefinierten Bereich (weiterhin 78,6 %,
+   Runde 2 hat nur bereits erkannte Funktionen gelesen, nicht neue
+   erschlossen).
+5. Undefinierte Bereiche (78,6 %) systematisch schließen (Kontrollfluss-
+   Verfolgung von den bekannten Funktionen aus, wie beim Kernel).
+6. Modulkopf-Feldnamen zwischen `0x0A`–`0x12` gegen eine Primärquelle
    absichern (aktuell nur per Analogieschluss zum Kernel-Kopf bestimmt).
 
 **Erstellt**: 2026-08-12
