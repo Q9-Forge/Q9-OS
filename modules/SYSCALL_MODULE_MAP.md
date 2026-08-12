@@ -190,6 +190,17 @@ unabhängig davon, ob sie im Testlauf tatsächlich aufgerufen wurden.
 
 ## Caveats
 
+- **"Modul = IOMan" heißt nicht "die eigentliche Arbeit passiert dort".**
+  IOMan-Disassemblierung Runde 3 fand: mehrere `I$`-Einträge (mindestens
+  `I$Detach`, vermutlich auch `I$Read`/`I$Write`/`I$Open`) sind in IOMan nur
+  ein **Dispatch-Stub**, der am Ende direkt (`jmp`, kein Rücksprung) in ein
+  **separates Treiber-/File-Manager-Modul** springt (Adresse aus der
+  Geräte-Deskriptor-Kette aufgelöst, liegt außerhalb der 5660-Byte-
+  `ioman_DEV`-Datei). Die Tabelle oben ist trotzdem korrekt (Zieladresse
+  liegt tatsächlich in IOMans Adressbereich), beschreibt aber nur "wo der
+  TRAP#0-Aufruf zuerst landet", nicht "wo die Datei-/Geräte-Logik steckt".
+  Details: [`ioman/docs/REVERSE_ENGINEERING.md`](ioman/docs/REVERSE_ENGINEERING.md),
+  Abschnitt "Runde 3".
 - Basis ist **ein** Boot-Image/Kernel-Build (`dker030s`, Development-Kernel,
   Standard-Allocator). Andere Kernel-Varianten (`aker*`, Buddy-Allocator,
   andere CPU-Familien) haben andere Modulgrößen/-adressen — diese Tabelle
