@@ -78,16 +78,23 @@ bestehende Tool-Pfade (`tools/ghidra_to_r68.py`, `src/Makefile`) anzufassen.
   `I$Close`); referenziert selbst ebenfalls den Kernel-Trampolin
   (15 Fundstellen) — relativiert die Annahme "File-Manager ohne
   Kernel-Calls" teilweise.
+- [`modules/os9000-x86/`](modules/os9000-x86/) — Systemmodule von
+  **OS-9000 v4.9** (Microwares späterer, portabler C-Neuschrieb,
+  x86-Ziel): Kernel/IOMan/RBF/SSM/SCF/PCF/CDFM/PipeMan als reale Binaries
+  extrahiert, Modul-Header-Format mit dem 68k-Original verglichen
+  (Type/Lang-Byte-Offsets architekturübergreifend identisch, Namensfeld-
+  Format anders). Image tatsächlich unter QEMU gebootet und live geprüft:
+  **RBF ist weiterhin der aktive File Manager**, die zunächst rätselhafte
+  Boot-Sektor-Signatur `"XD00BT"` ist nur ein x86-BIOS-Bootstrap-Wrapper,
+  kein Ersatz-Dateisystem.
+- [`modules/os9000-x86-6.1/`](modules/os9000-x86-6.1/) — dieselbe Prüfung
+  für **OS-9000 v6.1** (2018, VirtualBox-Appliance, ~20 Jahre nach v4.9):
+  ebenfalls gebootet, RBF weiterhin als File Manager bestätigt, Type/Lang-
+  Byte-Konvention ein drittes Mal (nach 68k und v4.9) unabhängig
+  verifiziert — architektonisch stabil über zwei Jahrzehnte und zwei
+  CPU-Familien.
 - `modules/syscache/`, `modules/ssm/` — bisher nur Platzhalterverzeichnisse,
   noch nicht disassembliert.
-- [`modules/os9000-x86/`](modules/os9000-x86/) — Systemmodule von
-  **OS-9000** (Microwares späterer, portabler C-Neuschrieb, x86-Ziel):
-  Kernel/IOMan/RBF/SSM/SCF/PCF/CDFM/PipeMan als reale Binaries extrahiert.
-  Modul-Header-Format mit dem 68k-Original verglichen (Type/Lang-Byte-
-  Offsets architekturübergreifend identisch, Namensfeld-Format anders);
-  Boot-Sektor-Signatur `"XD00BT"` gefunden, die NICHT dem klassischen
-  RBF-LSN0-Layout entspricht — offene Frage, welches Dateisystem das
-  Boot-Volume tatsächlich nutzt, noch nicht abschließend geklärt.
 
 ## Build
 
