@@ -30,8 +30,10 @@ in frischer Disassemblierung/Dekompilierung.
   Adressverweise korrekt aufgelöst werden. Compiler-Spec wurde beim Import
   automatisch auf `windows` gesetzt (Ghidra-Default für `x86:LE:32:default`
   ohne explizite `-cspec`); für reine Disassemblierung/Dekompilierung ohne
-  Aufrufkonventions-Feinschliff war das ausreichend, könnte bei einer
-  Vertiefung aber gegen `gcc` getauscht werden.
+  Aufrufkonventions-Feinschliff war das ausreichend. **Nachtrag:** ein
+  Reimport mit `-cspec gcc` wurde getestet (separates Projekt
+  `Q9-OS-ghidra-os9000-kernel-gcc/`) — brachte **keine** spürbare
+  Verbesserung, Details siehe "Grenzen" unten.
 - Skripte: [`../ghidra_scripts/kernel_ParseHeaderAndAnalyze.java`](../ghidra_scripts/kernel_ParseHeaderAndAnalyze.java),
   [`kernel_SetEntryAndAnalyze.java`](../ghidra_scripts/kernel_SetEntryAndAnalyze.java),
   [`kernel_DecompileInitChain.java`](../ghidra_scripts/kernel_DecompileInitChain.java),
@@ -280,9 +282,23 @@ Dokumentation, sondern direkt im disassemblierten Code bestätigt.
   Aufrufkonvention (`extraout_`/`unaff_`-Variablen) — der x86-Kernel
   scheint an mehreren Stellen Werte in Registern statt über den Stack zu
   übergeben/zurückzugeben, was die generische `windows`-Compiler-Spec
-  nicht vollständig modelliert. Eine gezielte `-cspec gcc`- oder
-  benutzerdefinierte Kalling-Konventions-Definition könnte das verbessern,
-  wurde hier aber nicht mehr ausprobiert.
+  nicht vollständig modelliert. **Getestet (2026-08-13): Reimport mit
+  `-cspec gcc` bringt keine spürbare Verbesserung** — direkter Vergleich
+  der vier Boot-Ketten-Funktionen zeigt praktisch identische Artefakt-Zahlen
+  (`unaff_*`: 95 vs. 94 Vorkommen, `extraout_*`: 22 vs. 22, `in_*`: 26 vs. 26
+  über beide Varianten hinweg) und dieselbe Fehlinterpretation von `pcVar2`
+  als Rückgabewert statt Sprungziel in beiden Versionen. Naheliegende
+  Erklärung: dieser handgeschriebene Kernel-Assembler folgt ohnehin keiner
+  der beiden Standard-x86-Aufrufkonventionen (er reicht Werte adhoc über
+  Register zwischen internen Routinen weiter, siehe den Stack-Switch-Trick
+  bei `pcVar2`/`FUN_0021e5a0`) — Ghidras Aufrufkonventions-Modell kann das
+  unabhängig von der gewählten Compiler-Spec nicht sauber abbilden. Eine
+  benutzerdefinierte, von Hand geschriebene Kalling-Konventions-Definition
+  wäre der einzige verbleibende Hebel, wurde hier nicht versucht (deutlich
+  höherer Aufwand für vermutlich begrenzten Zusatznutzen). Zweites,
+  gcc-basiertes Ghidra-Projekt bleibt unter
+  `/Volumes/SSD1TB/projects/Q9-OS-ghidra-os9000-kernel-gcc/` als Beleg
+  erhalten, nicht Teil des Repos.
 - Nicht verifiziert: ob/wo die echte x86-Hardware-IDT (`LIDT`) tatsächlich
   gesetzt wird — vermutlich außerhalb dieses Moduls in der Low-Level-
   System-Schicht, aber diese Schicht selbst wurde nicht separat aus dem
