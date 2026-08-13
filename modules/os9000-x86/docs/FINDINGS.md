@@ -221,6 +221,72 @@ Vergleich der LSN0-Struktur mit dem Technical-Manual-Layout nötig, nicht
 mehr getan (Priorität sank, nachdem die Kernfrage "welcher File Manager
 läuft tatsächlich" live beantwortet war).
 
+## Fund 5: Toolshed kann OS-9000/x86-RBF-Images NICHT direkt lesen — das On-Disk-Format hat sich geändert (nicht nur der Modul-Header)
+
+Andreas fragte, ob Toolshed (`os9`-Kommando, NitrOS-9-Projekt, bereits für
+die 68k-Images im Einsatz) das x86-Image "zerlegen" kann. Kurzantwort:
+**nein, jedenfalls nicht ohne Weiteres** — aber der Versuch hat die
+RBF-On-Disk-Struktur für OS-9000/x86 vollständig geklärt.
+
+**Test 1** (`os9 dir` direkt auf `os9000-xibase.img`): schlägt fehl
+(`error 1`, unbekannter Fehler — Toolshed erkennt das MBR-gewrappte Image
+gar nicht als Datenträger).
+
+**Test 2** (MBR-Partition per `dd` herausgeschnitten, `skip=17`
+Sektoren): Toolshed öffnet die Datei jetzt, aber `error 216`
+("pathname not found") — Root-Verzeichnis nicht auffindbar. Blindes
+Offset-Sondieren (verschiedene `skip`-Werte, `-nb400`-Vermutung aus
+`bootgen`, Byte-Muster-Suche nach plausiblen `DD.TOT`-Werten im ersten MB)
+brachte **keinen** Treffer — bestätigt später: der Bereich bei
+Partitionsanfang ist tatsächlich nur x86-BIOS-Bootcode (`"XD00BT"`), keine
+verschleierte RBF-LSN0.
+
+**Test 3, entscheidend:** eine frisch **vom laufenden OS-9000-System
+selbst** formatierte Diskette (`format /d0`, per QMP-Tastatursimulation
+im gebooteten Gast) ebenfalls mit Toolshed geöffnet — **auch das
+schlägt fehl** (`error 211`, "input past end-of-file", nach
+`Warning: T0S is zero`). Das ist der Beweis: es liegt **nicht** an einem
+MBR-/Bootloader-Wrapper, sondern am RBF-Format selbst — OS-9000/x86 nutzt
+ein grundlegend anderes On-Disk-Layout als das 68k-RBF, das Toolshed kennt.
+
+### Manuell dekodiert (reines Python, kein Toolshed nötig)
+
+Rohbyte-Analyse der guest-formatierten Diskette (1,44 MB, 2879 Blöcke à
+512 Byte, Name `"SYSBOOT"`) ergab ein vollständig konsistentes,
+neues LSN0-Format — jedes Feld stimmt exakt mit den vom `format`-Dialog
+selbst angezeigten Parametern überein:
+
+| Klassisches 68k-RBF | OS-9000/x86-RBF (empirisch ermittelt) |
+|---|---|
+| LSN0 bei physischem Block 0 | **LSN0 bei physischem Block 1** (Block 0 reserviert/leer — Platz für einen Bootsektor, selbst auf einer reinen Datendiskette) |
+| Felder 2–3 Byte, Big-Endian | **Alle Felder 4 Byte, Little-Endian** |
+| Verzeichniseinträge 32 Byte, Name High-Bit-terminiert | **Verzeichniseinträge 64 Byte, Name NUL-terminiert**, FD-Zeiger als 4-Byte-LE am Ende des Eintrags |
+| `DD.DIR` (Root-Verzeichnis-LSN) 3 Byte @ Offset 8 | `DD.DIR`-Äquivalent 4 Byte @ Offset `0x28` (LSN2 im Test) |
+
+Erfolgreich von Hand nachvollzogen: LSN0 → Root-FD (LSN2) → Root-
+Verzeichnisdaten (LSN3, Einträge `".."`/`"."`/`"sysboot"`) → `sysboot`s
+eigener FD (LSN960, direkt hinter der vom `format`-Dialog genannten
+Bitmap-Adresse `959`) → Segmentliste (Daten ab LSN961, Länge 1918 Blöcke)
+→ **`sysboot` erfolgreich rein aus den Rohbytes extrahiert, 982.016 Byte,
+ohne jedes Toolshed/Ghidra-Werkzeug, nur Python** (Details/Skript-Logik
+siehe Abschnitt "Werkzeuge" unten).
+
+### Bonus-Fund: `sysboot` selbst ist ein komprimiertes Container-Format, keine einfache Modul-Verkettung
+
+Die extrahierten 982.016 Byte beginnen mit einem eigenen Header —
+ASCII **`"OS9Z"`** gefolgt von der Konstante `0x12345678` (klassischer
+Byte-Order-Erkennungswert) und weiteren Feldern — **nicht** mit dem
+bekannten Modul-Sync `0x4AFC`. Eine Suche nach den Modul-Sync-Byte-Paaren
+(`4a fc` bzw. `fc 4a`, je nach Byte-Reihenfolge) im Rest der Datei findet
+nur ~10–11 Treffer auf 982 KB — das deckt sich mit der **zufällig zu
+erwartenden Trefferzahl** (≈15 bei rein zufälligen Bytes dieser Länge),
+nicht mit gehäuften echten Modul-Kopfzeilen. Schlussfolgerung: `sysboot`
+ist **komprimiert** (der Name `"OS9Z"` passt dazu — vermutlich "Zipped"
+o. ä.), keine bloße Aneinanderreihung von `kernel`/`ioman`/`rbf` &Co. Das
+Kompressionsverfahren ist nicht identifiziert — für eine weitere Zerlegung
+in die Einzelmodule bräuchte es zuerst dessen Header-Format (Segment-
+Tabelle, Kompressionsalgorithmus) verstanden.
+
 ## Werkzeuge / Wiederholbarkeit
 
 ```bash
@@ -253,11 +319,19 @@ separaten `RESIDENT/mw86.tar`.
    live per `devs`/`dir`/`ident -m` geprüft — RBF ist der aktive File
    Manager für alle Block-Geräte, `"XD00BT"` ist nur ein x86-BIOS-Boot-
    Wrapper, kein Ersatz-Dateisystem. Kernfrage damit beantwortet.
-3. Offen (nachrangig, s. Fund 4 Ende): ob die XD00BT-Struktur ein
-   klassisches RBF-LSN0 an anderer Stelle referenziert oder RBF x86-seitig
-   mit angepasstem Layout arbeitet — Byte-für-Byte-Vergleich mit dem
-   Technical Manual (Kapitel 6) nicht mehr gemacht, da nachrangig.
-4. Ghidra-Disassemblierung von `kernel`/`ioman`/`rbf` (x86-Target,
+3. **Geklärt (Fund 5):** die XD00BT-Struktur referenziert kein klassisches
+   RBF-LSN0 an anderer Stelle — RBF hat auf x86 tatsächlich ein eigenes,
+   grundlegend anderes On-Disk-Format (4-Byte-LE-Felder, LSN0 bei Block 1,
+   64-Byte-Verzeichniseinträge). Vollständig dokumentiert und von Hand
+   dekodiert, Toolshed kann dieses Format nicht lesen (baut auf 68k-RBF
+   auf). `sysboot` erfolgreich rein aus Rohbytes extrahiert — stellte sich
+   als eigenes, vermutlich komprimiertes Container-Format heraus (`"OS9Z"`
+   Header), nicht als einfache Modul-Verkettung.
+4. Offen: `sysboot`s Kompressionsformat identifizieren, um die
+   gebündelten Module (kernel/ioman/rbf/...) daraus zu extrahieren — ohne
+   das bleibt der Live-Extraktions-Weg (Punkt 5) der einzige Weg an
+   den tatsächlich laufenden Code.
+5. Ghidra-Disassemblierung von `kernel`/`ioman`/`rbf` (x86-Target,
    analog zum bisherigen 68k-Vorgehen) — mit Andreas' Vermutung im
    Hinterkopf, dass der C-kompilierte Code sich besser dekompilieren
    lassen könnte als der handoptimierte 68k-Assembler. **Wichtig:** dafür
@@ -267,6 +341,6 @@ separaten `RESIDENT/mw86.tar`.
    `mw86.tar`-Kopien sind ein anderer (älterer) Build. Live-Extraktion aus
    dem laufenden Speicher wäre der nächste technische Schritt (z. B. über
    `ident -m -o` für den Speicher-Offset, dann per QEMU-Monitor `memsave`).
-5. Restliche Kopf-Felder (`0x14`–`0x58`) Byte für Byte zuordnen.
+6. Restliche Kopf-Felder (`0x14`–`0x58`) Byte für Byte zuordnen.
 
 **Erstellt**: 2026-08-13
