@@ -11,6 +11,15 @@ Vergleichspunkt: der bereits vollständig analysierte OS-9/68K-Kernel
 insbesondere der Abschnitt "Fund: Trap-/Exception-Tabellen-Initialisierung
 und Dispatch-Ziele" (Zeile ~149, zentrale Boot-Init-Funktion `FUN_000067a0`).
 
+**Fortsetzung (2026-08-13):** Die Funktionen der Boot-Kette wurden in
+einer weiteren Runde mit sprechenden Namen versehen (Präfix `Q9X_`,
+analog zum 68K-Präfix `Q9_`) und mit dem 68K-Bootstrap chronologisch
+Schritt für Schritt verglichen — inklusive der Auflösung, wohin `pcVar2`
+in `FUN_0021eb26`/`Q9X_kernel_globals_init` tatsächlich springt. Siehe
+[`../../../docs/kernel-walkthrough/01-kernel-bootstrap/`](../../../docs/kernel-walkthrough/01-kernel-bootstrap/README.md)
+für die vollständige, aktuelle Fassung — dort auch die neuen `Q9X_`-Namen
+in frischer Disassemblierung/Dekompilierung.
+
 ## Ghidra-Setup
 
 - Projekt: `/Volumes/SSD1TB/projects/Q9-OS-ghidra-os9000-kernel/` (außerhalb
