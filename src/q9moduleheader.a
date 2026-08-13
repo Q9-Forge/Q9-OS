@@ -1,0 +1,148 @@
+*****************************************************************
+* q9moduleheader.a -- Q9-OS eigene, architekturuebergreifende
+*                     Definition des OS-9-Modul-Headers: OS-9/6809
+*                     (1980), OS-9/68K (klassisch) und OS-9000
+*                     (universell, x86/PowerPC/ARM/MIPS/SPARC/...).
+*                     C-Variante siehe q9moduleheader.h.
+*
+* Ziel: Grundlage fuer ein "ident"-artiges Werkzeug, das Module aller
+* drei Generationen anhand des Sync-Worts erkennt und ausfuehrlich
+* beschreibt -- unabhaengig von OS-9-Generation/CPU-Architektur.
+*
+* Eigenstaendig aus den drei offiziellen Technical Manuals
+* rekonstruiert (OS-9 System Programmer's Manual 1983, Kapitel 4, fuer
+* 6809; OS-9 for 68K Processors Technical Manual, Table 1-6/1-7/1-8,
+* fuer 68K; OS-9000 Technical Manual, Kapitel 1 (mh_com-Struct), fuer
+* OS-9000), verifiziert durch eigene Disassemblierung realer Kernel-
+* Binaries (siehe docs/kernel-walkthrough/00-modul-aufbau-und-header/).
+* KEIN Abdruck der proprietaeren Microware-Quelldateien module.h/
+* oskdefs.d (copyright-geschuetzt) -- nur die (nicht schutzfaehigen)
+* strukturellen Fakten Offset/Groesse/Bedeutung uebernommen, alle Namen
+* und Beschreibungstexte eigene Formulierungen.
+*
+* Statuskennzeichnung je Feld:
+*   VERIFIZIERT   -- an einem echten Binary geprueft
+*   HANDBUCH      -- aus dem offiziellen Manual, nicht selbst nachgeprueft
+*   PLATZHALTER   -- Struktur uebernommen, am konkreten Kernel-Modul
+*                    nicht mit Wert belegt/nicht verifizierbar
+*****************************************************************
+
+*-------------------------------------------------------------
+* Sync-Werte je Generation
+*-------------------------------------------------------------
+Q9_MH_SYNC_6809   equ $87CD   OS-9/6809, 1980 [HANDBUCH, cross-verifiziert gegen NitrOS-9 module.d]
+Q9_MH_SYNC_OS9    equ $4AFC   OS-9/68K UND alle OS-9000-Ports (x86/PowerPC/ARM/...) -- Byte-Reihenfolge je nach Ziel-Endianness [VERIFIZIERT 68K+x86]
+
+* CRC-Polynom -- ueber 6809 UND 68K hinweg identisch dokumentiert [HANDBUCH]
+Q9_MH_CRC_POLY    equ $800FE3
+
+*-------------------------------------------------------------
+* Modultyp-Codes -- ueber ALLE drei Generationen identisch
+*-------------------------------------------------------------
+Q9_MT_ANY         equ $0
+Q9_MT_PROGRAM     equ $1
+Q9_MT_SUBROUT     equ $2
+Q9_MT_MULTI       equ $3
+Q9_MT_DATA        equ $4
+Q9_MT_CSDDATA     equ $5
+Q9_MT_TRAPLIB     equ $B
+Q9_MT_SYSTEM      equ $C     Systm -- Kernel/IOMan/SSM/SCF/...
+Q9_MT_FILEMAN     equ $D     Flmgr -- RBF/PCF/CDFM/...
+Q9_MT_DEVDRVR     equ $E     Drivr
+Q9_MT_DEVDESC     equ $F     Devic
+
+*-------------------------------------------------------------
+* Sprach-Codes -- ebenfalls ueber alle drei Generationen identisch
+*-------------------------------------------------------------
+Q9_ML_ANY         equ $0
+Q9_ML_OBJECT      equ $1     Maschinencode der jeweiligen CPU
+Q9_ML_ICODE       equ $2     BASIC09 I-Code
+Q9_ML_PCODE       equ $3
+Q9_ML_CCODE       equ $4
+Q9_ML_CBLCODE     equ $5
+Q9_ML_FRTNCODE    equ $6
+
+*-------------------------------------------------------------
+* Attribut-Bits
+*-------------------------------------------------------------
+Q9_MA_REENT       equ $80    reentrant/sharable -- bereits 1980 bei 6809 dokumentiert
+Q9_MA_SUPER       equ $20    system-state -- erst ab 68K dokumentiert
+
+*-------------------------------------------------------------
+* Header-Layout 1: OS-9/6809 (1980, Motorola 6809, 8-Bit)
+* Nur 9 Byte Standard-Header, danach typabhaengige Erweiterung.
+* [HANDBUCH] -- kein eigenes 6809-Kernel-Binary vorhanden.
+*-------------------------------------------------------------
+Q9_MH6809_SYNC    equ $00    2 Byte
+Q9_MH6809_SIZE    equ $02    2 Byte -- nur 16 Bit (64-KB-Adressraum)
+Q9_MH6809_NAME    equ $04    2 Byte, Offset zum Namen -- High-Bit-terminiert
+Q9_MH6809_TYLANG  equ $06    1 Byte: oberes Nibble=Typ, unteres Nibble=Sprache
+Q9_MH6809_ATTREV  equ $07    1 Byte: oberes Nibble=Attribut (nur Bit7), unteres Nibble=Revision (0-15)
+Q9_MH6809_PARITY  equ $08    1 Byte XOR-Pruefsumme -- Standard-Header endet hier
+Q9_MH6809_STDLEN  equ $09    Laenge des Standard-Headers
+* Typabhaengige Erweiterung (User-Module 0-9, laut Manual auch fuer Systm uebernommen):
+Q9_MH6809_EXEC    equ $09    2 Byte, Einsprungoffset
+Q9_MH6809_STORSZ  equ $0B    2 Byte, Speicherbedarf/Stackgroesse [PLATZHALTER fuer Systm]
+
+*-------------------------------------------------------------
+* Header-Layout 2: OS-9/68K (klassisch -- dieses Projekts Hauptziel)
+* 46 Byte Standard-Header + optionale, typabhaengige Erweiterung.
+*-------------------------------------------------------------
+Q9_MH68K_SYNC     equ $00    2 Byte [VERIFIZIERT]
+Q9_MH68K_SYSREV   equ $02    2 Byte [VERIFIZIERT]
+Q9_MH68K_SIZE     equ $04    4 Byte [VERIFIZIERT]
+Q9_MH68K_OWNER    equ $08    4 Byte [VERIFIZIERT]
+Q9_MH68K_NAME     equ $0C    4 Byte, Offset zum Namen -- NUL-terminiert [VERIFIZIERT]
+Q9_MH68K_ACCESS   equ $10    2 Byte [VERIFIZIERT]
+Q9_MH68K_TYPE     equ $12    1 Byte [VERIFIZIERT]
+Q9_MH68K_LANG     equ $13    1 Byte [VERIFIZIERT]
+Q9_MH68K_ATTR     equ $14    1 Byte [VERIFIZIERT]
+Q9_MH68K_REVS     equ $15    1 Byte [VERIFIZIERT]
+Q9_MH68K_EDIT     equ $16    2 Byte [VERIFIZIERT]
+Q9_MH68K_USAGE    equ $18    4 Byte, Offset Kommentar-String (unbenutzt) [HANDBUCH]
+Q9_MH68K_SYMBOL   equ $1C    4 Byte, Offset Symboltabelle (reserviert) [HANDBUCH]
+Q9_MH68K_IDENT    equ $20    2 Byte, unbenutzt [HANDBUCH]
+* $22-$27: 6 Byte reserviert
+Q9_MH68K_HDEXT    equ $28    4 Byte, Offset Header-Erweiterung [HANDBUCH]
+Q9_MH68K_HDEXTSZ  equ $2C    2 Byte, Groesse der Header-Erweiterung [HANDBUCH]
+Q9_MH68K_PARITY   equ $2E    2 Byte -- Standard-Header endet hier [VERIFIZIERT]
+Q9_MH68K_STDLEN   equ $30    Laenge des Standard-Headers
+* Typabhaengige Erweiterung -- laut Manual NUR M$Exec/M$Excpt offiziell
+* fuer Program/TrapLib/Drivr/Flmgr/Systm definiert:
+Q9_MH68K_EXEC     equ $30    4 Byte, Einsprungoffset [VERIFIZIERT]
+Q9_MH68K_EXCPT    equ $34    4 Byte, Trap-Einsprung [VERIFIZIERT, Wert 0 am Kernel]
+* Nur bei Program/TrapLib/Drivr (NICHT bei Systm/Flmgr):
+Q9_MH68K_MEM      equ $38    4 Byte, Speicherbedarf [PLATZHALTER -- Systm nutzt dieses Feld nicht]
+Q9_MH68K_STACK    equ $3C    4 Byte, Stackgroesse [PLATZHALTER]
+
+*-------------------------------------------------------------
+* Header-Layout 3: OS-9000 universell (x86/PowerPC/ARM/MIPS/SPARC/...)
+* 88 Byte, EIN gemeinsamer Header fuer JEDEN Modultyp (mh_com-Konzept).
+* Byte-Reihenfolge der Mehrbyte-Felder folgt der Ziel-Endianness.
+*-------------------------------------------------------------
+Q9_MH9K_SYNC      equ $00    2 Byte [VERIFIZIERT, x86]
+Q9_MH9K_SYSREV    equ $02    2 Byte [VERIFIZIERT, x86]
+Q9_MH9K_SIZE      equ $04    4 Byte [VERIFIZIERT, x86]
+Q9_MH9K_OWNER     equ $08    4 Byte [VERIFIZIERT, x86]
+Q9_MH9K_NAME      equ $0C    4 Byte, Offset zum Namen -- NUL-terminiert [VERIFIZIERT, x86]
+Q9_MH9K_ACCESS    equ $10    2 Byte [VERIFIZIERT, x86]
+Q9_MH9K_TYLANG    equ $12    2 Byte: (Typ<<8)|Sprache, Byte-Reihenfolge endian-abhaengig [VERIFIZIERT, x86]
+Q9_MH9K_ATTREV    equ $14    2 Byte: (Attribut<<8)|Revision, ebenso endian-abhaengig [VERIFIZIERT, x86]
+Q9_MH9K_EDIT      equ $16    2 Byte [VERIFIZIERT, x86]
+Q9_MH9K_NEEDS     equ $18    4 Byte, Hardware-Anforderungsflags [VERIFIZIERT, x86]
+Q9_MH9K_SHARE     equ $1C    4 Byte, Offset Shared-Data [VERIFIZIERT, x86]
+Q9_MH9K_SYMBOL    equ $20    4 Byte, Offset Symboltabelle [VERIFIZIERT, x86]
+Q9_MH9K_EXEC      equ $24    4 Byte, Einsprungoffset -- fuer JEDEN Modultyp vorhanden [VERIFIZIERT, x86]
+Q9_MH9K_EXCPT     equ $28    4 Byte, Trap-Einsprung [VERIFIZIERT, x86]
+Q9_MH9K_DATA      equ $2C    4 Byte, Datenbereichsgroesse [VERIFIZIERT, x86]
+Q9_MH9K_STACK     equ $30    4 Byte, Stackgroesse [VERIFIZIERT, x86]
+Q9_MH9K_IDATA     equ $34    4 Byte, Offset initialisierte Daten [VERIFIZIERT, x86]
+Q9_MH9K_IDREF     equ $38    4 Byte, Offset Datenreferenzlisten [VERIFIZIERT, x86]
+Q9_MH9K_INIT      equ $3C    4 Byte [VERIFIZIERT, x86]
+Q9_MH9K_TERM      equ $40    4 Byte [VERIFIZIERT, x86]
+Q9_MH9K_DBIAS     equ $44    4 Byte [VERIFIZIERT, x86]
+Q9_MH9K_CBIAS     equ $48    4 Byte [VERIFIZIERT, x86]
+Q9_MH9K_IDENT     equ $4C    2 Byte, unbenutzt [VERIFIZIERT, x86]
+* $4E-$55: 8 Byte reserviert
+Q9_MH9K_PARITY    equ $56    2 Byte -- Header endet hier [VERIFIZIERT, x86]
+Q9_MH9K_STDLEN    equ $58    Laenge des Standard-Headers
