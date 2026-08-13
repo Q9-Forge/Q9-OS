@@ -57,6 +57,18 @@ bestehenden Platz (`vendor/`, `src/kernel/`, `docs/REVERSE_ENGINEERING.md`)
 statt rückwirkend nach `modules/kernel/` verschoben zu werden — vermeidet,
 bestehende Tool-Pfade (`tools/ghidra_to_r68.py`, `src/Makefile`) anzufassen.
 
+**Provenienz-Konvention:** Jedes Verzeichnis mit aus einer externen Quelle
+übernommenen Binärdateien (Archiv-Entpackung, Live-RAM-Extraktion, ...)
+bekommt eine eigene `PROVENANCE.md` direkt daneben — Quelldatei(en) mit
+SHA-256, ggf. Zwischenschritt (Disk-Image, Boot-Session, Speicheradresse)
+und SHA-256 je extrahierter Einzeldatei. Beispiel:
+[`modules/os9000-x86/vendor/PROVENANCE.md`](modules/os9000-x86/vendor/PROVENANCE.md)
+(statischer Tar-Export) und
+[`modules/os9000-x86/vendor-live/PROVENANCE.md`](modules/os9000-x86/vendor-live/PROVENANCE.md)
+(Live-RAM-Extraktion) — damit bleibt bei jedem Fund nachvollziehbar, woher
+er stammt, auch wenn Quelldateien später umbenannt/verschoben/erneut
+gebootet werden.
+
 - [`modules/SYSCALL_MODULE_MAP.md`](modules/SYSCALL_MODULE_MAP.md) —
   vollständige Zuordnung aller ~97 OS-9-Systemaufrufe zu ihrem jeweiligen
   Modul (Kernel/IOMan/SysCache/SSM), per Adressvergleich aus der
