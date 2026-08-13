@@ -1,5 +1,9 @@
 # Live aus dem RAM extrahierte Systemmodule (OS-9000/x86 v4.9)
 
+**Lückenlose Herkunftskette (Quell-Zip → Disk-Image → RAM-Adresse →
+SHA-256 je Datei) steht in [`PROVENANCE.md`](PROVENANCE.md).** Dieses
+README beschreibt nur die Methode, nicht die exakten Hashes/Adressen.
+
 Diese 8 Dateien sind die **tatsächlich laufenden** Kopien von
 `kernel`/`ioman`/`rbf`/`ssm`/`scf`/`pcf`/`cdfm`/`pipeman`, direkt aus dem
 physischen RAM eines gebooteten `os9000-xibase.img`-Systems extrahiert —

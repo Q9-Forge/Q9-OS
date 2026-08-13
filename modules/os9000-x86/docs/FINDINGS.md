@@ -329,7 +329,12 @@ sondern echte Bau-/Konfigurationsunterschiede pro Modul.
 Dateien liegen jetzt unter
 [`vendor-live/`](../vendor-live/README.md) — eigenständige, Ghidra-taugliche
 Binärdateien, für eine Disassemblierung die richtigen Ausgangsdateien
-(nicht `vendor/`), weil sie den tatsächlich laufenden Code enthalten.
+(nicht `vendor/`), weil sie den tatsächlich laufenden Code enthalten. Die
+lückenlose Herkunftskette (Quell-Zip → welche Disk-Image-Kopie →
+QEMU-Boot → RAM-Adresse → SHA-256 je Datei) steht in
+[`vendor-live/PROVENANCE.md`](../vendor-live/PROVENANCE.md); die statischen
+`vendor/`-Dateien aus `mw86.tar` haben ihr eigenes
+[`vendor/PROVENANCE.md`](../vendor/PROVENANCE.md).
 
 ## Werkzeuge / Wiederholbarkeit
 
