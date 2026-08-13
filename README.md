@@ -29,6 +29,18 @@ unabhängiger früher Versuch).
   `PLATZHALTER` markiert. Siehe
   [`docs/REVERSE_ENGINEERING.md`](docs/REVERSE_ENGINEERING.md) für den
   Hintergrund.
+- **`src/q9moduleheader.a`** / **`src/q9moduleheader.h`** — eigene,
+  architekturübergreifende Definition des OS-9-Modul-Headers: OS-9/6809
+  (1980), OS-9/68K (klassisch) und OS-9000 (universell, x86/PowerPC/ARM/
+  MIPS/SPARC/...) als drei getrennte Layouts (`Q9_MH6809_*`/`Q9_MH68K_*`/
+  `Q9_MH9K_*`) plus gemeinsame, über alle drei Generationen identische
+  Typ-/Sprach-Codes (`Q9_MT_*`/`Q9_ML_*`). Ziel: Grundlage für ein
+  künftiges `ident`-artiges Werkzeug, das Module jeder OS-9-Generation
+  am Sync-Wort erkennt und beschreiben kann. Aus den drei offiziellen
+  Technical Manuals sowie eigener Disassemblierung rekonstruiert, kein
+  Abdruck der proprietären `module.h`/`oskdefs.d`. Siehe
+  [`docs/kernel-walkthrough/00-modul-aufbau-und-header/`](docs/kernel-walkthrough/00-modul-aufbau-und-header/)
+  für den Hintergrund und die Herleitung jedes einzelnen Felds.
 
 Weitere Tools folgen, sobald sie feststehen — bis dahin bleibt die Struktur
 flach (`src/`, kein Modulverzeichnis pro Tool), siehe `Q9-Forge`s
