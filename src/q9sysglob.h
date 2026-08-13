@@ -38,7 +38,7 @@
 #define Q9_D_SYSSTK         0x0060  /* System-IRQ-Stackpointer [PLATZHALTER] */
 #define Q9_D_SYSROM         0x0064  /* Einsprungpunkt des Boot-ROMs [VERIFIZIERT -- (0x64,A6), Konsolen-Ausgabe ueber (0x8,A1)-Funktionszeiger in 0x850/0x868 bestaetigt] */
 #define Q9_D_EXCJMP         0x0068  /* Zeiger auf die Exception-Sprungtabelle (siehe Q9_T_*-Struktur) [VERIFIZIERT] */
-#define Q9_D_TOTRAM         0x006C  /* vom Boot-ROM ermittelte Gesamt-RAM-Groesse [PLATZHALTER] */
+#define Q9_D_TOTRAM         0x006C  /* vom Boot-ROM ermittelte Gesamt-RAM-Groesse [VERIFIZIERT -- Register D0 beim Boot direkt hierher kopiert, siehe docs/kernel-walkthrough/01-kernel-bootstrap/] */
 #define Q9_D_MINBLK         0x0070  /* minimale allozierbare Blockgroesse pro Prozess [PLATZHALTER] */
 #define Q9_D_FREMEM         0x0074  /* Kopf der freien Speicherliste [PLATZHALTER] */
 #define Q9_D_BLKSIZ         0x007C  /* minimale allozierbare Systemblockgroesse [PLATZHALTER] */
@@ -52,7 +52,7 @@
 #define Q9_D_SLEEPQ         0x03B4  /* Kopf der Warteschlange schlafender Prozesse [PLATZHALTER] */
 #define Q9_D_WAITQ          0x03BC  /* Kopf der Warteschlange wartender Prozesse [PLATZHALTER] */
 #define Q9_D_ACTAGE         0x03C4  /* Alterungszaehler der aktiven Warteschlange [VERIFIZIERT -- Aging-Countdown in Q9_scheduler_183a bestaetigt] */
-#define Q9_D_MPUTYP         0x03C8  /* erkannter CPU-Typ (68000/010/020/030/040/060/070/CPU32) [PLATZHALTER] */
+#define Q9_D_MPUTYP         0x03C8  /* erkannter CPU-Typ (68000/010/020/030/040/060/070/CPU32) [VERIFIZIERT -- Register D1 beim Boot direkt hierher kopiert, siehe docs/kernel-walkthrough/01-kernel-bootstrap/] */
 #define Q9_D_EVTBL          0x03CC  /* Start-/Endzeiger der System-Event-Tabelle [PLATZHALTER] */
 #define Q9_D_EVID           0x03D4  /* naechste, fortlaufende Event-ID [PLATZHALTER] */
 #define Q9_D_SPUMEM         0x03D8  /* Zeiger auf SPU-Globaldaten (0 = nicht aktiv) [PLATZHALTER] */
