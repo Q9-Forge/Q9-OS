@@ -1,74 +1,45 @@
 # Thema 00: Kernel-Modul-Aufbau und Header
 
 Bevor der Kernel irgendetwas initialisiert, muss ihn zuerst jemand als
-gültiges OS-9-Modul erkennen und an seinen Einsprungpunkt springen. Beide
-Header-Formate sind **offiziell dokumentiert** (nicht geraten) in den
-lokal vorliegenden Technical Manuals:
+gültiges OS-9-Modul erkennen und an seinen Einsprungpunkt springen. Alle
+drei Header-Formate sind **offiziell dokumentiert** (nicht geraten) —
+inklusive dem Urvater, OS-9/6809 (1980er, Motorola 6809, der eigentliche
+Ursprung der ganzen Modul-Architektur):
 
-- 68K: `MWOS/DOC/RadiSys/68k_tech.pdf`, Kapitel 1, Table 1-6/1-7/1-8
-- OS-9000: `MWOS/DOC/RadiSys/os9k_tech.pdf`, Kapitel 1, C-Struct `mh_com`
+- **OS-9/6809**: `OS-9 System Programmer's Manual` (1983), Kapitel 4,
+  "Module Header Definitions" — plus realer Kernel-Quelltext
+  (`krn.asm`, NitrOS-9-Projekt, LGPL/Open-Source-Nachbau, lokal unter
+  `#INFO/#Microware/OS-9 6809/nitros09/6809l2/modules/kernel/krn.asm`)
+- **OS-9/68K**: `68k_tech.pdf`, Kapitel 1, Table 1-6/1-7/1-8
+- **OS-9000/x86**: `os9k_tech.pdf`, Kapitel 1, C-Struct `mh_com`
 
-## So sieht der Header beim OS-9/68K-Kernel aus
+**Hinweis zur 6809-Spalte:** kein eigenes 6809-Kernel-Binary vorhanden
+(anders als bei 68K/x86, wo alle Werte aus echten, live geprüften Kernen
+stammen) — die Werte hier kommen aus dem Manual bzw. den Parametern im
+echten NitrOS-9-Quelltext, sind also dokumentiert, aber nicht Byte-für-
+Byte aus einem gebooteten System verifiziert.
 
-Alle Werte real aus `vendor/68020/dker030s` (dem Original-Kernel-Binary)
-ausgelesen:
+## Alle drei Header im direkten Vergleich
 
-| Offset | Feld | Breite | Wert | Bedeutung |
-|---|---|---|---|---|
-| `0x00` | `M$ID` | 2 Byte | `0x4AFC` | Sync-Bytes, damit findet man das Modul im Speicher |
-| `0x02` | `M$SysRev` | 2 Byte | `1` | Format-Revision |
-| `0x04` | `M$Size` | 4 Byte | `28.476` | Gesamtgröße des Moduls in Byte |
-| `0x08` | `M$Owner` | 4 Byte | `0` | Owner-ID |
-| `0x0C` | `M$Name` | 4 Byte | `0x6F30` | Offset zum Namens-String, relativ zum Modulanfang |
-| `0x10` | `M$Accs` | 2 Byte | `0x0555` | Zugriffsrechte (r-x r-x r-x) |
-| `0x12` | `M$Type` | 1 Byte | `0x0C` | Modultyp: `Systm` (12) = Systemmodul |
-| `0x13` | `M$Lang` | 1 Byte | `0x01` | Sprache: `Objct` (1) = Maschinencode |
-| `0x14` | `M$Attr` | 1 Byte | `0xA0` | Attribute: system-state + reentrant |
-| `0x15` | `M$Revs` | 1 Byte | `0` | Revisionsstufe |
-| `0x16` | `M$Edit` | 2 Byte | `375` | Build-/Edition-Zähler |
-| `0x18` | `M$Usage` | 4 Byte | `0` | Offset Kommentar-String (unbenutzt) |
-| `0x1C` | `M$Symbol` | 4 Byte | `0` | Offset Symboltabelle (reserviert) |
-| `0x20` | `M$Ident` | 2 Byte | `0` | Ident-Code (unbenutzt) |
-| `0x22`–`0x27` | *reserviert* | 6 Byte | `0` | — |
-| `0x28` | `M$HdExt` | 4 Byte | `0` | Offset Header-Erweiterung |
-| `0x2C` | `M$HdExtSz` | 2 Byte | `0` | Größe der Header-Erweiterung |
-| `0x2E` | `M$Parity` | 2 Byte | `0x1D2D` | Prüfsumme — **Standard-Header endet hier, bei Byte 46** |
-| `0x30` | `M$Exec` | 4 Byte | `0x54` | **Einsprungpunkt** |
-| `0x34` | `M$Excpt` | 4 Byte | `0` | Trap-Einsprung für unbehandelte User-Traps (hier: keiner) |
-| `0x38`+ | *(kein offizielles Feld für Systemmodule)* | — | — | ab hier nur noch Microware-interne Konvention, siehe Thema-Text unten |
-| `0x54` | *(Programmcode)* | — | `BRA.W` | Sprung über den ID-String, landet bei `0x67A0` — der echten Init-Funktion |
+| # | Feld (Konzept) | OS-9/6809 | OS-9/68K (`dker030s`) | OS-9000/x86 (`kernel`, live) | Gleich? |
+|---|---|---|---|---|---|
+| 1 | Sync-Bytes | `$00` (2B) = `$87CD` | `$00` (2B) = `$4AFC` | `$00` (2B) = `$4AFC` (LE: `FC4A`) | Wert ist **je Prozessorfamilie eigen** (Manual: "processor dependent") — 68K/x86 identischer Wert, nur Byte-Reihenfolge gedreht |
+| 2 | Modulgröße | `$02` (2B) | `$04` (4B) = 28.476 | `$04` (4B) = 76.944 | Konzept gleich, 6809 nur 2 Byte (64-KB-Adressraum reicht für 16 Bit) |
+| 3 | Name-Offset | `$04` (2B) | `$0C` (4B) = `$6F30` | `$0C` (4B) = `$58` | Konzept identisch bei allen drei; 6809 schmaler aus demselben Adressraum-Grund |
+| 4 | Modultyp | oberes Nibble von `$06` = `$C` (Systm) | `$12` (1B) = `$0C` | oberes Byte von `$12` (`$0C01`) = `$0C` | **Wert überall identisch** (`$C`=Systm, seit 1980 bis heute unverändert!), aber **3 verschiedene Kodierungen**: Nibble-Paar → zwei Bytes → ein 16-Bit-Wort |
+| 5 | Sprache | unteres Nibble von `$06` = `1` (6809-Code) | `$13` (1B) = `$01` (Objct) | unteres Byte von `$12` (`$0C01`) = `$01` | **Wert überall `1`** = "Maschinencode dieser CPU" — dieselbe 3-Kodierungs-Entwicklung wie Typ |
+| 6 | Attribute | oberes Nibble von `$07`, nur Bit 7 = reentrant dokumentiert | `$14` (1B) = `$A0` | oberes Byte von `$14` (`$A000`) = `$A0` | 6809 kennt nur "reentrant"; `system-state`-Bit kommt erst mit 68K dazu — **echte Erweiterung**, nicht nur Umkodierung |
+| 7 | Revisionsstufe | unteres Nibble von `$07`, 0–15 | `$15` (1B) = `0`, 0–255 | unteres Byte von `$14`, 0–255 | 6809 auf 4 Bit begrenzt — **echte Kapazitätserweiterung** ab 68K |
+| 8 | Header-Prüfsumme | `$08` (1B) | `$2E` (2B) = `$1D2D` | `$56` (2B) = `$4E0D` | Konzept (XOR-Prüfsumme) über die gesamte Session hinweg gleich; Breite wächst mit der Headergröße |
+| 9 | Einsprungpunkt | `$09` (2B) | `$30` (4B) = `$54` | `$24` (4B) = `$A4` | **Konzept über 3 Prozessorgenerationen identisch**: kurzer Sprung-Stub vor dem echten Code (s. Abschnitt unten) |
+| 10 | Datenbereich/Storage-Größe | `$0B` (2B), universell für jeden Modultyp | *(für `Systm` nicht dokumentiert)* | `$2C` (4B) = 7.008 | 6809 hatte es universell, 68K spart es sich für Systemmodule, x86 holt es sich zurück |
+| 11 | Standard-Header endet nach | **9 Byte** | **46 Byte** (`$2E`/`$2F`) | **88 Byte** (`$58`) | wächst mit jeder Generation deutlich — 6809→68K ~5×, 68K→x86 ~2× |
 
-## So sieht der Header beim OS-9000/x86-Kernel aus
-
-Alle Werte real aus `modules/os9000-x86/vendor-live/kernel` (der live
-laufenden Kopie) ausgelesen:
-
-| Offset | Feld | Breite | Wert | Bedeutung |
-|---|---|---|---|---|
-| `0x00` | `m_sync` | 2 Byte | `0x4AFC` | dasselbe Sync-Feld wie beim 68K |
-| `0x02` | `m_sysrev` | 2 Byte | `2` | Format-Revision |
-| `0x04` | `m_size` | 4 Byte | `76.944` | Gesamtgröße des Moduls in Byte |
-| `0x08` | `m_owner` | 4 Byte | `0` | Owner-ID |
-| `0x0C` | `m_name` | 4 Byte | `0x58` | Offset zum Namens-String — **derselbe Feldtyp wie beim 68K** |
-| `0x10` | `m_access` | 2 Byte | `0x0555` | Zugriffsrechte — identischer Wert wie beim 68K |
-| `0x12` | `m_tylan` | 2 Byte | `0x0C01` | Type+Lang **in einem Feld** (Type=`0x0C`, Lang=`0x01` — dieselben Werte wie beim 68K, s. Kasten unten) |
-| `0x14` | `m_attrev` | 2 Byte | `0xA000` | Attr+Revs **in einem Feld** (Attr=`0xA0`, Revs=`0` — dieselben Werte wie beim 68K) |
-| `0x16` | `m_edit` | 2 Byte | `205` | Build-/Edition-Zähler |
-| `0x18` | `m_needs` | 4 Byte | `0` | Hardware-Anforderungsflags |
-| `0x1C` | `m_share` | 4 Byte | `0` | Offset Shared-Data |
-| `0x20` | `m_symbol` | 4 Byte | `0` | Offset Symboltabelle |
-| `0x24` | `m_exec` | 4 Byte | `0xA4` | **Einsprungpunkt** |
-| `0x28` | `m_excpt` | 4 Byte | `0` | Trap-Einsprung (hier: keiner) |
-| `0x2C` | `m_data` | 4 Byte | `7.008` | Größe des Datenbereichs |
-| `0x30` | `m_stack` | 4 Byte | `16.384` | Stackgröße (16 KB) |
-| `0x34` | `m_idata` | 4 Byte | `68.952` | Offset initialisierte Daten |
-| `0x38` | `m_idref` | 4 Byte | `75.968` | Offset Datenreferenzlisten |
-| `0x3C`–`0x4B` | `m_init`/`m_term`/`m_dbias`/`m_cbias` | je 4 Byte | `0` | ungenutzt |
-| `0x4C` | `m_ident` | 2 Byte | `0` | ungenutzt |
-| `0x4E`–`0x55` | *reserviert* | 8 Byte | `0` | — |
-| `0x56` | `m_parity` | 2 Byte | `0x4E0D` | Prüfsumme — **Header endet hier, bei Byte 88** |
-| `0x58` | Name | — | `"kernel\0"` | direkt nach dem Header |
-| `0xA4` | *(Programmcode)* | — | `JMP` | Sprung über den Copyright-String, landet bei `0x21E4C0` — der echten Init-Funktion |
+**Bemerkenswert:** Zeile 4/5 (Typ-Code `$C`=System, Sprach-Code `1`=
+Maschinencode) sind über **drei komplett unabhängige Prozessorarchitekturen
+und ~28 Jahre** (6809 1980 → 68K ~1990er → x86 2008) **wortwörtlich
+identisch geblieben** — vermutlich der am längsten unverändert
+durchgehaltene Teil der gesamten OS-9-Familie.
 
 ## Der wichtigste Unterschied: kein verschobenes Feld, sondern ein längerer Header
 
@@ -88,23 +59,32 @@ verschobenes Feld, sondern ein bewusst vereinheitlichter, längerer Header.
 **Was inhaltlich trotzdem entspricht:** `M$Exec`(68K)/`m_exec`(x86) sind
 derselbe Einsprungpunkt-Mechanismus, nur an unterschiedlicher Position.
 
-### Kasten: warum Type/Lang und Attr/Revs "vertauscht" aussehen
+### Kasten: drei Generationen, drei Kodierungen für dasselbe Typ/Sprache-Paar
 
-68K hat `M$Type`+`M$Lang` (und `M$Attr`+`M$Revs`) als **zwei unabhängige
-Einzelbytes** — bei Einzelbytes gibt es keine Byte-Reihenfolge-Frage. Der
-C-Neuschrieb bei OS-9000 hat je zwei dieser Bytes zu **einem** 16-Bit-Feld
-zusammengelegt (`m_tylan`, `m_attrev`). Ein 16-Bit-Wert wird aber — genau
-wie die Modulgröße oder das Sync-Byte — je nach Prozessor in
-unterschiedlicher Byte-Reihenfolge gespeichert (Little-Endian bei x86,
-Big-Endian beim 68K). Deswegen liegt bei x86 das niederwertige Byte
-zuerst — es sieht aus wie eine Vertauschung, ist aber derselbe Effekt wie
-beim Sync-Byte (`4AFC` ↔ `FC4A`), nur eben erst durch die Feld-
-Zusammenlegung sichtbar geworden.
+Type+Language (und Attribut+Revision) durchlaufen über die drei
+Architekturen eine klare Entwicklung:
 
-## Der Einsprung: derselbe Trick in beiden Kernen
+1. **6809** (1980): ein **einziges Byte**, aufgeteilt in zwei 4-Bit-Nibbles
+   (Typ oben, Sprache unten) — spart Platz, begrenzt aber auf 16 Werte je
+   Feld.
+2. **68K**: zwei **unabhängige, volle Bytes** — mehr Werte möglich (bis
+   255), aber auch mehr Platzverbrauch. Bei Einzelbytes gibt es keine
+   Byte-Reihenfolge-Frage.
+3. **OS-9000/x86**: die beiden 68K-Bytes wurden zu **einem 16-Bit-Feld**
+   zusammengelegt (`m_tylan`, `m_attrev`). Ein 16-Bit-Wert wird aber —
+   genau wie Modulgröße oder Sync-Byte — je nach Prozessor in
+   unterschiedlicher Byte-Reihenfolge gespeichert (Little-Endian bei x86,
+   Big-Endian beim 68K). Deswegen liegt bei x86 das niederwertige Byte
+   zuerst — sieht aus wie eine Vertauschung gegenüber 68K, ist aber
+   derselbe Effekt wie beim Sync-Byte (`4AFC` ↔ `FC4A`), nur eben erst
+   durch die Feld-Zusammenlegung sichtbar geworden.
 
-Beide Kernel springen über einen eingebetteten Copyright-/ID-String
-hinweg, bevor die echte Init-Funktion beginnt:
+## Der Einsprung: derselbe Trick über alle drei Kernel-Generationen
+
+Sowohl 68K als auch x86 springen über einen eingebetteten Copyright-/
+ID-String hinweg, bevor die echte Init-Funktion beginnt (6809 vermutlich
+ebenso, aber ohne eigenes Kernel-Binary hier nicht am realen Byte-Code
+nachvollzogen):
 
 **68K** (`M$Exec` = `0x54`, Auszug aus [`asm-68k.r`](asm-68k.r)):
 ```asm
@@ -132,7 +112,8 @@ sich erst ab Thema 04 (Header-Prüfsumme + Relozierer, echte Kontrolllogik).
 
 ## Quellen
 
-- Primärquelle: `MWOS/DOC/RadiSys/68k_tech.pdf` (Table 1-6/1-7/1-8), `MWOS/DOC/RadiSys/os9k_tech.pdf` (`mh_com`-Struct)
+- Primärquelle 68K/x86: `MWOS/DOC/RadiSys/68k_tech.pdf` (Table 1-6/1-7/1-8), `MWOS/DOC/RadiSys/os9k_tech.pdf` (`mh_com`-Struct)
+- Primärquelle 6809: `#INFO/#Microware/OS-9_6809/OS-9 System Programmers Manual 1983-01.pdf`, Kapitel 4; realer Kernel-Quelltext `#INFO/#Microware/OS-9 6809/nitros09/6809l2/modules/kernel/krn.asm` (NitrOS-9, Open Source)
 - [`../../../modules/os9000-x86/docs/FINDINGS.md`](../../../modules/os9000-x86/docs/FINDINGS.md), Fund 1 (mit Herleitung/Korrekturen)
 - [`../../../modules/os9000-x86/docs/KERNEL_INIT.md`](../../../modules/os9000-x86/docs/KERNEL_INIT.md), Fund 1
 - [`../../REVERSE_ENGINEERING.md`](../../REVERSE_ENGINEERING.md), Abschnitt "Modul-Header"
