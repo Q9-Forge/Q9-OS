@@ -28,37 +28,118 @@ Extrahierte Module liegen in [`../vendor/`](../vendor/): `kernel`, `ioman`,
 `rbf`, `ssm`, `pipeman`, `scf`, `cdfm` (CD-ROM-File-Manager), `pcf`,
 `sbf`, `null`, `nil`, `scllio`, `cache386`, `vectx86`, `fpu`, `fpuem`.
 
-## Fund 1: Modul-Header-Format strukturell identisch, aber breitere Felder
+## Fund 1: Modul-Header-Format vollständig anhand der offiziellen Technical Manuals geklärt (nicht geraten)
+
+Andreas' berechtigter Einwand beim Aufbau des Kernel-Walkthroughs: "ist der
+Header nicht in der Doku definiert... das können wir doch nachschlagen ...
+denke da müssen wir nicht raten." Stimmt — beide Header-Formate sind
+offiziell dokumentiert:
+
+- **68K**: `MWOS/DOC/RadiSys/68k_tech.pdf`, Kapitel 1, Table 1-6/1-7/1-8
+  ("Module Header Fields" / "Module Header Standard Fields" / "Additional
+  Header Fields for Individual Modules").
+- **OS-9000**: `MWOS/DOC/RadiSys/os9k_tech.pdf`, Kapitel 1, "Module Header
+  Definitions" — vollständige C-Struct-Deklaration `mh_com` aus `module.h`.
 
 Sync-Byte ist `fc 4a` statt `4a fc` — **dieselbe** 16-Bit-Konstante
 `0x4AFC`, nur wegen x86-Little-Endian byte-vertauscht gespeichert (68k ist
-big-endian). Bestätigt per Rohbyte-Vergleich mehrerer Module
-nebeneinander:
+big-endian), exakt wie für `M$ID`/`m_sync` dokumentiert.
 
-| Offset | Feld | Kernel-Wert | Vergleich zu 68k |
+### Die Type/Lang-Byte-"Vertauschung" — real, aber vollständig durch Endianness erklärt
+
+Erster empirischer Blick sah aus wie eine Vertauschung: 68K hat `0x0C`
+(Type) bei Offset `0x12` und `0x01` (Lang) bei `0x13`; x86 hat `0x01`
+(Lang) bei `0x12` und `0x0C` (Type) bei `0x13`. **Das ist kein Zufall und
+keine willkürliche Neuordnung** — beide Manuals erklären es:
+
+- **68K, Table 1-7**: `$12 M$Type` und `$13 M$Lang` sind zwei **getrennte,
+  unabhängige 1-Byte-Felder**. Da beides Einzelbytes sind, gibt es hier
+  keinerlei Endianness-Frage — Type steht einfach immer vor Lang.
+- **OS-9000, `mh_com`-Struct**: die beiden Felder wurden im C-Neuschrieb zu
+  **einem einzigen `u_int16 m_tylan`** zusammengelegt ("Contains the module
+  type (first/high byte) and language (second/low byte)", konzeptionell
+  also `m_tylan = (Type<<8) | Lang`, z. B. `0x0C01`). Ein `u_int16` ist
+  aber eine waschechte Mehrbyte-Ganzzahl — und die wird, exakt wie
+  `m_sync`/`m_size`, in der **nativen Endianness des Zielsystems**
+  gespeichert. Little-Endian legt das niederwertige Byte (Lang) an die
+  niedrigere Adresse (`0x12`), das höherwertige Byte (Type) an die höhere
+  (`0x13`) — **genau umgekehrt zur 68K-Reihenfolge**, obwohl der
+  *konzeptionelle* Wert (`0x0C01`) identisch ist.
+
+Verifiziert per direktem Rohbyte-Vergleich (`vendor/68020/dker030s`,
+`modules/os9000-x86/vendor-live/kernel` **und** `vendor-live/ioman` als
+Gegenprobe — alle drei konsistent):
+
+| | Byte @ `0x12` | Byte @ `0x13` | `m_tylan` als 16-Bit-Wert |
 |---|---|---|---|
-| `0x00` | M$ID | `0x4AFC` (LE) | identisch |
-| `0x04` | M$Size (4 Byte) | `0xF390` = 62352, deckt sich exakt mit Dateigröße | identisch (auch 68k: 4 Byte an `0x04`) |
-| `0x08` | M$Owner | `0` | identisch |
-| `0x0C` | Name-Offset | `0x58` (4 Byte, LE) | **68k hatte hier nur 2 Byte** — echte Formatabweichung, kein reiner Endianness-Effekt |
-| `0x12` | Language-Byte | `0x01` (Objct) | **identisch — selbes Byte-Offset wie 68k, architekturübergreifend bestätigt** |
-| `0x13` | Type-Byte | `0x0C` (Systm) bei kernel/ioman/ssm, `0x0D` (Fmgr) bei rbf/scf/pcf/cdfm/pipeman | **identisch — selbes Byte-Offset wie 68k**, deckt sich exakt mit den in `../SYSCALL_MODULE_MAP.md`/`../c0-descriptor/docs/FINDINGS.md` empirisch bestätigten Typ-Codes |
-| ab `0x58` | Modulname, NUL-terminiert (`"kernel\0"`) | — | **68k nutzte High-Bit-Terminierung** (letztes Zeichen mit gesetztem Bit 7) statt NUL — echte Formatabweichung |
+| 68K (`dker030s`) | `0x0C` = M$Type (Systm) | `0x01` = M$Lang (Objct) | *(zwei getrennte Felder, kein Integer)* |
+| x86 (`kernel`, `ioman`) | `0x01` (LSB) | `0x0C` (MSB) | `0x0C01` LE-dekodiert = Type `0x0C`, Lang `0x01` — **identisch zum 68K-Wert** |
 
-**Einordnung:** Die grundlegende Modul-Klassifizierung (Type/Lang-Bytes an
-denselben absoluten Offsets `0x12`/`0x13`, dieselben Typ-Codes
-Systm=`0x0C`/Fmgr=`0x0D`) ist über zwei Prozessorarchitekturen und
-~10 Jahre Zeitunterschied hinweg **stabil geblieben** — das ist ein
-starkes Signal, dass dieser Teil des Modulkopfs ein bewusst langfristig
-stabiler Vertrag war. Die Namensfeld-Breite (2→4 Byte) und die
-Terminierungskonvention (High-Bit→NUL) haben sich dagegen geändert —
-plausibel, weil OS-9000 laut Porting-Guide-Dokumentation komplett in C neu
-geschrieben wurde, nicht binärkompatibel zum 68k-Original sein musste.
+**Dasselbe Muster wiederholt sich bei `M$Attr`/`M$Revs` → `m_attrev`:** 68K
+hat sie als zwei getrennte Bytes (`$14 M$Attr`, `$15 M$Revs`), OS-9000
+legt sie zu einem `u_int16 m_attrev` zusammen (LE gespeichert: `0x14`=Revs
+(LSB), `0x15`=Attr (MSB) — Attr-Wert `0xA0` beim Kernel identisch zum
+68K-Wert `0xA0` "system-state + reentrant"). Konsistentes Muster: der
+C-Neuschrieb hat mehrere eng verwandte 68K-Bytepaare zu einzelnen
+16-Bit-Feldern zusammengelegt, wodurch sie erst durch die x86-Endianness
+scheinbar "vertauscht" wirken.
 
-**Noch nicht geklärt:** die übrigen Kopf-Felder zwischen `0x14` und `0x58`
-(Edition, Attr/Revs, Usage, Symbol-Tabelle o.ä. beim 68k) — nur teilweise
-mit Werten belegt, noch nicht einzeln zugeordnet. Auch die CRC-Konvention
-am Modulende ist noch nicht verifiziert.
+### Vollständiger, offiziell dokumentierter OS-9000-Header (`kernel`, alle Werte real ausgelesen)
+
+Damit ist der bisher als "noch nicht geklärt" markierte Bereich `0x14`–`0x58`
+**vollständig aufgelöst** — keine der Zahlen unten ist geraten, alle Feldnamen
+stammen direkt aus `mh_com` (`os9k_tech.pdf`):
+
+| Offset | Feld (`mh_com`) | Wert (`kernel`, live) | Bedeutung |
+|---|---|---|---|
+| `0x00` | `m_sync` | `0x4AFC` | Sync, identisch zu 68K (endian-gespiegelt) |
+| `0x02` | `m_sysrev` | `0x0002` | Format-Revision |
+| `0x04` | `m_size` | `76944` | = exakte Dateigröße |
+| `0x08` | `m_owner` | `0` | kein Owner |
+| `0x0C` | `m_name` | `0x58` | Name-Offset (4 Byte breit, s. u.) |
+| `0x10` | `m_access` | `0x0555` | r-x r-x r-x (owner/group/world), keine Schreibrechte |
+| `0x12` | `m_tylan` | `0x0C01` (LE) | Type=`0x0C` Systm, Lang=`0x01` Objct — s. o. |
+| `0x14` | `m_attrev` | `0xA000` (LE) | Attr=`0xA0` (system-state+reentrant), Revs=`0` |
+| `0x16` | `m_edit` | `0x00CD` (205) | Edition/Build-Zähler |
+| `0x18` | `m_needs` | `0` | keine Hardware-Anforderungsflags |
+| `0x1C` | `m_share` | `0` | kein Shared-Data-Offset |
+| `0x20` | `m_symbol` | `0` | keine Symboltabelle (Release-Build) |
+| `0x24` | `m_exec` | `0xA4` | **Einsprungpunkt** — bestätigt den empirischen Fund aus `KERNEL_INIT.md` Fund 1 exakt |
+| `0x28` | `m_excpt` | `0` | kein Default-User-Trap-Handler |
+| `0x2C` | `m_data` | `0x1B60` (7008) | Datenbereichsgröße (Analogon zu 68Ks `M$Mem`) |
+| `0x30` | `m_stack` | `0x4000` (16384) | Stackgröße — 16 KB, plausibel für den Kernel-Init-Stack |
+| `0x34` | `m_idata` | `0x10D58` (68952) | Offset initialisierte Daten |
+| `0x38` | `m_idref` | `0x128C0` (75968) | Offset Datenreferenzlisten, nahe Modulende |
+| `0x3C`–`0x4B` | `m_init`/`m_term`/`m_dbias`/`m_cbias` | alle `0` | ungenutzt |
+| `0x4C` | `m_ident` | `0` | ungenutzt |
+| `0x4E`–`0x55` | `m_spare[8]` | `0` | reserviert |
+| `0x56` | `m_parity` | `0x4E0D` | Header-Prüfsumme |
+| `0x58` | Name | `"kernel\0"` | direkt nach dem 88 Byte (`0x58`) langen Standard-Header — passt exakt zu `m_name=0x58` |
+
+**Korrektur einer eigenen früheren Fehlinterpretation** (`KERNEL_INIT.md`
+Fund 1 hatte Feld `0x20` versuchsweise als "candidate M$Excpt" bezeichnet —
+das ist laut `mh_com` tatsächlich `m_symbol`; der echte `m_excpt` liegt bei
+`0x28`, Wert `0`, siehe Tabelle oben. `KERNEL_INIT.md` wurde entsprechend
+korrigiert.
+
+**Für den 68K-Kernel ebenfalls geklärt** (per `68k_tech.pdf`, Table 1-8):
+Feld `0x34` (bisher in `docs/REVERSE_ENGINEERING.md` als "unbekannt, immer
+0 beobachtet" notiert) ist **`M$Excpt`** — Wert `0`, dieselbe Bedeutung wie
+x86s `m_excpt`. Table 1-8 bestätigt außerdem, dass `M$Exec`+`M$Excpt` die
+**einzigen** offiziell für System-Module (`Systm`) definierten
+Erweiterungsfelder sind (`M$Mem`/`M$Stack`/etc. sind laut Manual nur für
+Program-/Trap-Handler-/Device-Driver-Module dokumentiert) — der Rest von
+68Ks Erweiterungsbereich (`0x38`–`0x53`, inkl. der `0xB0BD`-Magic-Konstante)
+ist also **kein** offiziell dokumentiertes Feld, sondern Microware-interne
+Konvention/Padding, für System-Module ungenutzt.
+
+**Namensfeld-Breite (`M$Name`: 2 Byte bei 68K vs. 4 Byte bei x86) und
+Terminierungskonvention (68K High-Bit vs. x86 NUL) bleiben echte
+Formatabweichungen**, nicht durch Endianness erklärbar — beides sind
+bewusste Entscheidungen im C-Neuschrieb, keine Fehlinterpretation unsererseits.
+
+CRC-Konvention am Modulende weiterhin nicht verifiziert (kein `mh_com`-Feld
+dafür, das liegt hinter dem eigentlichen Modulkörper).
 
 ## Fund 2: Kernel deutlich größer, keine automatische Rückschlüsse auf "besseren Code"
 
