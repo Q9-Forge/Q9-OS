@@ -80,6 +80,14 @@ bestehende Tool-Pfade (`tools/ghidra_to_r68.py`, `src/Makefile`) anzufassen.
   Kernel-Calls" teilweise.
 - `modules/syscache/`, `modules/ssm/` — bisher nur Platzhalterverzeichnisse,
   noch nicht disassembliert.
+- [`modules/os9000-x86/`](modules/os9000-x86/) — Systemmodule von
+  **OS-9000** (Microwares späterer, portabler C-Neuschrieb, x86-Ziel):
+  Kernel/IOMan/RBF/SSM/SCF/PCF/CDFM/PipeMan als reale Binaries extrahiert.
+  Modul-Header-Format mit dem 68k-Original verglichen (Type/Lang-Byte-
+  Offsets architekturübergreifend identisch, Namensfeld-Format anders);
+  Boot-Sektor-Signatur `"XD00BT"` gefunden, die NICHT dem klassischen
+  RBF-LSN0-Layout entspricht — offene Frage, welches Dateisystem das
+  Boot-Volume tatsächlich nutzt, noch nicht abschließend geklärt.
 
 ## Build
 
