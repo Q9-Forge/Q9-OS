@@ -21,25 +21,17 @@ echtem Code direkt dabei.
 | # | Thema | Status |
 |---|---|---|
 | [00](00-modul-aufbau-und-header/) | Kernel-Modul-Aufbau und Header | ✅ fertig |
-| 01 | Speicher-/Arena-Init | 🚧 geplant — 68K-Seite hat eine offene Frage (siehe unten) |
-| 02 | Exception-/Trap-Dispatch-Tabelle aufbauen | 🚧 geplant |
-| 03 | Prozess-/Deskriptor-Tabellen vorbereiten | 🚧 geplant |
-| 04 | Modul-Header-Prüfung + Nachladen weiterer Module (Relozierer/Scanner) | 🚧 geplant |
-| 05 | Erster Ausführungskontext / Sprung in den ersten Prozess | 🚧 geplant |
-| x | IO-Manager: Syscall-Dispatch (F$/I$-Aufrufe) | 🚧 geplant |
-| x | RBF/Descriptor/Driver — der OS-9-"Dreiklang" | 🚧 geplant |
+| [01](01-kernel-bootstrap/) | Kompletter Boot-Bootstrap: vom Einsprung bis zur Übergabe an den Scheduler (Speicher-/Arena-Init, Exception-Dispatch-Tabelle, Warteschlangen, erster Ausführungskontext — alles in einem Thema statt fünf einzelnen) | ✅ fertig |
+| 02 | IO-Manager: Syscall-Dispatch (F$/I$-Aufrufe) | 🚧 geplant |
+| 03 | RBF/Descriptor/Driver — der OS-9-"Dreiklang" | 🚧 geplant |
 
-**Bekannte Hürde für Thema 01:** Eine frühe Annahme in
-`REVERSE_ENGINEERING.md` ("`0x4978` ist der Speicher-Allokator für die
-Exception-Tabelle") wurde später **explizit widerlegt** ("Fund (Korrektur
-einer Fehlannahme): `0x4978` ist KEIN Allocator, sondern reine
-Konstanten-Initialisierung", Zeile ~1211) — die tatsächliche Herkunft des
-in `D_ExcJmp` gespeicherten Zeigers ist beim 68K-Kernel also noch nicht
-zweifelsfrei geklärt. Für die x86-Seite ist der Speicher-/Arena-Aufbau
-dagegen bereits vollständig verstanden (`KERNEL_INIT.md`, Fund 3/5). Bevor
-Thema 01 geschrieben wird, lohnt sich vermutlich eine kurze zusätzliche
-Ghidra-Runde, um diese 68K-Lücke zu schließen — sonst müsste das Thema mit
-einer echten Wissenslücke auf der 68K-Seite starten.
+**Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
+(Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
+erster Ausführungskontext) wurden zu **einem** Thema 01 zusammengefasst —
+Andreas wollte "alles bis zum Scheduler" an einem Stück, chronologisch,
+nicht in fünf separaten Verzeichnissen. Die frühere 68K-Wissenslücke
+(woher kommt der Speicher für `D_ExcJmp`?) ist jetzt geklärt — siehe
+Thema 01.
 
 ## Konvention
 

@@ -189,6 +189,14 @@ siehe oben) — hier wird also die 256-Eintrags-Sprungtabelle (10 Byte pro
 Eintrag = 2560 Byte) zur Boot-Zeit alloziert und ihr Zeiger im
 System-Global-Bereich hinterlegt.
 
+**Nachtrag (2026-08-13, endgültig geklärt):** Die obige Lesart war nicht
+ganz richtig — `bsr 0x4978` alloziert hier gar nichts (siehe Korrektur
+weiter unten), und der tatsächlich gespeicherte Zeiger stammt von
+**Register A5**, das der Kernel unverändert vom Boot-ROM übernimmt.
+Vollständige Herleitung samt einer vollständigen Boot-Register-Konvention
+(D0/D1/A1/A5) und dem chronologischen Vergleich mit dem x86-Kernel in
+[`kernel-walkthrough/01-kernel-bootstrap/`](kernel-walkthrough/01-kernel-bootstrap/README.md).
+
 Direkt danach (`0x68f0`–`0x6912`) füllt eine Schleife die Tabelle aus
 einer **kompakt kodierten Quelltabelle im Modul selbst** bei `0x3802`
 (Format: Wortpaare `(count, offset)`, `offset` ist ein **vorzeichen-
@@ -1659,7 +1667,9 @@ Ergebnis pro Insel:
   (per `FORCE_RAW_BYTES` in `tools/ghidra_to_r68.py` als Rohbytes
   reproduziert, Sprungziel `0x6e12` liegt mitten darin und wurde per
   `EQU`-Alias in `kernel.r` aufgelöst — derselbe Überlappungs-Trick wie
-  an den bereits bekannten Stellen).
+  an den bereits bekannten Stellen). Chronologischer Vergleich dieses
+  gesamten Bootstraps mit dem x86-Kernel in
+  [`kernel-walkthrough/01-kernel-bootstrap/`](kernel-walkthrough/01-kernel-bootstrap/README.md).
 
 **Byte-Exaktheit nach dieser Runde erneut verifiziert**: `kernel.out` =
 28476 Byte, 0 abweichende Bytes gegen `vendor/68020/dker030s`. Zwei
