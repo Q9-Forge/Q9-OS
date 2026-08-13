@@ -92,7 +92,10 @@ bestehende Tool-Pfade (`tools/ghidra_to_r68.py`, `src/Makefile`) anzufassen.
   es deshalb nicht lesen; von Hand aus Rohbytes dekodiert und dabei
   `sysboot` erfolgreich extrahiert (982 KB, stellte sich als eigenes,
   vermutlich komprimiertes Container-Format `"OS9Z"` heraus, keine
-  einfache Modul-Verkettung).
+  einfache Modul-Verkettung). Alle 8 aktuell geladenen Module zusätzlich
+  live per `ident -m -o` + QEMU `pmemsave` direkt aus dem laufenden RAM
+  extrahiert (siehe [`modules/os9000-x86/vendor-live/`](modules/os9000-x86/vendor-live/README.md))
+  — unterscheiden sich alle in der Größe vom statischen `mw86.tar`-Build.
 - [`modules/os9000-x86-6.1/`](modules/os9000-x86-6.1/) — dieselbe Prüfung
   für **OS-9000 v6.1** (2018, VirtualBox-Appliance, ~20 Jahre nach v4.9):
   ebenfalls gebootet, RBF weiterhin als File Manager bestätigt, Type/Lang-
