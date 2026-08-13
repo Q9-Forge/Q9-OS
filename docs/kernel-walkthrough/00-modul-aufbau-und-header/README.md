@@ -1,139 +1,140 @@
 # Thema 00: Kernel-Modul-Aufbau und Header
 
 Bevor der Kernel irgendetwas initialisiert, muss ihn zuerst jemand als
-gültiges OS-9-Modul erkennen und an seinen Einsprungpunkt springen. Dieses
-Thema zeigt, wie dieser Kopfbereich bei beiden Architekturen aussieht —
-strukturell fast identisch, mit einem überraschend direkten Parallel-Fund
-beim Einsprungmechanismus selbst.
+gültiges OS-9-Modul erkennen und an seinen Einsprungpunkt springen. Beide
+Header-Formate sind **offiziell dokumentiert** (nicht geraten) in den
+lokal vorliegenden Technical Manuals:
 
-**Wichtig:** Nichts hier ist geraten — beide Header-Formate sind offiziell
-dokumentiert (68K: `68k_tech.pdf`, Table 1-6/1-7/1-8; OS-9000: `os9k_tech.pdf`,
-`mh_com`-C-Struct). Alle Werte unten wurden gegen diese Manuals **und**
-direkt gegen die Rohbytes beider Original-Binaries geprüft.
+- 68K: `MWOS/DOC/RadiSys/68k_tech.pdf`, Kapitel 1, Table 1-6/1-7/1-8
+- OS-9000: `MWOS/DOC/RadiSys/os9k_tech.pdf`, Kapitel 1, C-Struct `mh_com`
 
-## Header-Layout im Vergleich
+## So sieht der Header beim OS-9/68K-Kernel aus
 
-| Offset | 68K (`dker030s`) | x86 (`kernel`, live) | Gleich/Anders |
-|---|---|---|---|
-| `0x00` | M$ID `0x4AFC` | M$ID `0x4AFC` (byte-vertauscht gespeichert, x86 = little-endian) | gleich (Endianness-Effekt) |
-| `0x04` | M$Size (4 Byte) = 28.476 | M$Size (4 Byte) = 76.944 | gleiches Feld, andere Größe |
-| `0x0C` | Name-Offset, **2 Byte breit** (`0x6F30`) | Name-Offset, **4 Byte breit** (`0x58`) | **echte Formatabweichung** |
-| `0x12` | **M$Type**-Byte `0x0C` (Systm) | Lang-Byte `0x01` (LSB von `m_tylan`) | s. u. — wirkt vertauscht, ist aber reine Endianness |
-| `0x13` | **M$Lang**-Byte `0x01` (Objct) | Type-Byte `0x0C` (MSB von `m_tylan`) | s. u. |
-| `0x30` | **M$Exec = `0x54`** (siehe unten) | — (bei x86 liegt das Feld auf `0x24`, siehe unten) | Feld existiert bei beiden, aber an unterschiedlicher Position |
-| `0x24` | — | **`m_exec` = `0xA4`** | offiziell bestätigt, siehe `FINDINGS.md` Fund 1 |
-| `0x34` | **M$Excpt = `0`** | `m_excpt` = `0` (bei `0x28`, nicht `0x24`!) | gleiches Feld, unterschiedliche Position |
-| `0x40`–`0x43` bzw. `0xB4`–`0xB6` | Magic `0xB0BD` (zweimal) | Magic `0xB0BD` (zweimal) | **identische Konstante, andere Fundstelle** — nicht offiziell dokumentiert, Microware-interne Konvention |
-| Modulname | `"kernel"` bei Offset `0x6F30` (**ganz am Ende** des Moduls) | `"kernel"` bei Offset `0x58` (**gleich nach dem Standard-Header**) | echte Layout-Abweichung |
+Alle Werte real aus `vendor/68020/dker030s` (dem Original-Kernel-Binary)
+ausgelesen:
 
-Vollständiger Rohbyte-Auszug: [`asm-68k.r`](asm-68k.r) / [`asm-x86.txt`](asm-x86.txt).
-Vollständige, feldweise dokumentierte Tabelle (alle `0x00`–`0x58`) in
-[`../../../modules/os9000-x86/docs/FINDINGS.md`](../../../modules/os9000-x86/docs/FINDINGS.md), Fund 1.
+| Offset | Feld | Breite | Wert | Bedeutung |
+|---|---|---|---|---|
+| `0x00` | `M$ID` | 2 Byte | `0x4AFC` | Sync-Bytes, damit findet man das Modul im Speicher |
+| `0x02` | `M$SysRev` | 2 Byte | `1` | Format-Revision |
+| `0x04` | `M$Size` | 4 Byte | `28.476` | Gesamtgröße des Moduls in Byte |
+| `0x08` | `M$Owner` | 4 Byte | `0` | Owner-ID |
+| `0x0C` | `M$Name` | 4 Byte | `0x6F30` | Offset zum Namens-String, relativ zum Modulanfang |
+| `0x10` | `M$Accs` | 2 Byte | `0x0555` | Zugriffsrechte (r-x r-x r-x) |
+| `0x12` | `M$Type` | 1 Byte | `0x0C` | Modultyp: `Systm` (12) = Systemmodul |
+| `0x13` | `M$Lang` | 1 Byte | `0x01` | Sprache: `Objct` (1) = Maschinencode |
+| `0x14` | `M$Attr` | 1 Byte | `0xA0` | Attribute: system-state + reentrant |
+| `0x15` | `M$Revs` | 1 Byte | `0` | Revisionsstufe |
+| `0x16` | `M$Edit` | 2 Byte | `375` | Build-/Edition-Zähler |
+| `0x18` | `M$Usage` | 4 Byte | `0` | Offset Kommentar-String (unbenutzt) |
+| `0x1C` | `M$Symbol` | 4 Byte | `0` | Offset Symboltabelle (reserviert) |
+| `0x20` | `M$Ident` | 2 Byte | `0` | Ident-Code (unbenutzt) |
+| `0x22`–`0x27` | *reserviert* | 6 Byte | `0` | — |
+| `0x28` | `M$HdExt` | 4 Byte | `0` | Offset Header-Erweiterung |
+| `0x2C` | `M$HdExtSz` | 2 Byte | `0` | Größe der Header-Erweiterung |
+| `0x2E` | `M$Parity` | 2 Byte | `0x1D2D` | Prüfsumme — **Standard-Header endet hier, bei Byte 46** |
+| `0x30` | `M$Exec` | 4 Byte | `0x54` | **Einsprungpunkt** |
+| `0x34` | `M$Excpt` | 4 Byte | `0` | Trap-Einsprung für unbehandelte User-Traps (hier: keiner) |
+| `0x38`+ | *(kein offizielles Feld für Systemmodule)* | — | — | ab hier nur noch Microware-interne Konvention, siehe Thema-Text unten |
+| `0x54` | *(Programmcode)* | — | `BRA.W` | Sprung über den ID-String, landet bei `0x67A0` — der echten Init-Funktion |
 
-### Type/Lang: sieht aus wie vertauscht, ist reine Endianness
+## So sieht der Header beim OS-9000/x86-Kernel aus
 
-68K hat `M$Type`(`0x12`) und `M$Lang`(`0x13`) als **zwei unabhängige
-1-Byte-Felder** (Table 1-7) — bei Einzelbytes gibt es keine Endianness.
-OS-9000 hat beide im C-Neuschrieb zu **einem** `u_int16 m_tylan`
-zusammengelegt (`mh_com`-Struct: "type (first/high byte), language
-(second/low byte)", konzeptionell `0x0C01`). Ein `u_int16` wird aber genau
-wie `m_sync`/`m_size` in der **nativen Endianness** gespeichert —
-Little-Endian legt das niederwertige Byte (Lang) an die niedrigere Adresse.
-Der *Wert* ist bei beiden identisch (`Type=0x0C, Lang=0x01`), nur die
-physische Byte-Reihenfolge dreht sich um, weil x86 zwei 68K-Einzelbytes zu
-einem echten Integer-Feld gemacht hat. Dasselbe Muster wiederholt sich bei
-`M$Attr`/`M$Revs` → `m_attrev`.
+Alle Werte real aus `modules/os9000-x86/vendor-live/kernel` (der live
+laufenden Kopie) ausgelesen:
 
-## 68K: der Einsprung (`asm-68k.r`, `L000054` ff.)
+| Offset | Feld | Breite | Wert | Bedeutung |
+|---|---|---|---|---|
+| `0x00` | `m_sync` | 2 Byte | `0x4AFC` | dasselbe Sync-Feld wie beim 68K |
+| `0x02` | `m_sysrev` | 2 Byte | `2` | Format-Revision |
+| `0x04` | `m_size` | 4 Byte | `76.944` | Gesamtgröße des Moduls in Byte |
+| `0x08` | `m_owner` | 4 Byte | `0` | Owner-ID |
+| `0x0C` | `m_name` | 4 Byte | `0x58` | Offset zum Namens-String — **derselbe Feldtyp wie beim 68K** |
+| `0x10` | `m_access` | 2 Byte | `0x0555` | Zugriffsrechte — identischer Wert wie beim 68K |
+| `0x12` | `m_tylan` | 2 Byte | `0x0C01` | Type+Lang **in einem Feld** (Type=`0x0C`, Lang=`0x01` — dieselben Werte wie beim 68K, s. Kasten unten) |
+| `0x14` | `m_attrev` | 2 Byte | `0xA000` | Attr+Revs **in einem Feld** (Attr=`0xA0`, Revs=`0` — dieselben Werte wie beim 68K) |
+| `0x16` | `m_edit` | 2 Byte | `205` | Build-/Edition-Zähler |
+| `0x18` | `m_needs` | 4 Byte | `0` | Hardware-Anforderungsflags |
+| `0x1C` | `m_share` | 4 Byte | `0` | Offset Shared-Data |
+| `0x20` | `m_symbol` | 4 Byte | `0` | Offset Symboltabelle |
+| `0x24` | `m_exec` | 4 Byte | `0xA4` | **Einsprungpunkt** |
+| `0x28` | `m_excpt` | 4 Byte | `0` | Trap-Einsprung (hier: keiner) |
+| `0x2C` | `m_data` | 4 Byte | `7.008` | Größe des Datenbereichs |
+| `0x30` | `m_stack` | 4 Byte | `16.384` | Stackgröße (16 KB) |
+| `0x34` | `m_idata` | 4 Byte | `68.952` | Offset initialisierte Daten |
+| `0x38` | `m_idref` | 4 Byte | `75.968` | Offset Datenreferenzlisten |
+| `0x3C`–`0x4B` | `m_init`/`m_term`/`m_dbias`/`m_cbias` | je 4 Byte | `0` | ungenutzt |
+| `0x4C` | `m_ident` | 2 Byte | `0` | ungenutzt |
+| `0x4E`–`0x55` | *reserviert* | 8 Byte | `0` | — |
+| `0x56` | `m_parity` | 2 Byte | `0x4E0D` | Prüfsumme — **Header endet hier, bei Byte 88** |
+| `0x58` | Name | — | `"kernel\0"` | direkt nach dem Header |
+| `0xA4` | *(Programmcode)* | — | `JMP` | Sprung über den Copyright-String, landet bei `0x21E4C0` — der echten Init-Funktion |
 
+## Der wichtigste Unterschied: kein verschobenes Feld, sondern ein längerer Header
+
+Bis Byte `0x17` sind beide Header **praktisch identisch** — gleiche
+Felder, gleiche Werte, nur Type/Lang und Attr/Revs sind bei x86 zu je
+einem 16-Bit-Wert zusammengelegt (Kasten unten). **Danach trennen sich die
+Wege**, aus einem einfachen Grund: Der 68K-Header ist nach 46 Byte fertig
+(`M$Parity` bei `0x2E`) — alles danach (`M$Exec` bei `0x30` usw.) ist eine
+**optionale** Erweiterung, die es nur bei bestimmten Modultypen gibt. Der
+OS-9000-Header dagegen ist **eine einzige, 88 Byte lange Struktur**, die
+mehrere Felder, die beim 68K nur optional waren (Einsprungpunkt, Trap-
+Einsprung, Datengröße, Stackgröße, ...), fest eingebaut hat — **jedes**
+OS-9000-Modul hat sie, unabhängig vom Typ. Deswegen ergibt ein reiner
+"Feld X bei Offset Y" Vergleich ab `0x18` keinen Sinn mehr — es ist kein
+verschobenes Feld, sondern ein bewusst vereinheitlichter, längerer Header.
+
+**Was inhaltlich trotzdem entspricht:** `M$Exec`(68K)/`m_exec`(x86) sind
+derselbe Einsprungpunkt-Mechanismus, nur an unterschiedlicher Position.
+
+### Kasten: warum Type/Lang und Attr/Revs "vertauscht" aussehen
+
+68K hat `M$Type`+`M$Lang` (und `M$Attr`+`M$Revs`) als **zwei unabhängige
+Einzelbytes** — bei Einzelbytes gibt es keine Byte-Reihenfolge-Frage. Der
+C-Neuschrieb bei OS-9000 hat je zwei dieser Bytes zu **einem** 16-Bit-Feld
+zusammengelegt (`m_tylan`, `m_attrev`). Ein 16-Bit-Wert wird aber — genau
+wie die Modulgröße oder das Sync-Byte — je nach Prozessor in
+unterschiedlicher Byte-Reihenfolge gespeichert (Little-Endian bei x86,
+Big-Endian beim 68K). Deswegen liegt bei x86 das niederwertige Byte
+zuerst — es sieht aus wie eine Vertauschung, ist aber derselbe Effekt wie
+beim Sync-Byte (`4AFC` ↔ `FC4A`), nur eben erst durch die Feld-
+Zusammenlegung sichtbar geworden.
+
+## Der Einsprung: derselbe Trick in beiden Kernen
+
+Beide Kernel springen über einen eingebetteten Copyright-/ID-String
+hinweg, bevor die echte Init-Funktion beginnt:
+
+**68K** (`M$Exec` = `0x54`, Auszug aus [`asm-68k.r`](asm-68k.r)):
 ```asm
 L000054:
-	dc.w	$6000                        * BRA.W-Opcode
-	dc.w	Q9_kernel_init_67a0-*        * Displacement 0x674A -> Ziel 0x67a0
+	dc.w	$6000                        * BRA.W
+	dc.w	Q9_kernel_init_67a0-*        * Displacement -> Ziel 0x67a0
 ```
+String, der übersprungen wird: `"68030\0 OS-9/68K Kernel (Dev-Std) V3.2.0\0Copyright (c) 1999 by Microware Systems Corp.\0"`
 
-`M$Exec` (Header-Feld `0x30`) zeigt auf Offset `0x54` — dort liegt aber
-**keine** Kernel-Logik, sondern ein einzelner `BRA.W`-Sprung, der über einen
-eingebetteten ID-String hinwegspringt (kein Standard-Header-Feld, aber
-Microware-Konvention):
-
-```
-"68030\0 OS-9/68K Kernel (Dev-Std) V3.2.0\0Copyright (c) 1999 by Microware Systems Corp.\0"
-```
-
-(4 Byte davor, `00 01 09 be`, sind laut bisheriger Recherche noch nicht
-geklärt.) Erst am Sprungziel `0x67a0` beginnt die echte Init-Funktion
-`Q9_kernel_init_67a0` (Thema 01+).
-
-## x86: der Einsprung (`asm-x86.txt`)
-
+**x86** (`m_exec` = `0xA4`, Auszug aus [`asm-x86.txt`](asm-x86.txt)):
 ```asm
-Field@0x24 (candidate M$Exec)  = 0x000000A4
-...
-=== FUNCTION kernel_init_0021e4c0 @ 0021e4a4 size=5 ===
 0021e4a4: JMP 0x0021e4c0                 ; bytes=5
 ```
+String, der übersprungen wird: `"OS-9000/x86 V4.9\0Copyright (c) 1989-2008 by RadiSys Corporation\0"`
 
-Exakt dasselbe Prinzip: das x86-Analogon von `M$Exec` (Header-Feld `0x24`)
-zeigt auf Offset `0xA4` — auch dort **kein** Kernel-Code, sondern ein
-5-Byte-`JMP`-Trampolin, das über den eingebetteten Copyright-String
-hinwegspringt:
-
-```
-"OS-9000/x86 V4.9\0Copyright (c) 1989-2008 by RadiSys Corporation\0"
-```
-
-Erst am Sprungziel `0x21e4c0` beginnt die echte Init-Funktion
-`kernel_init_0021e4c0` (Thema 01+).
-
-**Bonus-Fund:** Der Copyright-String nennt **RadiSys** (nicht Microware)
-und **2008** (nicht 1998/99 wie die Eval-CD-Version in `vendor/`) — ein
-weiterer, unabhängiger Beleg dafür, dass die live gebootete Kopie ein
-**anderer, deutlich jüngerer Build** ist als die statische `mw86.tar`-Kopie
-(RadiSys übernahm Microware 2001, der Copyright-Vermerk spiegelt das
-direkt wider).
-
-## Gemeinsamkeiten
-
-1. **Beide Architekturen springen über einen eingebetteten Identifikations-/
-   Copyright-String hinweg**, bevor die eigentliche Init-Funktion beginnt —
-   derselbe Trick, nur beim 68K über `BRA.W` (2 Worte) und bei x86 über
-   `JMP rel32` (5 Byte) gelöst.
-2. Die **Magic-Konstante `0xB0BD`** taucht bei beiden auf, nur an
-   unterschiedlicher relativer Position zum Einsprungpunkt.
-3. **Type-/Lang-Klassifizierung** (derselbe 2-Byte-Slot `0x12`-`0x13`,
-   dieselben Werte Systm=`0x0C`/Objct=`0x01`) ist über den kompletten
-   Architekturwechsel stabil geblieben — auch wenn die x86-Seite die
-   beiden 68K-Einzelbytes zu einem Integer-Feld zusammengelegt hat und
-   dadurch die physische Byte-Reihenfolge dreht (s. o.).
-
-## Unterschiede
-
-1. **Namensfeld-Position**: 68K legt den Modulnamen ans **Ende** des
-   Moduls (`0x6F30` von `0x6F3C` Gesamtgröße — praktisch der letzte
-   Bereich), x86 legt ihn **direkt nach dem Standard-Header** (`0x58`).
-   Für den eigenen Kernel relevant: eine feste Namensposition
-   (x86-Stil) ist einfacher zu parsen als eine größenabhängige
-   (68K-Stil, Name-Offset muss man ohnehin aus dem Header lesen, aber
-   die Konvention "Name kommt ans Ende" ist zumindest beim Debuggen mit
-   einem Hex-Editor unpraktischer).
-2. **M$Exec-Feldposition**: `0x30` (68K) vs. `0x24` (x86) — kein
-   architekturbedingter Zwang, vermutlich einfach eine andere
-   Header-Erweiterung im C-Neuschrieb.
+**Bonus-Fund:** Der x86-Copyright-String nennt **RadiSys** (nicht
+Microware) und **2008** — ein weiterer Beleg, dass die live gebootete
+Kopie ein anderer, jüngerer Build ist als die statische `mw86.tar`-Kopie
+in `vendor/` (die von der 1998/99-Eval-CD stammt).
 
 ## C-Variante?
 
-Für dieses Thema nicht sinnvoll — der Header ist reine Datenstruktur,
-keine Programmlogik. Eine C-`struct`-Definition beider Header-Layouts wäre
-höchstens eine Wiederholung der Tabelle oben in anderer Syntax. Der
-C-Dekompilierungs-Vergleich lohnt sich erst ab Thema 04 (Header-Prüfsumme +
-Relozierer, `FUN_0022246c` — dort gibt es echte Kontroll-/Prüflogik, siehe
-[`../../../modules/os9000-x86/docs/KERNEL_INIT.md`](../../../modules/os9000-x86/docs/KERNEL_INIT.md), Fund 4).
+Für dieses Thema nicht nötig — der Header ist reine Datenstruktur. Lohnt
+sich erst ab Thema 04 (Header-Prüfsumme + Relozierer, echte Kontrolllogik).
 
 ## Quellen
 
-- **Offizielle Manuals** (Primärquelle, nicht geraten): `MWOS/DOC/RadiSys/68k_tech.pdf`, Kapitel 1, Table 1-6/1-7/1-8; `MWOS/DOC/RadiSys/os9k_tech.pdf`, Kapitel 1, "Module Header Definitions" (`mh_com`-Struct)
-- 68K-Reverse-Engineering: [`../../REVERSE_ENGINEERING.md`](../../REVERSE_ENGINEERING.md), Abschnitt "Modul-Header" (Zeile 25, inkl. Nachtrag zu `M$Excpt`) und "Fund: `0x1424` ... löst das `0xB0BD`-Rätsel" (Zeile 1192)
-- x86-Reverse-Engineering: [`../../../modules/os9000-x86/docs/FINDINGS.md`](../../../modules/os9000-x86/docs/FINDINGS.md), Fund 1 (vollständige `mh_com`-Tabelle); [`../../../modules/os9000-x86/docs/KERNEL_INIT.md`](../../../modules/os9000-x86/docs/KERNEL_INIT.md), Fund 1
+- Primärquelle: `MWOS/DOC/RadiSys/68k_tech.pdf` (Table 1-6/1-7/1-8), `MWOS/DOC/RadiSys/os9k_tech.pdf` (`mh_com`-Struct)
+- [`../../../modules/os9000-x86/docs/FINDINGS.md`](../../../modules/os9000-x86/docs/FINDINGS.md), Fund 1 (mit Herleitung/Korrekturen)
+- [`../../../modules/os9000-x86/docs/KERNEL_INIT.md`](../../../modules/os9000-x86/docs/KERNEL_INIT.md), Fund 1
+- [`../../REVERSE_ENGINEERING.md`](../../REVERSE_ENGINEERING.md), Abschnitt "Modul-Header"
 
 **Erstellt**: 2026-08-13
