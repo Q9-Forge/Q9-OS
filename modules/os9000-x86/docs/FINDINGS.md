@@ -287,6 +287,50 @@ Kompressionsverfahren ist nicht identifiziert — für eine weitere Zerlegung
 in die Einzelmodule bräuchte es zuerst dessen Header-Format (Segment-
 Tabelle, Kompressionsalgorithmus) verstanden.
 
+## Fund 6: Alle 8 live laufenden Systemmodule vollständig aus dem RAM extrahiert
+
+Fund 4 hatte bereits `kernel`/`ioman`/`rbf` teilweise live per `ident -m`
+geprüft (nur Type/Lang-Byte und Größe abgelesen, keine Datei extrahiert).
+Diese Runde: das systematisch für ALLE aktuell geladenen Module gemacht,
+und zwar als tatsächliche Binärdateien, nicht nur als Metadaten-Ablesung.
+
+**Methode:** `ident -m -o <name>` liefert zusätzlich zu Type/Lang/Größe auch
+den `Offset` — die physische RAM-Adresse des Moduls. Da die CPU im
+32-Bit-Protected-Mode mit Segment-Basis 0 läuft (bestätigt per
+`info registers`), ist dieser Offset direkt eine physische Adresse, die
+sich unverändert an QEMUs Monitor-Befehl `pmemsave <addr> <size> <file>`
+übergeben lässt (Anführungszeichen um den Dateinamen nötig, sonst
+Parser-Fehler bei `/`).
+
+Für alle 9 mit `devs`/Fund 4 bekannten Kernmodule abgefragt — `sbf` war zum
+Testzeitpunkt nicht verlinkt (`E_MNF`, "Module not found"), die übrigen 8
+erfolgreich extrahiert und verifiziert (Sync-Byte `0xFC4A` korrekt,
+Größenfeld im Header entspricht exakt der Dateigröße, Namensstring stimmt):
+
+| Modul | Adresse | Größe live | Größe `../vendor/` (`mw86.tar`) |
+|---|---|---|---|
+| `kernel` | `0x21E400` | 76.944 | 62.352 |
+| `ioman` | `0x23347C` | 17.480 | 15.504 |
+| `rbf` | `0x24D858` | 38.672 | 32.432 |
+| `ssm` | `0x2378C4` | 4.744 | 4.672 |
+| `scf` | `0x23B768` | 16.952 | 15.472 |
+| `pcf` | `0x256F68` | 35.920 | 38.896 (live hier KLEINER als vendor) |
+| `cdfm` | `0x2F9218` | 16.312 | 12.696 |
+| `pipeman` | `0x238CFC` | 10.680 | 10.400 |
+
+**Alle 8 Module unterscheiden sich in der Größe vom `mw86.tar`-Referenzbuild**
+— bestätigt endgültig, was Fund 4 schon für `kernel`/`rbf` andeutete: das
+gebootete System nutzt durchgehend einen anderen (vermutlich neueren) Build,
+der komplett im komprimierten `sysboot`-Container (Fund 5, Bonus-Fund)
+eingebettet ist. Bemerkenswert: `pcf` ist als einziges Modul live KLEINER
+als sein `vendor/`-Gegenstück — kein simples "neuer = immer größer"-Muster,
+sondern echte Bau-/Konfigurationsunterschiede pro Modul.
+
+Dateien liegen jetzt unter
+[`vendor-live/`](../vendor-live/README.md) — eigenständige, Ghidra-taugliche
+Binärdateien, für eine Disassemblierung die richtigen Ausgangsdateien
+(nicht `vendor/`), weil sie den tatsächlich laufenden Code enthalten.
+
 ## Werkzeuge / Wiederholbarkeit
 
 ```bash
@@ -328,19 +372,20 @@ separaten `RESIDENT/mw86.tar`.
    als eigenes, vermutlich komprimiertes Container-Format heraus (`"OS9Z"`
    Header), nicht als einfache Modul-Verkettung.
 4. Offen: `sysboot`s Kompressionsformat identifizieren, um die
-   gebündelten Module (kernel/ioman/rbf/...) daraus zu extrahieren — ohne
-   das bleibt der Live-Extraktions-Weg (Punkt 5) der einzige Weg an
-   den tatsächlich laufenden Code.
-5. Ghidra-Disassemblierung von `kernel`/`ioman`/`rbf` (x86-Target,
+   gebündelten Module (kernel/ioman/rbf/...) direkt aus der Boot-Datei zu
+   extrahieren — durch Fund 6 aber nicht mehr blockierend: der
+   Live-Extraktions-Weg liefert bereits alle laufenden Module als saubere
+   Einzeldateien.
+5. **Erledigt (Fund 6):** alle 8 aktuell geladenen Module
+   (`kernel`/`ioman`/`rbf`/`ssm`/`scf`/`pcf`/`cdfm`/`pipeman`) live per
+   `ident -m -o` + `pmemsave` aus dem laufenden Speicher extrahiert, unter
+   [`vendor-live/`](../vendor-live/README.md) abgelegt. Alle unterscheiden
+   sich in der Größe von den `mw86.tar`-Kopien in `vendor/`.
+6. Ghidra-Disassemblierung von `kernel`/`ioman`/`rbf` (x86-Target,
    analog zum bisherigen 68k-Vorgehen) — mit Andreas' Vermutung im
    Hinterkopf, dass der C-kompilierte Code sich besser dekompilieren
-   lassen könnte als der handoptimierte 68k-Assembler. **Wichtig:** dafür
-   eher die live aus dem Speicher extrahierten, größeren Module verwenden
-   (76.944/38.672 Byte, s. Fund 4) statt der `../vendor/`-Dateien aus
-   `mw86.tar` — die laufen tatsächlich auf diesem System, die
-   `mw86.tar`-Kopien sind ein anderer (älterer) Build. Live-Extraktion aus
-   dem laufenden Speicher wäre der nächste technische Schritt (z. B. über
-   `ident -m -o` für den Speicher-Offset, dann per QEMU-Monitor `memsave`).
-6. Restliche Kopf-Felder (`0x14`–`0x58`) Byte für Byte zuordnen.
+   lassen könnte als der handoptimierte 68k-Assembler. Dafür jetzt
+   `vendor-live/` als Quelle verwenden, nicht `vendor/`.
+7. Restliche Kopf-Felder (`0x14`–`0x58`) Byte für Byte zuordnen.
 
 **Erstellt**: 2026-08-13
