@@ -21,9 +21,9 @@ Byte aus einem gebooteten System verifiziert.
 
 ## Alle drei Header im direkten Vergleich
 
-| # | Feld (Konzept) | OS-9/6809 | OS-9/68K (`dker030s`) | OS-9000/x86 (`kernel`, live) | Gleich? |
+| # | Feld (Konzept) | OS-9/6809 | OS-9/68K (`dker030s`) | OS-9000 universell (hier: x86 `kernel`, live) | Gleich? |
 |---|---|---|---|---|---|
-| 1 | Sync-Bytes | `$00` (2B) = `$87CD` | `$00` (2B) = `$4AFC` | `$00` (2B) = `$4AFC` (LE: `FC4A`) | Wert ist **je Prozessorfamilie eigen** (Manual: "processor dependent") — 68K/x86 identischer Wert, nur Byte-Reihenfolge gedreht |
+| 1 | Sync-Bytes | `$00` (2B) = `$87CD` | `$00` (2B) = `$4AFC` | `$00` (2B) = `$4AFC` (auf x86 LE gespeichert: `FC4A`) | 6809 hat einen eigenen Wert; **68K und alle OS-9000-Ports (x86/PowerPC/ARM/...) teilen sich denselben Wert `$4AFC`**, gespeichert je nach Ziel-Endianness (Big-Endian-Ports wie PowerPC/ARM identisch zu 68K, x86 byte-vertauscht) — s. Kasten unten |
 | 2 | Modulgröße | `$02` (2B) | `$04` (4B) = 28.476 | `$04` (4B) = 76.944 | Konzept gleich, 6809 nur 2 Byte (64-KB-Adressraum reicht für 16 Bit) |
 | 3 | Name-Offset | `$04` (2B) | `$0C` (4B) = `$6F30` | `$0C` (4B) = `$58` | Konzept identisch bei allen drei; 6809 schmaler aus demselben Adressraum-Grund |
 | 4 | Modultyp | oberes Nibble von `$06` = `$C` (Systm) | `$12` (1B) = `$0C` | oberes Byte von `$12` (`$0C01`) = `$0C` | **Wert überall identisch** (`$C`=Systm, seit 1980 bis heute unverändert!), aber **3 verschiedene Kodierungen**: Nibble-Paar → zwei Bytes → ein 16-Bit-Wort |
@@ -40,6 +40,34 @@ Maschinencode) sind über **drei komplett unabhängige Prozessorarchitekturen
 und ~28 Jahre** (6809 1980 → 68K ~1990er → x86 2008) **wortwörtlich
 identisch geblieben** — vermutlich der am längsten unverändert
 durchgehaltene Teil der gesamten OS-9-Familie.
+
+### Warum nur zwei "32-Bit"-Spalten nicht ganz reichen — und wo sie doch reichen würden
+
+Andreas' Vorschlag: eigentlich bräuchte man nur zwei Offset-Spalten (6809
+und "32-Bit"), weil OS-9000 als **eine portable C-Struktur** (`mh_com`) auf
+mehrere 32-Bit-Ziele gebaut wird — nicht nur x86, auch **PowerPC und ARM**
+(`os9k_port.pdf` nennt beide als reale Ports). Diese Ports unterscheiden
+sich **nicht in den Offsets**, nur in der Byte-Reihenfolge: PowerPC/ARM
+sind (üblicherweise) Big-Endian und speichern `m_sync` daher als `$4AFC`
+— genau wie 68K —, nur x86 ist Little-Endian und speichert es
+byte-vertauscht als `$FC4A`. Der Porting Guide bestätigt dieses Konzept
+explizit über ein eigenes Feld `v_endflag` (`BIG_END`/`LITTLE_END`,
+"indicates the byte ordering used by the processor"). **Für PowerPC/ARM
+liegt uns aber kein reales Binary vor** — anders als bei x86 (real
+geprüft), ist das hier plausibel aus der Doku, nicht Byte-für-Byte
+verifiziert.
+
+**Wo die Vereinfachung NICHT ganz aufgeht:** OS-9/68K (dieses Projekt hier,
+`dker030s`) ist **kein** OS-9000-Port, sondern das ältere, eigenständige
+Microware-Produkt, aus dem OS-9000 später hervorging. Beide teilen sich
+zwar Zeile 1–8 der Tabelle oben identisch (gleiche Offsets, gleiche
+Feldbreiten) — aber ab Zeile 9 divergieren sie (46-Byte- vs. 88-Byte-
+Header, siehe nächster Abschnitt). Eine einzige "32-Bit-Spalte" für 68K
+**und** OS-9000/x86/PowerPC/ARM zusammen würde also für die ersten 8 Zeilen
+perfekt funktionieren, aber die echten Unterschiede ab Zeile 9 verstecken.
+Deswegen bleiben es hier zwei Spalten (68K, OS-9000-universell) statt einer
+— aber die OS-9000-Spalte selbst gilt unverändert für x86/PowerPC/ARM/...,
+das ist der Kern von Andreas' Punkt und stimmt.
 
 ## Der wichtigste Unterschied: kein verschobenes Feld, sondern ein längerer Header
 
