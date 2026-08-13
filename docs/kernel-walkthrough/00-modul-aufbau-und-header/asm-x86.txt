@@ -1,0 +1,54 @@
+=== Header-Dump (Skript kernel_ParseHeaderAndAnalyze.java, siehe
+    modules/os9000-x86/disasm/kernel_header_dump.txt) ===
+
+M$ID        = 0x4AFC (sync)
+M$SysRev    = 0x0002
+M$Size      = 0x00012C90 (76944)
+M$Owner     = 0x00000000
+Name-Offset = 0x00000058
+Accs/Err    = 0x0555
+Lang byte@0x12 = 0x01
+Type byte@0x13 = 0x0C (0x0C=Systm expected)
+Field@0x20 (candidate M$Excpt) = 0x00000000
+Field@0x24 (candidate M$Exec)  = 0x000000A4
+Module name = "kernel"
+
+Raw bytes 0x14-0x60 (Header-Bereich vor dem Namen):
+00 A0 CD 00 00 00 00 00 00 00 00 00 00 00 00 00
+A4 00 00 00 00 00 00 00 60 1B 00 00 00 40 00 00
+58 0D 01 00 C0 28 01 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 0D 4E 6B 65 72 6E 65 6C 00 00
+
+0xB0BD-Magic-Konstante zweimal gefunden (dieselbe Konstante wie beim
+68K-Header @ 0x40-0x43, hier an anderer Stelle):
+  0xB0BD found at offset 0xB4
+  0xB0BD found at offset 0xB6
+
+=== Bytes 0x60-0xA4 (ID-String zwischen Namen und Einsprung-Trampolin,
+    per Python direkt aus vendor-live/kernel gelesen -- nicht Teil der
+    bisherigen Ghidra-Skript-Ausgabe) ===
+
+"OS-9000/x86 V4.9\0Copyright (c) 1989-2008 by RadiSys Corporation\0"
+
+=== Einsprung bei Header-Offset 0x24 -> Wert 0xA4 -> Trampolin bei 0x21e4a4 ->
+    echter Code bei 0x21e4c0 (Auszug aus modules/os9000-x86/disasm/kernel_full_disasm.txt) ===
+
+=== FUNCTION kernel_init_0021e4c0 @ 0021e4a4 size=5 ===
+0021e4a4: JMP 0x0021e4c0                 ; bytes=5
+
+=== FUNCTION kernel_init_0021e4c0 @ 0021e4c0 size=96 ===
+0021e4c0: PUSH EAX                       ; bytes=1
+0021e4c1: MOV EAX,dword ptr [EAX + 0x90] ; bytes=6
+0021e4c7: MOV EAX,dword ptr [EAX + 0x2c] ; bytes=3
+0021e4ca: MOV EAX,dword ptr [EAX + 0x10] ; bytes=3
+0021e4cd: TEST EAX,0x10                  ; bytes=5
+0021e4d2: JNZ 0x0021e4d9                 ; bytes=2
+0021e4d4: CALL 0x0022e9b0                ; bytes=5
+0021e4d9: CALL 0x0021e4de                ; bytes=5
+0021e4de: POP EDX                        ; bytes=1
+0021e4df: LEA EDX,[EDX + 0xffffff22]     ; bytes=6
+0021e4e5: MOV EAX,dword ptr [EDX + 0x2c] ; bytes=3
+0021e4e8: MOV ESI,dword ptr [EDX + 0x30] ; bytes=3
+...  (weiter in Thema 01/Memory-Init -- vollstaendig in
+       modules/os9000-x86/docs/KERNEL_INIT.md, Fund 3)

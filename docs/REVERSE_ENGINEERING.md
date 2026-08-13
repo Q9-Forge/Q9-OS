@@ -36,17 +36,33 @@ dokumentiert, empirisch aus dem Binary ermittelt):
 | Offset | Wert (dker030s) | Interpretation |
 |---|---|---|
 | `0x30` | `0x00000054` | `M$Exec` — Offset des Einsprungpunkts |
-| `0x34` | `0x00000000` | unbekannt, immer 0 beobachtet |
-| `0x38`–`0x3F` | 0 | unbekannt |
-| `0x40`–`0x43` | `b0bd b0bd` | unbekannt — Musterwert oder Füllwert, wiederholt sich identisch in `aker030s` |
-| `0x44`–`0x4B` | `00000001 00000001` | unbekannt |
-| `0x4C`–`0x53` | 0 | unbekannt |
+| `0x34` | `0x00000000` | `M$Excpt` — Default-User-Trap-Einsprung, hier `0` = keiner |
+| `0x38`–`0x3F` | 0 | nicht offiziell dokumentiert — s. u. |
+| `0x40`–`0x43` | `b0bd b0bd` | nicht offiziell dokumentiert — Musterwert oder Füllwert, wiederholt sich identisch in `aker030s` |
+| `0x44`–`0x4B` | `00000001 00000001` | nicht offiziell dokumentiert |
+| `0x4C`–`0x53` | 0 | nicht offiziell dokumentiert |
 | `0x54` | `BRA.W +0x674A` | erste echte Instruktion — springt über den ID-String |
+
+**Nachtrag (2026-08-13, per offiziellem `68k_tech.pdf` bestätigt statt zu
+raten):** `0x34` ist laut Table 1-8 ("Additional Header Fields for
+Individual Modules") tatsächlich `M$Excpt`. Dieselbe Tabelle bestätigt
+außerdem: `M$Exec`+`M$Excpt` sind die **einzigen** offiziell für
+System-Module (Typ `Systm`) definierten Erweiterungsfelder — `M$Mem`/
+`M$Stack`/etc. sind laut Manual explizit nur für Program-/Trap-Handler-/
+Device-Driver-Module dokumentiert. Der Rest von `0x38`–`0x53` (inkl. der
+`0xB0BD`-Konstante) ist damit kein Auslassungsfehler unsererseits, sondern
+schlicht kein für diesen Modultyp offiziell belegtes Feld — vermutlich
+Microware-interne Konvention/Padding. Vollständiger Vergleich mit dem
+analogen, offiziell dokumentierten OS-9000/x86-Header (dort per C-Struct
+`mh_com` durchgehend benannt) in
+[`../modules/os9000-x86/docs/FINDINGS.md`](../modules/os9000-x86/docs/FINDINGS.md), Fund 1.
 
 Direkt nach dem Sprungziel-Überspringen folgt ein eingebetteter
 Identifikationsstring (kein Teil des Standard-Headers, aber offenbar
 Konvention bei Microware-Kerneln): `"68030\0 OS-9/68K Kernel (Dev-Std)
-V3.2.0\0Copyright (c) 1999 by Microware ..."`.
+V3.2.0\0Copyright (c) 1999 by Microware Systems Corp.\0"` (vollständiger,
+nicht abgekürzter String — byte-exakt nachvollziehbar in
+`src/kernel/kernel.r`, ab Label `L00005c`).
 
 Als Ghidra-Struktur angelegt (`OS9_ModuleHeader_Std` +
 `OS9_KernelHeader_Ext`), Skript `ApplyModuleHeader.java`.

@@ -54,6 +54,16 @@ EAX,[EAX+0x90]; ...`). Dasselbe Trampolin-Prinzip wie bei 68K-Modulen
 (`M$Exec` zeigt dort ebenfalls oft auf einen kurzen Sprung-Stub statt
 direkt auf den Code), nur mit 4-Byte- statt 2-Byte-Namensfeld-Offset davor.
 
+**Nachtrag (2026-08-13, per offiziellem Technical Manual bestätigt statt
+weiter zu raten):** Feld `0x24` ist tatsächlich `m_exec` aus der offiziell
+dokumentierten `mh_com`-Struktur (`os9k_tech.pdf`) — der obige empirische
+Fund war korrekt. Das im Skript `kernel_ParseHeaderAndAnalyze.java` noch als
+"candidate M$Excpt" bezeichnete Feld `0x20` ist laut derselben Struktur in
+Wahrheit `m_symbol` (Symboltabellen-Offset, hier `0`); der echte `m_excpt`
+liegt bei `0x28` (ebenfalls `0`). Vollständige, dokumentbestätigte
+Header-Tabelle (alle Felder `0x00`–`0x58`) in
+[`FINDINGS.md`](FINDINGS.md), Fund 1.
+
 **Bonus-Fund dabei:** direkt nach dem Trampolin, bei Offset `0xB4`/`0xB6`,
 steht zweimal hintereinander das 16-Bit-Wort `0xB0BD` — **derselbe
 "Struktur-Signatur"-Musterwert**, den die 68K-Analyse bei Modulkopf-Offset
