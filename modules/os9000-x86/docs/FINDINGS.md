@@ -336,6 +336,31 @@ QEMU-Boot → RAM-Adresse → SHA-256 je Datei) steht in
 `vendor/`-Dateien aus `mw86.tar` haben ihr eigenes
 [`vendor/PROVENANCE.md`](../vendor/PROVENANCE.md).
 
+## Fund 7: Kernel-Init-Sequenz per Ghidra disassembliert und mit dem 68K-Kernel verglichen
+
+Vollständiger Bericht: [`KERNEL_INIT.md`](KERNEL_INIT.md). Kurzfassung:
+Entry-Point empirisch gefunden (Header-Feld `0x24`, x86-Analogon von
+`M$Exec`, zeigt auf einen `JMP`-Trampolin), Ghidra-Autoanalyse erreicht
+**70 % Code-Abdeckung / 229 Funktionen komplett automatisch** (deutlich
+besser als beim handoptimierten 68K-Kernel — bestätigt Andreas'
+Vermutung, dass C-kompilierter Code sich leichter automatisch erschließen
+lässt). Die Init-Kette (Entry-Funktion → `FUN_0022246c` → `FUN_0021eb26`)
+zeigt dieselbe grobe Boot-Reihenfolge wie der 68K-Kernel (Speicher/Arena
+einrichten, Exception-Dispatch-Tabelle aus einer kompakten Quelltabelle
+aufbauen, Prozess-/Deskriptor-Freilisten vorbereiten, ersten
+Ausführungskontext von Hand konstruieren) — koppelt Hardware- und
+Systemlogik aber konsequent über Funktionszeiger/virtuelle Aufrufe in eine
+externe, zielspezifische Beschreibungsstruktur, statt wie beim 68K direkt
+im Modul zu verdrahten (VBR, feste Sprungadressen). Bestätigt damit die
+im Technical Manual dokumentierte "Low-Level System"-Portierungsgrenze
+erstmals im disassemblierten Code selbst, nicht nur in der Dokumentation.
+Nebenfund: die 68K-"`0xB0BD`"-Struktursignatur (siehe
+`../../docs/REVERSE_ENGINEERING.md`) taucht unverändert auch im x86-Kernel
+auf, direkt hinter dem Entry-Trampolin. Auch gefunden: eine x86-Modul-
+Relozierungsfunktion (`FUN_0022246c`) — ein echter Architekturunterschied,
+da klassische 68K-Module bewusst positionsunabhängig sind und keine
+Relozierung benötigen.
+
 ## Werkzeuge / Wiederholbarkeit
 
 ```bash

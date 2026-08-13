@@ -1,0 +1,27 @@
+=== OS-9000/x86 kernel module header ===
+M$ID        = 0x4AFC (sync)
+M$SysRev    = 0x0002
+M$Size      = 0x00012C90 (76944)
+M$Owner     = 0x00000000
+Name-Offset = 0x00000058
+Accs/Err    = 0x0555
+Lang byte@0x12 = 0x01
+Type byte@0x13 = 0x0C (0x0C=Systm expected)
+Field@0x20 (candidate M$Excpt) = 0x00000000
+Field@0x24 (candidate M$Exec)  = 0x000000A4
+Module name = "kernel"
+=== Raw bytes 0x14-0x60 (previously unmapped header region) ===
+00 A0 CD 00 00 00 00 00 00 00 00 00 00 00 00 00 
+A4 00 00 00 00 00 00 00 60 1B 00 00 00 40 00 00 
+58 0D 01 00 C0 28 01 00 00 00 00 00 00 00 00 00 
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 
+00 00 0D 4E 6B 65 72 6E 65 6C 00 00 
+=== 0xB0BD magic-constant check (repeated LE words near entry trampoline) ===
+  0xB0BD found at offset 0xB4
+  0xB0BD found at offset 0xB6
+=== Auto-analysis coverage (before entry-point disassembly) ===
+Total module length: 76944 bytes
+Disassembled as code: 53838 bytes (70.0%)
+Defined data: 745 bytes (1.0%)
+Undefined: 22361 bytes (29.1%)
+Functions found so far: 229
