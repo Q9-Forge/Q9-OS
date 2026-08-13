@@ -128,10 +128,36 @@ QEMU-Prozess nach dieser Session-Runde beendet
 diese Version noch nicht angelegt (keine Disassemblierung in dieser
 Runde, nur Live-Beobachtung).
 
+## Nachtrag: `OS-9-6.1-EN-XiBase9_10_20_18.ova` — grafische Variante, bootet, aber kein Bildschirmbild
+
+Zweites `.ova`-Archiv untersucht: `.ovf` bestätigt Annotation **"XiBase9
+(1024x768x32) with US/EN Keyboard"** — echte GUI-Variante (XiBase9 =
+Microwares eigenes Fenstersystem, vgl. `maui_win`/`maui_inp` aus der
+v4.9-Runde), 2048 MB RAM statt 1024 MB, nur EINE Festplatte (172 MB
+komprimiert, kein zweites 4-GB-Laufwerk wie bei der Textversion).
+
+Boot mit `-vga std` UND separat mit `-vga cirrus` versucht — beides
+liefert einen dauerhaft **schwarzen** `screendump`, auch nach >50 Sekunden
+(bei den anderen Boots erschien der SeaBIOS-Splash sofort). QEMU-Monitor
+`info registers` zeigt aber: `EIP=00116bb3`, `CS32`-Segment, `CPL=0`,
+`HLT=0` — das System läuft bereits im 32-Bit-Protected-Mode-Kernel, ist
+also durch BIOS und Boot durch, nicht abgestürzt oder hängengeblieben.
+
+**Einordnung:** Plausibelste Erklärung — XiBase9 programmiert die
+Grafikkarte vermutlich direkt (Bankwechsel-Modi, eigene VESA-Aufrufe) statt
+über den generischen VGA-BIOS-Pfad, den QEMUs `std`/`cirrus`-Emulation für
+`screendump` abbildet; ein bekanntes Kompatibilitätsproblem bei alten,
+hardwarenah programmierten GUI-Systemen unter generischer VGA-Emulation.
+Nicht weiter verfolgt (Seitenzweig, kein Bezug zu den Kernfragen
+Modularchitektur/File-Manager) — bei Bedarf wäre ein VNC-Display
+(`-display vnc=...`) oder eine andere QEMU-Grafikkarte (`-vga vmware`,
+näher am ursprünglichen VirtualBox-Adapter) ein möglicher nächster
+Diagnoseschritt.
+
 ## Nächste Schritte (falls gewünscht)
 
-1. `OS-9-6.1-EN-XiBase9_10_20_18.ova` (das zweite, noch nicht geöffnete
-   Archiv) auf Unterschiede zur reinen 6.1-Version prüfen.
+1. **Erledigt (Nachtrag oben):** XiBase9-Variante geprüft — bootet, aber
+   Grafikausgabe unter QEMU nicht sichtbar.
 2. SSH-Hänger-Bug genauer untersuchen (optional, nicht kernrelevant für
    die Modul-Architektur-Fragen).
 3. `kernel`/`ioman`/`rbf` dieser Version aus dem laufenden Speicher
