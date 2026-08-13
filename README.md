@@ -108,6 +108,17 @@ gebootet werden.
   live per `ident -m -o` + QEMU `pmemsave` direkt aus dem laufenden RAM
   extrahiert (siehe [`modules/os9000-x86/vendor-live/`](modules/os9000-x86/vendor-live/README.md))
   — unterscheiden sich alle in der Größe vom statischen `mw86.tar`-Build.
+  Kernel-Init-Sequenz per Ghidra disassembliert und mit dem 68K-Kernel
+  verglichen (siehe [`modules/os9000-x86/docs/KERNEL_INIT.md`](modules/os9000-x86/docs/KERNEL_INIT.md)):
+  Entry-Point empirisch gefunden, **70 % Code-Abdeckung/229 Funktionen
+  komplett automatisch** durch Ghidra (deutlich mehr als beim
+  handoptimierten 68K-Kernel), dieselbe grobe Boot-Reihenfolge
+  (Speicher/Arena → Exception-Dispatch-Tabelle → Prozess-Freilisten →
+  erster Ausführungskontext von Hand konstruiert), koppelt Hardware/
+  Systemlogik aber über Funktionszeiger in eine externe, zielspezifische
+  Beschreibungsstruktur statt sie wie beim 68K fest im Modul zu verdrahten
+  — bestätigt die dokumentierte "Low-Level System"-Portierungsgrenze
+  erstmals im Code selbst.
 - [`modules/os9000-x86-6.1/`](modules/os9000-x86-6.1/) — dieselbe Prüfung
   für **OS-9000 v6.1** (2018, VirtualBox-Appliance, ~20 Jahre nach v4.9):
   ebenfalls gebootet, RBF weiterhin als File Manager bestätigt, Type/Lang-
