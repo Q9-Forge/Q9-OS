@@ -48,25 +48,51 @@ Damit sind vier der bisher als „PLATZHALTER“ markierten Felder in
 Runde nachgetragen, aber vorgemerkt für die nächste Aktualisierung dieser
 beiden Dateien).
 
-**Zweiter Bonus-Fund:** die alte, als „KONFLIKT“ markierte Frage nach der
-echten Position von `Q9_D_ACTIVQ`/`Q9_D_SLEEPQ`/`Q9_D_WAITQ` ist jetzt
-beantwortet. Der Kernel initialisiert beim Boot **sechs** leere,
-zirkuläre Listen, nicht nur eine: drei mit Verkettungsfeldern bei
-`+0x30`/`+0x34` (bei `0x37C`, `0x384`, `0x38C` — das sind vermutlich die
-echten `Q9_D_ACTIVQ`/`Q9_D_SLEEPQ`/`Q9_D_WAITQ`, nicht die bisher
-vermuteten `0x3AC`/`0x3B4`/`0x3BC`) und drei weitere mit
-Verkettungsfeldern bei `+0xC`/`+0x10` (bei `0x774`, `0x77C`, und einer
-dritten Stelle) — letztere noch nicht benannt.
+**Zweiter Bonus-Fund, jetzt vollständig aufgelöst (2026-08-14):** die alte,
+als „KONFLIKT“ markierte Frage nach der echten Position von
+`Q9_D_ACTIVQ`/`Q9_D_SLEEPQ`/`Q9_D_WAITQ` ist beantwortet, und alle sechs
+beim Boot initialisierten leeren Listen sind jetzt identifiziert. Der
+komplette Init-Block liegt bei `0x6856`-`0x689e` in `Q9_kernel_init_67a0`
+(sechs `lea`/`move.l`-Dreiergruppen direkt hintereinander, siehe
+[`asm-68k.r`](asm-68k.r)):
+
+| Adresse | Verkettung bei | Bedeutung | Beleg |
+|---|---|---|---|
+| `0x37C` | `+0x30`/`+0x34` | `Q9_D_ACTIVQ` — Bereitschaftswarteschlange | bereits in Thema 01 (erste Runde) geklärt |
+| `0x384` | `+0x30`/`+0x34` | `Q9_D_SLEEPQ` — Schlafwarteschlange | dito |
+| `0x38C` | `+0x30`/`+0x34` | `Q9_D_WAITQ` — Wartewarteschlange | dito |
+| `0x3FC` | `+0x8`/`+0xC` | **neu:** Basis des Arena-/Freispeicher-Kontrollblocks (`Q9_D_ARENA`) — das schon bekannte `Q9_D_FREEMEM` (`0x404`) ist exakt `Basis+8`, also das Kopf-Feld dieser Struktur, nicht separat | `Q9_arena_alloc_526c` referenziert `$3fc(a6)` mehrfach (`lea`/`pea`, u. a. `src/kernel/kernel.r` Zeile 17285 im Kontext); die Falschannahme "eigenständige Struktur" korrigiert |
+| `0x774` | `+0xC`/`+0x10` | **neu:** `Q9_D_ALMQ1` — F$Alarm-Warteschlange 1 (sofortige/D1=0-Variante) | `Q9_alarm_set_157e` lädt `lea $774(a6),a0` direkt vor dem Sprung in `Q9_alarm_insert_15c4` (dem sortierten Einfüge-/Verkettungs-Code über genau `+0xC`/`+0x10`, verifiziert per Volltextlesen) |
+| `0x77C` | `+0xC`/`+0x10` | **neu:** `Q9_D_ALMQ2` — F$Alarm-Warteschlange 2 (intervallbasierte Variante) | `Q9_alarm_set_1580` lädt `lea $77c(a6),a0` genauso vor `Q9_alarm_insert_15c4` |
+
+**Wichtiger Nebenbefund:** die alten `q9sysglob.h`/`.a`-Felder
+`Q9_D_THREAD` (`0x438`) und `Q9_D_ALARTH` (`0x440`) beschreiben fast
+wortgleich "Kopf der System-Thread-/Alarm-Warteschlange" — aber an einer
+ganz anderen Adresse als die jetzt nachweislich echten Alarm-Warteschlangen
+`Q9_D_ALMQ1`/`Q9_D_ALMQ2`. Beide alten Felder waren nie mehr als
+`PLATZHALTER` (nie selbst verifiziert) und sind jetzt als `KONFLIKT`
+markiert, nicht gelöscht — möglich, dass sie ein anderes, noch unbekanntes
+Konzept beschreiben, oder schlicht falsch geraten waren. `Q9_D_ALMQ1`/
+`Q9_D_ALMQ2` (und `Q9_D_ARENA`) wurden neu und mit Status `VERIFIZIERT` in
+`src/q9sysglob.h`/`.a` ergänzt.
+
+Die `0x0777`-Freilisten-Sentinel, die schon beim x86-Kernel auftauchte
+(Fund 3/5 in `KERNEL_INIT.md`), ist hier interessanterweise NICHT
+wiederzufinden — die 68K-Alarm-Warteschlangen nutzen eine reine
+Ringlisten-Terminierung (Kopf==Schwanz bei leerer Liste) statt eines
+Tag-Sentinels. Kein Widerspruch, nur eine andere Implementierungswahl für
+dasselbe Grundproblem "leere Liste erkennen".
 
 ### 2. Wohin springt der x86-Kernel am Ende von `Q9X_kernel_globals_init` (`pcVar2`)?
 
 **Antwort: über ein manuelles Stack-Switch-Sprung-Primitiv — mechanisch
-dasselbe Prinzip wie beim 68K, nur anders umgesetzt. Das exakte Sprungziel
-selbst bleibt offen.** Die Funktion, die Ghidra als Rückgabewert
-(„pcVar2“) an den Aufrufer weiterreicht, ist in Wirklichkeit kein
-normaler Rückgabewert — Ghidra scheitert hier an einem handgeschriebenen
-Kontextwechsel. Die entscheidende Funktion (unbenannt gelassen, s. o.)
-besteht nur aus drei Instruktionen:
+dasselbe Prinzip wie beim 68K, nur anders umgesetzt. Das Sprungziel selbst
+lässt sich jetzt als Formel auflösen, wenn auch nicht als fester
+Zahlenwert.** Die Funktion, die Ghidra als Rückgabewert („pcVar2“) an den
+Aufrufer weiterreicht, ist in Wirklichkeit kein normaler Rückgabewert —
+Ghidra scheitert hier an einem handgeschriebenen Kontextwechsel. Die
+entscheidende Funktion (unbenannt gelassen, s. o.) besteht nur aus drei
+Instruktionen:
 
 ```asm
 XCHG EAX,ESP        ; tauscht EAX und ESP
@@ -79,15 +105,39 @@ eines anderswo vorbereiteten neuen Stack-Rahmens; nach dem Tausch läuft
 die CPU auf diesem neuen Stack weiter, und der `JMP` springt zu einer
 Adresse, die dort abgelegt wurde. Ghidra dekompiliert das als normalen
 Funktionsaufruf mit Rückgabewert — daher die verwirrende `pcVar2`-Zeile
-in `Q9X_kernel_init`. **Was offen bleibt:** welcher konkrete Wert zum
-Zeitpunkt des Sprungs in EAX steht (also wohin genau gesprungen wird) —
-das würde eine tiefere Verfolgung der Registerbelegung an dieser Stelle
-erfordern, die in dieser Runde nicht mehr geleistet wurde. Funktional ist
-aber klar: **das ist der x86-Moment, der dem 68K-Sprung in
-`Q9_reschedule_trampolin_3140` entspricht** — beide Kernel bauen sich sozusagen
-einen künstlichen Ausführungskontext und springen hinein, nur der 68K-Kernel tut
-das direkt auf seinem eigenen Stack, der x86-Kernel über einen echten
-Stack-Wechsel.
+in `Q9X_kernel_init`.
+
+**Nachtrag (2026-08-14): das Sprungziel als Formel aufgelöst.** Direkt vor
+dem Aufruf (`asm-x86.txt`, `0x21f08b`-`0x21f093`) steht:
+
+```asm
+0021f08b: MOV EAX,0x4140
+0021f090: ADD EAX,dword ptr [EBP + -0x4]
+0021f093: CALL 0x0021e5a0
+```
+
+`[EBP-4]` wurde weiter vorne in derselben Funktion (`0x21ece6`, direkt nach
+`CALL Q9X_query_memsize`) mit dem Rückgabewert der zweiten
+Speichergrößen-Abfrage belegt (`iVar2` in `decompiled-x86.c`) und bis
+hierhin unverändert durchgereicht. **Der neue Stack-Zeiger (und damit die
+Adresse, an der der eigentliche Sprungzielwert abgelegt ist) ist also
+exakt `iVar2 + 0x4140`** — ein fester Offset in den gerade erst per
+`Q9X_query_memsize` ermittelten, frisch reservierten Speicherbereich
+hinein (der `0x4140` liegt innerhalb des schon bekannten "festen
+`0x464A`-Byte-Bereichs" aus Fund 3/`KERNEL_INIT.md`, also noch vor den
+Prozess-/Pfad-Deskriptor-Tabellen). Der **numerische** Wert lässt sich aus
+dem Binary allein nicht mehr bestimmen, weil `iVar2` von der tatsächlichen
+RAM-Größe zur Laufzeit abhängt (keine Konstante im Modul) — das wäre nur
+noch per Live-Speicher-Inspektion im laufenden Emulator zu ermitteln, nicht
+mehr per reiner Disassemblierung. Damit ist die Frage so weit aufgelöst,
+wie es ohne einen laufenden Gast überhaupt geht.
+
+Funktional ist klar: **das ist der x86-Moment, der dem 68K-Sprung in
+`Q9_reschedule_trampolin_3140` entspricht** — beide Kernel bauen sich
+sozusagen einen künstlichen Ausführungskontext und springen hinein, nur
+der 68K-Kernel tut das direkt auf seinem eigenen Stack, der x86-Kernel
+über einen echten Stack-Wechsel in einen frisch berechneten, dynamischen
+Speicherbereich hinein.
 
 ## Die chronologische Übersicht
 
@@ -149,4 +199,6 @@ weiter, man muss trotzdem die rohe Disassemblierung lesen.
 - x86: [`../../../modules/os9000-x86/docs/KERNEL_INIT.md`](../../../modules/os9000-x86/docs/KERNEL_INIT.md) — ebenfalls per Verweis auf dieses Thema aktualisiert.
 - Ghidra-Projekte: `/Volumes/SSD1TB/projects/Q9-OS-ghidra/` (68K), `/Volumes/SSD1TB/projects/Q9-OS-ghidra-os9000-kernel/` (x86, Funktionen in dieser Runde umbenannt).
 
-**Erstellt**: 2026-08-13
+**Erstellt**: 2026-08-13, **aktualisiert**: 2026-08-14 (beide offenen Punkte
+aus diesem Thema geklärt — 68K-Warteschlangen `Q9_D_ARENA`/`Q9_D_ALMQ1`/
+`Q9_D_ALMQ2` und x86-Sprungziel-Formel)
