@@ -485,6 +485,20 @@ konkrete Sprung vom Dispatcher in den Treiber-/File-Manager-Code selbst
 gefunden — offene Frage. Vollständige Herleitung in
 [`../../../docs/kernel-walkthrough/02-io-manager-syscall-dispatch/`](../../../docs/kernel-walkthrough/02-io-manager-syscall-dispatch/README.md).
 
+## Fund 9: `vendor-live/rbf` — die 16-Slot-Callcode-Dispatch-Tabelle liegt im `m_idata`-Bereich, nicht bei `m_exec`
+
+Anders als beim 68K (Tabelle direkt an der `M$Exec`-Adresse) zeigt x86s
+`m_exec` bei `rbf` nur auf einen trivialen No-Op-Stub. Die echte 16-Slot-
+Tabelle (13 Slots positionell wie beim 68K `I$Create`…`I$Close`, plus 3
+neue, nicht identifizierte Slots) liegt stattdessen im `m_idata`-Bereich,
+direkt nach einem 3-Word-Kopf (u. a. die Slot-Anzahl `16`). Beleg: 9 der
+16 Tabellenwerte zeigten auf Adressen, die Ghidras Auto-Analyse zuvor
+komplett unbekannt waren — gezielte Disassemblierung ergab bei allen
+neun einen gültigen Funktionsprolog. Löst gleichzeitig die Hälfte von
+Fund 8s offener Frage (die Ziel-Seite; der IOMan-seitige Aufrufer bleibt
+offen). Vollständige Herleitung in
+[`../../../docs/kernel-walkthrough/03-dreiklang/`](../../../docs/kernel-walkthrough/03-dreiklang/README.md).
+
 ## Werkzeuge / Wiederholbarkeit
 
 ```bash
