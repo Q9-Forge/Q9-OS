@@ -471,6 +471,20 @@ Relozierungsfunktion (`FUN_0022246c`) — ein echter Architekturunterschied,
 da klassische 68K-Module bewusst positionsunabhängig sind und keine
 Relozierung benötigen.
 
+## Fund 8: IOMan disassembliert — derselbe "Dreiklang" mit identischen Typ-Filter-Werten wie beim 68K
+
+`vendor-live/ioman` erstmals disassembliert (14 von 67 Funktionen benannt,
+Präfix `Q9X_`). Zentraler Fund: `Q9X_ioman_attach` linkt Descriptor/Driver/
+File-Manager mit exakt denselben Filter-Werten `0xF00`/`0xE00`/`0xD00` wie
+das 68K-`I$Attach` — über zwei Architekturen hinweg identisch. Außerdem:
+IOMans eigene Kernel-Service-Aufrufe laufen über das **FS-Segmentregister**
+(`FS:[0]` → `+0xA8C` → Funktionszeiger) als Kernel-Globals-Basiszeiger —
+das x86-Gegenstück zu 68Ks fest reserviertem Adressregister A6. Der
+konkrete Sprung vom Dispatcher in den Treiber-/File-Manager-Code selbst
+(x86-Analogon zu 68Ks `FUN_000014f8`) wurde in dieser Runde nicht
+gefunden — offene Frage. Vollständige Herleitung in
+[`../../../docs/kernel-walkthrough/02-io-manager-syscall-dispatch/`](../../../docs/kernel-walkthrough/02-io-manager-syscall-dispatch/README.md).
+
 ## Werkzeuge / Wiederholbarkeit
 
 ```bash

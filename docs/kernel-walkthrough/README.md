@@ -22,8 +22,8 @@ echtem Code direkt dabei.
 |---|---|---|
 | [00](00-modul-aufbau-und-header/) | Kernel-Modul-Aufbau und Header | ✅ fertig |
 | [01](01-kernel-bootstrap/) | Kompletter Boot-Bootstrap: vom Einsprung bis zur Übergabe an den Scheduler (Speicher-/Arena-Init, Exception-Dispatch-Tabelle, Warteschlangen, erster Ausführungskontext — alles in einem Thema statt fünf einzelnen) | ✅ fertig |
-| 02 | IO-Manager: Syscall-Dispatch (F$/I$-Aufrufe) | 🚧 geplant |
-| 03 | RBF/Descriptor/Driver — der OS-9-"Dreiklang" | 🚧 geplant |
+| [02](02-io-manager-syscall-dispatch/) | IO-Manager: wie ein Syscall beim Treiber landet — Dreiklang (Descriptor/Driver/Fmgr) mit identischen Typ-Filtern 0xF00/0xE00/0xD00 auf beiden Architekturen bestätigt | ✅ fertig (x86-Seite: Grundmechanismus geklärt, Treiber-Sprung selbst noch offen) |
+| 03 | RBF/Descriptor/Driver — der OS-9-"Dreiklang" im Detail | 🚧 geplant |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -32,6 +32,14 @@ Andreas wollte "alles bis zum Scheduler" an einem Stück, chronologisch,
 nicht in fünf separaten Verzeichnissen. Die frühere 68K-Wissenslücke
 (woher kommt der Speicher für `D_ExcJmp`?) ist jetzt geklärt — siehe
 Thema 01.
+
+**Hinweis zu Thema 02:** die 68K-Seite stützt sich auf bereits vorhandene
+4-Runden-Vorarbeit (`modules/ioman/`), die x86-Seite wurde in dieser Runde
+erstmals disassembliert und weniger tief untersucht (14 von 67 Funktionen
+benannt) — der zentrale Dreiklang-Mechanismus ist geklärt, der konkrete
+Sprung in den Treibercode bei einem laufenden `I$Read`/`I$Write` bleibt
+auf x86 offen (Kandidatenfunktionen im Ghidra-Projekt vorhanden, siehe
+Thema 02 selbst).
 
 ## Konvention
 
