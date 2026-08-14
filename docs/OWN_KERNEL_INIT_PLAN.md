@@ -179,6 +179,39 @@ Implementierungen, dieselben Grundmuster.
   auf beiden Seiten, bevor man sich auf eine Prozesserzeugungs-Reihenfolge
   festlegt.
 
+## 2b. Speicherverwaltung — der eigentliche Allokator
+
+Aus [Thema 05](kernel-walkthrough/05-speicherverwaltung/): über die
+Boot-Zeit-Arena aus Abschnitt 2 hinaus die Laufzeit-Logik für
+`F$SRqMem`/`F$SRtMem`. Stärkster Einzelbefund der ganzen Serie: **alle
+fünf 68K-Fehlercodes für Speicherverwaltung (`0xDB`/`0xD2`/`0xAB`/`0xED`/
+`0xE1`) tauchen unverändert im x86-Kernel wieder auf** — interne Codes,
+die kein Nutzer je sieht, also ohne jeden externen Kompatibilitätsdruck
+übernommen. **Klare Übernahme-Empfehlung, unabhängig vom Pfad**: diese
+Werte sind offenbar eine über Jahrzehnte gepflegte interne Konvention,
+kein Zufall.
+
+- **Zweistufiges Schema Pool → Arena (nach Adressbereich) → Freiliste**
+  (nach Größe/Klasse sortiert) — bei beiden Architekturen unabhängig
+  vorhanden. **Übernahme-Empfehlung.**
+- **Arena-Deskriptoren werden per Template-Kopie erzeugt**: eine
+  Kandidatenregion wird byteweise in einen neuen, festgrößigen
+  Deskriptor kopiert (68K: 42 Byte; x86: 64 Byte) statt ihn von Grund
+  auf neu zu berechnen — ein einfacher, an beiden Architekturen
+  gefundener Mechanismus.
+- **Boundary-Tag-Coalescing beim Freigeben**: angrenzende freie Blöcke
+  werden verschmolzen statt neue Freilisten-Einträge anzulegen — Standard-
+  technik, aber konkret bei beiden Kernen bestätigt.
+- **Größen-Rundung per Zweierpotenz-Bitmaske** (`neg`/`and`-Idiom) — bei
+  beiden Architekturen identisch, unabhängig davon ob 16-Byte- (Thema 01)
+  oder größere Alignments gefragt sind.
+- **Offen für beide Architekturen**: der öffentliche `F$SRqMem`/
+  `F$SRtMem`-Einstiegspunkt selbst wurde nie gefunden (68K-Lücke schon
+  vor dieser Session bekannt) — für den eigenen Kernel kein Hindernis
+  (der eigene Einstiegspunkt kann frei gewählt werden), aber ein Hinweis,
+  dass die Syscall-Tabellen-Befüllung beim Boot noch nicht vollständig
+  verstanden ist, falls das für Pfad (B) relevant wird.
+
 ## 3. Der Dreiklang — jetzt eine Pflichtanforderung
 
 Aus [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/) und
@@ -273,5 +306,6 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 - [`kernel-walkthrough/02-io-manager-syscall-dispatch/`](kernel-walkthrough/02-io-manager-syscall-dispatch/README.md)
 - [`kernel-walkthrough/03-dreiklang/`](kernel-walkthrough/03-dreiklang/README.md)
 - [`kernel-walkthrough/04-scheduler-prozesslebenszyklus/`](kernel-walkthrough/04-scheduler-prozesslebenszyklus/README.md)
+- [`kernel-walkthrough/05-speicherverwaltung/`](kernel-walkthrough/05-speicherverwaltung/README.md)
 
 **Erstellt**: 2026-08-14

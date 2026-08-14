@@ -25,6 +25,7 @@ echtem Code direkt dabei.
 | [02](02-io-manager-syscall-dispatch/) | IO-Manager: wie ein Syscall beim Treiber landet — Dreiklang (Descriptor/Driver/Fmgr) mit identischen Typ-Filtern 0xF00/0xE00/0xD00 auf beiden Architekturen bestätigt | ✅ fertig — inkl. IOMan-seitiger Dispatcher-Aufrufer (`Q9X_ioman_callcode_dispatch`), siehe Nachtrag im Thema selbst |
 | [03](03-dreiklang/) | RBF/Descriptor/Driver im Detail — x86-Callcode-Dispatch-Tabelle gefunden (16 Slots im `m_idata`-Bereich statt bei `m_exec` wie beim 68K) | ✅ fertig (x86: nur File-Manager untersucht, Descriptor/Driver offen) |
 | [04](04-scheduler-prozesslebenszyklus/) | Scheduler & Prozess-Lebenszyklus — 68K-Vorarbeit erweitert, x86 neu untersucht; Kettenschluss gefunden: x86-Boot-Trampolin endet in `Q9X_scheduler_insert` | ✅ fertig (x86: nur Scheduler-Kern gelesen, `F$Fork`/`F$Exit` auf x86 noch offen) |
+| [05](05-speicherverwaltung/) | Speicherverwaltung/Allokator — 68K-Vorarbeit erweitert, x86 neu untersucht; identische Fehlercodes (`0xDB`/`0xD2`/`0xAB`/`0xED`/`0xE1`) und identische Template-Kopie-Technik über beide Architekturen bestätigt | ✅ fertig (x86: eigentlicher First-Fit-Allokator `FUN_002228ac` nicht mehr benannt, Syscall-Einstiegspunkt bei keiner Architektur gefunden) |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -54,6 +55,15 @@ disassembliert). x86-Teil neu: der Boot-Trampolin aus Thema 01 endet
 nachweislich in `Q9X_scheduler_insert` — Queue-Walk mit Timer-Vergleich
 und Unlink-bei-Fälligkeit gefunden, aber nicht die komplette 743-Byte-
 Funktion gelesen; `F$Fork`/`F$Exit` auf x86 in dieser Runde nicht gesucht.
+
+**Hinweis zu Thema 05:** 68K-Teil ist Zusammenfassung bereits vorhandener
+Vorarbeit aus `docs/REVERSE_ENGINEERING.md` (Pool→Arena→Freiliste-Schema,
+vollständig gelesen). x86-Teil neu, gefunden über eine gezielte Suche nach
+den fünf bereits bekannten 68K-Fehlercodes (`0xDB`/`0xD2`/`0xAB`/`0xED`/
+`0xE1`) — alle fünf tauchen identisch im x86-Kernel wieder auf, ebenso die
+"Template-Kopie in einen neuen Arena-Deskriptor"-Technik. Der eigentliche
+First-Fit-Allokator (`FUN_002228ac`) wurde referenziert, aber nicht mehr
+selbst disassembliert/benannt.
 
 ## Konvention
 

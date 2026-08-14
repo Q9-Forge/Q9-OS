@@ -1,0 +1,2020 @@
+* Wortwoertlicher Auszug aus src/kernel/kernel.r: die komplette
+* Speicherverwaltung des 68K-Kernels -- Arena-Deskriptor-Allocator
+* (Q9_arena_alloc_526c), die eigentliche Allokations-Primitive
+* (Q9_mem_alloc_5440), die groessensortierte Freiliste auf Arena-
+* Ebene (Q9_freelist_bysize_5712), die zentrale Speicherfreigabe
+* (Q9_mem_free_5a22) und Arena-Lookup-oder-Erzeugen (Q9_arena_lookup_5bac).
+* Bereits vollstaendig in docs/REVERSE_ENGINEERING.md analysiert,
+* hier nur als Rohbyte-Beleg fuer Thema 05.
+
+Q9_arena_alloc_526c:
+	link.w	a5,#-$4
+L005270:
+	movem.l	a4/a3/a2/a1/a0/d7/d6/d5/d4/d3,-(sp)
+L005274:
+	move.l	d0,d5
+L005276:
+	move.l	d1,d7
+L005278:
+	move.l	$8(a5),d6
+L00527c:
+	movea.l	d5,a0
+L00527e:
+	moveq	#-$1,d0
+L005280:
+	sub.l	$7c(a6),d0
+L005284:
+	cmp.l	(a0),d0
+L005286:
+	bcc.b	L0052b2
+L005288:
+	movea.l	d5,a0
+L00528a:
+	moveq	#-$1,d0
+L00528c:
+	cmp.l	(a0),d0
+L00528e:
+	bne.b	L0052a8
+L005290:
+	moveq	#$1,d0
+L005292:
+	move.l	d0,-(sp)
+L005294:
+	pea	$3fc(a6)
+L005298:
+	moveq	#$0,d1
+L00529a:
+	move.w	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00529c:
+	dc.w	$6100
+	dc.w	L0051e8-*
+L0052a0:
+	movea.l	d5,a0
+L0052a2:
+	move.l	d0,(a0)
+L0052a4:
+	addq.l	#$8,sp
+L0052a6:
+	bra.b	L0052b2
+L0052a8:
+	move.l	#$ed,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0052ae:
+	dc.w	$6000
+	dc.w	L005438-*
+L0052b2:
+	move.l	$70(a6),d0
+L0052b6:
+	movea.l	d5,a0
+L0052b8:
+	move.l	d0,d1
+L0052ba:
+	add.l	(a0),d1
+L0052bc:
+	subq.l	#$1,d1
+L0052be:
+	neg.l	d0
+L0052c0:
+	and.l	d1,d0
+L0052c2:
+	move.l	d0,(a0)
+L0052c4:
+	bne.b	L0052d0
+L0052c6:
+	lea	$e1.w,a0
+L0052ca:
+	move.l	a0,d4
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0052cc:
+	dc.w	$6000
+	dc.w	L005406-*
+L0052d0:
+	moveq	#$1,d0
+L0052d2:
+	move.l	d0,-(sp)
+L0052d4:
+	movea.l	$50(a6),a0
+L0052d8:
+	pea	$390(a0)
+L0052dc:
+	move.l	d6,-(sp)
+L0052de:
+	movea.l	d5,a0
+L0052e0:
+	move.l	(a0),d0
+L0052e2:
+	moveq	#$0,d1
+L0052e4:
+	move.w	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0052e6:
+	dc.w	$6100
+	dc.w	Q9_mem_alloc_5440-*
+L0052ea:
+	move.l	d0,d4
+L0052ec:
+	cmpi.l	#$ed,d4
+L0052f2:
+	adda.w	#$c,sp
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0052f6:
+	dc.w	$6600
+	dc.w	L005406-*
+L0052fa:
+	move.l	$7c(a6),d0
+L0052fe:
+	movea.l	d5,a0
+L005300:
+	move.l	d0,d1
+L005302:
+	add.l	(a0),d1
+L005304:
+	subq.l	#$1,d1
+L005306:
+	neg.l	d0
+L005308:
+	and.l	d1,d0
+L00530a:
+	move.l	d0,-$4(a5)
+L00530e:
+	moveq	#$1,d0
+L005310:
+	move.l	d0,-(sp)
+L005312:
+	pea	$3fc(a6)
+L005316:
+	move.l	d6,-(sp)
+L005318:
+	move.l	-$4(a5),d0
+L00531c:
+	moveq	#$0,d1
+L00531e:
+	move.w	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005320:
+	dc.w	$6100
+	dc.w	Q9_mem_alloc_5440-*
+L005324:
+	move.l	d0,d4
+L005326:
+	cmpi.l	#$ed,d4
+L00532c:
+	adda.w	#$c,sp
+L005330:
+	bne.b	L00533a
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005332:
+	dc.w	$6100
+	dc.w	L005558-*
+L005336:
+	tst.l	d0
+L005338:
+	beq.b	L00530e
+L00533a:
+	tst.l	d4
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00533c:
+	dc.w	$6600
+	dc.w	L005406-*
+L005340:
+	movea.l	d6,a0
+L005342:
+	movea.l	(a0),a2
+L005344:
+	move.l	-$4(a5),d7
+L005348:
+	movea.l	$50(a6),a0
+L00534c:
+	lea	$390(a0),a4
+L005350:
+	movea.l	$8(a4),a3
+L005354:
+	tst.l	a3
+L005356:
+	beq.b	L0053c6
+L005358:
+	moveq	#$1,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00535a:
+	dc.w	$6100
+	dc.w	Q9_irq_mask_10e6-*
+L00535e:
+	move.l	d0,d3
+L005360:
+	bra.b	L005366
+L005362:
+	movea.l	$8(a3),a3
+L005366:
+	cmpa.l	a4,a3
+L005368:
+	beq.b	L005374
+L00536a:
+	cmpa.l	(a3),a2
+L00536c:
+	bcs.b	L005362
+L00536e:
+	cmpa.l	$4(a3),a2
+L005372:
+	bcc.b	L005362
+L005374:
+	cmpa.l	a4,a3
+L005376:
+	beq.b	L0053be
+L005378:
+	adda.l	d7,a2
+L00537a:
+	moveq	#$10,d0
+L00537c:
+	movea.l	a3,a1
+L00537e:
+	adda.l	d0,a1
+L005380:
+	movea.l	$4(a1),a0
+L005384:
+	tst.l	a0
+L005386:
+	beq.b	L0053be
+L005388:
+	bra.b	L00538e
+L00538a:
+	movea.l	$4(a0),a0
+L00538e:
+	cmpa.l	a2,a0
+L005390:
+	bls.b	L005396
+L005392:
+	cmpa.l	a1,a0
+L005394:
+	bne.b	L00538a
+L005396:
+	cmpa.l	a2,a0
+L005398:
+	bne.b	L0053be
+L00539a:
+	movea.l	(a0),a1
+L00539c:
+	move.l	$4(a0),$4(a1)
+L0053a2:
+	movea.l	$4(a0),a1
+L0053a6:
+	move.l	(a0),(a1)
+L0053a8:
+	add.l	$8(a0),d7
+L0053ac:
+	moveq	#-$1,d0
+L0053ae:
+	move.l	d0,-(sp)
+L0053b0:
+	move.l	a4,-(sp)
+L0053b2:
+	move.l	$8(a0),d0
+L0053b6:
+	move.l	a3,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0053b8:
+	dc.w	$6100
+	dc.w	Q9_freelist_bysize_5712-*
+L0053bc:
+	addq.l	#$8,sp
+L0053be:
+	moveq	#$0,d0
+L0053c0:
+	move.l	d3,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0053c2:
+	dc.w	$6100
+	dc.w	Q9_irq_unmask_10f2-*
+L0053c6:
+	movea.l	d5,a0
+L0053c8:
+	move.l	d7,-$4(a5)
+L0053cc:
+	cmp.l	(a0),d7
+L0053ce:
+	bls.b	L005406
+L0053d0:
+	movea.l	d5,a0
+L0053d2:
+	move.l	(a0),d0
+L0053d4:
+	sub.l	d0,-$4(a5)
+L0053d8:
+	movea.l	d6,a0
+L0053da:
+	move.l	-$4(a5),d0
+L0053de:
+	add.l	(a0),d0
+L0053e0:
+	movea.l	d0,a1
+L0053e2:
+	moveq	#$1,d0
+L0053e4:
+	move.l	d0,-(sp)
+L0053e6:
+	move.l	$70(a6),-(sp)
+L0053ea:
+	movea.l	$50(a6),a0
+L0053ee:
+	pea	$390(a0)
+L0053f2:
+	move.l	d6,d0
+L0053f4:
+	lea	-$4(a5),a0
+L0053f8:
+	move.l	a0,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0053fa:
+	dc.w	$6100
+	dc.w	Q9_pool_lookup_55a4-*
+L0053fe:
+	movea.l	d6,a0
+L005400:
+	move.l	a1,(a0)
+L005402:
+	adda.w	#$c,sp
+L005406:
+	tst.l	d4
+L005408:
+	beq.b	L005414
+L00540a:
+	movea.l	d5,a0
+L00540c:
+	clr.l	(a0)
+L00540e:
+	movea.l	d6,a0
+L005410:
+	clr.l	(a0)
+L005412:
+	bra.b	L005436
+L005414:
+	moveq	#$10,d0
+L005416:
+	and.b	$2e(a6),d0
+L00541a:
+	moveq	#$0,d1
+L00541c:
+	move.b	d0,d1
+L00541e:
+	tst.l	d1
+L005420:
+	beq.b	L005436
+L005422:
+	pea	$a110ca7d.l
+L005428:
+	movea.l	d5,a0
+L00542a:
+	move.l	(a0),d0
+L00542c:
+	movea.l	d6,a0
+L00542e:
+	move.l	(a0),d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005430:
+	dc.w	$6100
+	dc.w	L0010ba-*
+L005434:
+	addq.l	#$4,sp
+L005436:
+	move.l	d4,d0
+L005438:
+	movem.l	(sp)+,d3/d4/d5/d6/d7/a0/a1/a2/a3/a4
+L00543c:
+	unlk	a5
+L00543e:
+	rts
+*----------------------------------------------------------------------
+* Q9_mem_alloc_5440  (0x005440)
+* Speicher-Allokations-Primitive (Gegenstueck zu Q9_mem_free_5a22). Register: D0=Groesse, D1=Klassen-/Typ-Tag, Stack: Ausgabe-Zeiger, Arena-Listenkopf, Interrupt-Maskieren-Flag.
+* Algorithmus: First-Fit ueber die Arena-Kette (passender Klassen-Tag + aktiviert + nicht gesperrt), innerhalb der Arena First-Fit in deren Freiliste.
+* Exakter Treffer: Block komplett aushaengen. Restflaeche: Split von hinten (Freilisten-Eintrag behaelt seine Adresse, Ergebnis ist das hintere Ende).
+* Fehlercodes: 0xAB (keine Arena mit genug Platz), 0xE1 (Groesse 0), 0xED (Arena-Liste leer).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_mem_alloc_5440:
+	link.w	a5,#$0
+L005444:
+	movem.l	a4/a3/a2/a1/a0/d7/d6/d5/d4/d3/d2,-(sp)
+L005448:
+	move.l	d0,d6
+L00544a:
+	move.l	d1,d3
+L00544c:
+	movea.l	$8(a5),a0
+L005450:
+	move.l	$c(a5),d5
+L005454:
+	move.l	$10(a5),d2
+L005458:
+	clr.l	(a0)
+L00545a:
+	move.l	d2,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00545c:
+	dc.w	$6100
+	dc.w	Q9_irq_mask_10e6-*
+L005460:
+	move.l	d0,d2
+L005462:
+	tst.l	d6
+L005464:
+	bne.b	L00546e
+L005466:
+	lea	$e1.w,a1
+L00546a:
+	move.l	a1,d4
+L00546c:
+	bra.b	L005482
+L00546e:
+	movea.l	d5,a1
+L005470:
+	tst.l	$8(a1)
+L005474:
+	bne.b	L00547c
+L005476:
+	lea	$ed.w,a1
+L00547a:
+	bra.b	L005480
+L00547c:
+	moveq	#$0,d0
+L00547e:
+	movea.l	d0,a1
+L005480:
+	move.l	a1,d4
+L005482:
+	movea.l	d5,a4
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005484:
+	dc.w	$6000
+	dc.w	L005546-*
+L005488:
+	movea.l	$8(a4),a4
+L00548c:
+	cmpa.l	d5,a4
+L00548e:
+	bne.b	L00549a
+L005490:
+	lea	$ed.w,a1
+L005494:
+	move.l	a1,d4
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005496:
+	dc.w	$6000
+	dc.w	L005546-*
+L00549a:
+	cmp.w	$26(a4),d3
+L00549e:
+	beq.b	L0054b6
+L0054a0:
+	moveq	#$0,d0
+L0054a2:
+	move.w	d3,d0
+L0054a4:
+	tst.l	d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0054a6:
+	dc.w	$6600
+	dc.w	L005546-*
+L0054aa:
+	moveq	#$0,d0
+L0054ac:
+	move.w	$28(a4),d0
+L0054b0:
+	tst.l	d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0054b2:
+	dc.w	$6700
+	dc.w	L005546-*
+L0054b6:
+	cmp.l	$20(a4),d6
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0054ba:
+	dc.w	$6200
+	dc.w	L005546-*
+L0054be:
+	moveq	#$4,d0
+L0054c0:
+	and.w	$24(a4),d0
+L0054c4:
+	moveq	#$0,d1
+L0054c6:
+	move.w	d0,d1
+L0054c8:
+	tst.l	d1
+L0054ca:
+	bne.b	L005546
+L0054cc:
+	moveq	#$10,d0
+L0054ce:
+	movea.l	a4,a1
+L0054d0:
+	adda.l	d0,a1
+L0054d2:
+	movea.l	$4(a1),a2
+L0054d6:
+	bra.b	L005538
+L0054d8:
+	cmpa.l	(a2),a1
+L0054da:
+	bne.b	L0054f0
+L0054dc:
+	moveq	#$10,d0
+L0054de:
+	move.l	a4,d1
+L0054e0:
+	add.l	d0,d1
+L0054e2:
+	cmpa.l	d1,a1
+L0054e4:
+	beq.b	L0054f8
+L0054e6:
+	move.l	a2,d0
+L0054e8:
+	add.l	$8(a2),d0
+L0054ec:
+	cmp.l	a1,d0
+L0054ee:
+	bcs.b	L0054f8
+L0054f0:
+	lea	$ab.w,a3
+L0054f4:
+	move.l	a3,d4
+L0054f6:
+	bra.b	L005546
+L0054f8:
+	move.l	$8(a2),d7
+L0054fc:
+	sub.l	d6,d7
+L0054fe:
+	tst.l	d7
+L005500:
+	blt.b	L005532
+L005502:
+	moveq	#-$1,d0
+L005504:
+	move.l	d0,-(sp)
+L005506:
+	move.l	d5,-(sp)
+L005508:
+	move.l	d6,d0
+L00550a:
+	move.l	a4,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00550c:
+	dc.w	$6100
+	dc.w	Q9_freelist_bysize_5712-*
+L005510:
+	tst.l	d7
+L005512:
+	addq.l	#$8,sp
+L005514:
+	bne.b	L005528
+L005516:
+	movea.l	$4(a2),a3
+L00551a:
+	move.l	(a2),(a3)
+L00551c:
+	movea.l	(a2),a3
+L00551e:
+	move.l	$4(a2),$4(a3)
+L005524:
+	move.l	a2,(a0)
+L005526:
+	bra.b	L005532
+L005528:
+	move.l	d7,$8(a2)
+L00552c:
+	move.l	a2,d0
+L00552e:
+	add.l	d7,d0
+L005530:
+	move.l	d0,(a0)
+L005532:
+	movea.l	a2,a1
+L005534:
+	movea.l	$4(a2),a2
+L005538:
+	moveq	#$10,d0
+L00553a:
+	move.l	a4,d1
+L00553c:
+	add.l	d0,d1
+L00553e:
+	cmpa.l	d1,a2
+L005540:
+	beq.b	L005546
+L005542:
+	tst.l	(a0)
+L005544:
+	beq.b	L0054d8
+L005546:
+	tst.l	(a0)
+L005548:
+	bne.b	L005550
+L00554a:
+	tst.l	d4
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00554c:
+	dc.w	$6700
+	dc.w	L005488-*
+L005550:
+	move.l	d4,d0
+L005552:
+	move.l	d2,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005554:
+	dc.w	$6000
+	dc.w	L005706-*
+L005558:
+	movem.l	a1/a0/d1,-(sp)
+L00555c:
+	moveq	#$4,d0
+L00555e:
+	and.b	$2e(a6),d0
+L005562:
+	moveq	#$0,d1
+L005564:
+	move.b	d0,d1
+L005566:
+	tst.l	d1
+L005568:
+	bne.b	L005598
+L00556a:
+	movea.l	$3c(a6),a0
+L00556e:
+	movea.l	$40(a6),a1
+L005572:
+	bra.b	L005594
+L005574:
+	tst.l	(a0)
+L005576:
+	beq.b	L005590
+L005578:
+	moveq	#$0,d0
+L00557a:
+	move.w	$c(a0),d0
+L00557e:
+	tst.l	d0
+L005580:
+	bne.b	L005590
+L005582:
+	move.l	a0,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005584:
+	dc.w	$6100
+	dc.w	L0040ea-*
+L005588:
+	tst.l	d0
+L00558a:
+	bne.b	L005590
+L00558c:
+	moveq	#$0,d0
+L00558e:
+	bra.b	L00559e
+L005590:
+	moveq	#$10,d0
+L005592:
+	adda.l	d0,a0
+L005594:
+	cmpa.l	a1,a0
+L005596:
+	bcs.b	L005574
+L005598:
+	move.l	#$ed,d0
+L00559e:
+	movem.l	(sp)+,d1/a0/a1
+L0055a2:
+	rts
+*----------------------------------------------------------------------
+* Q9_pool_lookup_55a4  (0x0055a4)
+* Pool-Lookup: findet den zustaendigen Speicherpool-Deskriptor fuer eine Adresse/Groesse (Bitmasken-Vergleich gegen Pool-Grenzen). Fehlercode 0xDB bei Nichttreffer.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_pool_lookup_55a4:
+	link.w	a5,#-$4
+L0055a8:
+	movem.l	a4/a3/a2/a1/a0/d7/d6/d5/d4/d3/d2,-(sp)
+L0055ac:
+	move.l	d0,d2
+L0055ae:
+	move.l	d1,d3
+L0055b0:
+	move.l	$8(a5),d5
+L0055b4:
+	move.l	$c(a5),d1
+L0055b8:
+	move.l	$10(a5),d4
+L0055bc:
+	movea.l	d3,a0
+L0055be:
+	move.l	(a0),d6
+L0055c0:
+	bne.b	L0055c8
+L0055c2:
+	moveq	#$0,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0055c4:
+	dc.w	$6000
+	dc.w	L00570a-*
+L0055c8:
+	movea.l	d2,a0
+L0055ca:
+	move.l	(a0),d7
+L0055cc:
+	move.l	d7,d0
+L0055ce:
+	or.l	d6,d0
+L0055d0:
+	subq.l	#$1,d1
+L0055d2:
+	and.l	d0,d1
+L0055d4:
+	beq.b	L0055e0
+L0055d6:
+	move.l	#$db,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0055dc:
+	dc.w	$6000
+	dc.w	L00570a-*
+L0055e0:
+	tst.l	d7
+L0055e2:
+	bne.b	L0055ee
+L0055e4:
+	move.l	#$db,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0055ea:
+	dc.w	$6000
+	dc.w	L00570a-*
+L0055ee:
+	move.l	d4,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0055f0:
+	dc.w	$6100
+	dc.w	Q9_irq_mask_10e6-*
+L0055f4:
+	move.l	d0,d4
+L0055f6:
+	pea	-$4(a5)
+L0055fa:
+	move.l	d5,-(sp)
+L0055fc:
+	move.l	d6,d0
+L0055fe:
+	move.l	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005600:
+	dc.w	$6100
+	dc.w	Q9_arena_lookup_5bac-*
+L005604:
+	tst.l	d0
+L005606:
+	addq.l	#$8,sp
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005608:
+	dc.w	$6600
+	dc.w	L005704-*
+L00560c:
+	moveq	#$10,d0
+L00560e:
+	add.l	-$4(a5),d0
+L005612:
+	movea.l	d0,a0
+L005614:
+	tst.l	(a0)
+L005616:
+	bne.b	L005624
+L005618:
+	movea.l	a0,a1
+L00561a:
+	movea.l	a1,a2
+L00561c:
+	move.l	a2,$4(a0)
+L005620:
+	move.l	a2,(a0)
+L005622:
+	bra.b	L005644
+L005624:
+	movea.l	a0,a2
+L005626:
+	bra.b	L00563a
+L005628:
+	cmpa.l	$4(a1),a2
+L00562c:
+	beq.b	L005638
+L00562e:
+	lea	$ab.w,a3
+L005632:
+	move.l	a3,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005634:
+	dc.w	$6000
+	dc.w	L005704-*
+L005638:
+	movea.l	a1,a2
+L00563a:
+	movea.l	(a2),a1
+L00563c:
+	cmpa.l	d7,a1
+L00563e:
+	bcc.b	L005644
+L005640:
+	cmpa.l	a0,a1
+L005642:
+	bne.b	L005628
+L005644:
+	cmpa.l	a0,a2
+L005646:
+	beq.b	L005650
+L005648:
+	movea.l	a2,a3
+L00564a:
+	adda.l	$8(a2),a3
+L00564e:
+	bra.b	L005654
+L005650:
+	moveq	#$0,d0
+L005652:
+	movea.l	d0,a3
+L005654:
+	cmpa.l	a1,a3
+L005656:
+	bls.b	L005666
+L005658:
+	cmpa.l	a0,a1
+L00565a:
+	beq.b	L005666
+L00565c:
+	lea	$ab.w,a4
+L005660:
+	move.l	a4,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005662:
+	dc.w	$6000
+	dc.w	L005704-*
+L005666:
+	cmpa.l	d7,a3
+L005668:
+	bhi.b	L005676
+L00566a:
+	move.l	d7,d0
+L00566c:
+	add.l	d6,d0
+L00566e:
+	cmp.l	a1,d0
+L005670:
+	bls.b	L005680
+L005672:
+	cmpa.l	a0,a1
+L005674:
+	beq.b	L005680
+L005676:
+	lea	$d2.w,a0
+L00567a:
+	move.l	a0,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00567c:
+	dc.w	$6000
+	dc.w	L005704-*
+L005680:
+	moveq	#$1,d0
+L005682:
+	move.l	d0,-(sp)
+L005684:
+	move.l	d5,-(sp)
+L005686:
+	move.l	d6,d0
+L005688:
+	move.l	-$4(a5),d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00568c:
+	dc.w	$6100
+	dc.w	Q9_freelist_bysize_5712-*
+L005690:
+	moveq	#$10,d0
+L005692:
+	and.b	$2e(a6),d0
+L005696:
+	moveq	#$0,d1
+L005698:
+	move.b	d0,d1
+L00569a:
+	tst.l	d1
+L00569c:
+	addq.l	#$8,sp
+L00569e:
+	beq.b	L0056b0
+L0056a0:
+	pea	$66726565.l
+L0056a6:
+	move.l	d6,d0
+L0056a8:
+	move.l	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0056aa:
+	dc.w	$6100
+	dc.w	L0010ba-*
+L0056ae:
+	addq.l	#$4,sp
+L0056b0:
+	cmpa.l	d7,a3
+L0056b2:
+	bne.b	L0056ce
+L0056b4:
+	movea.l	d2,a0
+L0056b6:
+	move.l	a2,(a0)
+L0056b8:
+	move.l	a2,d7
+L0056ba:
+	movea.l	d7,a0
+L0056bc:
+	add.l	d6,$8(a0)
+L0056c0:
+	movea.l	d7,a3
+L0056c2:
+	movea.l	d3,a0
+L0056c4:
+	move.l	$8(a3),d0
+L0056c8:
+	move.l	d0,(a0)
+L0056ca:
+	move.l	d0,d6
+L0056cc:
+	bra.b	L0056e0
+L0056ce:
+	movea.l	d7,a0
+L0056d0:
+	move.l	d6,$8(a0)
+L0056d4:
+	move.l	a2,$4(a0)
+L0056d8:
+	move.l	a1,(a0)
+L0056da:
+	move.l	d7,(a2)
+L0056dc:
+	move.l	d7,$4(a1)
+L0056e0:
+	move.l	d7,d0
+L0056e2:
+	add.l	d0,d6
+L0056e4:
+	move.l	a1,d0
+L0056e6:
+	cmp.l	d0,d6
+L0056e8:
+	bne.b	L005702
+L0056ea:
+	movea.l	d3,a0
+L0056ec:
+	move.l	(a0),d0
+L0056ee:
+	add.l	$8(a1),d0
+L0056f2:
+	move.l	d0,(a0)
+L0056f4:
+	movea.l	d7,a0
+L0056f6:
+	move.l	d0,$8(a0)
+L0056fa:
+	move.l	(a1),(a0)
+L0056fc:
+	movea.l	(a0),a1
+L0056fe:
+	move.l	d7,$4(a1)
+L005702:
+	moveq	#$0,d0
+L005704:
+	move.l	d4,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005706:
+	dc.w	$6100
+	dc.w	Q9_irq_unmask_10f2-*
+L00570a:
+	movem.l	(sp)+,d2/d3/d4/d5/d6/d7/a0/a1/a2/a3/a4
+L00570e:
+	unlk	a5
+L005710:
+	rts
+*----------------------------------------------------------------------
+* Q9_freelist_bysize_5712  (0x005712)
+* Groessen-/klassensortierte Freiliste auf Arena-Ebene: Parameter <=0 schrumpft einen bestehenden Eintrag, >0 fuegt sortiert (Klasse, dann Groesse) neu ein.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_freelist_bysize_5712:
+	link.w	a5,#$0
+L005716:
+	movem.l	a3/a2/a1/a0,-(sp)
+L00571a:
+	movea.l	d1,a0
+L00571c:
+	movea.l	$8(a5),a1
+L005720:
+	move.l	$c(a5),d1
+L005724:
+	ble.b	L00576e
+L005726:
+	add.l	d0,$20(a0)
+L00572a:
+	bra.b	L005750
+L00572c:
+	move.l	$8(a0),$8(a2)
+L005732:
+	movea.l	$8(a0),a3
+L005736:
+	move.l	a2,$c(a3)
+L00573a:
+	move.l	a2,$8(a0)
+L00573e:
+	move.l	$c(a2),$c(a0)
+L005744:
+	move.l	a0,$c(a2)
+L005748:
+	movea.l	$c(a0),a3
+L00574c:
+	move.l	a0,$8(a3)
+L005750:
+	movea.l	$c(a0),a2
+L005754:
+	cmpa.l	a1,a2
+L005756:
+	beq.b	L0057b4
+L005758:
+	move.w	$28(a0),d1
+L00575c:
+	cmp.w	$28(a2),d1
+L005760:
+	bne.b	L0057b4
+L005762:
+	move.l	$20(a0),d1
+L005766:
+	cmp.l	$20(a2),d1
+L00576a:
+	bhi.b	L00572c
+L00576c:
+	bra.b	L0057b4
+L00576e:
+	sub.l	d0,$20(a0)
+L005772:
+	bra.b	L005798
+L005774:
+	movea.l	$c(a0),a3
+L005778:
+	move.l	a2,$8(a3)
+L00577c:
+	move.l	$c(a0),$c(a2)
+L005782:
+	move.l	$8(a2),$8(a0)
+L005788:
+	movea.l	$8(a0),a3
+L00578c:
+	move.l	a0,$c(a3)
+L005790:
+	move.l	a0,$8(a2)
+L005794:
+	move.l	a2,$c(a0)
+L005798:
+	movea.l	$8(a0),a2
+L00579c:
+	cmpa.l	a1,a2
+L00579e:
+	beq.b	L0057b4
+L0057a0:
+	move.w	$28(a0),d0
+L0057a4:
+	cmp.w	$28(a2),d0
+L0057a8:
+	bne.b	L0057b4
+L0057aa:
+	move.l	$20(a0),d0
+L0057ae:
+	cmp.l	$20(a2),d0
+L0057b2:
+	bcs.b	L005774
+L0057b4:
+	moveq	#$0,d0
+L0057b6:
+	movem.l	(sp)+,a0/a1/a2/a3
+L0057ba:
+	unlk	a5
+L0057bc:
+	rts
+L0057be:
+	link.w	a5,#-$4
+L0057c2:
+	movem.l	a2/a1/a0/d7/d6/d5/d4,-(sp)
+L0057c6:
+	movea.l	d0,a1
+L0057c8:
+	move.l	d1,d5
+L0057ca:
+	movea.l	$8(a5),a2
+L0057ce:
+	move.l	(a1),d6
+L0057d0:
+	moveq	#-$1,d0
+L0057d2:
+	cmp.l	d0,d6
+L0057d4:
+	bne.b	L005804
+L0057d6:
+	clr.l	-(sp)
+L0057d8:
+	movea.l	$4c(a6),a0
+L0057dc:
+	pea	$390(a0)
+L0057e0:
+	moveq	#$1,d0
+L0057e2:
+	moveq	#$0,d1
+L0057e4:
+	move.w	d5,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0057e6:
+	dc.w	$6100
+	dc.w	L0051e8-*
+L0057ea:
+	move.l	d0,d6
+L0057ec:
+	moveq	#$1,d0
+L0057ee:
+	move.l	d0,-(sp)
+L0057f0:
+	pea	$3fc(a6)
+L0057f4:
+	move.l	d6,d0
+L0057f6:
+	moveq	#$0,d1
+L0057f8:
+	move.w	d5,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0057fa:
+	dc.w	$6100
+	dc.w	L0051e8-*
+L0057fe:
+	move.l	d0,d6
+L005800:
+	adda.w	#$10,sp
+L005804:
+	move.l	$70(a6),d0
+L005808:
+	move.l	d0,d1
+L00580a:
+	add.l	d6,d1
+L00580c:
+	subq.l	#$1,d1
+L00580e:
+	neg.l	d0
+L005810:
+	and.l	d1,d0
+L005812:
+	move.l	d0,d6
+L005814:
+	bne.b	L005824
+L005816:
+	movea.l	a2,a0
+L005818:
+	clr.l	(a0)
+L00581a:
+	move.l	#$e1,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005820:
+	dc.w	$6000
+	dc.w	L005908-*
+L005824:
+	clr.l	-(sp)
+L005826:
+	movea.l	$4c(a6),a0
+L00582a:
+	pea	$390(a0)
+L00582e:
+	move.l	a2,-(sp)
+L005830:
+	move.l	d6,d0
+L005832:
+	moveq	#$0,d1
+L005834:
+	move.w	d5,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005836:
+	dc.w	$6100
+	dc.w	Q9_mem_alloc_5440-*
+L00583a:
+	move.l	d0,d7
+L00583c:
+	adda.w	#$c,sp
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005840:
+	dc.w	$6700
+	dc.w	L0058dc-*
+L005844:
+	cmpi.l	#$ed,d7
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00584a:
+	dc.w	$6600
+	dc.w	L005900-*
+L00584e:
+	move.l	$7c(a6),d0
+L005852:
+	move.l	d0,d1
+L005854:
+	add.l	d6,d1
+L005856:
+	subq.l	#$1,d1
+L005858:
+	neg.l	d0
+L00585a:
+	and.l	d1,d0
+L00585c:
+	move.l	d0,-$4(a5)
+L005860:
+	moveq	#$1,d0
+L005862:
+	move.l	d0,-(sp)
+L005864:
+	pea	$3fc(a6)
+L005868:
+	move.l	a2,-(sp)
+L00586a:
+	move.l	-$4(a5),d0
+L00586e:
+	moveq	#$0,d1
+L005870:
+	move.w	d5,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005872:
+	dc.w	$6100
+	dc.w	Q9_mem_alloc_5440-*
+L005876:
+	move.l	d0,d7
+L005878:
+	cmpi.l	#$ed,d7
+L00587e:
+	adda.w	#$c,sp
+L005882:
+	bne.b	L00588c
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005884:
+	dc.w	$6100
+	dc.w	L005558-*
+L005888:
+	tst.l	d0
+L00588a:
+	beq.b	L005860
+L00588c:
+	tst.l	d7
+L00588e:
+	bne.b	L005900
+L005890:
+	move.l	(a2),d0
+L005892:
+	move.l	-$4(a5),d1
+L005896:
+	bsr.b	L005910
+L005898:
+	move.l	d0,d7
+L00589a:
+	bne.b	L005900
+L00589c:
+	move.l	$70(a6),d4
+L0058a0:
+	cmp.l	$7c(a6),d4
+L0058a4:
+	beq.b	L0058dc
+L0058a6:
+	clr.l	-(sp)
+L0058a8:
+	move.l	d4,-(sp)
+L0058aa:
+	movea.l	$4c(a6),a0
+L0058ae:
+	pea	$390(a0)
+L0058b2:
+	move.l	a2,d0
+L0058b4:
+	lea	-$4(a5),a0
+L0058b8:
+	move.l	a0,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0058ba:
+	dc.w	$6100
+	dc.w	Q9_pool_lookup_55a4-*
+L0058be:
+	clr.l	-(sp)
+L0058c0:
+	movea.l	$4c(a6),a0
+L0058c4:
+	pea	$390(a0)
+L0058c8:
+	move.l	a2,-(sp)
+L0058ca:
+	move.l	d6,d0
+L0058cc:
+	moveq	#$0,d1
+L0058ce:
+	move.w	d5,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0058d0:
+	dc.w	$6100
+	dc.w	Q9_mem_alloc_5440-*
+L0058d4:
+	move.l	d0,d7
+L0058d6:
+	adda.w	#$18,sp
+L0058da:
+	bne.b	L005900
+L0058dc:
+	move.l	d6,(a1)
+L0058de:
+	moveq	#$10,d0
+L0058e0:
+	and.b	$2e(a6),d0
+L0058e4:
+	moveq	#$0,d1
+L0058e6:
+	move.b	d0,d1
+L0058e8:
+	tst.l	d1
+L0058ea:
+	beq.b	L0058fc
+L0058ec:
+	pea	$a110ca7d.l
+L0058f2:
+	move.l	d6,d0
+L0058f4:
+	move.l	(a2),d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0058f6:
+	dc.w	$6100
+	dc.w	L0010ba-*
+L0058fa:
+	addq.l	#$4,sp
+L0058fc:
+	moveq	#$0,d0
+L0058fe:
+	bra.b	L005908
+L005900:
+	movea.l	a2,a0
+L005902:
+	clr.l	(a0)
+L005904:
+	clr.l	(a1)
+L005906:
+	move.l	d7,d0
+L005908:
+	movem.l	(sp)+,d4/d5/d6/d7/a0/a1/a2
+L00590c:
+	unlk	a5
+L00590e:
+	rts
+L005910:
+	link.w	a5,#-$c
+L005914:
+	movem.l	a1/a0/d7,-(sp)
+L005918:
+	movea.l	d0,a1
+L00591a:
+	move.l	d1,d7
+L00591c:
+	pea	$100.w
+L005920:
+	moveq	#$2,d0
+L005922:
+	move.l	d0,-(sp)
+L005924:
+	movea.l	$4c(a6),a0
+L005928:
+	lea	$2d8(a0),a0
+L00592c:
+	move.l	a0,d0
+L00592e:
+	lea	-$c(a5),a0
+L005932:
+	move.l	a0,d1
+L005934:
+	bsr.b	L0059a0
+L005936:
+	tst.l	d0
+L005938:
+	addq.l	#$8,sp
+L00593a:
+	beq.b	L00596c
+L00593c:
+	move.l	a1,-$8(a5)
+L005940:
+	move.l	d7,-$4(a5)
+L005944:
+	moveq	#$1,d0
+L005946:
+	move.l	d0,-(sp)
+L005948:
+	move.l	$7c(a6),-(sp)
+L00594c:
+	pea	$3fc(a6)
+L005950:
+	lea	-$8(a5),a0
+L005954:
+	move.l	a0,d0
+L005956:
+	lea	-$4(a5),a0
+L00595a:
+	move.l	a0,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00595c:
+	dc.w	$6100
+	dc.w	Q9_pool_lookup_55a4-*
+L005960:
+	move.l	#$cf,d0
+L005966:
+	adda.w	#$c,sp
+L00596a:
+	bra.b	L005998
+L00596c:
+	movea.l	-$c(a5),a0
+L005970:
+	move.l	a1,d0
+L005972:
+	move.l	d0,(a0)
+L005974:
+	movea.l	-$c(a5),a0
+L005978:
+	move.l	d7,$4(a0)
+L00597c:
+	moveq	#$3,d0
+L00597e:
+	move.l	d0,-(sp)
+L005980:
+	move.l	a1,d0
+L005982:
+	move.l	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005984:
+	dc.w	$6100
+	dc.w	L0011fa-*
+L005988:
+	tst.l	d0
+L00598a:
+	addq.l	#$4,sp
+L00598c:
+	beq.b	L005996
+L00598e:
+	cmpi.l	#$d0,d0
+L005994:
+	bne.b	L005998
+L005996:
+	moveq	#$0,d0
+L005998:
+	movem.l	(sp)+,d7/a0/a1
+L00599c:
+	unlk	a5
+L00599e:
+	rts
+L0059a0:
+	link.w	a5,#-$4
+L0059a4:
+	movem.l	a4/a3/a2/a1/a0/d7/d6/d5,-(sp)
+L0059a8:
+	move.l	d0,d7
+L0059aa:
+	movea.l	d1,a3
+L0059ac:
+	move.l	$8(a5),d6
+L0059b0:
+	move.l	$c(a5),d5
+L0059b4:
+	movea.l	d7,a0
+L0059b6:
+	movea.l	(a0),a4
+L0059b8:
+	move.l	d6,d0
+L0059ba:
+	lsl.l	#$2,d0
+L0059bc:
+	movea.l	d0,a2
+L0059be:
+	lsl.w	#$2,d6
+L0059c0:
+	move.l	(a4),d0
+L0059c2:
+	subq.w	#$8,d0
+L0059c4:
+	moveq	#$0,d1
+L0059c6:
+	move.w	d0,d1
+L0059c8:
+	divu.w	d6,d1
+L0059ca:
+	movea.l	a3,a0
+L0059cc:
+	move.l	a4,d0
+L0059ce:
+	addq.l	#$8,d0
+L0059d0:
+	move.l	d0,(a0)
+L0059d2:
+	bra.b	L0059e8
+L0059d4:
+	movea.l	a3,a0
+L0059d6:
+	movea.l	(a0),a1
+L0059d8:
+	tst.l	(a1)
+L0059da:
+	bne.b	L0059e2
+L0059dc:
+	moveq	#$0,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0059de:
+	dc.w	$6000
+	dc.w	L0062d2-*
+L0059e2:
+	movea.l	a3,a0
+L0059e4:
+	move.l	a2,d0
+L0059e6:
+	add.l	d0,(a0)
+L0059e8:
+	subq.w	#$1,d1
+L0059ea:
+	bge.b	L0059d4
+L0059ec:
+	tst.l	$4(a4)
+L0059f0:
+	bne.b	L005a1c
+L0059f2:
+	move.l	d5,-(sp)
+L0059f4:
+	lea	-$4(a5),a0
+L0059f8:
+	move.l	a0,d0
+L0059fa:
+	move.l	a3,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0059fc:
+	dc.w	$6100
+	dc.w	L00646c-*
+L005a00:
+	tst.l	d0
+L005a02:
+	addq.l	#$4,sp
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005a04:
+	dc.w	$6600
+	dc.w	L0062d2-*
+L005a08:
+	movea.l	-$4(a5),a0
+L005a0c:
+	movea.l	d7,a1
+L005a0e:
+	move.l	(a1),$4(a0)
+L005a12:
+	move.l	-$4(a5),(a1)
+L005a16:
+	moveq	#$0,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005a18:
+	dc.w	$6000
+	dc.w	L0062d2-*
+L005a1c:
+	movea.l	$4(a4),a4
+L005a20:
+	bra.b	L0059c0
+*----------------------------------------------------------------------
+* Q9_mem_free_5a22  (0x005a22)
+* Zentrale Speicherfreigabe-Primitive (Gegenstueck zu Q9_mem_alloc_5440). Register: D0=Groesse, D1=Adresse, Stack-Parameter 1 (Pool-Typ, vermutet).
+* Rundet die Groesse aus, versucht Pool (0x3fc,A6), bei Ablehnung (Fehlercode 0xDB) Pool (0x50,A6)+0x390. Boundary-Tag-Coalescing beim Einfuegen.
+* Interrupt-Maskierung sauber auf allen Ausstiegspunkten via Q9_irq_mask_10e6/Q9_irq_unmask_10f2.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_mem_free_5a22:
+	link.w	a5,#-$c
+L005a26:
+	movem.l	a2/a1/a0/d7/d6/d5,-(sp)
+L005a2a:
+	move.l	d0,-$c(a5)
+L005a2e:
+	move.l	d1,-$8(a5)
+L005a32:
+	move.l	$8(a5),d6
+L005a36:
+	move.l	d6,-(sp)
+L005a38:
+	move.l	$7c(a6),-(sp)
+L005a3c:
+	pea	$3fc(a6)
+L005a40:
+	lea	-$8(a5),a0
+L005a44:
+	move.l	a0,d0
+L005a46:
+	lea	-$c(a5),a0
+L005a4a:
+	move.l	a0,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005a4c:
+	dc.w	$6100
+	dc.w	Q9_pool_lookup_55a4-*
+L005a50:
+	cmpi.l	#$db,d0
+L005a56:
+	adda.w	#$c,sp
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005a5a:
+	dc.w	$6600
+	dc.w	L005ba4-*
+L005a5e:
+	move.l	$70(a6),d0
+L005a62:
+	move.l	d0,d1
+L005a64:
+	add.l	-$c(a5),d1
+L005a68:
+	subq.l	#$1,d1
+L005a6a:
+	neg.l	d0
+L005a6c:
+	and.l	d1,d0
+L005a6e:
+	move.l	d0,-$c(a5)
+L005a72:
+	move.l	d6,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005a74:
+	dc.w	$6100
+	dc.w	Q9_irq_mask_10e6-*
+L005a78:
+	move.l	d0,d7
+L005a7a:
+	move.l	d6,-(sp)
+L005a7c:
+	move.l	$70(a6),-(sp)
+L005a80:
+	movea.l	$50(a6),a0
+L005a84:
+	pea	$390(a0)
+L005a88:
+	lea	-$8(a5),a0
+L005a8c:
+	move.l	a0,d0
+L005a8e:
+	lea	-$c(a5),a0
+L005a92:
+	move.l	a0,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005a94:
+	dc.w	$6100
+	dc.w	Q9_pool_lookup_55a4-*
+L005a98:
+	tst.l	d0
+L005a9a:
+	adda.w	#$c,sp
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005a9e:
+	dc.w	$6600
+	dc.w	L005b9e-*
+L005aa2:
+	move.l	$7c(a6),d5
+L005aa6:
+	cmp.l	-$c(a5),d5
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005aaa:
+	dc.w	$6200
+	dc.w	L005b9c-*
+L005aae:
+	move.l	d5,d0
+L005ab0:
+	subq.l	#$1,d0
+L005ab2:
+	and.l	-$8(a5),d0
+L005ab6:
+	tst.l	d0
+L005ab8:
+	bne.b	L005ad4
+L005aba:
+	movea.l	-$8(a5),a0
+L005abe:
+	movea.l	$4(a0),a0
+L005ac2:
+	movea.l	-$8(a5),a1
+L005ac6:
+	move.l	(a1),(a0)
+L005ac8:
+	movea.l	-$8(a5),a1
+L005acc:
+	movea.l	(a1),a2
+L005ace:
+	move.l	a0,$4(a2)
+L005ad2:
+	bra.b	L005b00
+L005ad4:
+	sub.l	d0,d5
+L005ad6:
+	sub.l	d5,-$c(a5)
+L005ada:
+	move.l	-$c(a5),d0
+L005ade:
+	cmp.l	$7c(a6),d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005ae2:
+	dc.w	$6500
+	dc.w	L005b9c-*
+L005ae6:
+	movea.l	-$8(a5),a0
+L005aea:
+	move.l	d5,$8(a0)
+L005aee:
+	add.l	-$8(a5),d5
+L005af2:
+	move.l	d5,-$8(a5)
+L005af6:
+	movea.l	-$8(a5),a1
+L005afa:
+	move.l	-$c(a5),$8(a1)
+L005b00:
+	move.l	$7c(a6),d0
+L005b04:
+	subq.l	#$1,d0
+L005b06:
+	and.l	-$c(a5),d0
+L005b0a:
+	tst.l	d0
+L005b0c:
+	beq.b	L005b2e
+L005b0e:
+	sub.l	d0,-$c(a5)
+L005b12:
+	move.l	-$8(a5),d1
+L005b16:
+	add.l	-$c(a5),d1
+L005b1a:
+	movea.l	d1,a1
+L005b1c:
+	move.l	d0,$8(a1)
+L005b20:
+	move.l	a0,$4(a1)
+L005b24:
+	move.l	(a0),(a1)
+L005b26:
+	move.l	a1,(a0)
+L005b28:
+	movea.l	(a1),a0
+L005b2a:
+	move.l	a1,$4(a0)
+L005b2e:
+	moveq	#$0,d0
+L005b30:
+	move.l	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005b32:
+	dc.w	$6100
+	dc.w	Q9_irq_unmask_10f2-*
+L005b36:
+	pea	-$4(a5)
+L005b3a:
+	movea.l	$50(a6),a0
+L005b3e:
+	pea	$390(a0)
+L005b42:
+	move.l	-$c(a5),d0
+L005b46:
+	move.l	-$8(a5),d1
+L005b4a:
+	bsr.b	Q9_arena_lookup_5bac
+L005b4c:
+	tst.l	d0
+L005b4e:
+	addq.l	#$8,sp
+L005b50:
+	bne.b	L005b7c
+L005b52:
+	move.l	d6,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005b54:
+	dc.w	$6100
+	dc.w	Q9_irq_mask_10e6-*
+L005b58:
+	move.l	d0,d7
+L005b5a:
+	moveq	#-$1,d0
+L005b5c:
+	move.l	d0,-(sp)
+L005b5e:
+	movea.l	$50(a6),a0
+L005b62:
+	pea	$390(a0)
+L005b66:
+	move.l	-$c(a5),d0
+L005b6a:
+	move.l	-$4(a5),d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005b6e:
+	dc.w	$6100
+	dc.w	Q9_freelist_bysize_5712-*
+L005b72:
+	moveq	#$0,d0
+L005b74:
+	move.l	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005b76:
+	dc.w	$6100
+	dc.w	Q9_irq_unmask_10f2-*
+L005b7a:
+	addq.l	#$8,sp
+L005b7c:
+	move.l	d6,-(sp)
+L005b7e:
+	move.l	$7c(a6),-(sp)
+L005b82:
+	pea	$3fc(a6)
+L005b86:
+	lea	-$8(a5),a0
+L005b8a:
+	move.l	a0,d0
+L005b8c:
+	lea	-$c(a5),a0
+L005b90:
+	move.l	a0,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005b92:
+	dc.w	$6100
+	dc.w	Q9_pool_lookup_55a4-*
+L005b96:
+	adda.w	#$c,sp
+L005b9a:
+	bra.b	L005ba4
+L005b9c:
+	moveq	#$0,d0
+L005b9e:
+	move.l	d7,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005ba0:
+	dc.w	$6100
+	dc.w	Q9_irq_unmask_10f2-*
+L005ba4:
+	movem.l	(sp)+,d5/d6/d7/a0/a1/a2
+L005ba8:
+	unlk	a5
+L005baa:
+	rts
+*----------------------------------------------------------------------
+* Q9_arena_lookup_5bac  (0x005bac)
+* Arena-Lookup-oder-Erzeugen fuer eine freizugebende Adresse. Register: D0=Groesse, D1=Adresse, Stack: Pool-Header, Ausgabe-Zeiger.
+* Sucht die Arena, deren Adressbereich die Adresse abdeckt; bei Bedarf neuer 42-Byte-Arena-Deskriptor via Q9_dealloc_tail_131c. Fehlercode 0xD2 bei unbekannter Region.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_arena_lookup_5bac:
+	link.w	a5,#-$8
+L005bb0:
+	movem.l	a4/a3/a2/a1/a0/d7/d6,-(sp)
+L005bb4:
+	move.l	d0,d7
+L005bb6:
+	movea.l	d1,a1
+L005bb8:
+	movea.l	$8(a5),a2
+L005bbc:
+	move.l	$c(a5),d6
+L005bc0:
+	tst.l	$8(a2)
+L005bc4:
+	bne.b	L005bce
+L005bc6:
+	move.l	a2,$c(a2)
+L005bca:
+	move.l	a2,$8(a2)
+L005bce:
+	movea.l	$8(a2),a3
+L005bd2:
+	bra.b	L005bd8
+L005bd4:
+	movea.l	$8(a3),a3
+L005bd8:
+	cmpa.l	a2,a3
+L005bda:
+	beq.b	L005be6
+L005bdc:
+	cmpa.l	(a3),a1
+L005bde:
+	bcs.b	L005bd4
+L005be0:
+	cmpa.l	$4(a3),a1
+L005be4:
+	bcc.b	L005bd4
+L005be6:
+	cmpa.l	a2,a3
+L005be8:
+	bne.b	L005c62
+L005bea:
+	movea.l	$404(a6),a3
+L005bee:
+	bra.b	L005c06
+L005bf0:
+	movea.l	$8(a3),a3
+L005bf4:
+	lea	$3fc(a6),a0
+L005bf8:
+	cmpa.l	a0,a3
+L005bfa:
+	bne.b	L005c06
+L005bfc:
+	move.l	#$d2,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005c02:
+	dc.w	$6000
+	dc.w	L0060fa-*
+L005c06:
+	cmpa.l	(a3),a1
+L005c08:
+	bcs.b	L005bf0
+L005c0a:
+	cmpa.l	$4(a3),a1
+L005c0e:
+	bcc.b	L005bf0
+L005c10:
+	move.l	a1,d0
+L005c12:
+	add.l	d7,d0
+L005c14:
+	cmp.l	$4(a3),d0
+L005c18:
+	bls.b	L005c24
+L005c1a:
+	move.l	#$d2,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005c20:
+	dc.w	$6000
+	dc.w	L0060fa-*
+L005c24:
+	moveq	#$2a,d0
+L005c26:
+	move.l	d0,-$8(a5)
+L005c2a:
+	pea	-$4(a5)
+L005c2e:
+	lea	-$8(a5),a0
+L005c32:
+	move.l	a0,d0
+L005c34:
+	moveq	#$0,d1
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005c36:
+	dc.w	$6100
+	dc.w	Q9_arena_alloc_526c-*
+L005c3a:
+	tst.l	d0
+L005c3c:
+	addq.l	#$4,sp
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005c3e:
+	dc.w	$6600
+	dc.w	L0060fa-*
+L005c42:
+	movea.l	-$4(a5),a0
+L005c46:
+	movea.l	a3,a4
+L005c48:
+	moveq	#$4,d0
+L005c4a:
+	move.l	(a4)+,(a0)+
+L005c4c:
+	move.l	(a4)+,(a0)+
+L005c4e:
+	dbf	d0,L005c4a
+L005c52:
+	move.w	(a4)+,(a0)+
+L005c54:
+	move.l	-$4(a5),d0
+L005c58:
+	move.l	a2,d1
+L005c5a:
+	bsr.b	Q9_sorted_list_insert_5c7c
+L005c5c:
+	movea.l	-$4(a5),a3
+L005c60:
+	bra.b	L005c74
+L005c62:
+	adda.l	d7,a1
+L005c64:
+	cmpa.l	$4(a3),a1
+L005c68:
+	bls.b	L005c74
+L005c6a:
+	move.l	#$d2,d0
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005c70:
+	dc.w	$6000
+	dc.w	L0060fa-*
+L005c74:
+	movea.l	d6,a0
+L005c76:
+	move.l	a3,(a0)
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L005c78:
+	dc.w	$6000
+	dc.w	L0060f8-*
+*----------------------------------------------------------------------
+* Q9_sorted_list_insert_5c7c  (0x005c7c)
+* Genereller, nach Klassen-/Typ-Tag sortierter Doppelverkettungs-Insert (auch fuer Arenen in Q9_arena_lookup_5bac genutzt).
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_sorted_list_insert_5c7c:
