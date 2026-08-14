@@ -1,0 +1,88 @@
+Frische Ghidra-Disassemblierung von MWOS/OS9/68020/CMDS/BOOTOBJS/ssm851
+(Basisadresse 0, 68000:BE:32:default). Modul: 1908 Byte, Header bestaetigt
+Sync=0x4AFC, Type=0x0C (Systm), Lang=0x01 (Objct), M$Exec=0x54,
+M$Excpt=0. Skript: ../../../modules/os9000-x86/ghidra_scripts/ssm851_AnalyzeAndDump.java
+(Name historisch verwirrend, betrifft aber nur den 68K-Teil dieser Runde).
+
+=== Q9_ssm851_entry @ 0x54 (124 Byte) -- Init-Routine ===
+00000054: tst.l (0x3d8,A6)              ; bereits initialisiert?
+00000058: bne.w 0x000000f8              ; ja -> ueberspringen
+0000005c: movem.l {  A2 A1 A0},-(SP)
+00000060: move.l #0x1000,(0x7c,A6)      ; $1000=4096=Seitengroesse! Ziel:
+                                         ; (0x7c,A6) -- DERSELBE Offset wie
+                                         ; das eigene Q9_D_BLKSIZ in
+                                         ; src/q9sysglob.h ("minimale
+                                         ; allozierbare Systemblockgroesse")
+00000068: move.l A3,(0x3d8,A6)          ; Installiert-Flag setzen
+0000006c: movea.l (0x68,A6),A0          ; Q9_D_SYSROM-Bereich? (0x68=A6+0x68)
+00000070: move.l (0x6,A0),(0x4,A3)
+00000076: lea (0x672,PC),A1             ; eigene Callback-Routine
+0000007a: move.l A1,(0x6,A0)            ; ... in eine System-Struktur haengen
+0000007e: clr.l (0x0,A3)
+00000082: move.w #0xc00,D0w             ; Funktionscode 0x0C (F$Link-artig)
+00000086: lea (0x9e,PC),A0              ; Zeiger auf einen Namen/String
+0000008a: trap #0x0                     ; ECHTER OS-9-SYSCALL
+0000008c: ori.b #-0x37,D0b
+00000090: bcs.b 0x000000aa              ; Fehler? -> ueberspringen
+00000092: move.w (0x74,A2),D0w
+00000096: beq.b 0x000000aa
+00000098: cmpi.l #-0x1,(0x0,A2,D0w*0x1)
+000000a0: beq.b 0x000000aa
+000000a2: lea (-0x10,A2,D0w*0x1),A1
+000000aa: move.l A1,(0x8,A3)
+000000ae: lea (0xe,A3),A0
+000000b2: move.w #0x7fff,(0x0,A0)       ; Struktur-Init (Freilisten-artig?)
+000000b8: clr.b (0x2,A0)
+000000bc: move.b #0x1,(0x3,A0)
+000000c2: clr.l (0x4,A0)
+000000f8: move.w #0xe7,D1w              ; Rueckgabe/Fehlercode-Kandidat
+000000fc: ori #0x1,CCR                  ; Carry setzen (OS-9-Fehlerkonvention)
+00000100: rts
+
+=== FUN_000006ea @ 0x6ea (88 Byte) -- Function-Code-Manipulation ===
+000006ea: movem.l {  A6 A5 A0 D0},-(SP)
+000006ee: movec SFC,D0                  ; Source Function Code lesen
+000006f2: move.l D0,-(SP)
+000006f4: movec VBR,A0                  ; Vector Base Register lesen
+000006f8: movea.l (A0),A5
+000006fa: cmpi.w #0x4afc,(A5)           ; Modul-Sync pruefen (Sicherheit)
+000006fe: bne.b 0x00000756
+00000700: move.l (0x3d8,A5),D0          ; dasselbe Installiert-Flag wie oben
+00000704: beq.b 0x00000756
+00000706: movea.l D0,A0
+00000708: tst.l (0x0,A0)
+0000070c: beq.b 0x00000756
+0000070e: move.w (0x22,SP),D0w
+00000712: btst.l #0x7,D0
+00000716: beq.b 0x00000756
+00000718: movea.l (0x28,SP),A5
+0000071c: moveq 0x1,D0
+0000071e: btst.b #0x5,(0x18,SP)
+00000724: beq.b 0x00000728
+00000726: moveq 0x5,D0
+00000728: movec D0,SFC                  ; Source Function Code SETZEN
+                                         ; (1=User-Data, 5=Super-Data --
+                                         ; klassische 68K-Funktionscodes,
+                                         ; steuern welcher Adressraum/
+                                         ; welche MMU-Tabelle greift)
+00000756: movea.l (0x10,SP),A6
+0000075a: move.l (0x4,A0),(0x10,SP)
+00000760: move.l (SP)+,D0
+00000762: movec D0,SFC                  ; wiederherstellen
+00000766: movem.l (SP)+,{ D0 A0 A5}
+0000076a: rts
+
+Funktionsliste (Ghidra-Autoanalyse, unveraendert bis auf Q9_ssm851_entry):
+Q9_ssm851_entry @ 0x54 size=124
+FUN_00000166 @ 0x166 size=78
+FUN_000001f8 @ 0x1f8 size=18
+FUN_000002b6 @ 0x2b6 size=328
+FUN_000003fe @ 0x3fe size=58
+FUN_000004d0 @ 0x4d0 size=174
+FUN_00000684 @ 0x684 size=102
+FUN_000006ea @ 0x6ea size=88
+
+WICHTIG: keine einzige PMOVE-Instruktion im gesamten Modul gefunden
+(vollstaendig durchsucht) -- SSM851 selbst programmiert NICHT direkt die
+PMMU-Uebersetzungsregister (CRP/SRP/TC). Es manipuliert stattdessen
+SFC (Source Function Code) und nutzt einen echten TRAP #0-Syscall.

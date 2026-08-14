@@ -27,6 +27,7 @@ echtem Code direkt dabei.
 | [04](04-scheduler-prozesslebenszyklus/) | Scheduler & Prozess-Lebenszyklus — 68K-Vorarbeit erweitert, x86 neu untersucht; Kettenschluss gefunden: x86-Boot-Trampolin endet in `Q9X_scheduler_insert` | ✅ fertig (x86: nur Scheduler-Kern gelesen, `F$Fork`/`F$Exit` auf x86 noch offen) |
 | [05](05-speicherverwaltung/) | Speicherverwaltung/Allokator — 68K-Vorarbeit erweitert, x86 neu untersucht; identische Fehlercodes (`0xDB`/`0xD2`/`0xAB`/`0xED`/`0xE1`) und identische Template-Kopie-Technik über beide Architekturen bestätigt | ✅ fertig (x86: eigentlicher First-Fit-Allokator `FUN_002228ac` nicht mehr benannt, Syscall-Einstiegspunkt bei keiner Architektur gefunden) |
 | [06](06-exception-handler/) | Exception-/Trap-Handler-Körper — 68K-Vorarbeit (alle 8 Handler) zusammengefasst, x86 neu untersucht; Dispatch-Tabellen-Builder bestätigt, einzelne Handler-Körper (inkl. Syscall-Dispatcher) auf x86 nicht lokalisiert | ⚠️ teilweise (x86-Syscall-Dispatcher nicht gefunden — Quelltabelle liegt zur Laufzeit in Kernel-Globals, nicht statisch im Modul, s. Thema selbst) |
+| [07](07-ssm-mmu/) | SSM — MMU-Initialisierung als eigenständiges Modul (nicht Kernel, nicht Treiber/Deskriptor); 68K: Funktionscode-Umschaltung (`MOVEC SFC`) + Blockgrößen-Konstante; x86: echte `CR3`-Seitentabellen-Programmierung gefunden | ⚠️ teilweise (komplett neues Thema, beide Module nur in Ausschnitten gelesen, s. Thema selbst) |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -76,6 +77,17 @@ wie bei Thema 03s RBF-Tabelle. Deshalb ließen sich die einzelnen x86-
 Handler-Körper (allen voran der Syscall-Dispatcher) mit reiner
 Datei-Analyse **nicht** lokalisieren — bräuchte Live-Speicher-Inspektion
 für eine Vertiefung. Kein `INT`/`IRET` im gesamten Kernelmodul gefunden.
+
+**Hinweis zu Thema 07:** erstes komplett neues Thema ohne jede 68K-
+Vorarbeit — beantwortet Andreas' direkte Frage "wann wird die MMU
+initialisiert". Beide SSM-Module (68K `ssm851`, x86 `ssm`) erstmals
+disassembliert. 68K zeigt Funktionscode-Umschaltung (`SFC`) und schreibt
+eine seitengrößenartige Konstante (`0x1000`) in denselben Kernel-Global-
+Offset, den `src/q9sysglob.h` bereits als `Q9_D_BLKSIZ` führt — aber
+**keine** `PMOVE`-Instruktion (Übersetzungstabellen-Setup bleibt offen).
+x86 zeigt umgekehrt vier echte `MOV CR3,...`-Zugriffe (Seitentabellen-
+Basis), plausibel eine Adressraum-Freigabe-Routine. Beide Module nur in
+Ausschnitten gelesen, nicht vollständig.
 
 ## Konvention
 

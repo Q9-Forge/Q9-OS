@@ -1,0 +1,78 @@
+Frische Ghidra-Disassemblierung von modules/os9000-x86/vendor-live/ssm
+(Basisadresse 0x2378C4, x86:LE:32:default, siehe PROVENANCE.md).
+Header bestaetigt: Sync=0x4AFC, Type=0x0C (Systm), Lang=0x01 (Objct),
+m_exec=0x98. Skript: ../../../modules/os9000-x86/ghidra_scripts/ssm_AnalyzeAndDump.java
+
+=== Vier CR3-Zugriffe im gesamten Modul gefunden ===
+002379bc: MOV CR3,EAX   (in FUN_00237a63)
+00237a53: MOV CR3,EDX   (in FUN_00237a63)
+00237dc8: MOV CR3,EAX   (in FUN_00238216)
+00238242: MOV CR3,EAX   (in FUN_00238216)
+
+CR3 = x86 Page-Directory-Base-Register (das Analogon zu 68Ks CRP/SRP) --
+"MOV CR3,EAX" (Ghidra/Intel-Syntax, Ziel zuerst) SCHREIBT EAX NACH CR3,
+laedt also eine neue Seitentabellen-Basis. Das ist die direkte x86-
+Entsprechung zur MMU-Programmierung, die beim 68K in ssm851 selbst NICHT
+gefunden wurde (dort nur SFC-Manipulation, s. asm-68k.txt).
+
+=== Kontext des ersten Treffers (0x2379bc), zeigt die volle Umgebung ===
+00237974: PUSH ECX
+00237975: PUSH EDX
+00237976: PUSH ESI
+00237977: MOV ESI,dword ptr [EAX + 0xc]
+0023797a: TEST ESI,ESI
+0023797c: JZ 0x00237984
+0023797e: CMP dword ptr [ESI + 0x4],0x1
+00237982: JNZ 0x00237988
+00237984: XOR EAX,EAX
+00237986: JMP 0x00237a03
+00237988: MOV EAX,dword ptr [ESI + 0x14]
+0023798b: MOV EDX,dword ptr [EAX + 0x14]
+0023798e: TEST EDX,EDX
+00237990: JNZ 0x00237996
+00237992: XOR EAX,EAX
+00237994: JMP 0x00237a03
+00237996: MOV EAX,EBX
+00237998: MOV ECX,EAX
+0023799a: MOV EAX,FS:[0x0]              ; Kernel-Globals-Basis lesen --
+                                         ; DASSELBE Muster wie Thema 02
+                                         ; (Q9X_kernel_service_call)
+002379a0: MOV EAX,dword ptr [EAX + 0xa24]  ; Feld aus Kernel-Globals lesen
+002379a6: MOV EBX,EAX
+002379a8: CMP ESI,dword ptr [EBX + 0xb8]   ; mit einem Prozess-/Kontext-Feld
+                                            ; vergleichen (aktiver
+                                            ; Adressraum == dieser?)
+002379ae: JNZ 0x002379bf                ; ungleich -> CR3 NICHT anfassen
+002379b0: XOR EAX,EAX                   ; EAX = 0
+002379b2: MOV dword ptr [EBX + 0xb8],0x0   ; Kontext-Feld loeschen
+002379bc: MOV CR3,EAX                   ; Seitentabellen-Basis auf 0 --
+                                         ; ungueltig machen/invalidieren,
+                                         ; nur wenn der geloeschte
+                                         ; Adressraum gerade AKTIV war
+002379bf: MOV EAX,dword ptr [ESI + 0x14]
+002379c2: XOR ESI,ESI
+002379c4: MOV dword ptr [EAX + 0x14],0x0
+002379cb: MOV EAX,dword ptr [EDX + ESI*0x4]
+002379cf: BT EAX,0x0                    ; Present-Bit einer Seitentabellen-
+                                         ; artigen Struktur pruefen
+002379d3: JNC 0x002379e8
+002379d5: AND EAX,0xfffff000            ; auf 4-KB-Seitengrenze maskieren
+002379da: PUSH EAX
+002379db: MOV EAX,0x2000
+002379e0: CALL 0x002388da               ; vermutlich Speicher freigeben
+                                         ; (Groesse 0x2000, Seitentabellen-
+                                         ; Speicher?)
+
+Funktionsliste (Ghidra-Autoanalyse):
+Q9X_ssm_entry @ 0x2378dc (via thunk @ 0x23795c)
+FUN_00237a63 @ 0x237a63 size=940   -- enthaelt 2 der 4 CR3-Zugriffe
+FUN_00238216 @ 0x238216 size=806   -- enthaelt 2 der 4 CR3-Zugriffe
+FUN_0023853c .. FUN_00238a5c       -- kleinere Hilfsfunktionen, in dieser
+                                      Runde nicht einzeln gelesen/benannt
+
+WICHTIG: Der Modul-Einsprung (m_exec=0x98, Q9X_ssm_entry) selbst wurde in
+dieser Runde nicht bis ins Detail gelesen -- die CR3-Funde liegen in den
+beiden groesseren Funktionen FUN_00237a63/FUN_00238216, vermutlich
+Kontextwechsel- bzw. Adressraum-Freigabe-Routinen, die von anderer Stelle
+(vermutlich dem Kernel-Scheduler, siehe Thema 04) aufgerufen werden, nicht
+notwendigerweise direkt beim Boot.

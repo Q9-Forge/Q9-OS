@@ -246,6 +246,34 @@ ist das ohnehin irrelevant (`TRAP #0` ist die naheliegende, bereits vom
 68K-Vorbild bewährte Wahl), aber ein Hinweis darauf, dass die x86-
 Vergleichsseite hier an eine echte Erkenntnisgrenze gestoßen ist.
 
+## 2d. MMU/Speicherschutz — SSM als eigenständiges, optionales Modul
+
+Aus [Thema 07](kernel-walkthrough/07-ssm-mmu/), direkte Antwort auf
+Andreas' Frage "wann wird die MMU initialisiert": **weder vom Kernel
+selbst noch von Treibern/Deskriptoren** — bei beiden Referenzarchitekturen
+übernimmt das ein **eigenständiges, separat geladenes Systemmodul**
+(68K/OS-9000-Konvention: `SSM`, "System Security Module"), laut Manual
+vom Init-Modul geladen, nicht Teil des Kernel-Bootstraps aus Thema 01.
+
+**Klare Übernahme-Empfehlung für den eigenen Kernel**: MMU-/Speicherschutz-
+Verwaltung als **optionales, nachladbares Modul** behandeln, nicht als
+Kernel-Pflichtbestandteil — das deckt sich mit der bereits dokumentierten
+Atomic-/Development-Kernel-Unterscheidung (Atomic kommt laut Manual ganz
+ohne SSM aus, nur Development nutzt es für User-State-Speicherschutz).
+Für Q9-Flux (68K) heißt das konkret: ein eigenes SSM-artiges Modul wäre
+zuständig für Function-Code-basierte Zugriffssteuerung (`MOVEC SFC`,
+User-Data vs. Super-Data) und würde eine seitengrößenartige Konstante in
+den Kernel-Global-Bereich schreiben (68K-Vorbild: `0x1000` in denselben
+Offset, den `src/q9sysglob.h` bereits als `Q9_D_BLKSIZ` führt).
+
+**Ehrlich offen**: weder beim 68K- noch beim x86-Vorbild wurde in dieser
+Runde das eigentliche Programmieren der Übersetzungstabellen vollständig
+verifiziert (68K: keine `PMOVE`-Instruktion in `ssm851` gefunden; x86: nur
+`CR3`-Zugriffe in einer vermuteten Adressraum-Freigabe-Routine, nicht in
+einer erkennbaren Erst-Initialisierung) — für eine konkrete Umsetzung
+bräuchte es eine weitere Vertiefungsrunde, keine reine Übernahme aus den
+hier gefundenen Ausschnitten.
+
 ## 3. Der Dreiklang — jetzt eine Pflichtanforderung
 
 Aus [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/) und
@@ -342,5 +370,6 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 - [`kernel-walkthrough/04-scheduler-prozesslebenszyklus/`](kernel-walkthrough/04-scheduler-prozesslebenszyklus/README.md)
 - [`kernel-walkthrough/05-speicherverwaltung/`](kernel-walkthrough/05-speicherverwaltung/README.md)
 - [`kernel-walkthrough/06-exception-handler/`](kernel-walkthrough/06-exception-handler/README.md)
+- [`kernel-walkthrough/07-ssm-mmu/`](kernel-walkthrough/07-ssm-mmu/README.md)
 
 **Erstellt**: 2026-08-14
