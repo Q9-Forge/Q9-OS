@@ -10,8 +10,9 @@ bereits vorhandene, gründliche Vorarbeit (`modules/ioman/docs/REVERSE_ENGINEERI
 4 Analyserunden, plus `modules/c0-descriptor/`, `modules/cfide-driver/`,
 `modules/rbf-filemanager/`) — hier nur zusammengefasst, nicht neu
 hergeleitet. Die x86-Seite (`modules/os9000-x86/vendor-live/ioman`) wurde
-in dieser Runde **erstmals** disassembliert — deutlich weniger tief
-untersucht als die 68K-Seite (14 von 67 Funktionen benannt/gelesen, nicht
+in dieser Runde **erstmals** disassembliert, in einer gezielten
+Folgerunde um den Callcode-Dispatcher ergänzt — deutlich weniger tief
+untersucht als die 68K-Seite (16 von 67 Funktionen benannt/gelesen, nicht
 alle 4 68K-Runden-Tiefe erreicht). Wo die x86-Seite eine offene Frage
 hinterlässt, steht das explizit da.
 
@@ -90,31 +91,57 @@ Wert.
 | 3 | Pfad öffnen / Gerät auflösen | `I$Open` → bei Bedarf `I$Attach` | `Q9X_ioman_open` → bei Bedarf `Q9X_ioman_attach` (`asm-x86.txt`, ruft `Q9X_ioman_attach` direkt auf) |
 | 4 | **Dreiklang**: Descriptor→Driver→File-Manager linken | `ioman_I_Attach_b3a`: 3× `F$Link` mit Filtern `0xF00`/`0xE00`/`0xD00` | `Q9X_ioman_attach`: 3× `Q9X_link_module` mit **denselben** Filtern `0xF00`/`0xE00`/`0xD00` |
 | 5 | Bereits attached? Link-Count statt Neuanlage | `ioman_I_Attach_b3a`, Gerätetabellen-Vergleich | `Q9X_ioman_attach`, Gerätetabellen-Walk (`local_8`-Schleife in `decompiled` — Struktur ähnlich, nicht 1:1 gegengelesen) |
-| 6 | Direkter Sprung in den Treiber (Init/Term) | `ioman_I_Detach_e5e`: `jmp (0x0,A0,D2w*1)` — direkter Sprung, kein Rücksprung über IOMan | **x86-Äquivalent in dieser Runde nicht gefunden** — offene Frage, s. u. |
-| 7 | Generischer `I$`-Callcode → Treiber-/Fmgr-Tabellenslot | `FUN_000014f8`: `(Callcode−0x83)` als Wort-Index in eine 13-Slot-Tabelle (bestätigt an `rbf`) | **x86-Äquivalent in dieser Runde nicht gefunden** — offene Frage, s. u. |
+| 6 | Direkter Sprung in den Treiber (Init/Term) | `ioman_I_Detach_e5e`: `jmp (0x0,A0,D2w*1)` — direkter Sprung, kein Rücksprung über IOMan | `Q9X_ioman_callcode_dispatch` (s. u.) — konzeptionell dasselbe, aber über einen manuellen RET-Trampolin statt direktem `JMP`/`CALL` |
+| 7 | Generischer `I$`-Callcode → Treiber-/Fmgr-Tabellenslot | `FUN_000014f8`: `(Callcode−0x83)` als Wort-Index in eine 13-Slot-Tabelle (bestätigt an `rbf`) | `Q9X_ioman_callcode_dispatch`: `(Callcode−0x95)` als Index in die von `Q9X_ioman_attach` gecachte Tabelle — **jetzt gefunden, s. u.** |
 
-## Offene Frage: der eigentliche Treiber-Sprung auf x86 — Ziel-Ende geklärt, IOMan-seitiger Aufrufer noch offen
+## Geklärt (2026-08-14): der IOMan-seitige Dispatcher-Aufrufer gefunden
 
-Bei 68K ist der Übergang "IOMan → Treiber-/File-Manager-Code" doppelt
-belegt (Slot-basierter `jmp` in `I$Detach`, callcode-indizierter
-Dispatcher `FUN_000014f8` für die "einfachen" `I$`-Aufrufe). Bei x86 wurde
-in dieser Runde **nur der Attach-Mechanismus** (das Linken der drei
-Module) gefunden — der Mechanismus, der NACH einem erfolgreichen Attach
-bei einem tatsächlichen `I$Read`/`I$Write`/etc. den Sprung in den
-File-Manager/Treiber auslöst, ist unter den 14 bisher benannten
-Funktionen nicht dabei. `modules/os9000-x86/vendor-live/ioman` hat noch
-**53 unbenannte Funktionen** — eine gute nächste Runde, falls das
-gebraucht wird (Kandidaten: die größeren, noch nicht gelesenen Funktionen
-zwischen `0x235f68` und `0x2370c8`, siehe `Q9-OS-ghidra-os9000-ioman`-Projekt).
-Ehrlich offen gelassen statt geraten.
+Direkt im Anschluss an `Q9X_ioman_attach` liegt `Q9X_ioman_callcode_dispatch`
+(vormals `FUN_0023479a`, 172 Byte) — das gesuchte x86-Analogon zu 68Ks
+`FUN_000014f8`. Entscheidende Zeile (Ghidra-Dekompilierung):
 
-**Nachtrag (Thema 03, 2026-08-14):** die **Ziel-Seite** dieser Frage ist
-jetzt geklärt — RBF hat eine echte 16-Slot-Callcode-Dispatch-Tabelle,
-allerdings nicht bei `m_exec` wie beim 68K, sondern im `m_idata`-Bereich
-(Details, inklusive Beleg über 9 zuvor unbekannte Funktionsadressen mit
-gültigem Prolog: [`../03-dreiklang/README.md`](../03-dreiklang/README.md)).
-Der **IOMan-seitige** Aufrufer, der diese Tabelle liest und indiziert,
-bleibt weiterhin offen — dieselbe Lücke wie oben beschrieben.
+```c
+if ((uint)(ushort)(*in_EAX - 0x95U) < **(uint **)(iVar2 + 0x10)) {
+    Q9X_ioman_dispatch_invoke(
+        iVar2,
+        (*(uint **)(iVar2 + 0x10))[(ushort)(*in_EAX - 0x95U)],
+        *(undefined4 *)(iVar2 + 0x58));
+}
+```
+
+Genau das erwartete Muster: `*in_EAX` ist der Callcode, `-0x95U`
+(dezimal `149`) ist die Basis-Subtraktion — das x86-Gegenstück zu 68Ks
+`-0x83` (dezimal `131`), nur mit anderer Callcode-Nummerierung (passt zu
+OS-9000s bereits dokumentiertem größerem `F$`/`I$`-Funktionsumfang,
+`FINDINGS.md` Fund 2). `(iVar2+0x10)` ist ein Feld im per-Gerät-Eintrag,
+das **`Q9X_ioman_attach` beim Linken mit dem `m_idata`-Tabellenzeiger des
+File-Managers füllt** (dieselbe Tabelle, die Thema 03 in `vendor-live/rbf`
+gefunden hat) — IOMan liest den Callcode-Index also nicht bei jedem Aufruf
+neu aus dem Modul-Header, sondern aus einer beim Attach angelegten Cache-
+Kopie. Die Bounds-Prüfung `< **(iVar2+0x10)` liest denselben Zeiger noch
+einmal dereferenziert — plausibel der Zähler-Kopf der Tabelle (`16`, aus
+Thema 03 bekannt), auf Byte-Ebene nicht weiter zerlegt.
+
+Der eigentliche Aufruf läuft über `Q9X_ioman_dispatch_invoke` (vormals
+`FUN_002334fb`, 28 Byte) — **kein normaler `CALL`**, sondern derselbe
+RET-basierte Sprung-Trick wie beim Kernel-Bootstrap in Thema 01
+(`FUN_0021e5a0`): Rohdisassemblierung zeigt `CALL $+5` (PC holen), `POP`,
+`LEA` (synthetische Rücksprungadresse berechnen), zwei `PUSH`
+(Rücksprungadresse + Zieladresse aus der Tabelle) und `RET` — ein
+manuell konstruierter "Sprung über Rücksprung", kein echter Aufruf mit
+Stack-Frame. Ghidra dekompiliert das deshalb (wie schon `pcVar2` in
+Thema 01) fälschlich als leere `void`-Funktion — dieselbe Klasse von
+Dekompilierungslücke, jetzt zum dritten Mal im x86-Code beobachtet
+(Kernel-Bootstrap, hier), ein wiederkehrendes Idiom dieser Toolchain.
+
+**Damit ist die offene Frage aus Thema 02/03 vollständig geklärt**:
+Aufrufer gefunden (`Q9X_ioman_callcode_dispatch`), Sprungmechanismus
+verstanden (`Q9X_ioman_dispatch_invoke`, RET-Trampolin), Cache-Quelle
+identifiziert (`Q9X_ioman_attach` füllt `+0x10`). Nicht bis ins letzte
+Byte verifiziert: die exakte Struktur des per-Gerät-Eintrags bei `+0x10`
+(zeigt sie direkt auf `m_idata+0xC`, wie in Thema 03 vermutet, oder auf
+eine eigene Kopie?) — für den Zweck dieser Frage (wo/wie wird
+dispatcht) nicht mehr entscheidend.
 
 ## C-Variante
 

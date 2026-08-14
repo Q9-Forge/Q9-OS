@@ -91,9 +91,9 @@ offen gelassen statt geraten, wofür sie stehen.
 |---|---|---|---|
 | 1 | Prozess ruft z. B. `I$Read` (`TRAP #0`/x86-Äquivalent) | Kernel-Dispatcher `Q9_disp_488` | (nicht Teil dieser Runde — Thema 01 hat den x86-Kernel-Bootstrap geklärt, der laufende Syscall-Pfad selbst ist ein möglicher künftiger Thema-Kandidat) |
 | 2 | Zieladresse in IOMan | `../SYSCALL_MODULE_MAP.md` | Thema 02 |
-| 3 | IOMans gemeinsamer Callcode-Dispatcher | `FUN_000014f8` (bestätigt) | in dieser Runde nicht namentlich gefunden — aber jetzt klar, dass er `m_idata+0xC` der jeweiligen File-Manager-Instanz lesen und mit `(Callcode-Basis)×4` indizieren muss, um zur x86-Tabelle zu gelangen |
-| 4 | Callcode-Index in File-Manager-Tabelle | RBFs 13-Slot-Tabelle **bei `M$Exec`** | RBFs 16-Slot-Tabelle **bei `m_idata+0xC`** (**dieser Fund**) |
-| 5 | Sprung direkt in File-Manager-Code | bestätigt, kein Rücksprung über IOMan | Tabelle zeigt auf echten Code (Funktionsprologe bestätigt), Sprungmechanismus selbst (direkter `JMP` vs. `CALL`) nicht mehr einzeln nachverfolgt |
+| 3 | IOMans gemeinsamer Callcode-Dispatcher | `FUN_000014f8` (bestätigt) | **`Q9X_ioman_callcode_dispatch`** — in einer Folgerunde gefunden (2026-08-14), Details: [`../02-io-manager-syscall-dispatch/README.md`](../02-io-manager-syscall-dispatch/README.md), Abschnitt "Geklärt" |
+| 4 | Callcode-Index in File-Manager-Tabelle | RBFs 13-Slot-Tabelle **bei `M$Exec`** | RBFs 16-Slot-Tabelle **bei `m_idata+0xC`**, per Attach in den Geräte-Eintrag gecacht |
+| 5 | Sprung direkt in File-Manager-Code | bestätigt, kein Rücksprung über IOMan | `Q9X_ioman_dispatch_invoke` — kein normaler `CALL`, sondern derselbe RET-basierte Sprung-Trampolin wie beim Kernel-Bootstrap (Thema 01) |
 | 6 | File-Manager → Treiber für eigentlichen Blockzugriff | vermutet (RBF→cfide, Slots 1/2), nicht einzeln verifiziert | nicht untersucht |
 
 ## C-Variante
@@ -106,9 +106,11 @@ Tabellen-Hypothese war das Ziel, nicht die einzelnen Handler-Implementierungen).
 
 ## Offene Punkte
 
-- Der genaue IOMan-seitige Code, der `m_idata+0xC` liest und indiziert
-  (das x86-Analogon zu `FUN_000014f8`), wurde nicht gefunden — von den 67
-  x86-IOMan-Funktionen sind laut Thema 02 weiterhin 53 unbenannt.
+- ~~Der genaue IOMan-seitige Code, der `m_idata+0xC` liest und indiziert~~
+  **Geklärt (2026-08-14, Folgerunde):** `Q9X_ioman_callcode_dispatch` +
+  `Q9X_ioman_dispatch_invoke`, siehe
+  [`../02-io-manager-syscall-dispatch/README.md`](../02-io-manager-syscall-dispatch/README.md),
+  Abschnitt "Geklärt".
 - Bedeutung der x86-Slots 13–15 unbekannt.
 - Descriptor/Driver auf x86-Seite nicht untersucht (kein Descriptor
   extrahiert, `cfide`-Äquivalent nicht identifiziert/analysiert).
