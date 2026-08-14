@@ -5,11 +5,18 @@
 Der gemeinsame projektübergreifende Kontext und die verbindlichen Namen
 stehen in [Q9-Forge/AI_CONTEXT.md](../AI_CONTEXT.md).
 
-Port von echtem, proprietärem Microware OS-9/68K für die Q9-Plattform
-([Q9-Flux](https://github.com/Q9-Forge/Q9-Flux) emuliert die Zielhardware).
-Kein Neubau eines eigenen Betriebssystems — dafür siehe
-[Q9RESUME-Kernel](https://github.com/foellmy51/Q9RESUME-Kernel) (archivierter,
-unabhängiger früher Versuch).
+Ursprünglich als reiner Port von echtem, proprietärem Microware OS-9/68K
+für die Q9-Plattform gestartet ([Q9-Flux](https://github.com/Q9-Forge/Q9-Flux)
+emuliert die Zielhardware). Nach einer längeren Planungs-/Recherchephase
+(siehe [`docs/kernel-walkthrough/`](docs/kernel-walkthrough/), der
+vergleichenden Analyse von OS-9/68K und OS-9000/x86) ist diese
+Beschränkung aufgehoben (2026-08-14) — Ziel ist jetzt ein **eigener
+Kernel**, mit **verbindlicher Kompatibilität zu echten OS-9/68K- und
+OS-9000-Modulen** (bestehende Treiber/File-Manager müssen weiterhin
+laufen), aber offen für zusätzliche, eigene Modularten. Erster grober
+Anforderungsentwurf dafür: [`docs/OWN_KERNEL_INIT_PLAN.md`](docs/OWN_KERNEL_INIT_PLAN.md).
+Frühere, unabhängige Vorarbeit dazu: [Q9RESUME-Kernel](https://github.com/foellmy51/Q9RESUME-Kernel)
+(archiviert).
 
 ## Werkzeuge
 
