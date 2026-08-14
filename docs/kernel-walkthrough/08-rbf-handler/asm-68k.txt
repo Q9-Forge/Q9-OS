@@ -1,0 +1,141 @@
+Frische Ghidra-Disassemblierung von modules/rbf-filemanager/vendor/rbf
+(68000:BE:32:default, Basisadresse 0x0 -- Modul ist positionsunabhaengig,
+wie bei allen 68K-Modulen). Ghidra-Projekt:
+/Volumes/SSD1TB/projects/Q9-OS-ghidra-rbf68k/ (ausserhalb des Repos).
+Skript: ../../../modules/rbf-filemanager/ghidra_scripts/DumpReadWriteHandlers.java.
+Tabellen-Offsets bereits in modules/rbf-filemanager/docs/FINDINGS.md per
+Rohbyte-Analyse bestaetigt (Slot 6=I$Read->0x5D0, Slot 7=I$Write->0x778).
+
+=== Q9_rbf_i_read @ 0x5d0 size=124 (sauberer, eigenstaendiger Funktionsbeginn) ===
+000005d0: bsr.w 0x000017be                  ; Helfer 1 -- Zweck nicht verfolgt
+000005d4: bcs.b 0x00000648                  ; Fehler -> gemeinsamer Ausstieg
+000005d6: movea.l (0x2e,A1),A0              ; A0 = Pfaddeskriptor-Feld +0x2e (Zeiger)
+000005da: moveq 0x0,D0
+000005dc: move.b (0x13,A0),D0b              ; hohes Byte einer 16-Bit-Groesse
+000005e0: asl.w #0x8,D0w
+000005e2: move.b (0x14,A0),D0b              ; niedriges Byte -> D0 = 16-Bit-Wert
+000005e6: addq.w #0x1,D0w
+000005e8: move.b (0x6f,A1),D1b              ; D1 = Blockgroessen-Shift (Pfaddesk. +0x6f)
+000005ec: lsl.l D1,D0                       ; D0 <<= D1 (Byte-Offset aus Blockzahl)
+000005ee: move.l D0,(0x42,A1)
+000005f2: move.l (0xb6,A1),(0x3e,A1)
+000005f8: bsr.w 0x000018f0                  ; Helfer 2 -- vermutlich Sektor-Lokalisierung
+000005fc: bcs.b 0x00000648
+000005fe: bclr.b #0x7,(0x2a,A1)             ; Statusbit loeschen
+00000604: bsr.w 0x00001cd6                  ; Helfer 3 -- AUCH in I$Write verwendet (s.u.)!
+00000608: bcs.b 0x00000648
+0000060a: bsr.w 0x00001168                  ; Helfer 4
+0000060e: move.l (0xba,A1),(0xb6,A1)
+00000614: bsr.w 0x00001094                  ; Helfer 5 -- Kandidat fuer echten Blockzugriff
+00000618: bcs.b 0x00000648
+0000061a: movea.l (0x2e,A1),A2
+0000061e: bsr.w 0x00000386                  ; Helfer 6
+00000622: move.b #0x2,(0x2b,A1)             ; Status setzen
+00000628: moveq 0x1,D2
+0000062a: bsr.w 0x00001250                  ; Helfer 7
+0000062e: bcs.b 0x00000648
+00000630: bsr.w 0x0000050e                  ; Helfer 8
+00000634: move.l (0xbe,A1),(0x32,A1)
+0000063a: bsr.w 0x00000f90                  ; Helfer 9 -- Kandidat fuer Puffer-Kopie
+0000063e: bcs.b 0x00000648
+00000640: clr.b (A0)                        ; A0 (von 0x5d6!) auf 0 -- EOF-Flag?
+00000642: moveq 0x1,D0
+00000644: bsr.w 0x00001c66                  ; Helfer 10 -- Erfolgsmeldung/Aufraeumen
+00000648: bra.w 0x0000048e                  ; gemeinsamer Ausstieg (auch alle bcs-Ziele)
+
+=== Q9_rbf_i_write -- Tabellenwert 0x778 landet NICHT am Funktionsanfang! ===
+Ghidras kontrollflussbasierte Funktionsgrenzen-Erkennung ordnet Offset
+0x778 einer groesseren Funktion zu, die bereits bei 0x69c beginnt --
+0x69c ist selbst KEIN Tabellenwert (weder I$Write=0x778 noch
+I$WritLn=0x756 zeigen dorthin). Plausibelste Erklaerung: 0x69c ist eine
+gemeinsame "eigentliche Schreiblogik", die I$WritLn (mit vorangehender
+Trennzeichen-Suche) UND I$Write (Direkteinstieg bei 0x778, ueberspringt
+die Trennzeichen-Logik) beide anspringen -- aehnliches Prinzip wie die
+68K-Kernel-Ueberlappungstricks, die diese Session schon mehrfach fand.
+
+000006a2: bne.b 0x0000070e
+000006a4: tst.b D7b
+000006a6: bne.b 0x00000706
+000006a8: cmp.l (0xc8,A1),D6
+000006ac: bcs.b 0x00000706
+000006ae: move.l (0x32,A1),D2
+000006b2: and.l (0x70,A1),D2
+000006b6: bne.b 0x00000706
+000006b8: move.w A3w,D2w
+000006ba: btst.l #0x0,D2
+000006be: bne.b 0x00000706
+000006c0: bsr.w 0x0000093e
+000006c4: bcs.b 0x00000706
+000006c6: bsr.w 0x00001a6c
+000006ca: bcs.w 0x00000764
+000006ce: bset.b #0x6,(0x2a,A1)
+000006d4: movea.l (0xe,A1),A0
+000006d8: exg A0,A3
+000006da: move.l A0,(0xe,A1)
+000006de: bsr.w 0x000007a4
+000006e2: move.l D0,-(SP)
+000006e4: bsr.w 0x00001cf8
+000006e8: scs D0b
+000006ea: movea.l (0xe,A1),A0
+000006ee: exg A0,A3
+000006f0: move.l A0,(0xe,A1)
+000006f4: clr.b (0x2a,A1)
+000006f8: move.l (SP)+,D2
+000006fa: move.b (0x6f,A1),D3b             ; DERSELBE Blockgroessen-Shift-Offset wie I$Read!
+000006fe: asl.l D3,D2
+00000700: tst.b D0b
+00000702: beq.b 0x00000744
+00000704: bra.b 0x00000764
+00000706: moveq 0x1,D0
+00000708: bsr.w 0x00001cf8
+0000070c: bcs.b 0x00000784
+0000070e: movea.l (0xe,A1),A0
+00000712: move.l (0x32,A1),D2
+00000716: and.l (0x70,A1),D2
+0000071a: adda.l D2,A0
+0000071c: sub.l (0xc8,A1),D2
+00000720: neg.l D2
+00000722: cmp.l D6,D2
+00000724: bls.b 0x00000728
+00000726: move.l D6,D2
+00000728: tst.b D7b
+0000072a: beq.b 0x0000073e
+0000072c: move.l D2,D1
+0000072e: movea.l A0,A2
+00000730: bra.b 0x00000734
+00000732: cmp.b (A2)+,D7b                  ; Trennzeichen-Suche -- I$WritLn-spezifisch
+00000734: dbeq D1w,0x00000732
+00000738: beq.b 0x0000073c
+0000073a: addq.w #0x1,D1w
+0000073c: sub.l D1,D2
+0000073e: movea.l A3,A2
+00000740: bsr.w 0x000000c0                 ; Helfer -- Puffer-Kopie?
+00000744: adda.l D2,A3
+00000746: sub.l D2,D6
+00000748: bclr.b #0x4,(0x2a,A1)
+0000074e: add.l (0x32,A1),D2
+00000752: move.l D2,D3
+00000754: and.l (0x70,A1),D2
+00000758: bne.b 0x0000076a
+0000075a: bsr.w 0x00001cd6                 ; DERSELBE Helfer 3 wie in I$Read!
+0000075e: bcc.b 0x0000076a
+00000760: move.l D3,(0x32,A1)
+00000764: ori #0x1,CCR
+00000768: bra.b 0x00000784
+0000076a: move.l D3,(0x32,A1)
+0000076e: tst.l D6
+00000770: beq.b 0x00000784
+00000772: tst.b D7b
+00000774: beq.w 0x0000069c
+00000778: cmp.b (-0x1,A3),D7b               ; <-- HIER zeigt die Tabelle fuer I$Write hin
+0000077c: bne.w 0x0000069c
+00000780: sub.l D6,(0x4,A5)
+00000784: btst.b #0x1,(0x2,A1)
+0000078a: bne.b 0x000007a2
+0000078c: movem.l {D1 D0},-(SP)
+00000790: move SR,(0x0,SP)
+00000794: moveq 0x5,D0
+00000796: bsr.w 0x000011ce                  ; Kernel-Trampolin-aehnlicher Aufruf?
+0000079a: move (0x0,SP),CCR
+0000079e: movem.l (SP)+,{D0 D1}
+000007a2: rts

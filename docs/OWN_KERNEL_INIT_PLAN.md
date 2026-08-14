@@ -304,6 +304,37 @@ im Modul, Basiswert der Indizierung) unterstützen — für eigene neue
 File-Manager ist das Muster selbst (`(Callcode-Basiswert)` als Tabellen-
 Index) eine klare Übernahme-Empfehlung, unabhängig vom exakten Layout.
 
+## 3a. RBF-Handler-Körper: File-Manager → Treiber-Übergabe (aus Thema 08)
+
+Aus [Thema 08](kernel-walkthrough/08-rbf-handler/): eine Ebene tiefer als
+Sektion 3 (Dispatch-Tabelle) — wie kommt ein File-Manager wie RBF beim
+eigentlichen `I$Write` zum zuständigen Treiber? Die x86-Seite liefert
+hier ein klares, gut belegtes Muster: **`Q9X_rbf_driver_dispatch`**
+durchläuft eine **Laufzeit-Liste aus (Geräte-/Treiber-ID,
+Handler-Funktionszeiger)-Paaren** und ruft den passenden Handler per
+**indirektem `CALL`** auf — kein fest verdrahteter Sprung, sondern ein
+generischer, zur Laufzeit aufgebauter Dispatcher. `Q9X_rbf_i_write`
+selbst enthält dafür **keine eigene Zugriffslogik**, sondern delegiert
+komplett an diese eine Funktion.
+
+Der 68K-Vergleich fällt hier anders aus als sonst: `Q9_rbf_i_read` ruft
+stattdessen **~10 interne Hilfsroutinen** direkt per `bsr` auf (nicht
+über eine Liste), und `I$Write` teilt sich sogar Code mit `I$WritLn`
+(mehrere Einsprungpunkte in dieselbe Routine — dasselbe Prinzip wie
+beim 68K-Kernel selbst, siehe Thema 01). Die genaue Aufteilung der 68K-
+Hilfsroutinen ließ sich in dieser Runde nicht mehr rekonstruieren.
+
+**Übernahme-Empfehlung für den eigenen Kernel:** das x86-Muster (Laufzeit-
+Liste aus ID/Funktionszeiger-Paaren mit indirektem Aufruf) ist flexibler
+als starre `bsr`-Ketten und passt zum bereits in Thema 01 gefundenen
+x86-Modul-Scanner-Prinzip (Geräte/Module werden zur Laufzeit entdeckt,
+nicht fest verdrahtet einprogrammiert) — für **eigene, neue**
+File-Manager-Implementierungen ein sinnvolles Vorbild. Für die
+**Kompatibilität** mit echten alten Modulen ändert das nichts an Sektion
+3: die Dispatch-Tabellen-Layouts selbst (68K `M$Exec`, x86 `m_idata`)
+bleiben die Pflichtanforderung, unabhängig davon, wie der eigene Kernel
+intern vom Tabellen-Eintrag zum Treiber kommt.
+
 ## 4. Was NICHT übernommen werden sollte
 
 **Wichtige Klarstellung vorab:** Diese Punkte betreffen nur Code, den

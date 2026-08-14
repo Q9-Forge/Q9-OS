@@ -1,0 +1,102 @@
+Frische Ghidra-Disassemblierung von modules/os9000-x86/vendor-live/rbf,
+Ghidra-Projekt /Volumes/SSD1TB/projects/Q9-OS-ghidra-os9000-rbf/ (aus
+Thema 03, hier weiterverwendet). Skripte:
+../../../modules/os9000-x86/ghidra_scripts/rbf_DumpReadWriteHandlers.java,
+rbf_PeekWriteHelper.java, rbf_RenameWriteHelpers.java.
+
+=== Q9X_rbf_i_read @ 0x254f4a size=7 -- BESTAETIGT trivialer Stub (wie in Thema 03 vermutet) ===
+00254f4a: PUSH EBP
+00254f4b: XOR EAX,EAX          ; Rueckgabewert = 0
+00254f4d: MOV EBP,ESP
+00254f4f: LEAVE
+00254f50: RET
+Keine Verzweigung, kein Aufruf -- das ist die GESAMTE Funktion. Liegt
+vermutlich am extrahierten Live-Speicherzustand (Feature-Flag/
+Fehlerpfad zur Extraktionszeit), nicht an einem generell leeren Read.
+
+=== Q9X_rbf_i_write @ 0x251ea6 size=70 (echte Logik) ===
+00251ea6: PUSH EBP
+00251ea7: MOV EBP,ESP
+00251ea9: PUSH ECX
+00251eaa: MOV ECX,EAX
+00251eac: PUSH EDX
+00251ead: LEA EAX,[EBX + 0x104]
+00251eb3: MOV EDX,dword ptr [EBP + 0x8]
+00251eb6: PUSH EAX
+00251eb7: PUSH EDX
+00251eb8: PUSH dword ptr [ECX + 0x12]
+00251ebb: MOVZX EAX,word ptr [ECX + 0x10]
+00251ebf: CALL Q9X_rbf_driver_dispatch      ; <- der eigentliche Fund, s.u.
+00251ec4: MOV dword ptr [ECX + 0x4],EAX
+00251ec7: CMP EAX,0xd0                      ; Fehlercode 0xD0 -- Bedeutung nicht identifiziert
+00251ecc: LEA ESP,[ESP + 0xc]
+00251ed0: JNZ 0x00251ee5
+00251ed2: PUSH ECX
+00251ed3: PUSH EDX
+00251ed4: PUSH 0x3
+00251ed6: XOR EAX,EAX
+00251ed8: PUSH 0x0
+00251eda: CALL Q9X_rbf_write_error_retry
+00251edf: MOV dword ptr [ECX + 0x4],EAX
+00251ee2: ADD ESP,0x10
+00251ee5: MOV EAX,dword ptr [ECX + 0x4]
+00251ee8: POP EDX
+00251ee9: POP ECX
+00251eea: LEAVE
+00251eeb: RET
+
+Ghidra-Dekompilierung (Pseudo-C, Register-Artefakte wie gehabt):
+
+undefined8 Q9X_rbf_i_write(undefined4 param_1)
+{
+  int in_EAX; undefined4 uVar1; int extraout_ECX, extraout_ECX_00, iVar2;
+  undefined4 in_EDX; int unaff_EBX; undefined8 uVar3;
+
+  uVar3 = Q9X_rbf_driver_dispatch(*(undefined4 *)(in_EAX + 0x12), param_1, unaff_EBX + 0x104);
+  *(int *)(extraout_ECX + 4) = (int)uVar3;
+  iVar2 = extraout_ECX;
+  if ((int)uVar3 == 0xd0) {
+    uVar1 = Q9X_rbf_write_error_retry(0, 3, (int)((ulonglong)uVar3 >> 0x20), extraout_ECX);
+    *(undefined4 *)(extraout_ECX_00 + 4) = uVar1;
+    iVar2 = extraout_ECX_00;
+  }
+  return CONCAT44(in_EDX, *(undefined4 *)(iVar2 + 4));
+}
+
+=== DER FUND: Q9X_rbf_driver_dispatch @ 0x2524fc size=64 ===
+Verkettete-Liste-Walk mit INDIREKTEM FUNKTIONSAUFRUF -- das ist der
+eigentliche Uebergang von RBF in den zustaendigen Treiber-Handler:
+
+002524fc: PUSH EBP
+002524fd: MOV EBP,ESP
+002524ff: SUB ESP,0x4
+00252502: PUSH ECX
+00252503: PUSH EDX
+00252504: PUSH ESI
+00252505: MOV ECX,EAX                       ; ECX = Suchschluessel (Treiber-/Geraete-ID)
+00252507: PUSH EDI
+00252508: MOV EAX,dword ptr [EBP + 0x8]
+0025250b: MOV dword ptr [EBP + -0x4],EAX
+0025250e: MOV ESI,dword ptr [EBP + 0xc]     ; ESI = Parameter fuer den Handler-Aufruf
+00252511: MOV EDX,dword ptr [EBP + 0x10]    ; EDX = Listenkopf (Geraete-/Treiber-Tabelle)
+00252514: JMP 0x0025252c
+00252516: CMP ECX,dword ptr [EDX]           ; Eintrags-Schluessel == gesuchter Schluessel?
+00252518: JNZ 0x00252529
+0025251a: PUSH dword ptr [EBP + -0x4]
+0025251d: MOV EAX,ESI
+0025251f: MOV EDI,dword ptr [EDX + 0x4]     ; EDI = Handler-Funktionszeiger aus dem Eintrag
+00252522: CALL EDI                          ; <-- INDIREKTER SPRUNG IN DEN TREIBER-HANDLER
+00252524: ADD ESP,0x4
+00252527: JMP 0x00252536
+00252529: ADD EDX,0x8                       ; naechster Listeneintrag (8 Byte/Eintrag: Schluessel+Zeiger)
+0025252c: CMP dword ptr [EDX + 0x4],0x0     ; Ende-Sentinel (Handler-Zeiger == 0)?
+00252530: JNZ 0x00252516
+00252532: XOR EAX,EAX                       ; nicht gefunden -> 0 zurueck
+
+=== Q9X_rbf_write_error_retry @ 0x2503dc size=88 (nur Anfang gelesen) ===
+Wird nur aufgerufen, wenn Q9X_rbf_driver_dispatch den Fehlercode 0xD0
+liefert. Folgt einer Zeigerkette [EDX+4]->[+0x18]->[+0x1c] (Struktur-
+Navigation, vermutlich zu einer alternativen/uebergeordneten Geraete-
+Beschreibung) und ruft dann eine weitere Funktion (0x2550f4) auf --
+plausibel eine Fehlerbehandlungs-/Wiederholungslogik, im Detail nicht
+weiter verfolgt (ausserhalb des Scopes dieser Runde).
