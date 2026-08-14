@@ -79,8 +79,8 @@ Q9_D_AddrLim:   do.l 1    hoechste beim Start gefundene Adresse [PLATZHALTER]
 Q9_D_Compat2:   do.b 1    Cache-Kompatibilitaets-/Konfigurationsflags [PLATZHALTER]
 Q9_D_SnoopD:    do.b 1    ungleich 0, wenn alle Daten-Caches kohaerent/snoopy sind [PLATZHALTER]
 Q9_D_ProcSz:    do.w 1    Groesse eines Prozessdeskriptors [PLATZHALTER]
-Q9_D_PolTbl:    do.b 32   Polling-Tabellenkoepfe fuer Autovektor-IRQs [PLATZHALTER]
-Q9_D_FreeMem:   do.b 8    Kopf der farbklassifizierten freien Speicherliste [PLATZHALTER]
+Q9_D_PolTbl:    do.b 32   Polling-Tabellenkoepfe fuer Autovektor-IRQs [PLATZHALTER -- Byte 24-31 dieses Blocks (=$3FC-$403) sind vermutlich Teil des Arena-Kontrollblocks, siehe naechste Zeile]
+Q9_D_FreeMem:   do.b 8    Kopf/Ende (je 4 Byte) des Arena-/Freispeicher-Listen-Kontrollblocks (Basis $3FC, dieses Feld = Basis+8); selbstreferenzierend beim Boot initialisiert (Q9_kernel_init_67a0, $6879-$6885), referenziert von Q9_arena_alloc_526c [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/]
 Q9_D_Ipid:      do.w 1    Multiprozessor-Identifikationsnummer [PLATZHALTER]
                 do.w 1    reserviert (Multiprozessor) [PLATZHALTER]
 Q9_D_Cpus:      do.l 1    Zeiger auf ein Array von CPU-Deskriptor-Listenkoepfen [PLATZHALTER]
@@ -94,8 +94,8 @@ Q9_D_TSlice:    do.w 1    Ticks pro Zeitscheibe [PLATZHALTER]
 Q9_D_Slice:     do.w 1    verbleibende Ticks der aktuellen Zeitscheibe [PLATZHALTER]
                 do.w 1    reserviert [PLATZHALTER]
 Q9_D_Elapse:    do.l 1    Ticks bis der Systemprozess geweckt wird [PLATZHALTER]
-Q9_D_Thread:    do.b 8    Kopf der System-Thread-Warteschlange (sofort/absolute Zeit) [PLATZHALTER]
-Q9_D_AlarTh:    do.b 8    Kopf der zeitgesteuerten Alarm-Threads (relative Zeit) [PLATZHALTER]
+Q9_D_Thread:    do.b 8    Kopf der System-Thread-Warteschlange (sofort/absolute Zeit) [KONFLIKT -- echte F$Alarm-Warteschlangen liegen nachweislich bei $774/$77C (Q9_D_AlmQ1/Q9_D_AlmQ2 unten), nicht hier]
+Q9_D_AlarTh:    do.b 8    Kopf der zeitgesteuerten Alarm-Threads (relative Zeit) [KONFLIKT -- s.o., dieselbe Unklarheit]
 Q9_D_SStkLm:    do.l 1    untere Grenze des System-IRQ-Stacks [PLATZHALTER]
 Q9_D_Forks:     do.l 1    Anzahl aktuell aktiver (geforkter) Prozesse [PLATZHALTER]
 Q9_D_BootRam:   do.l 1    beim Boot-ROM-Scan gefundene RAM-Groesse (Integritaetscheck) [PLATZHALTER]
@@ -137,6 +137,11 @@ Q9_D_IdleData:  do.l 1    Datenzeiger fuer die Idle-Callout-Routine [PLATZHALTER
 Q9_D_Switches:  do.l 1    Zaehler fuer Kontextwechsel (Idle-Pruefung) [PLATZHALTER]
                 do.b 20   reserviert [PLATZHALTER]
 Q9_D_IrqHeads:  do.b 32   IRQ-Kopfregionen (fuer Nicht-MSP-Kernel) [PLATZHALTER]
+
+* Absolute Offsets (nicht sequentiell aus dem obigen Feldstrom herleitbar,
+* deshalb als eigenstaendige EQUs statt do.b -- analog zu Q9_D_End unten):
+Q9_D_AlmQ1:     equ $774  F$Alarm-Warteschlange 1 (sofortige/D1=0-Variante, Q9_alarm_set_157e), sortiert nach Faelligkeit (Knotenfelder +$20/+$24), Verkettung ueber +$C/+$10; beim Boot als leere Ringliste initialisiert (Q9_kernel_init_67a0, $6886-$688e); Walk/Insert in Q9_alarm_insert_15c4 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/]
+Q9_D_AlmQ2:     equ $77C  F$Alarm-Warteschlange 2 (intervallbasierte Variante, Q9_alarm_set_1580), sonst identischer Aufbau zu Q9_D_AlmQ1 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/]
 
 Q9_D_End:		equ $1000			Ende des System-Global-Bereichs
 

@@ -61,7 +61,8 @@
 #define Q9_D_SNOOPD         0x03E1  /* ungleich 0, wenn alle Daten-Caches kohaerent/snoopy sind [PLATZHALTER] */
 #define Q9_D_PROCSZ         0x03E2  /* Groesse eines Prozessdeskriptors [PLATZHALTER] */
 #define Q9_D_POLTBL         0x03E4  /* Polling-Tabellenkoepfe fuer Autovektor-IRQs [PLATZHALTER] */
-#define Q9_D_FREEMEM        0x0404  /* Kopf der farbklassifizierten freien Speicherliste [PLATZHALTER] */
+#define Q9_D_ARENA          0x03FC  /* Basis des Arena-/Freispeicher-Listen-Kontrollblocks; Kopf/Ende-Zeiger bei +0x8/+0xC selbstreferenzierend beim Boot initialisiert (Q9_kernel_init_67a0, 0x6879-0x6885); von Q9_arena_alloc_526c referenziert (mehrfach lea/pea $3fc(a6)) [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/] */
+#define Q9_D_FREEMEM        0x0404  /* Kopf der farbklassifizierten freien Speicherliste -- liegt bei Q9_D_ARENA+0x8, vermutlich Teilfeld desselben Kontrollblocks statt eigenstaendige Struktur [PLATZHALTER, Bezug zu Q9_D_ARENA neu erkannt] */
 #define Q9_D_IPID           0x040C  /* Multiprozessor-Identifikationsnummer [PLATZHALTER] */
 #define Q9_D_CPUS           0x0410  /* Zeiger auf ein Array von CPU-Deskriptor-Listenkoepfen [PLATZHALTER] */
 #define Q9_D_IPCMD          0x0414  /* Kopf der Inter-Prozessor-Kommandowarteschlange [PLATZHALTER] */
@@ -73,8 +74,8 @@
 #define Q9_D_TSLICE         0x042E  /* Ticks pro Zeitscheibe [PLATZHALTER] */
 #define Q9_D_SLICE          0x0430  /* verbleibende Ticks der aktuellen Zeitscheibe [PLATZHALTER] */
 #define Q9_D_ELAPSE         0x0434  /* Ticks bis der Systemprozess geweckt wird [PLATZHALTER] */
-#define Q9_D_THREAD         0x0438  /* Kopf der System-Thread-Warteschlange (sofort/absolute Zeit) [PLATZHALTER] */
-#define Q9_D_ALARTH         0x0440  /* Kopf der zeitgesteuerten Alarm-Threads (relative Zeit) [PLATZHALTER] */
+#define Q9_D_THREAD         0x0438  /* Kopf der System-Thread-Warteschlange (sofort/absolute Zeit) [KONFLIKT -- siehe Q9_D_ALMQ1/Q9_D_ALMQ2 unten, echte F$Alarm-Warteschlangen liegen nachweislich bei 0x774/0x77C, nicht hier; dieses Feld evtl. falsch platziert oder ein anderes Konzept] */
+#define Q9_D_ALARTH         0x0440  /* Kopf der zeitgesteuerten Alarm-Threads (relative Zeit) [KONFLIKT -- s.o., dieselbe Unklarheit] */
 #define Q9_D_SSTKLM         0x0448  /* untere Grenze des System-IRQ-Stacks [PLATZHALTER] */
 #define Q9_D_FORKS          0x044C  /* Anzahl aktuell aktiver (geforkter) Prozesse [PLATZHALTER] */
 #define Q9_D_BOOTRAM        0x0450  /* beim Boot-ROM-Scan gefundene RAM-Groesse (Integritaetscheck) [PLATZHALTER] */
@@ -113,6 +114,8 @@
 #define Q9_D_IDLEDATA       0x05E4  /* Datenzeiger fuer die Idle-Callout-Routine [PLATZHALTER] */
 #define Q9_D_SWITCHES       0x05E8  /* Zaehler fuer Kontextwechsel (Idle-Pruefung) [PLATZHALTER] */
 #define Q9_D_IRQHEADS       0x0600  /* IRQ-Kopfregionen (fuer Nicht-MSP-Kernel) [PLATZHALTER] */
+#define Q9_D_ALMQ1          0x0774  /* F$Alarm-Warteschlange 1 (sofortige/D1=0-Variante, Q9_alarm_set_157e), sortiert nach Faelligkeit (Knotenfelder +0x20/+0x24), Verkettung ueber +0xC/+0x10; beim Boot als leere Ringliste initialisiert (Q9_kernel_init_67a0, 0x6886-0x688e); Walk/Insert in Q9_alarm_insert_15c4 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/] */
+#define Q9_D_ALMQ2          0x077C  /* F$Alarm-Warteschlange 2 (intervallbasierte Variante, Q9_alarm_set_1580), sonst identischer Aufbau zu Q9_D_ALMQ1 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/] */
 #define Q9_D_END          0x1000
 
 /* Exception-Sprungtabelle (Basis: *Q9_D_ExcJmp) */
