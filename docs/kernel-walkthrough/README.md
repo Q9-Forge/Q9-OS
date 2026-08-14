@@ -26,6 +26,7 @@ echtem Code direkt dabei.
 | [03](03-dreiklang/) | RBF/Descriptor/Driver im Detail — x86-Callcode-Dispatch-Tabelle gefunden (16 Slots im `m_idata`-Bereich statt bei `m_exec` wie beim 68K) | ✅ fertig (x86: nur File-Manager untersucht, Descriptor/Driver offen) |
 | [04](04-scheduler-prozesslebenszyklus/) | Scheduler & Prozess-Lebenszyklus — 68K-Vorarbeit erweitert, x86 neu untersucht; Kettenschluss gefunden: x86-Boot-Trampolin endet in `Q9X_scheduler_insert` | ✅ fertig (x86: nur Scheduler-Kern gelesen, `F$Fork`/`F$Exit` auf x86 noch offen) |
 | [05](05-speicherverwaltung/) | Speicherverwaltung/Allokator — 68K-Vorarbeit erweitert, x86 neu untersucht; identische Fehlercodes (`0xDB`/`0xD2`/`0xAB`/`0xED`/`0xE1`) und identische Template-Kopie-Technik über beide Architekturen bestätigt | ✅ fertig (x86: eigentlicher First-Fit-Allokator `FUN_002228ac` nicht mehr benannt, Syscall-Einstiegspunkt bei keiner Architektur gefunden) |
+| [06](06-exception-handler/) | Exception-/Trap-Handler-Körper — 68K-Vorarbeit (alle 8 Handler) zusammengefasst, x86 neu untersucht; Dispatch-Tabellen-Builder bestätigt, einzelne Handler-Körper (inkl. Syscall-Dispatcher) auf x86 nicht lokalisiert | ⚠️ teilweise (x86-Syscall-Dispatcher nicht gefunden — Quelltabelle liegt zur Laufzeit in Kernel-Globals, nicht statisch im Modul, s. Thema selbst) |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -64,6 +65,17 @@ den fünf bereits bekannten 68K-Fehlercodes (`0xDB`/`0xD2`/`0xAB`/`0xED`/
 "Template-Kopie in einen neuen Arena-Deskriptor"-Technik. Der eigentliche
 First-Fit-Allokator (`FUN_002228ac`) wurde referenziert, aber nicht mehr
 selbst disassembliert/benannt.
+
+**Hinweis zu Thema 06:** 68K-Teil ist Überblicks-Zusammenfassung der
+umfangreichsten Einzelrecherche aus `docs/REVERSE_ENGINEERING.md` (alle 8
+Handler dort bereits vollständig gelesen). x86-Teil: der Dispatch-
+Tabellen-**Builder** (`FUN_00221540`) ist bestätigt und deckt sich exakt
+mit Thema 01 — aber die Quelltabelle selbst liegt zur **Laufzeit** in
+Kernel-Globals (`+0x12c4`/`+0x16e0`), nicht statisch im Moduldateiabbild
+wie bei Thema 03s RBF-Tabelle. Deshalb ließen sich die einzelnen x86-
+Handler-Körper (allen voran der Syscall-Dispatcher) mit reiner
+Datei-Analyse **nicht** lokalisieren — bräuchte Live-Speicher-Inspektion
+für eine Vertiefung. Kein `INT`/`IRET` im gesamten Kernelmodul gefunden.
 
 ## Konvention
 

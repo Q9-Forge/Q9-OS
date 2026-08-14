@@ -212,6 +212,40 @@ kein Zufall.
   dass die Syscall-Tabellen-Befüllung beim Boot noch nicht vollständig
   verstanden ist, falls das für Pfad (B) relevant wird.
 
+## 2c. Exception-/Trap-Handler — wichtige Design-Lehre aus einem Fehlschlag
+
+Aus [Thema 06](kernel-walkthrough/06-exception-handler/): das Prinzip
+"kompakte Quelltabelle → beim Boot zur vollen Dispatch-Tabelle
+expandiert" (schon in Abschnitt 2, Punkt 4 als Übernahme-Empfehlung
+genannt) wurde hier ein zweites Mal bestätigt — der x86-Tabellen-
+**Builder** arbeitet exakt nach demselben Schema wie beim 68K.
+
+**Eine echte, für den eigenen Entwurf relevante Design-Lehre** ergibt
+sich aber aus dem, was in dieser Runde NICHT gefunden werden konnte: die
+x86-Quelltabelle liegt **zur Laufzeit in dynamisch allozierten
+Kernel-Globals**, nicht **statisch im Moduldateiabbild** wie beim 68K
+(Offset `0x3802`) oder wie die RBF-Callcode-Tabelle aus Thema 03
+(`m_idata`-Bereich). Das machte die x86-Quelltabelle mit reiner
+Datei-Analyse praktisch unmöglich nachzuvollziehen — nur mit einem
+laufenden Emulator und Live-Speicher-Auslesen wäre das möglich gewesen.
+
+**Für den eigenen Kernel:** eine **statische** Quelltabelle im Modul
+(68K-Stil) ist eindeutig die bessere Wahl — sie bleibt offline mit
+einem Disassembler/Hex-Editor nachvollziehbar und debugbar, ohne einen
+laufenden Emulator zu brauchen. Das ist ein direkter, aus einem eigenen
+Rechercheergebnis abgeleiteter Grund, hier NICHT dem x86-Muster zu
+folgen, obwohl x86 in anderen Punkten (z. B. Modul-Scanner, Abschnitt 2)
+die bessere Vorlage war — nicht jede x86-Design-Entscheidung ist
+automatisch die modernere/bessere.
+
+Auch bemerkenswert: das komplette x86-Kernelmodul enthält **keine
+einzige `INT`- oder `IRET`-Instruktion** — der tatsächliche Auslöse-
+Mechanismus für einen Syscall (Software-Interrupt? Call-Gate? etwas
+anderes?) bleibt für x86/OS-9000 ungeklärt. Für den eigenen 68K-Kernel
+ist das ohnehin irrelevant (`TRAP #0` ist die naheliegende, bereits vom
+68K-Vorbild bewährte Wahl), aber ein Hinweis darauf, dass die x86-
+Vergleichsseite hier an eine echte Erkenntnisgrenze gestoßen ist.
+
 ## 3. Der Dreiklang — jetzt eine Pflichtanforderung
 
 Aus [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/) und
@@ -307,5 +341,6 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 - [`kernel-walkthrough/03-dreiklang/`](kernel-walkthrough/03-dreiklang/README.md)
 - [`kernel-walkthrough/04-scheduler-prozesslebenszyklus/`](kernel-walkthrough/04-scheduler-prozesslebenszyklus/README.md)
 - [`kernel-walkthrough/05-speicherverwaltung/`](kernel-walkthrough/05-speicherverwaltung/README.md)
+- [`kernel-walkthrough/06-exception-handler/`](kernel-walkthrough/06-exception-handler/README.md)
 
 **Erstellt**: 2026-08-14

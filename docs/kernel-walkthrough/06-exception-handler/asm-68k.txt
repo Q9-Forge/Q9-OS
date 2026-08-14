@@ -1,0 +1,265 @@
+* Wortwoertlicher Auszug aus src/kernel/kernel.r: Q9_disp_488, der
+* wichtigste der 8 Exception-Dispatch-Handler (TRAP #0 = jeder
+* F$/I$-Syscall). Vollstaendiger Funktionskoerper, 978 Byte.
+* Die uebrigen 7 Handler nur mit Kopfkommentar (Kurzbeschreibung),
+* volle Koerper in docs/REVERSE_ENGINEERING.md.
+
+*----------------------------------------------------------------------
+* Q9_disp_488  (0x000488)
+* TRAP #0 -- der eigentliche OS-9-Syscall-Dispatcher, hier landet jeder F$-Aufruf.
+* Liest die Funktionsnummer als inline Wort direkt nach der TRAP-Instruktion (aus dem geretteten PC), D7=Funktionsnummer.
+* Zwei parallele Syscall-Tabellen (0x3a4,A6)/(0x3a8,A6), Auswahl ueber Bit 5 des geretteten Statusworts. Dispatch per PEA+RTS-Trampolin.
+* Fehlercode 0xD0 bei Funktionsnummer >= 0x100. Stack-Kanarienvogel 'Jimi' (0x4A696D69) wird nach Handler-Rueckkehr geprueft.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_disp_488:
+	movem.l	a6/a5/a4/a3/a2/a1/a0/d7/d6/d5/d4/d3/d2/d1/d0,-(sp)
+L00048c:
+	movec	vbr,a6
+L000490:
+	movea.l	(a6),a6
+L000492:
+	movea.l	$4c(a6),a4
+L000496:
+	clr.b	$41(sp)
+L00049a:
+	movea.l	$42(sp),a5
+L00049e:
+	move.w	(a5),d7
+L0004a0:
+	addq.l	#$2,$42(sp)
+L0004a4:
+	cmpi.w	#$100,d7
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0004a8:
+	dc.w	$6400
+	dc.w	L0005bc-*
+L0004ac:
+	move.w	d7,$3c(sp)
+L0004b0:
+	move.l	$140(a4),d5
+L0004b4:
+	move.l	$144(a4),d6
+L0004b8:
+	movea.l	$3a4(a6),a3
+L0004bc:
+	bset.b	#$7,$1c(a4)
+L0004c2:
+	btst.b	#$5,$40(sp)
+L0004c8:
+	bne.b	L0004ec
+L0004ca:
+	move	usp,a3
+L0004cc:
+	move.l	a3,$c(a4)
+L0004d0:
+	move.l	sp,$8(a4)
+L0004d4:
+	move.b	d7,$21(a4)
+L0004d8:
+	movea.l	$3a8(a6),a3
+L0004dc:
+	cmpi.w	#$80,d7
+L0004e0:
+	bcc.b	L0004e8
+L0004e2:
+	addq.l	#$1,$2c4(a4)
+L0004e6:
+	bra.b	L0004f6
+L0004e8:
+	addq.l	#$1,$2c8(a4)
+L0004ec:
+	cmpi.w	#$80,d7
+L0004f0:
+	bcs.b	L0004f6
+L0004f2:
+	addq.l	#$1,$3ac(a4)
+L0004f6:
+	asl.w	#$2,d7
+L0004f8:
+	adda.w	d7,a3
+L0004fa:
+	movea.l	sp,a5
+L0004fc:
+	move.l	$3ac(a4),d7
+L000500:
+	movem.l	a6/a5/a4/d7/d6/d5,-(sp)
+L000504:
+	move.l	sp,$140(a4)
+L000508:
+	pea	L000558(pc)
+L00050c:
+	move.l	(sp),$144(a4)
+L000510:
+	move.l	(a3),-(sp)
+L000512:
+	movea.l	$400(a3),a3
+L000516:
+	rts
+L000518:
+	tst.l	$8bc(a6)
+L00051c:
+	bne.b	L000538
+L00051e:
+	tst.l	$3ac(a4)
+L000522:
+	bne.b	L000538
+L000524:
+	btst.b	#$5,$1c(a4)
+L00052a:
+	beq.b	L000538
+L00052c:
+	subq.l	#$8,sp
+L00052e:
+	moveq	#$1,d0
+L000530:
+	movea.l	sp,a5
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L000532:
+	dc.w	$6100
+	dc.w	Q9_sleep_3a06-*
+L000536:
+	addq.l	#$8,sp
+L000538:
+	move.w	$3b0(a4),d0
+L00053c:
+	sub.w	$3b2(a4),d0
+L000540:
+	cmpi.l	#$4a696d69,$0(a4,d0.w*1)
+L000548:
+	beq.b	L00054e
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L00054a:
+	dc.w	$6100
+	dc.w	L0032c8-*
+L00054e:
+	movem.l	(sp)+,d0/d1/d2/d3/d4/d5/d6/d7/a0/a1/a2/a3/a4/a5/a6/sp
+L000552:
+	rte
+L000554:
+	trapf.w	#$0
+L000558:
+	movem.l	(sp)+,d5/d6/d7/a4/a5/a6
+L00055c:
+	bcc.b	L00056c
+L00055e:
+	ori.w	#$1,$40(sp)
+L000564:
+	clr.w	$4(sp)
+L000568:
+	move.w	d1,$6(sp)
+L00056c:
+	move.l	d5,$140(a4)
+L000570:
+	move.l	d6,$144(a4)
+L000574:
+	move.l	d7,$3ac(a4)
+L000578:
+	cmpi.w	#$80,$3c(sp)
+L00057e:
+	bcs.b	L000584
+L000580:
+	subq.l	#$1,$3ac(a4)
+L000584:
+	btst.b	#$5,$40(sp)
+L00058a:
+	bne.b	L000518
+L00058c:
+	tst.l	$2ac(a4)
+L000590:
+	beq.b	L000598
+L000592:
+	bset.b	#$5,$1c(a4)
+L000598:
+	movea.l	$c(a4),a0
+L00059c:
+	move	a0,usp
+L00059e:
+	btst.b	#$7,$40(sp)
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0005a4:
+	dc.w	$6700
+	dc.w	L000350-*
+L0005a8:
+	tst.w	$26(a4)
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0005ac:
+	dc.w	$6600
+	dc.w	L000350-*
+L0005b0:
+	tst.l	$2ac(a4)
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0005b4:
+	dc.w	$6700
+	dc.w	L000350-*
+* Wortform erzwungen (r68 wuerde sonst auf Kurzform optimieren) -- siehe BRANCH_WORD_RISK
+L0005b8:
+	dc.w	$6000
+	dc.w	L000bb6-*
+L0005bc:
+	move.w	#$d0,$6(sp)
+L0005c2:
+	ori.w	#$1,$40(sp)
+L0005c8:
+	bra.b	L000584
+L0005ca:
+	dc.b	$51
+L0005cb:
+	dc.b	$fb
+L0005cc:
+	dc.b	$00
+L0005cd:
+	dc.b	$00
+L0005ce:
+	dc.b	$00
+
+* --- Kopfkommentare der uebrigen 7 Handler (Koerper nicht wiederholt) ---
+
+* Q9_disp_180  (0x000180)
+* IRQ-Dispatcher: Sammel-Handler fuer Interrupt-Autovektoren 1-7 und alle User-Defined Vectors (199 von 256 Tabelleneintraegen).
+* Register: D0=Vektornummer (aus Exception-Frame). Ruft jeden Handler der Kette per JSR (A0) auf; Carry=1 heisst 'naechster in der Kette', Carry=0 'behandelt'.
+* Enthaelt zusaetzlich den optionalen Scheduler-Tick-Hook (0x8c0,A6) und den Reschedule-Aufruf von Q9_scheduler_183a.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_disp_180:
+
+*----------------------------------------------------------------------
+* Q9_disp_452  (0x000452)
+* Spurious/Uninitialized-Interrupt-Handler (CPU-Vektoren 15 und 24).
+* Erhoeht einen Spurious-Zaehler (0x84,A6) mit Saettigung; ignoriert das Ereignis falls Flag-Bit 6 in (0x2e,A6) gesetzt ist, sonst Sprung in die Panik-Infrastruktur bei 0x804.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_disp_452:
+
+* Q9_disp_5d0  (0x0005d0)
+* TRAP #1-15 -- Dispatcher fuer prozesseigene, selbst installierte Trap-Handler (z.B. fuer Sprach-Laufzeiten/Debugger).
+* Trap-Nummer indiziert eine Tabelle bei D_Proc+8; Zustellung ueber einen synthetischen Rueckkehr-Frame auf dem User-Stack.
+* Fallback-Kette ueber D_Proc+0x38 falls kein eigener Handler; Fehlercode 0x85 wenn niemand zustaendig ist.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_disp_5d0:
+
+	jmp	$8(a1)
+*----------------------------------------------------------------------
+* Q9_disp_888  (0x000888)
+* Bus/Address-Error-Handler: sichert die zusaetzlichen 68030-Langformat-Frame-Felder (D3-D5), faellt dann direkt durch in Q9_disp_8d0.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_disp_888:
+
+* Q9_disp_8d0  (0x0008d0)
+* Sammel-Handler fuer Illegal Instr/Zero Div/CHK/TRAPV/Priv.Violation/Line-A-F/reservierte Vektoren/FPU-Exceptions/MMU-Fehler.
+* Bedient: FPU-Exception-Vorverarbeitung (ruft Q9_fpu_save_fe0 + FPSP-Einstieg Q9_fpsp_handler_b04), Software-Breakpoints ueber Illegal Instruction,
+* generisches pro-Prozess-Vektor-Handler-System, und als Fallback Signal-Zustellung (Signalnummer = (Vektor>>2)+0x64) oder Sprung nach Q9_exc_no_handler_fc4.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_disp_8d0:
+
+	rts
+*----------------------------------------------------------------------
+* Q9_disp_ba4  (0x000ba4)
+* Trace-Exception-Handler (Single-Step-Debugging), minimaler Epilog: loescht bei Bedarf das Trace-Bit im geretteten Statuswort, sonst Fallthrough nach Q9_signal_pending_bc0.
+* Details/Kontext: docs/REVERSE_ENGINEERING.md
+*----------------------------------------------------------------------
+Q9_disp_ba4:
+
