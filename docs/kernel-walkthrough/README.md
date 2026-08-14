@@ -22,8 +22,9 @@ echtem Code direkt dabei.
 |---|---|---|
 | [00](00-modul-aufbau-und-header/) | Kernel-Modul-Aufbau und Header | ✅ fertig |
 | [01](01-kernel-bootstrap/) | Kompletter Boot-Bootstrap: vom Einsprung bis zur Übergabe an den Scheduler (Speicher-/Arena-Init, Exception-Dispatch-Tabelle, Warteschlangen, erster Ausführungskontext — alles in einem Thema statt fünf einzelnen) | ✅ fertig |
-| [02](02-io-manager-syscall-dispatch/) | IO-Manager: wie ein Syscall beim Treiber landet — Dreiklang (Descriptor/Driver/Fmgr) mit identischen Typ-Filtern 0xF00/0xE00/0xD00 auf beiden Architekturen bestätigt | ✅ fertig (x86-Seite: Grundmechanismus geklärt, IOMan-seitiger Aufrufer noch offen, s. Thema 03) |
+| [02](02-io-manager-syscall-dispatch/) | IO-Manager: wie ein Syscall beim Treiber landet — Dreiklang (Descriptor/Driver/Fmgr) mit identischen Typ-Filtern 0xF00/0xE00/0xD00 auf beiden Architekturen bestätigt | ✅ fertig — inkl. IOMan-seitiger Dispatcher-Aufrufer (`Q9X_ioman_callcode_dispatch`), siehe Nachtrag im Thema selbst |
 | [03](03-dreiklang/) | RBF/Descriptor/Driver im Detail — x86-Callcode-Dispatch-Tabelle gefunden (16 Slots im `m_idata`-Bereich statt bei `m_exec` wie beim 68K) | ✅ fertig (x86: nur File-Manager untersucht, Descriptor/Driver offen) |
+| [04](04-scheduler-prozesslebenszyklus/) | Scheduler & Prozess-Lebenszyklus — 68K-Vorarbeit erweitert, x86 neu untersucht; Kettenschluss gefunden: x86-Boot-Trampolin endet in `Q9X_scheduler_insert` | ✅ fertig (x86: nur Scheduler-Kern gelesen, `F$Fork`/`F$Exit` auf x86 noch offen) |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -35,17 +36,24 @@ Thema 01.
 
 **Hinweis zu Thema 02:** die 68K-Seite stützt sich auf bereits vorhandene
 4-Runden-Vorarbeit (`modules/ioman/`), die x86-Seite wurde in dieser Runde
-erstmals disassembliert und weniger tief untersucht (14 von 67 Funktionen
-benannt) — der zentrale Dreiklang-Mechanismus ist geklärt, der konkrete
-Sprung in den Treibercode bei einem laufenden `I$Read`/`I$Write` bleibt
-auf x86 offen (Kandidatenfunktionen im Ghidra-Projekt vorhanden, siehe
-Thema 02 selbst).
+erstmals disassembliert und weniger tief untersucht (16 von 67 Funktionen
+benannt) — der Dreiklang-Mechanismus UND der IOMan-seitige Callcode-
+Dispatcher (`Q9X_ioman_callcode_dispatch`/`Q9X_ioman_dispatch_invoke`,
+in einer Folgerunde nach Thema 03 gefunden) sind geklärt.
 
 **Hinweis zu Thema 03:** rein x86-seitiger Fortschritt (68K-Teil ist
 Zusammenfassung bestehender Vorarbeit) — die File-Manager-Dispatch-Tabelle
 gefunden und bestätigt (9 von 16 Slots zeigten auf zuvor völlig unbekannte,
-aber gültige Funktionsprologe). Descriptor/Driver auf x86-Seite nicht
-untersucht, der IOMan-seitige Aufrufer der Tabelle bleibt offen.
+aber gültige Funktionsprologe), der IOMan-seitige Aufrufer wurde
+zwischenzeitlich ebenfalls gefunden (s. Thema 02). Descriptor/Driver auf
+x86-Seite weiterhin nicht untersucht.
+
+**Hinweis zu Thema 04:** 68K-Teil ist Zusammenfassung bereits vorhandener,
+sehr detaillierter Vorarbeit aus `docs/REVERSE_ENGINEERING.md` (nicht neu
+disassembliert). x86-Teil neu: der Boot-Trampolin aus Thema 01 endet
+nachweislich in `Q9X_scheduler_insert` — Queue-Walk mit Timer-Vergleich
+und Unlink-bei-Fälligkeit gefunden, aber nicht die komplette 743-Byte-
+Funktion gelesen; `F$Fork`/`F$Exit` auf x86 in dieser Runde nicht gesucht.
 
 ## Konvention
 

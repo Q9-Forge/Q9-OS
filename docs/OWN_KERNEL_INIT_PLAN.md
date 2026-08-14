@@ -144,6 +144,41 @@ notwendig, weil 68K-Boot-ROMs keine Garantie über den Anfangszustand des
 RAM geben; für Q9-Flux (wo der Bootvorgang bekannt/kontrolliert ist)
 prüfenswert, ob das überhaupt nötig ist.
 
+## 2a. Scheduler & Prozess-Lebenszyklus — nach dem Boot
+
+Aus [Thema 04](kernel-walkthrough/04-scheduler-prozesslebenszyklus/):
+Thema 01 endet mit der Übergabe an den Scheduler — dieser Abschnitt
+beschreibt, was danach dauerhaft läuft. Auch hier: zwei unabhängige
+Implementierungen, dieselben Grundmuster.
+
+- **Ready-Queue als zirkuläre Doppel-Verkettung mit Sentinel-Kopf** —
+  bei beiden Architekturen. **Klare Übernahme-Empfehlung.**
+- **Prioritäts-Aging**: ein globaler Countdown, der bei Ablauf alle
+  wartenden Prozesse in ihrem Sortier-Schlüssel anhebt — Schutz gegen
+  Verhungern niedrigpriorer Prozesse (68K vollständig gelesen, x86 nur
+  in Ansätzen bestätigt: ein Timer-Vergleich pro Queue-Eintrag existiert
+  nachweislich). **Übernahme-Empfehlung**, da ein einfacher, bewährter
+  Mechanismus gegen ein reales Scheduling-Problem.
+- **Jede Queue-Manipulation läuft in einem interrupt-maskierten
+  kritischen Abschnitt** (68K: `ori #$700,sr`/Wiederherstellen; x86:
+  `PUSHFD`/`CLI`/.../`POPFD`) — **Muss-Anforderung**, unabhängig von der
+  Zielarchitektur: ohne das sind Ready-Queue-Operationen nicht
+  interrupt-sicher.
+- **Prozess-Terminierung als geschichtete Kette** (68K vollständig
+  gelesen, x86 auf dieser Ebene noch nicht untersucht): Deskriptor-Slot
+  aufräumen (inkl. **echtem Syscall-Aufruf** zum Schließen offener Pfade
+  — der Kernel nutzt hier seinen eigenen öffentlichen `I$Close`-Pfad,
+  keine interne Abkürzung) → pro-Prozess-Ressourcenlisten freigeben →
+  eigentliche Speicherfreigabe (Thema 05). Diese Schichtung (jede Ebene
+  kennt nur die nächsttiefere, nicht die Speicherverwaltung direkt) ist
+  ein sauberes Vorbild, unabhängig vom exakten Byte-Layout.
+- **Offen für beide Architekturen**: wie `F$Fork` im Detail abläuft
+  (Deskriptor-Allocator und Init-Routine sind beim 68K nur benannt, nicht
+  gelesen; auf x86 komplett unbekannt) — falls das für den eigenen
+  Entwurf relevant wird, lohnt sich hier eine weitere Vertiefungsrunde
+  auf beiden Seiten, bevor man sich auf eine Prozesserzeugungs-Reihenfolge
+  festlegt.
+
 ## 3. Der Dreiklang — jetzt eine Pflichtanforderung
 
 Aus [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/) und
@@ -237,5 +272,6 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 - [`kernel-walkthrough/01-kernel-bootstrap/`](kernel-walkthrough/01-kernel-bootstrap/README.md)
 - [`kernel-walkthrough/02-io-manager-syscall-dispatch/`](kernel-walkthrough/02-io-manager-syscall-dispatch/README.md)
 - [`kernel-walkthrough/03-dreiklang/`](kernel-walkthrough/03-dreiklang/README.md)
+- [`kernel-walkthrough/04-scheduler-prozesslebenszyklus/`](kernel-walkthrough/04-scheduler-prozesslebenszyklus/README.md)
 
 **Erstellt**: 2026-08-14

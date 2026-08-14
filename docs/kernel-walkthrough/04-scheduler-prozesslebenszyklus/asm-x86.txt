@@ -1,0 +1,92 @@
+Frische Ghidra-Disassemblierung/Umbenennung im bestehenden Projekt
+/Volumes/SSD1TB/projects/Q9-OS-ghidra-os9000-kernel/ (aus Thema 01),
+Skript modules/os9000-x86/ghidra_scripts/kernel_RenameScheduler.java.
+Basis: modules/os9000-x86/disasm/kernel_full_disasm.txt (Thema 01).
+
+### Boot-Zeit: vier Ready-Queue-Sentinels + Head/Tail-Felder angelegt
+### (Q9X_kernel_globals_init, bereits aus Thema 01 bekannt, hier mit
+### realen Byte-Offsets statt Ghidras 16-Bit-Pseudo-Pointer-Notation) ###
+
+0021ebbc: LEA EAX,[EBX + 0x40]
+0021ebc2: MOV dword ptr [EBX + 0x90],EAX   ; Queue1 Head = &Sentinel(EBX+0x40)
+0021ebc8: MOV dword ptr [EBX + 0x8c],EAX   ; Queue1 Tail = &Sentinel(EBX+0x40)
+0021ebce: LEA EAX,[EBX + 0x50]
+0021ebd4: MOV dword ptr [EBX + 0xa0],EAX   ; Queue2 Head = &Sentinel(EBX+0x50)
+0021ebda: MOV dword ptr [EBX + 0x9c],EAX   ; Queue2 Tail = &Sentinel(EBX+0x50)
+0021ebe0: LEA EAX,[EBX + 0x48]
+0021ebe6: MOV dword ptr [EBX + 0x98],EAX   ; Queue3 Head = &Sentinel(EBX+0x48)
+0021ebec: MOV dword ptr [EBX + 0x94],EAX   ; Queue3 Tail = &Sentinel(EBX+0x48)
+0021ebf2: LEA EAX,[EBX + 0xbc]
+0021ebf8: MOV dword ptr [EBX + 0xc8],EAX   ; Queue4 Head = &Sentinel(EBX+0xbc)
+0021ebfe: MOV dword ptr [EBX + 0xc4],EAX   ; Queue4 Tail = &Sentinel(EBX+0xbc)
+
+### Q9X_first_context_finalize @ 0021f680 (vormals FUN_0021f680), Ende:
+### zwei WEITERE Head/Tail-Paare gesetzt, dann derselbe Stack-Switch-
+### Trampolin-Trick wie am Ende von Q9X_kernel_globals_init (Thema 01) --
+### springt tatsaechlich in Q9X_scheduler_insert (s.u.) ###
+
+0021f791: LEA EAX,[EBX + 0x9c]
+0021f797: MOV dword ptr [EBX + 0xb0],EAX
+0021f79d: MOV dword ptr [EBX + 0xac],EAX
+0021f7a3: LEA EAX,[EBX + 0x94]
+0021f7a9: MOV dword ptr [EBX + 0xa8],EAX
+0021f7af: MOV dword ptr [EBX + 0xa4],EAX
+...
+0021f7e6: MOV EAX,0x4140
+0021f7eb: ADD EAX,dword ptr [EBX + 0x84]   ; dieselbe Formel wie in Thema 01 (dort aus Stack-Local, hier aus dem persistenten Kernel-Globals-Feld +0x84)
+0021f7f1: CALL 0x0021e5a0                  ; Stack-Switch-Trampolin (Thema 01)
+0021f7f6: CALL 0x00221218                  ; <- Q9X_scheduler_insert (von Ghidra als "danach ausgefuehrt" gezeigt -- tatsaechlich das Sprungziel des Trampolins)
+
+Ghidra-Dekompilierung des Funktionsendes (bestaetigt den Kettenschluss):
+  ...
+  *(int *)(unaff_EBX + 0xb0) = unaff_EBX + 0x9c;
+  *(int *)(unaff_EBX + 0xac) = unaff_EBX + 0x9c;
+  *(int *)(unaff_EBX + 0xa8) = unaff_EBX + 0x94;
+  *(int *)(unaff_EBX + 0xa4) = unaff_EBX + 0x94;
+  ...
+  FUN_0021e5a0();
+  Q9X_scheduler_insert();          /* <- der eigentliche Fund dieser Runde */
+  return CONCAT44(in_EDX,in_EAX);
+
+### Q9X_scheduler_insert @ 00221218 (vormals FUN_00221218, 743 Byte) ###
+### Anfang: Queue-Walk mit Timer-/Tick-Vergleich, EFLAGS-basierte
+### kritische Abschnitte (CLI/PUSHFD/POPFD), Doppel-Verkettungs-Unlink ###
+
+00221218: PUSH EBP
+00221219: MOV EBP,ESP
+0022121b: SUB ESP,0x4c
+00221223: MOV ECX,dword ptr [EBX + 0x50]
+00221229: LEA EDX,[EBX + 0x48]
+00221243: MOV EAX,dword ptr [EBX + 0x94]   ; Queue3-Tail lesen
+00221249: CMP EAX,EDX
+0022124d: BT dword ptr [EAX + 0x24],0x6    ; Bit-Test im Queue-Eintrag (Flag-Feld +0x24)
+00221256: MOV ESI,dword ptr [EBX + 0x58]   ; "aktuelle Zeit"/Tick-Zaehler
+0022125c: MOV EDX,dword ptr [EDX + 0x5c]
+00221265: SUB ESI,EDX                      ; Zeitdifferenz zum gespeicherten Wake-Zeitpunkt
+00221277: PUSHFD
+00221278: CLI                              ; kritischer Abschnitt beginnt (EFLAGS gesichert)
+...
+00221284: POPFD                            ; kritischer Abschnitt endet
+002212c6: MOV EDX,dword ptr [EBX + 0xa4]   ; die von Q9X_first_context_finalize gesetzte Queue-Iteration
+002212cc: LEA EAX,[EBX + 0x94]
+002212d2: CMP EDX,EAX
+002212d4: JZ 0x002213fa
+
+Ghidra-Dekompilierung (Ausschnitt, zeigt das Muster deutlich):
+  puVar1 = *(undefined4 **)(unaff_EBX + 0xa4);
+  if (puVar1 != (undefined4 *)(unaff_EBX + 0x94)) {
+    iVar8 = *(int *)(unaff_EBX + 0x58) - puVar1[9];   /* Zeit - gespeicherter Wake-Zeitpunkt */
+    if (iVar8 < 0) local_c = -iVar8; else local_c = 0;
+    if (local_c == 0) {                               /* Eintrag ist "faellig" */
+      *(undefined4 *)(puVar1[5] + 0x10) = puVar1[4];  /* klassisches Doppel-Listen-Unlink: */
+      *(undefined4 *)(puVar1[4] + 0x14) = puVar1[5];  /* next->prev = prev; prev->next = next; */
+      ...
+    }
+  }
+
+(Volle 743-Byte-Funktion nicht Zeile fuer Zeile gelesen -- die zitierten
+Ausschnitte belegen aber eindeutig: Queue-Walk, Timer-Vergleich, EFLAGS-
+kritischer-Abschnitt, Unlink-bei-Faelligkeit. Funktional der x86-Analog
+zu Q9_scheduler_183a, nur als "aufweckende" statt "einfuegende" Routine
+gelesen -- die genaue Rollenaufteilung Einfuegen-vs-Aufwecken wurde nicht
+bis ins letzte Detail gegen 68K abgeglichen, siehe README "Offene Punkte".)

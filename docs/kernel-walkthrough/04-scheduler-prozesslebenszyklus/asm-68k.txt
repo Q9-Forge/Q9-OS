@@ -1,0 +1,142 @@
+Wortwoertliche Auszuege aus src/kernel/kernel.r (68K-Kernel, eigener
+byte-exakter Nachbau) -- die drei zentralen, bereits VOR dieser Session
+vollstaendig gelesenen Funktionen zu Scheduler/Prozess-Lebenszyklus.
+Vollstaendige Herleitung: docs/REVERSE_ENGINEERING.md.
+
+=== Q9_scheduler_183a (0x183a, Zeile 4422 in kernel.r) ===
+Ready-Queue-Einfuegeroutine. A0 = einzufuegender Prozessdeskriptor.
+Kehrt sofort zurueck, wenn der Prozess schon aktiv ist (Zustand 'a').
+Sonst: Prioritaets-Aging (globaler Countdown bei $3c4(a6)), Sortier-
+Schluessel-Berechnung, sortiertes Einfuegen in die zirkulaere
+Doppel-Verkettung mit Sentinel-Kopf bei $37c(a6).
+
+Q9_scheduler_183a:
+	cmpi.b	#$61,$20(a0)        * Prozesszustand == 'a' (aktiv)?
+L001840:
+	dc.w	$6700               * BEQ -> sofort raus, nichts zu tun
+	dc.w	L001920-*
+L001844:
+	move.b	#$61,$20(a0)        * Zustand auf 'a' setzen
+L00184a:
+	movem.l	a3/a2/a1/d4/d3/d2/d1/d0,-(sp)
+L00184e:
+	moveq	#$0,d0
+L001850:
+	move	sr,d4               * SR sichern
+L001852:
+	lea	$37c(a6),a3           * a3 = Sentinel-Kopf der Ready-Queue
+L001856:
+	subq.l	#$1,$3c4(a6)        * Aging-Countdown dekrementieren
+L00185a:
+	bpl.b	L00188c             * noch nicht abgelaufen -> weiter
+L00185c:
+	move.l	#$7fff0000,d1       * Countdown zuruecksetzen
+L001862:
+	move.l	d1,$3c4(a6)
+L001866:
+	movea.l	a3,a1
+L001868:
+	ori	#$700,sr              * Interrupts maskieren (Aging-Durchlauf)
+L00186c:
+	bra.b	L001882
+L00186e:
+	move.l	$2e0(a1),d2         * Sortier-Schluessel jedes Eintrags erhoehen (Anti-Verhungern)
+L001872:
+	bmi.b	L001882
+L001874:
+	beq.b	L001882
+L001876:
+	add.l	d1,d2
+L001878:
+	bpl.b	L00187e
+L00187a:
+	move.l	d1,d2
+L00187c:
+	not.w	d2                  * Saettigung bei Ueberlauf
+L00187e:
+	move.l	d2,$2e0(a1)
+L001882:
+	movea.l	$30(a1),a1          * naechster Ringlisten-Eintrag
+L001886:
+	cmpa.l	a1,a3
+L001888:
+	bne.b	L00186e
+L00188a:
+	move	d4,sr               * SR wiederherstellen
+L00188c:
+	move.w	$8aa(a6),d0         * Fast-Path: Cache-Wert gegen Prozess-Typ
+	...                         * (weitere Sortier-Schluessel-Logik, siehe REVERSE_ENGINEERING.md)
+
+=== Q9_proc_slot_cleanup_25f8 (0x25f8, Zeile 7149 in kernel.r) ===
+Prozessdeskriptor-Slot aufraeumen. A0/A4 = zu bereinigender Deskriptor.
+Genutzt sowohl bei echter Terminierung als auch beim Wiederverwenden
+eines Slots fuer einen neuen Prozess.
+
+Q9_proc_slot_cleanup_25f8:
+	movem.l	a3/a2/a1/a0/d1,-(sp)
+L0025fc:
+	exg	a0,a4                 * zu terminierenden Prozess nach A4 tauschen
+L0025fe:
+	moveq	#$0,d0
+L002600:
+	moveq	#$0,d1
+L002602:
+	dc.w	$6100               * BSR Q9_alarm_dispatch_1390 (Kategorie 0, D1=0)
+	dc.w	Q9_alarm_dispatch_1390-*
+L002606:
+	exg	a4,a0                 * zurueck tauschen -- D_Proc wird kurzzeitig der sterbende Prozess
+L002608:
+	lea	$c8(a0),a3            * Ressourcenliste 1 (15 Langworte)
+L00260c:
+	moveq	#$e,d0
+L00260e:
+	move.l	a0,$4c(a6)          * D_Proc = A0 (Trick: Kernel "wird" der sterbende Prozess)
+L002612:
+	tst.l	-(a3)
+L002614:
+	dbne	d0,L002612          * jeden nicht-Null-Eintrag ueber bsr 0x403a freigeben
+L002618:
+	beq.b	L002622
+L00261a:
+	dc.w	$6100
+	dc.w	L00403a-*
+L00261e:
+	dbf	d0,L002612
+L002622:
+	moveq	#$20,d2             * bis zu 32 Wort-Eintraege
+L002624:
+	sub.l	(sp)+,d2
+L002626:
+	lea	$1a8(a0),a1           * Tabelle offener Pfade
+L00262a:
+	bra.b	L002636
+L00262c:
+	move.w	-(a1),d0
+L00262e:
+	beq.b	L002636
+L002630:
+	clr.w	(a1)
+L002632:
+	trap	#$0                 * echter Syscall: Pfad schliessen (I$Close-artig)
+L002634:
+	dc.b	$00
+L002635:
+	dc.b	$8f
+L002636:
+	dbf	d2,L00262c
+L00263a:
+	bset.b	#$0,$1c(a0)         * weiteres Prozessflag
+L002640:
+	move.l	a0,d0
+L002642:
+	dc.w	$6100               * BSR Q9_proc_resource_free_62da
+	dc.w	Q9_proc_resource_free_62da-*
+	...                         * (FPU-Ownership-Aufraeumen, Abschluss-Trampolin Slot 64,
+	                            *  siehe REVERSE_ENGINEERING.md fuer den Rest)
+
+=== Q9_proc_resource_free_62da (0x62da, Zeile 20435 in kernel.r) ===
+Aufgerufen aus Q9_proc_slot_cleanup_25f8 mit D0=Prozessdeskriptor. Gibt
+zwei pro-Prozess-Ressourcenlisten frei (Speicherblock-Chunk-Liste bei
+$2d8(a4), Fixgroessen-Liste bei $390(a4)+8), je Eintrag ueber
+Q9_mem_free_5a22 -- siehe docs/REVERSE_ENGINEERING.md fuer den vollen
+Funktionskoerper (194 Byte, komplett gelesen).
