@@ -93,7 +93,7 @@ Wert.
 | 6 | Direkter Sprung in den Treiber (Init/Term) | `ioman_I_Detach_e5e`: `jmp (0x0,A0,D2w*1)` — direkter Sprung, kein Rücksprung über IOMan | **x86-Äquivalent in dieser Runde nicht gefunden** — offene Frage, s. u. |
 | 7 | Generischer `I$`-Callcode → Treiber-/Fmgr-Tabellenslot | `FUN_000014f8`: `(Callcode−0x83)` als Wort-Index in eine 13-Slot-Tabelle (bestätigt an `rbf`) | **x86-Äquivalent in dieser Runde nicht gefunden** — offene Frage, s. u. |
 
-## Offene Frage: der eigentliche Treiber-Sprung auf x86
+## Offene Frage: der eigentliche Treiber-Sprung auf x86 — Ziel-Ende geklärt, IOMan-seitiger Aufrufer noch offen
 
 Bei 68K ist der Übergang "IOMan → Treiber-/File-Manager-Code" doppelt
 belegt (Slot-basierter `jmp` in `I$Detach`, callcode-indizierter
@@ -107,6 +107,14 @@ Funktionen nicht dabei. `modules/os9000-x86/vendor-live/ioman` hat noch
 gebraucht wird (Kandidaten: die größeren, noch nicht gelesenen Funktionen
 zwischen `0x235f68` und `0x2370c8`, siehe `Q9-OS-ghidra-os9000-ioman`-Projekt).
 Ehrlich offen gelassen statt geraten.
+
+**Nachtrag (Thema 03, 2026-08-14):** die **Ziel-Seite** dieser Frage ist
+jetzt geklärt — RBF hat eine echte 16-Slot-Callcode-Dispatch-Tabelle,
+allerdings nicht bei `m_exec` wie beim 68K, sondern im `m_idata`-Bereich
+(Details, inklusive Beleg über 9 zuvor unbekannte Funktionsadressen mit
+gültigem Prolog: [`../03-dreiklang/README.md`](../03-dreiklang/README.md)).
+Der **IOMan-seitige** Aufrufer, der diese Tabelle liest und indiziert,
+bleibt weiterhin offen — dieselbe Lücke wie oben beschrieben.
 
 ## C-Variante
 

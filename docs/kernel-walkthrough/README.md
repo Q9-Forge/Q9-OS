@@ -22,8 +22,8 @@ echtem Code direkt dabei.
 |---|---|---|
 | [00](00-modul-aufbau-und-header/) | Kernel-Modul-Aufbau und Header | ✅ fertig |
 | [01](01-kernel-bootstrap/) | Kompletter Boot-Bootstrap: vom Einsprung bis zur Übergabe an den Scheduler (Speicher-/Arena-Init, Exception-Dispatch-Tabelle, Warteschlangen, erster Ausführungskontext — alles in einem Thema statt fünf einzelnen) | ✅ fertig |
-| [02](02-io-manager-syscall-dispatch/) | IO-Manager: wie ein Syscall beim Treiber landet — Dreiklang (Descriptor/Driver/Fmgr) mit identischen Typ-Filtern 0xF00/0xE00/0xD00 auf beiden Architekturen bestätigt | ✅ fertig (x86-Seite: Grundmechanismus geklärt, Treiber-Sprung selbst noch offen) |
-| 03 | RBF/Descriptor/Driver — der OS-9-"Dreiklang" im Detail | 🚧 geplant |
+| [02](02-io-manager-syscall-dispatch/) | IO-Manager: wie ein Syscall beim Treiber landet — Dreiklang (Descriptor/Driver/Fmgr) mit identischen Typ-Filtern 0xF00/0xE00/0xD00 auf beiden Architekturen bestätigt | ✅ fertig (x86-Seite: Grundmechanismus geklärt, IOMan-seitiger Aufrufer noch offen, s. Thema 03) |
+| [03](03-dreiklang/) | RBF/Descriptor/Driver im Detail — x86-Callcode-Dispatch-Tabelle gefunden (16 Slots im `m_idata`-Bereich statt bei `m_exec` wie beim 68K) | ✅ fertig (x86: nur File-Manager untersucht, Descriptor/Driver offen) |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -40,6 +40,12 @@ benannt) — der zentrale Dreiklang-Mechanismus ist geklärt, der konkrete
 Sprung in den Treibercode bei einem laufenden `I$Read`/`I$Write` bleibt
 auf x86 offen (Kandidatenfunktionen im Ghidra-Projekt vorhanden, siehe
 Thema 02 selbst).
+
+**Hinweis zu Thema 03:** rein x86-seitiger Fortschritt (68K-Teil ist
+Zusammenfassung bestehender Vorarbeit) — die File-Manager-Dispatch-Tabelle
+gefunden und bestätigt (9 von 16 Slots zeigten auf zuvor völlig unbekannte,
+aber gültige Funktionsprologe). Descriptor/Driver auf x86-Seite nicht
+untersucht, der IOMan-seitige Aufrufer der Tabelle bleibt offen.
 
 ## Konvention
 

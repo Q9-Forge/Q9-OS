@@ -1,0 +1,84 @@
+Frische Ghidra-Disassemblierung von modules/os9000-x86/vendor-live/rbf,
+Basisadresse 0x24D858 (siehe PROVENANCE.md), Funktionen mit Q9X_-Praefix
+umbenannt. Ghidra-Projekt: /Volumes/SSD1TB/projects/Q9-OS-ghidra-os9000-rbf/
+(ausserhalb des Repos), Skripte: ../../../modules/os9000-x86/ghidra_scripts/
+rbf_ParseHeaderSetEntryAnalyze.java, rbf_RenameDispatchTable.java.
+
+### HEADER ###
+M$ID=0x4AFC size=38672 nameOff=0x58 lang=0x01 type=0x0D(Fmgr) exec=0xAC
+m_idata=0x9118 m_idref=0x96A8
+
+### DISPATCH-TABELLE (Datei-Offset 0x9124, 16 Eintraege, direkt nach einem
+### 3-Word-Kopf bei m_idata=0x9118: [0]=0 [1]=0x588(=m_data) [2]=0x10(=Anzahl=16) ###
+
+=== FUNCTION Q9X_rbf_entry_trampolin @ 0024d904 size=5 ===
+0024d904: JMP 0x0024d910
+
+=== FUNCTION Q9X_rbf_entry_stub @ 0024d910 size=3 ===
+0024d910: XOR EAX,EAX
+0024d912: RET
+
+=== FUNCTION Q9X_rbf_checksum @ 0024d918 size=23 ===
+0024d918: PUSH ECX
+0024d919: PUSH ESI
+0024d91a: MOV ESI,EAX
+0024d91c: MOV ECX,dword ptr [ESP + 0xc]
+0024d920: SUB EAX,EAX
+0024d922: SHR ECX,0x2
+0024d925: XOR EAX,dword ptr [ESI]
+0024d927: ADD ESI,0x4
+0024d92a: LOOP 0x0024d925
+0024d92c: POP ESI
+0024d92d: POP ECX
+0024d92e: RET
+
+=== Dispatch-Table-Slots (jeweils Funktionsanfang, nicht vollstaendig
+    disassembliert -- die Prologe belegen, dass es echte, gueltige
+    Funktionen sind, die Ghidras Auto-Analyse ohne die Tabelle NIE
+    gefunden haette (9 von 16 waren vor dem Umbenennen komplett
+    unbekannt: "NO FUNCTION CONTAINS THIS") ===
+
+Slot  0 (I$Create) Q9X_rbf_i_create  @ 002536e8  -- von Ghidra-Auto-Analyse gefunden
+Slot  1 (I$Open)   Q9X_rbf_i_open    @ 002545c8  -- von Ghidra-Auto-Analyse gefunden
+Slot  2 (I$MakDir) Q9X_rbf_i_makdir  @ 00254628  -- NUR ueber die Tabelle erreichbar
+  00254628: PUSH EBP
+  00254629: MOV EBP,ESP
+  0025462b: PUSH ECX
+  0025462c: MOV ECX,EAX
+  0025462e: MOV EAX,dword ptr [EBP + 0x8]
+  00254631: CALL 0x0025463c
+Slot  3 (I$ChgDir) Q9X_rbf_i_chgdir  @ 002539b6  -- NUR ueber die Tabelle erreichbar
+  002539b6: PUSH EBP
+  002539b7: MOV EBP,ESP
+  002539b9: SUB ESP,0x4
+  002539bc: PUSH ECX
+  002539bd: MOV ECX,EAX
+  002539bf: PUSH EDX
+Slot  4 (I$Delete) Q9X_rbf_i_delete  @ 0025473a  -- von Ghidra-Auto-Analyse gefunden
+Slot  5 (I$Seek)   Q9X_rbf_i_seek    @ 002537f8  -- von Ghidra-Auto-Analyse gefunden
+Slot  6 (I$Read)   Q9X_rbf_i_read    @ 00254f4a  -- NUR ueber die Tabelle erreichbar
+  00254f4a: PUSH EBP
+  00254f4b: XOR EAX,EAX
+  00254f4d: MOV EBP,ESP
+  00254f4f: LEAVE
+  00254f50: RET
+  (Anm.: dieser konkrete Slot ist selbst wieder ein trivialer Stub in
+   DIESEM extrahierten Speicherzustand -- plausibel: haengt vom
+   aktiven RBF-Feature-Set/Fehlerzustand zur Extraktionszeit ab, nicht
+   weiter untersucht)
+Slot  7 (I$Write)  Q9X_rbf_i_write   @ 00251ea6  -- von Ghidra-Auto-Analyse gefunden
+Slot  8 (I$ReadLn) Q9X_rbf_i_readln  @ 00254d3c  -- NUR ueber die Tabelle erreichbar
+Slot  9 (I$WritLn) Q9X_rbf_i_writln  @ 0025437a  -- NUR ueber die Tabelle erreichbar
+Slot 10 (I$GetStt) Q9X_rbf_i_getstt  @ 0025163e  -- NUR ueber die Tabelle erreichbar
+Slot 11 (I$SetStt) Q9X_rbf_i_setstt  @ 00251262  -- NUR ueber die Tabelle erreichbar
+Slot 12 (I$Close)  Q9X_rbf_i_close   @ 00251d54  -- von Ghidra-Auto-Analyse gefunden
+Slot 13 (unbekannt) Q9X_rbf_i_slot13_unk @ 0025253c  -- von Ghidra-Auto-Analyse gefunden
+Slot 14 (unbekannt) Q9X_rbf_i_slot14_unk @ 00251a42  -- NUR ueber die Tabelle erreichbar
+Slot 15 (unbekannt) Q9X_rbf_i_slot15_unk @ 00251a00  -- NUR ueber die Tabelle erreichbar
+
+Rohe Tabellen-Bytes (Datei-Offset 0x9124, 16x4 Byte LE, Werte = Offset
+relativ zum Modulanfang 0x24D858):
+90 5e 00 00  70 6d 00 00  d0 6d 00 00  5e 61 00 00
+e2 6e 00 00  a0 5f 00 00  f2 76 00 00  4e 46 00 00
+e4 74 00 00  22 6b 00 00  e6 3d 00 00  0a 3a 00 00
+fc 44 00 00  e4 4c 00 00  ea 41 00 00  a8 41 00 00

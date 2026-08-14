@@ -1,0 +1,50 @@
+Wortwoertliche Auszuege aus bereits vorhandener 68K-Vorarbeit (KEINE neue
+Disassemblierung in dieser Runde) -- volle Herleitung in den jeweiligen
+FINDINGS.md-Dateien, hier nur die strukturell zentralen Bytes zitiert.
+
+=== c0 (Geraete-Descriptor), modules/c0-descriptor/docs/FINDINGS.md ===
+
+Kompletter Hexdump (148 Byte):
+0000: 4a fc 00 01 00 00 00 94 00 00 00 00 00 00 00 8c
+0010: 05 55 0f 00 80 00 00 1a 00 00 00 00 00 00 00 00
+0020: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3f 55
+0030: ff ff e0 00 00 00 00 b7 00 7c 00 84 00 80 00 00
+0040: 00 00 00 00 00 00 00 34 01 00 02 80 00 00 00 00
+0050: 00 01 00 00 00 00 00 01 03 00 00 00 02 00 00 09
+0060: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+0070: 00 00 00 00 00 00 ff ff 00 00 00 00 52 42 46 00
+0080: 00 00 00 00 63 66 69 64 65 00 4e 71 63 30 00 00
+0090: 00 4b 3b 88
+
+Relevant: M$Type @0x12 = 0x0F (Descrptr). Offset 0x38 -> 0x7C = "RBF\0"
+(Fmgr-Name). Offset 0x3A -> 0x84 = "cfide\0" (Driver-Name).
+
+=== cfide (Treiber), modules/cfide-driver/docs/FINDINGS.md ===
+
+6-Slot-Einsprungtabelle, Tabellenbasis = Long bei Datei-Offset 0x30:
+  Slot 0 (+0x00) = 0x4A  Init   -- bestaetigt: I$Attach-Sprungziel
+  Slot 1 (+0x02) = 0x72  Read   (Positions-Hypothese, nicht live verifiziert)
+  Slot 2 (+0x04) = 0x1DE Write  (dito)
+  Slot 3 (+0x06) = 0x35E GetStat (dito)
+  Slot 4 (+0x08) = 0x4EE SetStat (dito)
+  Slot 5 (+0x0A) = 0x4F8 Term   -- bestaetigt: I$Detach-Sprungziel
+
+=== rbf (File-Manager), modules/rbf-filemanager/docs/FINDINGS.md ===
+
+13-Slot-Callcode-Tabelle, Tabellenbasis = Long bei Datei-Offset 0x30
+(=0xA6), indiziert von IOMans FUN_000014f8 per (Callcode-0x83):
+  Slot  0 @0xA6 = 0x003A  I$Create (Callcode 0x83)
+  Slot  1 @0xA8 = 0x0230  I$Open   (0x84)
+  Slot  2 @0xAA = 0x0336  I$MakDir (0x85)
+  Slot  3 @0xAC = 0x04B4  I$ChgDir (0x86)
+  Slot  4 @0xAE = 0x04EA  I$Delete (0x87)
+  Slot  5 @0xB0 = 0x08D8  I$Seek   (0x88)
+  Slot  6 @0xB2 = 0x05D0  I$Read   (0x89)
+  Slot  7 @0xB4 = 0x0778  I$Write  (0x8A)
+  Slot  8 @0xB6 = 0x05CC  I$ReadLn (0x8B)
+  Slot  9 @0xB8 = 0x0756  I$WritLn (0x8C)
+  Slot 10 @0xBA = 0x090A  I$GetStt (0x8D)
+  Slot 11 @0xBC = 0x0A6C  I$SetStt (0x8E)
+  Slot 12 @0xBE = 0x03C0  I$Close  (0x8F)
+  (Slot 13 @0xC0 = 0x48E7 = MOVEM.L-Opcode = echter Code, Tabelle endet
+   exakt nach 13 Eintraegen)
