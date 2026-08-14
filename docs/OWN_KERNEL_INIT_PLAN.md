@@ -1,81 +1,77 @@
 # Erster Entwurf: was der eigene Q9-Kernel initialisieren muss
 
-**Statushinweis, bewusst nicht versteckt:** Die Haupt-`README.md` dieses
-Projekts sagt aktuell explizit "Kein Neubau eines eigenen Betriebssystems"
-und verweist auf `Q9RESUME-Kernel` als archivierten, separaten früheren
-Versuch dafür — Q9-OS versteht sich offiziell als **Port** von echtem
-Microware OS-9/68K, nicht als Neuentwicklung. Dieses Dokument entstand,
-weil Andreas in dieser Session wiederholt nach den Voraussetzungen für
-einen **eigenen** Kernel gefragt hat ("dann werden wir mit dem Kernel
-anfangen... was muss initialisiert werden"). Das kann heißen: der
-README-Satz ist inzwischen veraltet, oder die Frage zielte auf ein
-anderes/zukünftiges Projekt (evtl. eine Wiederbelebung von
-`Q9RESUME-Kernel`), oder es ist bewusst nur Recherche ohne
-Bau-Verpflichtung. **Nicht selbst entschieden** — deshalb bewusst NICHT
-in die Haupt-`README.md` verlinkt, bis das geklärt ist. Der Inhalt selbst
-bleibt trotzdem gültig (reine Synthese bereits verifizierter Funde), nur
-der Rahmen "was ist das für ein Projekt" ist offen.
+**Status (2026-08-14, von Andreas bestätigt):** Die frühere "kein Neubau"-
+Beschränkung ist aufgehoben — es sollte erst eine längere Planungs-/
+Recherchephase geben, die jetzt zu Ende geht. Ziel ist ein **eigener
+Kernel**. Dabei gilt eine **verbindliche, nicht verhandelbare Anforderung**:
+**echte, bestehende OS-9/68K- UND OS-9000-Module müssen weiterhin
+laufen** — Andreas' Formulierung: "Eine Kompatibilität zu echten
+OS-9/9000 Modulen will ich auf jeden Fall haben." Zusätzliche, eigene
+Modularten sind ausdrücklich willkommen ("da bin ich offen für") — es
+geht also nicht um "eigenes Format ODER Kompatibilität", sondern um
+"Kompatibilität ALS Fundament, eigene Erweiterungen obendrauf".
 
-**Was das hier ist:** eine grobe Anforderungsliste, kein Bauplan und kein
-Quellcode. Grundlage sind die vier Themen des
+**Damit ist dieses Dokument** eine grobe Anforderungsliste, kein Bauplan
+und kein Quellcode. Grundlage sind die vier Themen des
 [Kernel-Walkthroughs](kernel-walkthrough/) — dem systematischen Vergleich
-des OS-9/68K-Kernels (`dker030s`, dieses Projekts Referenz) mit dem
-OS-9000/x86-Kernel (Microwares spätere, portable C-Neufassung). Ziel
-dieses Dokuments: aus dem, was **beide** Referenzkerne tun, herausfiltern,
-was für einen eigenen Kernel sinnvoll übernehmbar ist — nicht als 1:1-
-Kopie einer Architektur, sondern als geprüfte Anforderung.
+des OS-9/68K-Kernels (`dker030s`, dieses Projekts bisherige Referenz) mit
+dem OS-9000/x86-Kernel (Microwares spätere, portable C-Neufassung).
 
-**Wichtiger Rahmen:** Q9-Flux emuliert 68K-Hardware (Musashi-Interpreter).
-Ein eigener Kernel läuft also auf 68K. Die x86-Vergleichsseite ist deshalb
-**nicht** die Zielplattform — sie dient dazu, zu erkennen, welche Teile
-des 68K-Designs "OS-9-Konvention" sind (über zwei Architekturen und ~30
-Jahre stabil, also vermutlich bewusst so gewählt) und welche Teile bloße
-68K-CPU-Eigenheiten sind (austauschbar, ohne dass man die OS-9-Idee
-verlässt).
+**Offener technischer Punkt, der aus Andreas' Antwort folgt und noch zu
+klären ist:** "Kompatibilität zu echten Modulen" kann zwei sehr
+unterschiedliche Dinge bedeuten:
 
-## Die Grundsatzentscheidung, die dieses Dokument NICHT trifft
+1. **Strukturelle Kompatibilität** — der eigene Kernel versteht das
+   Header-/Link-/Dispatch-Format (dieses Dokument), kann also echte
+   Module *identifizieren, linken, ihre Metadaten lesen* — aber der
+   eigentliche Modul-**Code** müsste trotzdem für die Zielarchitektur des
+   eigenen Kernels vorliegen (neu kompiliert oder per Interpreter
+   ausgeführt).
+2. **Binäre Ausführungskompatibilität** — der eigene Kernel führt den
+   **unveränderten Maschinencode** echter Module tatsächlich aus. Für
+   68K-Module ist das machbar (Q9-Flux hat mit Musashi bereits einen
+   68K-Interpreter). **Für OS-9000/x86-Module braucht das zusätzlich
+   einen x86-Interpreter/-Emulator** — den gibt es in Q9-Flux aktuell
+   nicht (Musashi emuliert ausschließlich 68K). Andreas' Formulierung
+   "alte OS-9000 Module ausführen können" deutet auf Bedeutung 2, nicht
+   nur 1 — das wäre eine substanzielle zusätzliche Komponente (x86-CPU-
+   Emulation neben der bestehenden 68K-Emulation), keine Kleinigkeit.
 
-Aus einer früheren Diskussion (noch nicht formal entschieden): entweder
-
-- **(A) Eigenständiger Kernel, eigenes Modulformat** — volle Freiheit,
-  aber jeder Treiber/File-Manager muss selbst geschrieben werden. Andreas'
-  eigene Einschätzung dazu: "bis wir einen eigenen RBF beschrieben haben,
-  können sicher Jahre vergehen."
-- **(B) ABI-kompatibel zu echten OS-9/68K-Binaries** an der Descriptor/
-  Driver/File-Manager-Grenze — dann lassen sich reale Microware-Treiber
-  (`cfide`, `rbf`, ...) direkt weiterverwenden (Q9-Flux hat mit Musashi
-  bereits einen 68K-Interpreter eingebaut), zumindest übergangsweise, für
-  Module ohne eigenen Quellcode. Lizenzrechtlich bleibt das auf internen
-  Gebrauch beschränkt (siehe `vendor/README.md`).
-
-Diese Liste ist **für beide Wege nützlich** — Pfad (B) macht mehrere
-Punkte unten zur Pflicht (exakte Byte-Kompatibilität bei Header/Callcode-
-Tabellen), Pfad (A) macht sie zur freien Wahl (Konzept übernehmen, Format
-selbst bestimmen). Wo das einen Unterschied macht, steht es dabei.
+Dieses Dokument geht im Folgenden von Bedeutung 1 als **Minimalziel**
+aus (das ist ohnehin nötig für 68K-Kompatibilität) und markiert an den
+relevanten Stellen, wo Bedeutung 2 zusätzliche Arbeit bedeuten würde.
 
 ## 1. Modulformat — was ein Modul-Header mindestens braucht
 
 Aus [Thema 00](kernel-walkthrough/00-modul-aufbau-und-header/): drei
 untersuchte Header-Generationen (6809/68K/OS-9000), aber ein Kern, der
-über alle drei ~45 Jahre hinweg gleich blieb:
+über alle drei ~45 Jahre hinweg gleich blieb. **Diese Felder muss der
+eigene Kernel byte-genau verstehen können, um echte Module zu erkennen
+und zu linken** — das ist jetzt keine Empfehlung mehr, sondern die
+technische Grundlage der zugesagten Kompatibilität:
 
-| Feld | Zweck | Für Pfad (B) zwingend byte-genau | Für Pfad (A) frei wählbar, aber Konzept behalten |
-|---|---|---|---|
-| Sync-Konstante | Modul im Speicher/auf Platte erkennen | Ja, `$4AFC` (68K-Wert) | Ja — eigener Wert erlaubt, aber ein fester Wert bleibt sinnvoll für den Boot-ROM-Scan |
-| Modulgröße | Wie viele Bytes gehören zum Modul | Ja | Ja |
-| Name-Offset + Namensstring | Modul über Namen linken (`F$Link`) | Ja | Ja, falls überhaupt namensbasiertes Linken gewünscht ist |
-| **Typ-Code** | Welche Rolle hat das Modul (System/Fmgr/Driver/Descriptor) | **Ja, exakt `0x0C`/`0x0D`/`0x0E`/`0x0F`** — das ist die am längsten unveränderte Konstante der ganzen OS-9-Familie (6809→68K→x86, ~28 Jahre identisch) | Frei, aber: das Konzept "Typ-Byte, mit dem IOMan beim Linken filtert" ist der Kern des Dreiklangs (s. Abschnitt 3) — ohne das geht Pfad-B-Kompatibilität ohnehin nicht, für Pfad A trotzdem sinnvoll |
-| Einsprungoffset (`M$Exec`) | Wo beginnt der Modulcode | Ja (Position im Header darf variieren, Konzept nicht) | Ja |
-| Prüfsumme | Beschädigte Module erkennen | Ja, falls echte Module gelinkt werden sollen | Empfehlenswert, aber optional |
+| Feld | Zweck | Byte-genaue Kompatibilität nötig? |
+|---|---|---|
+| Sync-Konstante | Modul im Speicher/auf Platte erkennen | Ja — beide bekannten Werte (`$4AFC` 68K, `$FC4A`/`$4AFC` x86-gespiegelt) müssen erkannt werden, um Module beider Familien zu finden |
+| Modulgröße | Wie viele Bytes gehören zum Modul | Ja |
+| Name-Offset + Namensstring | Modul über Namen linken (`F$Link`) | Ja |
+| **Typ-Code** | Welche Rolle hat das Modul (System/Fmgr/Driver/Descriptor) | **Ja, exakt `0x0C`/`0x0D`/`0x0E`/`0x0F`** — das ist die am längsten unveränderte Konstante der ganzen OS-9-Familie (6809→68K→x86, ~28 Jahre identisch) und die Grundlage des Dreiklangs (Abschnitt 3) |
+| Einsprungoffset (`M$Exec`/`m_exec`) | Wo beginnt der Modulcode | Ja — Position im Header unterscheidet sich zwischen 68K (`$30`) und OS-9000 (`$24`), der Parser muss beide Layouts kennen |
+| Prüfsumme | Beschädigte Module erkennen | Empfehlenswert für eigene neue Module, für das reine Erkennen/Linken echter Module nicht zwingend |
 
-**Nicht übernehmenswert:** Weder 68Ks 46-Byte-Minimalheader noch OS-9000s
-88-Byte-Universalheader sind zwingend die richtige Wahl für einen neuen
-Entwurf — das war eine Design-Entscheidung ihrer jeweiligen Epoche
-(68K: Speicher war knapp, nur das Nötigste im Standard-Header; OS-9000:
-ein C-Compiler kann eine größere feste Struktur billig verwalten). Für
-Pfad (A) lohnt sich eher OS-9000s Ansatz (ein Feld pro Konzept, keine
-"nur bei bestimmten Typen vorhandene" Erweiterung) — einfacher zu parsen,
-kein Sonderfall-Code nötig.
+**Für eigene, zusätzliche Modularten** (von Andreas ausdrücklich gewünscht):
+freie Wahl, mit einer Einschränkung — der Sync-Wert-Scan beim Boot (Punkt
+"Modul-Scanner" in Abschnitt 2) muss zwischen "das ist ein 68K-Modul",
+"das ist ein OS-9000-Modul" und "das ist ein eigenes Q9-Modul"
+unterscheiden können, sich also über einen eigenen, vierten Sync-Wert
+identifizieren, der nicht mit den beiden bestehenden kollidiert.
+
+Weder 68Ks 46-Byte-Minimalheader noch OS-9000s 88-Byte-Universalheader
+müssen dabei als internes Modell übernommen werden — der Kernel kann
+intern EIN gemeinsames Verständnis (z. B. angelehnt an `src/q9moduleheader.h`,
+das schon alle drei Layouts als Parser-Definitionen enthält) nutzen und
+beim Lesen eines Moduls anhand des Sync-Werts entscheiden, welches der
+bekannten Layouts gilt.
 
 ## 2. Boot-Init-Reihenfolge — was beide Kernel in derselben Grundform tun
 
@@ -148,41 +144,46 @@ notwendig, weil 68K-Boot-ROMs keine Garantie über den Anfangszustand des
 RAM geben; für Q9-Flux (wo der Bootvorgang bekannt/kontrolliert ist)
 prüfenswert, ob das überhaupt nötig ist.
 
-## 3. Der Dreiklang — Pflicht, falls Pfad (B) gewählt wird
+## 3. Der Dreiklang — jetzt eine Pflichtanforderung
 
 Aus [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/) und
 [Thema 03](kernel-walkthrough/03-dreiklang/): der auffälligste Fund der
 ganzen Serie — **`Q9X_ioman_attach` (x86) linkt mit exakt denselben drei
 Filterwerten `0xF00`/`0xE00`/`0xD00` wie das 68K-`I$Attach`**, um
 nacheinander Descriptor→Driver→File-Manager zu linken. Über zwei komplett
-unabhängige Implementierungen hinweg identisch.
+unabhängige Implementierungen hinweg identisch — und genau deshalb jetzt
+kein "netter Fund mehr", sondern **Pflichtmechanismus**: ohne exakten
+Nachbau von `F$Link` mit typgefiltertem Namens-Lookup, in dieser
+Reihenfolge, mit diesen Filterwerten, lassen sich weder reale
+`cfide`/`rbf`-Module (68K) noch reale OS-9000-Äquivalente ansprechen —
+und genau das hat Andreas als nicht verhandelbar bezeichnet.
 
-**Falls Pfad (B) (echte Binaries weiterverwenden):** dieser Mechanismus
-muss **exakt** nachgebaut werden — `F$Link` mit typgefiltertem Namens-
-Lookup, in dieser Reihenfolge, mit diesen Filterwerten. Ohne das lassen
-sich reale `cfide`/`rbf`-Module nicht ansprechen.
-
-**Falls Pfad (A):** das Konzept (ein Gerät wird durch DREI verlinkte
-Module beschrieben, nicht durch eine monolithische Treiberdatei) ist
-trotzdem wertvoll — es trennt "was für ein Gerät ist das" (Descriptor) von
-"wie spreche ich die Hardware an" (Driver) von "welche Dateisystem-Semantik
-gilt" (File-Manager). Diese Trennung erlaubt z. B., denselben Treiber mit
-verschiedenen File-Managern zu kombinieren (SCF für seriell, RBF für
-Blockgeräte) — ein Freiheitsgrad, den man beim Neuentwurf nicht
-leichtfertig aufgeben sollte, auch mit eigenem Format.
+Der Dreiklang selbst (Descriptor beschreibt "was für ein Gerät",
+Driver spricht die Hardware an, File-Manager definiert die
+Dateisystem-Semantik) bleibt auch für **eigene, neue** Modularten ein
+sinnvolles Muster — erlaubt z. B., einen Treiber mit verschiedenen
+File-Managern zu kombinieren (SCF für seriell, RBF für Blockgeräte).
 
 **Callcode-Dispatch innerhalb eines File-Managers** (Thema 03): beide
 Architekturen lösen das über eine **kompakte, callcode-indizierte
 Sprungtabelle** — 68K mit 13 Slots (`I$Create`…`I$Close`, Basis `0x83`)
 direkt an der `M$Exec`-Adresse, x86 mit 16 Slots (3 neue, unidentifizierte
-dazu) im `m_idata`-Bereich, indiziert mit `Callcode-0x95`. **Übernahme-
-Empfehlung unabhängig vom Pfad**: eine File-Manager-interne
-Sprungtabelle, indiziert über `(Callcode - Basiswert)`, ist ein simples,
-bei beiden Architekturen bewährtes Muster — deutlich einfacher als eine
-Kette von `if`/`switch`-Vergleichen, und offen für Erweiterung (x86 zeigt,
-dass man die Tabelle bei Bedarf problemlos vergrößern kann, 13→16).
+dazu) im `m_idata`-Bereich, indiziert mit `Callcode-0x95`. Für echte
+Kompatibilität muss der eigene Kernel **beide** Tabellen-Layouts (Position
+im Modul, Basiswert der Indizierung) unterstützen — für eigene neue
+File-Manager ist das Muster selbst (`(Callcode-Basiswert)` als Tabellen-
+Index) eine klare Übernahme-Empfehlung, unabhängig vom exakten Layout.
 
 ## 4. Was NICHT übernommen werden sollte
+
+**Wichtige Klarstellung vorab:** Diese Punkte betreffen nur Code, den
+**wir selbst neu schreiben** (eigene Kernel-Interna, eigene neue Module) —
+sie haben **nichts** mit der Fähigkeit zu tun, echte alte Module
+auszuführen. Ein reales Modul, das intern einen der unten genannten
+Tricks nutzt, läuft trotzdem unverändert weiter, wenn wir seinen
+Maschinencode ausführen (68K direkt, x86 nur mit einem eigenen x86-
+Interpreter, s. Statusabschnitt oben) — wir müssen diese Tricks nicht
+selbst nachbauen, nur nicht kaputt machen, was schon drinsteht.
 
 - **Der x86-"RET-Trampolin"-Sprungtrick** (`CALL $+5`/`POP`/`LEA`/zwei
   `PUSH`/`RET` statt normalem `CALL`) — taucht in den x86-Referenzkernen
@@ -190,9 +191,9 @@ dass man die Tabelle bei Bedarf problemlos vergrößern kann, 13→16).
   vermutlich eine Notlösung des jeweiligen C-Compilers/der Toolchain
   (Ghidra scheitert jedes Mal daran, es als normalen Aufruf zu erkennen —
   ein Hinweis, dass es kein bewusst gewähltes, sauberes Sprachmittel war).
-  Für einen von Hand geschriebenen oder aus C kompilierten eigenen Kernel
-  gibt es keinen Grund, diesen Trick nachzubauen — ein normaler indirekter
-  `JMP`/`CALL` über einen Funktionszeiger reicht.
+  Für **eigenen, neuen** Kernel-/Modulcode gibt es keinen Grund, diesen
+  Trick nachzubauen — ein normaler indirekter `JMP`/`CALL` über einen
+  Funktionszeiger reicht.
 - **x86s 88-Byte-Universalheader 1:1** — wie in Abschnitt 1 erwähnt, das
   Konzept (ein Feld pro Sache, keine typabhängige Sonderbehandlung) ist
   gut, die exakte Feldreihenfolge/-breite ist reine OS-9000-Historie.
@@ -205,11 +206,15 @@ dass man die Tabelle bei Bedarf problemlos vergrößern kann, 13→16).
 Diese Liste löst NICHTS davon auf, macht die Entscheidungen aber
 konkreter:
 
-1. **Pfad (A) oder (B)?** (s. o.) — das bestimmt, wie viel von Abschnitt 1
-   und 3 zur Pflicht statt zur Empfehlung wird.
+1. **Strukturelle Kompatibilität oder tatsächliche Binärausführung für
+   OS-9000/x86-Module?** (s. Statusabschnitt oben) — Bedeutung 2 braucht
+   einen x86-Interpreter zusätzlich zu Musashi, ein substanzielles neues
+   Stück Technik, kein Nebeneffekt der übrigen Punkte hier.
 2. **Eigenes Syscall-Nummerierungsschema oder 68K-`F$`/`I$`-Codes
-   übernehmen?** Bei Pfad (B) zwingend die 68K-Codes (sonst keine
-   Kompatibilität zu echten Treibern/File-Managern); bei Pfad (A) frei.
+   übernehmen?** Für Kompatibilität zu echten 68K-Treibern/File-Managern
+   ohnehin zwingend die 68K-Codes — die Frage ist eher, ob eigene, neue
+   Syscalls eine getrennte Nummerierung bekommen oder in dieselbe Tabelle
+   einsortiert werden.
 3. **Wie groß soll der Kernel-Global-Bereich sein, und wo liegt er?** (68K
    nutzt `0x1000` Byte ab einer über VBR erreichten Adresse) — abhängig
    von Q9-Flux' RAM-Layout.
@@ -217,10 +222,11 @@ konkreter:
    x86-Ansatz übernehmen" — aber das ist eine echte Design-Entscheidung
    mit Aufwandsfolgen (Prüfsummen-Logik, Namenskollisions-Handling bei
    mehreren Revisionen), keine reine Formsache.
-5. **Reicht ein Descriptor+Driver+File-Manager-Dreiklang, oder wird eine
-   vereinfachte Zwei-Ebenen-Struktur gewünscht** (z. B. Descriptor+Driver
-   verschmolzen, wenn ohnehin nur eigene, für Q9 geschriebene Treiber
-   zum Einsatz kommen)?
+5. **Wie viele/welche eigenen Modularten sollen zusätzlich zum Dreiklang
+   definiert werden?** Andreas ist dafür offen, aber ohne Eingrenzung
+   bleibt das komplett unbestimmt — auch nur ein paar Stichworte würden
+   reichen, um die Modulformat-Erweiterung (Abschnitt 1) konkreter zu
+   planen.
 
 ## Quellen
 
