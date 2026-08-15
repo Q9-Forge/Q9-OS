@@ -278,6 +278,43 @@ einer erkennbaren Erst-Initialisierung) — für eine konkrete Umsetzung
 bräuchte es eine weitere Vertiefungsrunde, keine reine Übernahme aus den
 hier gefundenen Ausschnitten.
 
+**Ergänzung 2026-08-15** (Quelle: `Q9-Flux/docs/MMU_SSM_WORKFLOW_de.md` +
+`68k_tech.pdf`, kein Kernel-Walkthrough-Thema, sondern ein Planungsgespräch):
+zwei bis dahin unklare Punkte konkretisiert.
+
+1. **SSM baut echte Übersetzungstabellen, keine reine Schutzprüfung ohne
+   Umsetzung.** Laut `MMU_SSM_WORKFLOW_de.md` legt SSM einen vollständigen
+   68030-PMMU-Deskriptorbaum an (Root → Table A → B → C → D) mit getrennten
+   Supervisor- und User-Root-Pointern (`SRP`/`CRP`). Für den eigenen Kernel
+   heißt das: eine **portable Seitentabellen-Abstraktionsschicht** ist
+   nötig (68K-Kompatibilitätspfad SSM-bytegetreu, native Ziele mit
+   äquivalenter Semantik) — kein freier Entwurf zwischen "flach" und
+   "virtuell", die Altlast ist bereits virtuell. Relevante Syscalls dafür,
+   früh zu priorisieren zusammen mit dem Modul-Laden: `F$ChkMem`,
+   `F$SRqMem`, `F$MapBlk`, `F$Trans`.
+2. **Geräte-Fenster werden NICHT beim Boot vorab eingerichtet, sondern
+   verzögert beim ersten `I$Attach`.** Zitat `68k_tech.pdf`: "OS-9 links to
+   its file manager and device driver... the driver's initialization
+   routine is called to initialize the hardware... **The kernel attaches
+   all devices at open and detaches them at close.**" Die Init-Routine
+   eines Treibers (Dispatch-Tabellen-Slot 0) läuft also nur beim ersten
+   `I$Open`/`I$Create` auf dieses Gerät — dort würde `F$MapBlk` das
+   physische Fenster bei SSM anmelden, nicht der Boot-ROM und nicht der
+   Kernel-Bootstrap. Für ein paar einzelne I/O-Register ist trotzdem kein
+   gesondertes `F$MapBlk` nötig: Treiber-Routinen laufen innerhalb eines
+   `TRAP` (S-Bit gesetzt, Supervisor-Root-Tabelle), die laut Adresskarte in
+   `MMU_SSM_WORKFLOW_de.md` den ganzen I/O-Cluster-Bereich pauschal als
+   System-State abdeckt. Explizites `F$MapBlk` in eine *User*-Tabelle
+   braucht nur, was auch direkt aus User-Code heraus beschreibbar sein
+   soll (z. B. ein Framebuffer für performanten Direktzugriff ohne
+   Syscall pro Pixel). **Praktische Konsequenz für Q9-Flux:** die
+   bisherige Praxis, ROM/RAM/IO-Bereiche im Emulator/Bootprozess pauschal
+   vorzumappen, entspricht nicht diesem Modell — Andreas hat das bereits
+   gestoppt; nächster Schritt ist, den vorhandenen Framebuffer-Treiber so
+   zu erweitern, dass er sein Speicherfenster selbst per `F$MapBlk` in
+   seiner Init-Routine anmeldet, statt sich auf Emulator-seitiges
+   Vor-Mapping zu verlassen (noch nicht umgesetzt).
+
 ## 2e. Boot-Vorkette — was vor dem Kernel-Einsprung passiert (aus Thema 10)
 
 Aus [Thema 10](kernel-walkthrough/10-boot-vorkette/): alle bisherigen
@@ -494,7 +531,12 @@ konkreter:
    übernehmen?** Für Kompatibilität zu echten 68K-Treibern/File-Managern
    ohnehin zwingend die 68K-Codes — die Frage ist eher, ob eigene, neue
    Syscalls eine getrennte Nummerierung bekommen oder in dieselbe Tabelle
-   einsortiert werden.
+   einsortiert werden. **Teilweise entschieden (2026-08-15, s. Abschnitt
+   6):** eigene Syscalls bekommen einen von den echten `F$`/`I$`-Codes
+   komplett getrennten Nummernraum — ein erster Entwurf (`F_MUTEX_INIT`
+   `0x30` u.a.) kollidierte real mit `F$AllPD`/`F$RetPD`/`F$SSvc`/
+   `F$DelTsk`. Offen bleibt nur noch die exakte Lage/Größe dieses neuen
+   Raums.
 3. **Wie groß soll der Kernel-Global-Bereich sein, und wo liegt er?** (68K
    nutzt `0x1000` Byte ab einer über VBR erreichten Adresse) — abhängig
    von Q9-Flux' RAM-Layout.
@@ -506,7 +548,81 @@ konkreter:
    definiert werden?** Andreas ist dafür offen, aber ohne Eingrenzung
    bleibt das komplett unbestimmt — auch nur ein paar Stichworte würden
    reichen, um die Modulformat-Erweiterung (Abschnitt 1) konkreter zu
-   planen.
+   planen. **Teilweise entschieden (2026-08-15):** ein eigenes Q9-Modul-/
+   Header-Format ist für Phase 1 (s. Abschnitt 6) grundsätzlich in Scope —
+   u.a. weil erweiterte Zugriffsrechte (mehr als Owner/Public) auf den
+   echten Legacy-Headern strukturell nicht nachrüstbar sind (klassisches
+   68K-`FD_ATT`/`PD_ATT` ist nur 8 Bit breit, kein Platz für eine
+   Gruppen-Ebene — die kam erst mit OS-9000). Konkrete Feldliste des
+   eigenen Headers noch offen.
+
+## 6. Phasenplan und SMP-Grundsatzentscheidungen (2026-08-15, 💡 Vorschlag)
+
+Planungsgespräch, keine neuen Ghidra-Funde — Ergebnis eines Gesprächs über
+"was soll der eigene Kernel zusätzlich zur OS-9/9000-Vorgabe können, und
+was müssen wir *jetzt* entscheiden, weil es sich später nicht mehr sauber
+nachrüsten lässt". Noch nicht mit Andreas' finalem Go versehen, daher 💡.
+
+### Phasenplan (Andreas' eigene Formulierung)
+
+- **Phase 1**: reale OS-9/68K-Module laden und ausführen können (zuerst
+  Original-Microware-Manager/IO/Driver/Descriptor-Module) — plus SMP-
+  Fähigkeit (mindestens architektonisch vorgesehen), 64-Bit-taugliche
+  Schnittstellen inkl. Big-/Little-Endian-Bewusstsein (mindestens
+  vorgesehen), eigene neue Syscalls (Umsetzung kann später kommen:
+  Multiprozessor-Verwaltung, Mutex, interne Pipes) und ein eigenes
+  Q9-Modul-/Header-Format als Planungsgegenstand.
+- **Phase 2**: reale OS-9000/x86-Module laden und ausführen können, plus
+  alle Zusatzfähigkeiten aus Phase 1.
+- **Phase 3 (Nice-to-have, wächst erwartungsgemäß weiter)**: CPU-Hotplug &
+  Deep Sleep, UNIX-artiges `fork()` über A6-Register-Umbiegen (nur für
+  Q9-eigenen, flach-adressierten Code sinnvoll), volles Demand Paging mit
+  Swap.
+
+### Sortiermethode: One-Way-Door vs. Two-Way-Door
+
+Kriterium: lässt sich eine Erweiterung später noch sauber nachrüsten, oder
+zieht sie sich unumkehrbar durch den ganzen Code? Ergebnis dieser Runde:
+
+**Jetzt entscheiden (🔴 Phase 1):**
+- SMP-fähige Kernel-Globals (pro-CPU statt fixem A6/FS-Zeiger), TAS-
+  Spinlock-Unterbau mit `#ifdef`-No-Op auf Single-Core, CPU-Zahl dynamisch
+  aus einem Init-Modul gelesen.
+- Adressierungsmodell (s. Abschnitt 2d, Ergänzung 2026-08-15) — Portable
+  Seitentabellen-Abstraktion, weil die Legacy-Seite bereits real
+  PMMU-basiert virtuell adressiert, nicht flach/physisch.
+- 64-Bit-taugliche Syscall-Struct-/Zeigergrößen-Konventionen, auch wenn
+  68K/RISC-V32 vorerst 32-Bit bleiben.
+- Eigener, von `F$`/`I$` komplett getrennter Syscall-Nummernraum (s.
+  Fund unten).
+- Grundexistenz von Kernel-Mutex-Primitiven (nicht die exakte
+  Nummer/der Name — die ist 🟡).
+
+**Später leicht nachrüstbar (🟡), heute nur Erweiterungspunkt vormerken:**
+Priority Inheritance/Ceiling für Locks, Modul-Hot-Reload, Futexes,
+Lockless-Ringpuffer/Named-Pipe-Systemmonitoring, `/proc`, Dateisystem-
+Journaling. Netzwerk-Stack bleibt grundsätzlich File-Manager-Ebene, nie
+Kernel — bestätigt über `os9k_tech.pdf`: `DT_NFM`/`DT_SOCK`/`DT_RTNFM`
+sind File-Manager-Gerätetypen, kein Kernel-Bestandteil.
+
+### Konkreter, verifizierter Fund: Syscall-Nummernkollision
+
+Ein erster Entwurf eigener Syscalls (`F_MUTEX_INIT` `0x30`, `F_MUTEX_LOCK`
+`0x31`, `F_MUTEX_UNLOCK` `0x32`, `F_CPU_COUNT` `0x40`) wurde gegen
+[`SYSCALL_MODULE_MAP.md`](SYSCALL_MODULE_MAP.md) geprüft — alle vier
+kollidieren mit real existierenden OS-9-Syscalls (`F$AllPD`, `F$RetPD`,
+`F$SSvc`, `F$DelTsk`). Regel daraus: jeder neue Syscall-Vorschlag muss
+zuerst gegen diese Tabelle geprüft werden, bevor eine Nummer vergeben
+wird.
+
+### Namenskonvention: `SMP_`, nicht `MP_`
+
+Multiprozessor-bezogene Syscalls/Bezeichner bekommen das Präfix `SMP_`
+(Symmetric Multi-Processing, Industriestandard). **Nicht** `MP_` — das ist
+im echten OS-9000-Spec bereits *Module Permission* (`MP_OWNER_READ` etc.,
+Modul-Zugriffsrechte im Header) — Wiederverwendung würde dieselbe Art von
+Kollision reproduzieren wie oben. Geprüft: `SMP` kommt in `68k_tech.pdf`
+und `os9k_tech.pdf` nirgends vor, frei verwendbar.
 
 ## Quellen
 
@@ -528,5 +644,11 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 
 Konkrete Modul-/Syscall-Stückliste, die auf diesem Dokument aufbaut:
 [`OWN_KERNEL_MODULES_OVERVIEW.md`](OWN_KERNEL_MODULES_OVERVIEW.md).
+
+Abschnitt 2d (Ergänzung) und Abschnitt 6 basieren zusätzlich auf einem
+Planungsgespräch (kein Kernel-Walkthrough-Thema) sowie auf
+`Q9-Flux/docs/MMU_SSM_WORKFLOW_de.md`, `68k_tech.pdf` (Kapitel zu
+`I$Attach`, `FD_ATT`/`PD_ATT`) und `os9k_tech.pdf` (`MP_*`/`PERM_*`/
+`DT_*`-Konstanten).
 
 **Erstellt**: 2026-08-14, zuletzt ergänzt 2026-08-15
