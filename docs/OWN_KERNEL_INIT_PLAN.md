@@ -246,6 +246,10 @@ ist das ohnehin irrelevant (`TRAP #0` ist die naheliegende, bereits vom
 68K-Vorbild bewährte Wahl), aber ein Hinweis darauf, dass die x86-
 Vergleichsseite hier an eine echte Erkenntnisgrenze gestoßen ist.
 
+**Nachtrag (Thema 09):** der Auslöser wurde inzwischen doch gefunden —
+nur nicht im Kernel-Modul selbst, sondern auf der aufrufenden Seite in
+einem Treiber-Modul: ein echter `INT 0xFF`. Details in Abschnitt 3b.
+
 ## 2d. MMU/Speicherschutz — SSM als eigenständiges, optionales Modul
 
 Aus [Thema 07](kernel-walkthrough/07-ssm-mmu/), direkte Antwort auf
@@ -335,6 +339,45 @@ File-Manager-Implementierungen ein sinnvolles Vorbild. Für die
 bleiben die Pflichtanforderung, unabhängig davon, wie der eigene Kernel
 intern vom Tabellen-Eintrag zum Treiber kommt.
 
+## 3b. Treiber-Hardware-Zugriff und der x86-Syscall-Auslöser (aus Thema 09)
+
+Aus [Thema 09](kernel-walkthrough/09-treiber-hardware/): der letzte
+Schritt der Kette Descriptor→Driver→Hardware, und nebenbei die Antwort
+auf die in Abschnitt 2c offen gelassene Frage nach dem x86-Syscall-
+Auslöser.
+
+**68K (`cfide`):** ein direkter, lehrbuchmäßiger ATA/IDE-PIO-Treiber —
+Statusregister pollen, Drive/Head- und LBA-Register setzen, echte
+ATA-Kommandobytes (`0x20`=READ, `0x30`=WRITE), 512 Byte byteweise per PIO
+transferieren. **Kein** Systemaufruf im heißen Lese-/Schreibpfad — nur
+zwei `trap #0`-Aufrufe an ganz anderer Stelle (Init, GetStat-Formatierung).
+Das bestätigt: ein Treiber, der echte Hardware bedient, braucht dafür
+keinen einzigen Kernelaufruf — reiner Register-Zugriff reicht.
+
+**x86 (`scllio`):** genau umgekehrt — **kein** `IN`/`OUT` im ganzen Modul,
+dafür ein zehn Byte kleiner Trampolin, der `INT 0xFF` mit einem Zeiger auf
+einen Callcode-Parameterblock in `ECX` ausführt. Das ist der bislang
+gesuchte x86-Systemaufruf-Mechanismus (das x86-Gegenstück zu `TRAP #0`) —
+gefunden auf der **aufrufenden** Seite, nicht im Kernel-Modul selbst (der
+`IDT`-Vektor-0xFF-Handler bleibt weiterhin unlokalisiert). Ob `scllio`
+darüber hinaus selbst Hardware anspricht (hinter einem der drei
+gefundenen indirekten `CALL`s), wurde nicht geklärt.
+
+**Für den eigenen Kernel:**
+- **Muss-Anforderung** (für x86-Kompatibilität, falls Bedeutung 2 aus dem
+  Statusabschnitt oben gilt): ein `IDT`-Gate für Vektor `0xFF`, das echte
+  x86-Module unverändert weiter nutzen können — analog zum 68K-`TRAP #0`-
+  Handler aus Thema 06.
+- **Übernahme-Empfehlung, architekturunabhängig**: der Parameterblock-
+  Kontrakt (Callcode-Wort + Flag-Wort + Größenfeld + Nutzdaten, komplett
+  auf dem Stack aufgebaut, Zeiger im Trap-Register übergeben) ist ein
+  einfaches, klar spezifizierbares Muster für eigene neue Systemaufrufe —
+  unabhängig davon, ob als 68K-`TRAP` oder x86-`INT` ausgelöst.
+- **Bestätigt erneut** das Dispatch-Muster aus Sektion 3a: `scllio`s drei
+  indirekten `CALL`s über eine verkettete Liste sind derselbe Mechanismus
+  wie `Q9X_rbf_driver_dispatch` aus Thema 08 — kein Einzelfall, sondern
+  ein durchgängiges x86-Konstruktionsprinzip.
+
 ## 4. Was NICHT übernommen werden sollte
 
 **Wichtige Klarstellung vorab:** Diese Punkte betreffen nur Code, den
@@ -402,5 +445,7 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 - [`kernel-walkthrough/05-speicherverwaltung/`](kernel-walkthrough/05-speicherverwaltung/README.md)
 - [`kernel-walkthrough/06-exception-handler/`](kernel-walkthrough/06-exception-handler/README.md)
 - [`kernel-walkthrough/07-ssm-mmu/`](kernel-walkthrough/07-ssm-mmu/README.md)
+- [`kernel-walkthrough/08-rbf-handler/`](kernel-walkthrough/08-rbf-handler/README.md)
+- [`kernel-walkthrough/09-treiber-hardware/`](kernel-walkthrough/09-treiber-hardware/README.md)
 
-**Erstellt**: 2026-08-14
+**Erstellt**: 2026-08-14, zuletzt ergänzt 2026-08-15

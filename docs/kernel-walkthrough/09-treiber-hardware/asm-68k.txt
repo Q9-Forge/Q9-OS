@@ -1,0 +1,143 @@
+Quelle: modules/cfide-driver/vendor/cfide (CB030-CompactFlash-IDE-Treiber,
+1462 Byte), Ghidra-Projekt /Volumes/SSD1TB/projects/Q9-OS-ghidra-cfide,
+Skript modules/cfide-driver/ghidra_scripts/DumpReadWriteHandlers.java.
+
+Registerkonvention (aus dem Code erschlossen, OS-9/68K-Treiber-Standard):
+  A2 = Zeiger auf Treiber-Static-Storage; (0,A2) = I/O-Basisadresse -> A3
+  A1 = Zeiger auf Path-Descriptor/Device-Tabelleneintrag
+  A5 = Zeiger auf Datenpuffer des Aufrufers
+  D2 = Blocknummer (LBA)
+
+=== Q9_cfide_init @ 0x4A, 40 Byte ===
+0000004a: lea (0x534,PC),A0          ; A0 = "cfide" Modulname o.ae.
+0000004e: bsr.w 0x0000056e           ; -> trap#0-Syscall-Helfer (s.u.)
+00000052: move.b #0x1,(0x2e,A2)
+00000058: move.l #0x7fffff00,D0
+0000005e: lea (0x36,A2),A0
+00000062: move.l D0,(0x0,A0)
+00000066: lea (0x8c,A2),A1
+0000006a: move.l A1,(0x24,A0)
+0000006e: moveq 0x0,D1               ; Erfolg (D1=0 = kein Carry-Fehler)
+00000070: rts
+
+=== Q9_cfide_read @ 0x72, 364 Byte ===
+; Fast-Path: Block 0 aus Cache, falls Cache-Flag (0x28,A0) gesetzt
+00000072: movea.l (0x0,A2),A3        ; A3 = I/O-Basisadresse
+00000076: movea.l (0xe,A1),A5        ; A5 = Zielpuffer
+0000007a: tst.l D2
+0000007c: bne.w 0x0000008c           ; Block != 0 -> kein Cache-Check
+00000080: movea.l (0x48,A1),A0
+00000084: tst.b (0x28,A0)
+00000088: bne.w 0x000001cc           ; Cache gueltig -> direkt kopieren
+
+; Normalfall: echter Hardware-Zugriff
+0000008c: movea.l (0x48,A1),A0
+00000090: tst.b (0x29,A0)
+00000094: bne.w 0x0000010c           ; "busy/pending"-Flag bereits gesetzt
+00000098: move.l #0x123456,D0        ; Timeout-Zaehler
+0000009e: btst.b #0x7,(0x7,A3)       ; Status-Register Bit 7 = BSY
+000000a4: bne.w 0x000000b2
+000000a8: btst.b #0x6,(0x7,A3)       ; Status-Register Bit 6 = DRDY
+000000ae: bne.w 0x000000c2           ; Laufwerk bereit -> weiter
+000000b2: subq.l #0x1,D0
+000000b4: bne.w 0x0000009e
+000000b8: move.w #0xf6,D1w           ; Timeout -> Fehlercode 0xF6
+000000bc: ori #0x1,CCR
+000000c0: rts
+000000c2: moveq 0x0,D0
+000000c4: move.b (0x81,A1),D0b       ; Laufwerksauswahl-Bits aus Path-Desc.
+000000c8: lsl.b #0x4,D0b
+000000ca: ori.b #-0x20,D0b           ; 0xE0 = LBA-Modus-Flags
+000000ce: move.b D0b,(0x6,A3)        ; -> Drive/Head-Register (+6)
+000000d2: move.b #0x1,(0x1,A3)       ; Sektorzahl = 1 (+1: Sector Count)
+000000d8: move.b #-0x11,(0x7,A3)     ; 0xEF = ATA SET FEATURES (o.ae.)
+
+; ... (identischer Warte-Block wie oben, dann:)
+00000108: st (0x29,A0)               ; "pending"-Flag setzen
+0000010c: moveq 0x0,D0
+[Drive/Head-Register erneut gesetzt, identischer Warte-Block]
+00000146: move.b #0x1,(0x2,A3)       ; Sector Count = 1
+0000014c: move.b D2b,(0x3,A3)        ; LBA Bits 0-7  -> Sector-Number (+3)
+00000150: ror.l #0x8,D2
+00000152: move.b D2b,(0x4,A3)        ; LBA Bits 8-15 -> Cylinder-Low (+4)
+00000156: ror.l #0x8,D2
+00000158: move.b D2b,(0x5,A3)        ; LBA Bits 16-23-> Cylinder-High (+5)
+0000015c: move.b #0x20,(0x7,A3)      ; Command-Register (+7) = 0x20 = ATA READ SECTOR(S)
+; ... Warteschleife auf BSY=0 && DRQ(Bit3)=1 ...
+0000018c: movea.l A5,A0
+0000018e: move.w #0x1ff,D1w          ; 512 Iterationen
+00000192: move.b (0x0,A3),(A0)+      ; PIO: Datenregister (+0) -> Puffer, byteweise
+00000196: dbf D1w,0x00000192
+0000019a: tst.l D2
+0000019c: beq.w 0x000001a4           ; Block 0 -> zusaetzlich in Cache legen
+000001a0: moveq 0x0,D1
+000001a2: rts                        ; Block != 0: fertig, direkt zurueck
+000001a4: movea.l (0x48,A1),A0
+000001a8: st (0x28,A0)               ; Cache-gueltig-Flag setzen
+000001ac: move.w #0x14,D1w
+000001b0: move.b (0x0,A5,D1w*0x1),(0x0,A0,D1w*0x1)  ; A5 -> Cache-Puffer kopieren
+000001b6: dbf D1w,0x000001b0
+000001ba: movea.l (0x24,A0),A0
+000001be: move.w #0x7f,D1w           ; 128 Langworte = 512 Byte
+000001c2: move.l (A5)+,(A0)+
+000001c4: dbf D1w,0x000001c2
+000001c8: moveq 0x0,D1
+000001ca: rts
+000001cc: movea.l (0x24,A0),A0       ; Fast-Path: Cache -> Aufrufer-Puffer
+000001d0: move.w #0x7f,D1w
+000001d4: move.l (A0)+,(A5)+
+000001d6: dbf D1w,0x000001d4
+000001da: moveq 0x0,D1
+000001dc: rts
+
+=== Q9_cfide_write @ 0x1DE, 384 Byte ===
+; Struktur identisch zu Read (Statusabfrage, Drive/Head, LBA aus D2),
+; aber IMMER echter Hardware-Zugriff (kein Cache-Fast-Path) und mit
+; Command 0x30 statt 0x20:
+000002de: move.b #0x30,(0x7,A3)      ; Command-Register = 0x30 = ATA WRITE SECTOR(S)
+; ... Warteschleife auf BSY=0 && DRQ(Bit3)=1 ...
+0000030e: movea.l A5,A0
+00000310: move.w #0x1ff,D1w
+00000314: move.b (A0)+,(0x0,A3)      ; PIO: Puffer -> Datenregister (+0), byteweise
+00000318: dbf D1w,0x00000314
+; danach zweite Statuspruefung (Bit0 = ERR) -> Fehlercode 0xF5 falls gesetzt
+
+=== Q9_cfide_getstat @ 0x35E, 400 Byte ===
+0000035e: cmpi.w #0x44,D0w           ; GetStat-Code 0x44 (SS.Ready?)
+00000362: beq.w 0x00000378
+00000366: cmpi.w #0x40,D0w           ; GetStat-Code 0x40 (SS.SSize/Kapazitaet?)
+0000036a: beq.w 0x00000382
+0000036e: move.w #0xd0,D1w           ; unbekannter Code -> Fehler 0xD0
+00000372: ori #0x1,CCR
+00000376: rts
+00000378: move.w #0x200,(0x94,A1)    ; 0x44: schreibt Blockgroesse (512) zurueck
+0000037e: moveq 0x0,D1
+00000380: rts
+00000382: ; 0x40: liest Kapazitaet per Identify-aehnlicher Sequenz,
+           ; formatiert sie ueber die BCD/ASCII-Hilfsroutine bei 0x4fc,
+           ; klemmt auf max. 0x7FFFFF (LBA28-Bereich) und legt sie in
+           ; (0x8,A5) ab.
+
+=== Q9_cfide_setstat @ 0x4EE, 10 Byte ===
+000004ee: move.w #0xd0,D1w           ; SetStat wird generell nicht unterstuetzt
+000004f2: ori #0x1,CCR
+000004f6: rts
+
+=== Q9_cfide_term @ 0x4F8, 4 Byte ===
+000004f8: moveq 0x0,D1
+000004fa: rts
+
+=== Interne Hilfsroutinen: echte trap #0 OS-9/68K-Syscalls ===
+; Nur im GetStat-0x40-Pfad benutzt (ASCII-Formatierung der Kapazitaet),
+; NICHT im heissen Read/Write-Pfad -- der greift ausschliesslich direkt
+; auf die I/O-Register zu, ohne jeden Systemaufruf.
+00000556: ror.l #0x8,D0
+00000558: movem.l {A0 D1 D0},-(SP)   ; Parameterblock auf den Stack
+0000055c: moveq 0x1,D0               ; D0 = 1  (Aufrufklasse, vermutlich "F$"-Bereich)
+0000055e: moveq 0x1,D1               ; D1 = 1  (Callcode, nicht identifiziert)
+00000560: movea.l SP,A0              ; A0 = Zeiger auf Parameterblock
+00000562: trap #0x0                  ; <- echter OS-9/68K-Systemaufruf
+0000056e: movem.l {D1 D0},-(SP)
+00000572: moveq 0x1,D0               ; D0 = 1
+00000574: moveq 0x50,D1              ; D1 = 0x50 (Callcode, nicht identifiziert)
+00000576: trap #0x0                  ; <- zweiter echter Systemaufruf (aus Init)

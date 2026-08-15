@@ -107,6 +107,15 @@ bestimmen.
 | 5 | Sonstige Exception-Handler (Bus Error, Illegal Instr., FPU, ...) | alle 7 übrigen Handler vollständig gelesen | nicht lokalisiert |
 | 6 | Handler-Adressen ins System einbinden | über die kompakte Quelltabelle bei Boot | zusätzlich(!) über einzelne PC-relative Konstanten-Installationen in Kernel-Globals (neu gefunden, aber größtenteils bereits bekannte Sentinel-Werte wie `LAB_0022151c`) |
 
+**Nachtrag (Thema 09):** der konkrete Auslöse-Mechanismus wurde
+inzwischen doch gefunden — nicht im Kernel-Modul selbst, sondern auf der
+**aufrufenden** Seite in einem Treiber-Modul (`scllio`, x86-Gegenstück zu
+`cfide`): ein kleiner Trampolin führt einen echten `INT 0xFF` aus, mit
+einem Zeiger auf einen Callcode-Parameterblock in `ECX`. Details, Code
+und Einordnung siehe [Thema 09](../09-treiber-hardware/). Der Ziel-
+Handler im Kernel (die `IDT`-Vektor-0xFF-Routine) bleibt weiterhin nicht
+lokalisiert — nur der Auslöser ist jetzt bekannt.
+
 ## Offene Punkte
 
 - **Der x86-Syscall-Dispatcher selbst wurde nicht gefunden** — das war

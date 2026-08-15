@@ -29,6 +29,7 @@ echtem Code direkt dabei.
 | [06](06-exception-handler/) | Exception-/Trap-Handler-Körper — 68K-Vorarbeit (alle 8 Handler) zusammengefasst, x86 neu untersucht; Dispatch-Tabellen-Builder bestätigt, einzelne Handler-Körper (inkl. Syscall-Dispatcher) auf x86 nicht lokalisiert | ⚠️ teilweise (x86-Syscall-Dispatcher nicht gefunden — Quelltabelle liegt zur Laufzeit in Kernel-Globals, nicht statisch im Modul, s. Thema selbst) |
 | [07](07-ssm-mmu/) | SSM — MMU-Initialisierung als eigenständiges Modul (nicht Kernel, nicht Treiber/Deskriptor); 68K: Funktionscode-Umschaltung (`MOVEC SFC`) + Blockgrößen-Konstante; x86: echte `CR3`-Seitentabellen-Programmierung gefunden | ⚠️ teilweise (komplett neues Thema, beide Module nur in Ausschnitten gelesen, s. Thema selbst) |
 | [08](08-rbf-handler/) | RBF-Handler-Körper — `I$Read`/`I$Write` im Detail; x86: `Q9X_rbf_driver_dispatch` gefunden (Laufzeit-Liste aus Geräte-ID/Funktionszeiger-Paaren, indirekter Aufruf in den Treiber) | ⚠️ teilweise (68K: ~10 interne Hilfsroutinen nicht im Detail gelesen; x86 `I$Read` bestätigt trivialer Stub, Grund offen) |
+| [09](09-treiber-hardware/) | Treiber-Hardware-Zugriff — 68K `cfide`: lehrbuchmäßiger ATA/IDE-PIO-Treiber (Status-/Command-/Datenregister, Command `0x20`/`0x30`); x86 `scllio`: **kein** `IN`/`OUT` im Modul, dafür `INT 0xFF`-Syscall-Trampolin gefunden — beantwortet Thema 06s offene Frage nach dem x86-Systemaufruf-Auslöser | ⚠️ teilweise (x86: Ziel der drei indirekten `CALL`s und der `INT 0xFF`-Handler selbst nicht lokalisiert; Namens-Hypothese "SCF Line I/O" unverifiziert) |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -100,6 +101,16 @@ nicht geklärt; `I$Write` ruft als einzigen Schritt `Q9X_rbf_driver_dispatch`
 auf — eine Laufzeit-Liste aus (Geräte-ID, Funktionszeiger)-Paaren mit
 indirektem `CALL` in den Treiber-Handler, der bisher unbekannte Übergang
 "File-Manager → Treiber" auf x86.
+
+**Hinweis zu Thema 09:** drittes komplett neues Thema. 68K: `cfide` jetzt
+vollständig als klassischer ATA/IDE-PIO-Treiber verstanden (alle 6 Slots
+real, Status-/Command-Register, echte ATA-Kommandobytes `0x20`/`0x30`,
+Block-0-Cache). x86: `scllio` (einziges echtes Driver-Modul im Fundus)
+enthält keinerlei Port-I/O — dafür einen `INT 0xFF`-Trampolin, der
+**Thema 06s offene Frage nach dem x86-Systemaufruf-Auslöser beantwortet**
+(der Handler selbst bleibt weiterhin ungefunden, nur der Auslöser ist
+jetzt bekannt). Drei indirekte `CALL`s (gleiches Verkettete-Liste-Muster
+wie Thema 08) nicht weiterverfolgt.
 
 ## Konvention
 

@@ -1,0 +1,120 @@
+Quelle: modules/os9000-x86/vendor/scllio (2504 Byte, einziges echtes
+Driver-Typ-Modul (M$Type/m_tylan = 0x0E) im gesamten x86-Fundus ausser dem
+trivialen "null"-Geraet -- keine Live-Extraktion vorhanden, nur die
+statische Kopie aus mw86.tar). Ghidra-Projekt
+/Volumes/SSD1TB/projects/Q9-OS-ghidra-os9000-scllio, Skript
+modules/os9000-x86/ghidra_scripts/scllio_AnalyzeAndDump.java.
+
+WICHTIGER HEADER-FUND (neu, bisher nicht dokumentiert): bei Driver-Typ-
+Modulen (0x0E) liegt das exec-Offset-Feld NICHT bei Header-Offset 0x24
+(wie bei Systm/Fmgr-Typ-Modulen, s. Thema 00/01/02) sondern bei 0x2C.
+Offset 0x24 zeigt bei diesem Modul auf modul-namensnahe Textdaten
+("commdev\0consdev\0"), nicht auf Code -- erster Disassemblierungsversuch
+bei der falschen Adresse ergab sinnlose Instruktionen (ARPL, INSD).
+
+=== Q9X_scllio_entry @ 0x78, 503 Byte (nicht zusammenhaengend, s.u.) ===
+00000078: MOV dword ptr [EBX + 0x68],EAX
+0000007e: MOV dword ptr [EBX + 0x6c],EAX
+00000084: MOV dword ptr [EBX + 0x70],0x0
+0000008e: PUSH EDI
+0000008f: LEA EAX,[EBX + 0x70]
+00000095: PUSH EAX
+00000096: MOV EAX,0x6c
+0000009b: PUSH 0x4
+0000009d: CALL 0x00000800             ; -> "GET"-Wrapper, Callcode 0x29 (s.u.)
+000000a2: MOV EAX,dword ptr [EBX + 0x70]
+000000a8: MOVZX ECX,word ptr [EAX]
+000000ab: TEST CX,0xfefe
+000000b4: JNZ 0x000000c2
+000000b6: MOV EAX,dword ptr [EAX + 0x90]
+000000bc: MOV dword ptr [EBX + 0x70],EAX
+000000c2: MOV ECX,dword ptr [EBX + 0x70]
+000000c8: TEST ECX,ECX
+000000ca: JZ 0x000000e2
+000000cc: MOV EAX,ECX
+000000ce: MOVZX ESI,word ptr [EAX]
+000000d1: CMP ESI,0xa800              ; Magic-/Typ-Pruefung (vermutlich Deskriptor-Signatur)
+000000d7: JNZ 0x000000e2
+000000d9: MOVZX EAX,word ptr [EAX + 0x2]
+000000dd: CMP EAX,0x1
+000000e0: JGE 0x000000ec
+000000e2: MOV EAX,0x90000             ; Fehler, falls Magic/Typ nicht passt
+000000e7: JMP 0x00000265
+; ... (Suche in verketteter Liste, mehrere indirekte Aufrufe:)
+0000017e: CALL EDI                    ; <- indirekter Aufruf ueber Funktionszeiger (Handler-Tabelle)
+000001c7: CALL ECX                    ; <- ebenso
+00000255: CALL ECX                    ; <- ebenso, gegen Ende der Funktion
+00000265: POP EDI
+00000266: POP ESI
+00000267: JMP 0x00000485              ; Epilog liegt getrennt vom Rest (Compiler-Artefakt)
+00000485: POP EDX
+00000486: POP ECX
+00000487: RET
+
+=== FUN_00000800, 111 Byte: "GET"-Syscall-Wrapper (Callcode 0x29) ===
+00000800: PUSH EBP
+00000801: MOV EBP,ESP
+00000803: SUB ESP,0x18
+00000808: MOV ECX,dword ptr [EBP + 0x8]
+0000080b: MOV EDX,dword ptr [EBP + 0xc]
+0000080e: MOV word ptr [EBP + -0x18],0x29   ; Callcode = 0x29 (41)
+00000814: MOV word ptr [EBP + -0x16],0x1    ; Unterversion/Flag = 1
+0000081a: MOV dword ptr [EBP + -0x10],0x18  ; Blockgroesse = 0x18 (24 Byte)
+00000821: MOV dword ptr [EBP + -0xc],EAX
+00000824: MOV dword ptr [EBP + -0x8],ECX
+00000827: LEA EAX,[EBP + -0x18]             ; EAX = Zeiger auf Parameterblock
+0000082b: CALL 0x00000870                   ; -> INT-0xFF-Trampolin (s.u.)
+00000830: MOV ESI,EAX
+00000832: TEST ESI,ESI
+00000834: JNZ 0x00000868                    ; Fehler -> Rueckgabe Fehlercode
+00000836: CMP ECX,0x2
+; Groessen-Switch (1/2/4 Byte) -> schreibt Ergebnis nach *EDX
+0000084b: MOV AL,byte ptr [EBP + -0x4]      ; 1 Byte
+0000084e: MOV byte ptr [EDX],AL
+00000852: MOV AX,word ptr [EBP + -0x4]      ; 2 Byte
+00000856: MOV word ptr [EDX],AX
+0000085b: MOV EAX,dword ptr [EBP + -0x4]    ; 4 Byte
+0000085e: MOV dword ptr [EDX],EAX
+00000862: XOR EAX,EAX
+00000864: MOV AL,0xe1                       ; ungueltige Groesse -> Fehler 0xE1
+00000868: MOV EAX,ESI
+0000086d: LEAVE
+0000086e: RET
+
+=== FUN_00000870, 10 Byte: DER SYSCALL-TRAMPOLIN ===
+00000870: PUSH ECX
+00000871: MOV ECX,EAX                 ; ECX = Zeiger auf Parameterblock (aus EAX)
+00000873: INT 0xff                    ; <<< ECHTER SOFTWARE-INTERRUPT — DAS ist der
+                                       ;     x86-Systemaufruf-Mechanismus, den Thema 06
+                                       ;     im Kernel-Modul selbst nicht finden konnte
+00000875: MOV EAX,dword ptr [ECX + 0x4]  ; Ergebnis aus Parameterblock+4 lesen
+00000878: POP ECX
+00000879: RET
+
+=== FUN_00000880, 66 Byte: "SET"-Syscall-Wrapper (Callcode 0x1D) ===
+00000880: PUSH EBP
+00000881: MOV EBP,ESP
+00000883: SUB ESP,0x18
+00000888: MOV EDX,EAX
+0000088a: MOV EAX,dword ptr [EBP + 0x8]
+0000088d: MOV ECX,dword ptr [EBP + 0xc]
+00000891: MOV ESI,dword ptr [EBP + 0x10]
+00000894: MOV word ptr [EBP + -0x18],0x1d   ; Callcode = 0x1D (29)
+0000089a: MOV word ptr [EBP + -0x16],0x1
+000008a0: MOV dword ptr [EBP + -0x10],0x18
+000008a7: MOV word ptr [EBP + -0xc],DX
+000008ab: MOV word ptr [EBP + -0xa],AX
+000008af: MOV dword ptr [EBP + -0x8],ECX
+000008b2: MOV dword ptr [EBP + -0x4],ESI
+000008b5: LEA EAX,[EBP + -0x18]
+000008b8: CALL 0x00000870                   ; -> derselbe INT-0xFF-Trampolin
+000008c1: RET
+
+=== Hardware-Zugriff: KEIN IN/OUT im gesamten Modul gefunden ===
+Vollstaendige grep-Suche ueber alle 308 disassemblierten Zeilen: keine
+x86-Port-I/O-Instruktion (IN/OUT/INB/OUTB/...). Die einzige "harte"
+Interrupt-Instruktion im ganzen Modul ist das INT 0xFF oben. Echter
+Hardware-Zugriff (falls vorhanden) muesste hinter den drei indirekten
+CALLs (EDI/ECX/ECX oben) liegen -- Zieladressen wurden in dieser Runde
+nicht weiterverfolgt (Funktionszeiger aus Laufzeitdaten, nicht statisch
+aufloesbar).
