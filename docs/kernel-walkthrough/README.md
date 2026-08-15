@@ -31,6 +31,7 @@ echtem Code direkt dabei.
 | [08](08-rbf-handler/) | RBF-Handler-Körper — `I$Read`/`I$Write` im Detail; x86: `Q9X_rbf_driver_dispatch` gefunden (Laufzeit-Liste aus Geräte-ID/Funktionszeiger-Paaren, indirekter Aufruf in den Treiber) | ⚠️ teilweise (68K: ~10 interne Hilfsroutinen nicht im Detail gelesen; x86 `I$Read` bestätigt trivialer Stub, Grund offen) |
 | [09](09-treiber-hardware/) | Treiber-Hardware-Zugriff — 68K `cfide`: lehrbuchmäßiger ATA/IDE-PIO-Treiber (Status-/Command-/Datenregister, Command `0x20`/`0x30`); x86 `scllio`: **kein** `IN`/`OUT` im Modul, dafür `INT 0xFF`-Syscall-Trampolin gefunden — beantwortet Thema 06s offene Frage nach dem x86-Systemaufruf-Auslöser | ⚠️ teilweise (x86: Ziel der drei indirekten `CALL`s und der `INT 0xFF`-Handler selbst nicht lokalisiert; Namens-Hypothese "SCF Line I/O" unverifiziert) |
 | [10](10-boot-vorkette/) | Boot-Vorkette vor dem Kernel-Einsprung — 68K: echte Boot-ROM-Binärdatei disassembliert, System-Global-Bereich wird dort (nicht im Kernel) genullt, Modulketten-Scanner nutzt identisches Sync-Wort/Prüfsummen-Verfahren wie Thema 00; x86: bisher unbekanntes Modul `vectx86` gefunden, bestätigt `INT 0xFF`-Syscall-Mechanismus aus Thema 09 ein zweites Mal | ⚠️ teilweise (68K: CompactFlash-Gerätesuche selbst nicht lokalisiert; x86: kein echtes Boot-ROM-Äquivalent gefunden, nur ein Kernel-naher Bootstrap-Baustein) |
+| [11](11-programm-laden/) | Programm-Modul-Laden (`F$Load`) — 68K: liegt im IOMan-Modul (nicht Kernel), sucht erst im In-Memory-Modulverzeichnis (`F$CmpNam`-artiger interner Aufruf), unterscheidet Pfad- von Namenssuche, lädt erst danach von Mass-Storage, hängt neues Modul in eine typspezifische verkettete Liste ein | ⚠️ teilweise (68K: eigentlicher Geräte-/Dateizugriff nicht weiterverfolgt; x86: kein eigenständiger Fund, nur Querverweis auf den Boot-Zeit-Modul-Scanner aus Thema 01) |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -123,6 +124,19 @@ Kernel-vorausgesetzte System-Global-Bereich kommt), Modulketten-Scanner
 nutzt nachweislich dasselbe Sync-Wort/Prüfsummen-Verfahren wie der
 Kernel selbst. x86: bisher unbekanntes Modul `vectx86` gefunden — bestätigt
 den `INT 0xFF`-Syscall-Fund aus Thema 09 ein zweites Mal, unabhängig.
+
+**Hinweis zu Thema 11:** fünftes komplett neues Thema, wieder eine Ebene
+über den bisherigen Themen — nicht "was tut der Kernel", sondern "was tut
+`F$Load`" (der Systemaufruf, den `F$Fork` laut `docs/KERNEL.md` als
+ersten Schritt nutzt). 68K: physische Zieladresse war bereits aus der
+Syscall-Tabelle bekannt (`docs/REVERSE_ENGINEERING.md`), Adressvergleich
+zeigt `F$Load` liegt im **IOMan-Modul**, nicht im Kernel. Disassemblierung
+bestätigt die seit langem in `docs/KERNEL.md` beschriebene Theorie
+("erst im Speicher suchen, sonst von Mass-Storage") jetzt mit echtem
+Code: In-Memory-Modulverzeichnis-Suche über einen `F$CmpNam`-artigen
+internen Aufruf, Pfad-vs-Namenssuche-Unterscheidung, Einhängen ins
+Modulverzeichnis nach erfolgreichem Laden. x86: kein neuer Fund, nur
+Querverweis auf den bereits aus Thema 01 bekannten Boot-Zeit-Modul-Scanner.
 
 ## Konvention
 

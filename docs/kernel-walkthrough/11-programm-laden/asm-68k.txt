@@ -1,0 +1,111 @@
+Quelle: modules/ioman/vendor/ioman_DEV (5,7 KByte, physische Zieladresse
+laut docs/REVERSE_ENGINEERING.md Syscall-Tabelle: F$Load = 0xE712 in
+D_SysDis UND D_UsrDis, identisch). IOMan-Modulbasis physisch 0xE03C
+(Q9-Flux/docs/OS9_SYSCALL_OWNERSHIP.md) -> modulinterner Offset
+0xE712-0xE03C = 0x6D6. Ghidra-Projekt (bereits vorhanden aus Thema 02)
+/Volumes/SSD1TB/projects/Q9-OS-ghidra-ioman/, Skripte
+modules/ioman/ghidra_scripts/DumpFLoad.java und DumpFLoadCore.java.
+
+=== Q9_ioman_f_load @ Offset 0x6D6 (Einsprung) ===
+000006d6: bsr.b 0x00000706        ; -> Such-/Lade-Rahmen aufbauen
+000006d8: bcs.b 0x00000704        ; Fehler -> sofort zurueck
+000006da: move.l A0,-(SP)
+000006dc: movea.l A2,A0
+000006de: move.w (0x12,A0),D0w    ; Offset 0x12 = M$Type/M$Lang (Thema 00!)
+000006e2: adda.l (0xc,A0),A0
+000006e6: move.l A3,-(SP)
+000006e8: movea.l (0x3a8,A6),A3   ; A3 = D_UsrDis (Thema 06!)
+000006ec: pea (0xc,PC)
+000006f0: move.l (0x0,A3),-(SP)
+000006f4: movea.l (0x400,A3),A3   ; interner Aufruf ueber die Syscall-Tabelle
+000006f8: rts
+00000704: rts
+
+=== Rahmen-Aufbau @ 0x706: Parameter validieren, Rahmen anlegen ===
+00000706: suba.l A2,A2
+00000708: movem.l {A5 A3 A2 A1 A0 D4 D3 D2 D1 D0},-(SP)
+0000070c: lea (-0x4c,SP),SP       ; lokaler 0x4C-Byte-Suchkontext auf dem Stack
+00000710: movea.l SP,A5
+00000712: move SR,(0x40,SP)
+00000716: moveq 0x0,D3
+00000718: moveq 0x0,D4
+0000071a: move.l D3,(0x4c,SP)
+0000071e: move.b D3b,(0x4b,SP)
+00000722: tst.b D0b               ; D0 = Aufrufer-Parameter (Typ-/Sprachfilter,
+                                   ; s. offizielle F$Load-API)
+00000724: bmi.b 0x0000072a
+00000726: move.l D3,(0x50,SP)
+0000072a: andi.b #0x5,D0b
+0000072e: bne.b 0x00000732
+00000730: moveq 0x4,D0            ; Default-Typmaske
+00000732: move.w #0x84,(0x3c,A5)  ; Default-Fehlercode = 0x84
+00000738: move.l D0,(0x0,A5)
+0000073c: move.l A0,(0x20,A5)     ; Namenszeiger im Suchkontext ablegen
+00000744: addq.l #0x1,(0x3ac,A4)  ; "In-Syscall"-Zaehler
+00000748: bsr.w 0x0000124a        ; -> eigentliche Such-/Lade-Logik
+0000074c: bsr.w 0x00000a02        ; Epilog: SR restore, Zaehler runter,
+                                   ; Pending-Signal-Check (identisches Muster
+                                   ; wie Q9_disp_488 aus Thema 06)
+
+=== Q9_ioman_load_search_core @ 0x124A: erst Speicher, dann Geraet ===
+0000124a: move.b (0x3,A5),D1b
+0000124e: bsr.w 0x0000135e        ; -> Modulverzeichnis (im Speicher) durchsuchen
+00001252: bcs.b 0x00001266        ; nicht gefunden -> zurueck (Fehler/weiter oben behandelt)
+00001254: bsr.w 0x000014f8        ; gefunden -> Link-Zaehler erhoehen, fertig
+00001258: bcs.w 0x000011ca
+0000125c: moveq 0x0,D0
+0000125e: move.w (0x0,A1),D0w
+00001262: move.l D0,(0x0,A5)
+00001266: rts
+
+=== Modulverzeichnis-Suche @ 0x135E: F$CmpNam-artiger interner Aufruf ===
+0000135e: movem.l {A5 A4},-(SP)
+00001362: movea.l (0x48,A6),A0    ; A0 = Kopf des Modulverzeichnisses
+                                   ; (Kernel-Globals-relativ, A6 = Basis, Thema 01)
+00001366: lea (-0x2c,SP),SP
+0000136a: movea.l SP,A5
+0000136c: move.l A3,-(SP)
+0000136e: movea.l (0x3a4,A6),A3   ; A3 = D_SysDis
+00001372: pea (0xc,PC)
+00001376: move.l (0xc0,A3),-(SP)
+0000137a: movea.l (0x4c0,A3),A3   ; interner Aufruf -- Offset passt zu F$CmpNam
+0000137e: rts                    ; (Callcode 0x11, s. SYSCALL_MODULE_MAP.md)
+00001382: bcs.w 0x00001454        ; nicht gefunden -> Epilog (Fehler)
+00001386: movea.l (0x24,SP),A1    ; A1 = gefundener Verzeichniseintrag
+0000138e: move.w #0x1,(0x1a,A1)
+0000139c: move.l (0x14,A4),(0x12,A1)   ; z.B. anfordernder Prozess
+000013a2: move.l A6,(0x22,A1)
+
+=== Namensauflösung: Pfad vs. Suchliste ===
+000013a6: movea.l (0x20,A5),A0
+000013aa: cmpi.b #0x2f,(A0)       ; erstes Zeichen des Namens == '/' ?
+000013ae: beq.b 0x000013ce        ; ja -> Pfadname, KEINE Standard-Suchliste
+000013b0: andi.b #0x4,D1b
+000013b4: beq.b 0x000013bc
+000013b6: movea.l (0x158,A4),A0   ; Kernel-Global 0x158 -- Suchliste A
+000013ba: bra.b 0x000013c0
+000013bc: movea.l (0x148,A4),A0   ; Kernel-Global 0x148 -- Suchliste B
+000013c0: move.l A0,D0
+000013c2: beq.w 0x0000145e        ; keine Suchliste -> Fehler 0xD7 (nicht gefunden)
+
+=== Der eigentliche Geraete-/Datei-Ladeaufruf ===
+000013dc: movem.l {A1 A0 D0},-(SP)
+000013e0: bsr.w 0x00000b3a        ; <<< "von Mass-Storage laden" -- nicht mehr
+                                   ;     weiterverfolgt, waere Datei-/RBF-Ebene
+                                   ;     (s. Themen 08/09), nicht mehr F$Load selbst
+000013e4: movem.l (SP)+,{D0 A0 A1}
+000013e8: bcs.b 0x00001462        ; Ladefehler-Pfad
+
+=== Nach erfolgreichem Laden: Eintrag ins Modulverzeichnis einhängen ===
+0000142a: move.l (0xa,A0),(0x16,A1)   ; klassische Linked-List-Einfuegung
+00001430: move.l A1,(0xa,A0)          ; (neuer Kopf einer typspezifischen Liste,
+                                       ;  "Colored-Memory-Listen" laut docs/KERNEL.md)
+00001434: movea.l (0x8,A2),A0
+00001438: lea (0x46,A0),A0            ; Modulname aus dem geladenen Modul lesen
+0000143c: move.w (A0)+,D1w
+0000143e: lea (0x80,A1),A2
+00001442: cmpi.w #0x80,D1w
+00001446: bls.b 0x0000144c
+00001448: moveq 0x7f,D1
+0000144a: move.b (A0)+,(A2)+          ; Name in den Verzeichniseintrag kopieren
+0000144c: dbf D1w,0x0000144a          ; (fuer kuenftige F$CmpNam-Suchen)

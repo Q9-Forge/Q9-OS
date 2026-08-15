@@ -425,6 +425,35 @@ gefundenen indirekten `CALL`s), wurde nicht geklärt.
   wie `Q9X_rbf_driver_dispatch` aus Thema 08 — kein Einzelfall, sondern
   ein durchgängiges x86-Konstruktionsprinzip.
 
+## 3c. Programm-Modul-Laden: `F$Load` (aus Thema 11)
+
+Aus [Thema 11](kernel-walkthrough/11-programm-laden/): `docs/KERNEL.md`
+beschreibt `F$Fork`s ersten Schritt seit Beginn dieses Projekts in
+Theorie ("Modul lokalisieren/laden — erst im Speicher suchen, sonst von
+Mass-Storage nachladen") — dieser Abschnitt bestätigt das jetzt mit
+echtem, disassembliertem 68K-Code (`F$Load`, physisch im IOMan-Modul,
+nicht im Kernel).
+
+**Klare Übernahme-Empfehlung:** die dreistufige Suchreihenfolge — (1)
+In-Memory-Modulverzeichnis per Namensvergleich durchsuchen, (2) bei
+Nichttreffer eine der beiden Suchlisten anhand eines Präfix-Tests
+(`'/'` = vollständiger Pfad, sonst Standard-Suchliste) auswählen, (3)
+erst dann tatsächlich von Mass-Storage laden — spart bei mehrfach
+genutzten Modulen (Compiler-Läufe, wiederholte Programmstarts)
+vollständig wiederholte Plattenzugriffe. Für den eigenen Kernel ein
+einfaches, klar spezifizierbares Muster, unabhängig vom exakten
+Byte-Layout des Modulverzeichnisses.
+
+**Ebenfalls Übernahme-Empfehlung:** neu geladene Module werden in eine
+**typspezifische verkettete Liste** eingehängt (nicht eine einzige globale
+Liste) — passt zur bereits in Abschnitt 1 erwähnten Typ-Code-Zentralität
+des ganzen Formats und macht typgefilterte Suchen (wie sie `F$Link`s
+Dreiklang-Mechanismus, Abschnitt 3, ohnehin braucht) effizient.
+
+**x86-Seite offen:** kein eigenständiger x86-`F$Load`-Fund in dieser
+Runde — nur der bereits aus Abschnitt 2 bekannte Boot-Zeit-Modul-Scanner
+als naheliegende, aber nicht bestätigte Parallele.
+
 ## 4. Was NICHT übernommen werden sollte
 
 **Wichtige Klarstellung vorab:** Diese Punkte betreffen nur Code, den
@@ -495,5 +524,6 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 - [`kernel-walkthrough/08-rbf-handler/`](kernel-walkthrough/08-rbf-handler/README.md)
 - [`kernel-walkthrough/09-treiber-hardware/`](kernel-walkthrough/09-treiber-hardware/README.md)
 - [`kernel-walkthrough/10-boot-vorkette/`](kernel-walkthrough/10-boot-vorkette/README.md)
+- [`kernel-walkthrough/11-programm-laden/`](kernel-walkthrough/11-programm-laden/README.md)
 
 **Erstellt**: 2026-08-14, zuletzt ergänzt 2026-08-15
