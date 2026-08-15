@@ -526,4 +526,7 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 - [`kernel-walkthrough/10-boot-vorkette/`](kernel-walkthrough/10-boot-vorkette/README.md)
 - [`kernel-walkthrough/11-programm-laden/`](kernel-walkthrough/11-programm-laden/README.md)
 
+Konkrete Modul-/Syscall-Stückliste, die auf diesem Dokument aufbaut:
+[`OWN_KERNEL_MODULES_OVERVIEW.md`](OWN_KERNEL_MODULES_OVERVIEW.md).
+
 **Erstellt**: 2026-08-14, zuletzt ergänzt 2026-08-15
