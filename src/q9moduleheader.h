@@ -45,6 +45,7 @@
  * ==================================================================== */
 #define Q9_MH_SYNC_6809     0x87CD  /* OS-9/6809, 1980 [HANDBUCH, cross-verifiziert: NitrOS-9-Quelltext module.d, M$ID1=$87/M$ID2=$CD] */
 #define Q9_MH_SYNC_OS9      0x4AFC  /* OS-9/68K UND alle OS-9000-Ports (x86/PowerPC/ARM/...) -- derselbe Wert, Byte-Reihenfolge je nach Ziel-Endianness [VERIFIZIERT fuer 68K+x86, HANDBUCH/Portierungskonzept (v_endflag) fuer PowerPC/ARM] */
+#define Q9_MH_SYNC_Q9OWN    0x5139  /* Q9-eigenes Modulformat -- ASCII "Q9" ($51='Q', $39='9'), bewusst kollisionsfrei zu obigen beiden gewaehlt [ENTWURF, Planungsgespraech 2026-08-16]. Byte-Reihenfolge je nach abiClass-Endian-Bit -- Big-Endian-Ziele lesen im Hex-Dump woertlich "Q9", Little-Endian-Ziele "9Q", exakt dasselbe kosmetische Verhalten wie $4AFC/$FC4A oben. */
 
 /* CRC-Polynom -- ueber 6809 UND 68K hinweg identisch dokumentiert [HANDBUCH] */
 #define Q9_MH_CRC_POLY      0x800FE3L
@@ -241,6 +242,194 @@ typedef struct {
 } Q9_ModHeadOS9000;
 
 /* ====================================================================
+ * Header-Layout 4: Q9-eigenes Format [ENTWURF -- Planungsgespraech
+ * 2026-08-16, NICHT reverse-engineered, keine Fremdquelle]. Uebernimmt
+ * bewusst das Grundschema von Layout 2/3 (sync/hdrVersion/size/owner/
+ * name/access/type/lang/attr/revs/edit/exec/except/data/stack + optionaler
+ * Erweiterungsblock ueber hdExtOffset/hdExtSize -- dasselbe Prinzip, das
+ * der 68K-Header schon selbst mitbringt), mit drei neuen Grundideen:
+ *
+ * 1. 16-Bit-taugliches `type`-Feld statt Nibble: Werte 0x00-0x0F sind
+ *    WORT-IDENTISCH zu Q9_MT_* oben (0x0C-0x0F bleiben fuer den Dreiklang
+ *    zwingend reserviert, siehe Abschnitt 1 von OWN_KERNEL_INIT_PLAN.md),
+ *    0x10 aufwaerts frei fuer eigene, neue Modularten -- bisher keine
+ *    vergeben.
+ * 2. Ein `abiClass`-Byte direkt nach `hdrVersion`, noch VOR jedem
+ *    breitenabhaengigen Feld (dasselbe Prinzip wie ELFs `EI_CLASS`),
+ *    kodiert Pointerbreite UND Endianness in einem Feld ("zusammen
+ *    verwaltet"):
+ *      Bit [1:0]  Pointerbreite: 00=16 Bit (6809-Erbe), 01=32 Bit
+ *                 (68K/RISC-V32/x86-32), 10=64 Bit (ARM64/x86-64/
+ *                 kuenftig), 11=reserviert
+ *      Bit [2]    Endianness: 0=Big-Endian, 1=Little-Endian
+ *      Bit [7:3]  reserviert
+ *    Fuenf real genutzte Kombinationen: 16BE/32BE/32LE/64BE/64LE (16LE
+ *    absichtlich nicht vorgesehen -- keine bekannte Little-Endian-6809-
+ *    Historie). Die aus dem Sync-Wort-Byte-Vergleich implizit erkannte
+ *    Endianness kann gegen dieses Bit quergeprueft werden (billiger
+ *    Konsistenz-Check gegen beschaedigte Header).
+ * 3. Ein optionaler Q9-Erweiterungsblock (Q9_ModHeadOwnExt) fuer alles,
+ *    was ueber die OS-9/9000-Vorgabe hinausgeht: erweiterte Rechte
+ *    (Owner/Group/World, Bit-Layout an OS-9000s PERM_*-Konzept angelehnt,
+ *    aber eigene, neu vergebene Bitwerte -- keine Uebernahme proprietaerer
+ *    Microware-Konstanten), SMP-Metadaten, Zielarchitektur-Kennung,
+ *    Adressierungsmodell-Flag.
+ *
+ * `nameOffset` bewusst NUL-terminiert (wie Layout 2/3), auch in der
+ * 16-Bit-Variante -- KEINE Uebernahme von 6809s High-Bit-Terminierung,
+ * einheitlicher Parser wichtiger als Werktreue zum 6809-Vorbild.
+ *
+ * Feldbreite skaliert mit abiClass fuer alle Offset-/Groessenfelder
+ * (size/owner/nameOffset/execOffset/exceptOffset/dataSize/stackSize/
+ * idataOffset/idrefOffset/hdExtOffset/hdExtSize); sync/hdrVersion/
+ * abiClass/access/type/lang/attr/revs/edit/parity bleiben in allen drei
+ * Breitenvarianten gleich breit (reine Ein-Byte-/Zwei-Byte-Werte, keine
+ * Zeiger). Deshalb DREI eigene Struct-Varianten statt eines gemeinsamen
+ * Offset-Schemas -- echte Byte-Offsets verschieben sich je Variante,
+ * exakt wie bei ELFs Elf32_Ehdr/Elf64_Ehdr.
+ * ==================================================================== */
+
+/* abiClass-Bitmasken */
+#define Q9_ABICLASS_WIDTH_MASK   0x03
+#define Q9_ABICLASS_WIDTH_16     0x00
+#define Q9_ABICLASS_WIDTH_32     0x01
+#define Q9_ABICLASS_WIDTH_64     0x02
+#define Q9_ABICLASS_ENDIAN_MASK  0x04
+#define Q9_ABICLASS_ENDIAN_BE    0x00
+#define Q9_ABICLASS_ENDIAN_LE    0x04
+
+/* Typ-Codes: 0x00-0x0F identisch zu Q9_MT_* oben, 0x10+ frei fuer eigene
+ * Q9-native Modularten (Abschnitt 5 des Plans, noch offen) */
+#define Q9_MT_LEGACY_MAX         0x0F
+
+/* Zielarchitektur-Kennung (Erweiterungsblock) */
+#define Q9_ARCH_6809      0
+#define Q9_ARCH_68K       1
+#define Q9_ARCH_RISCV32   2
+#define Q9_ARCH_ARM64     3
+#define Q9_ARCH_X86_32    4
+#define Q9_ARCH_X86_64    5
+
+/* Adressierungsmodell (Erweiterungsblock) -- siehe OWN_KERNEL_INIT_PLAN.md
+ * Abschnitt 2d/6 */
+#define Q9_ADDRMODEL_FLAT_SSM_COMPAT  0  /* SSM-kompatibel, Legacy-Treiber */
+#define Q9_ADDRMODEL_Q9_NATIVE_PAGED  1  /* eigenes Paging-Modell */
+
+/* SMP-Flags (Erweiterungsblock) -- Praefix SMP_, bewusst NICHT MP_
+ * (MP_ ist real schon Module Permission in os9k_tech.pdf, siehe
+ * OWN_KERNEL_INIT_PLAN.md Abschnitt 6) */
+#define Q9_SMP_SAFE            0x0001  /* Code ist selbst SMP-sicher */
+#define Q9_SMP_NEEDS_LOCK      0x0002  /* braucht externe Synchronisation */
+#define Q9_SMP_UP_ONLY         0x0004  /* nur Single-Core, z.B. Legacy-Shim */
+
+/* Erweiterte Rechte (Erweiterungsblock) -- Owner/Group/World x Read/
+ * Write/Search/Execute, Reihenfolge an OS-9000s PERM_*-Konzept angelehnt,
+ * aber EIGENE, neu vergebene Bitwerte (keine Microware-Konstanten
+ * uebernommen) */
+#define Q9_RIGHTS_OWNER_READ    0x0001
+#define Q9_RIGHTS_OWNER_WRITE   0x0002
+#define Q9_RIGHTS_OWNER_SRCH    0x0004
+#define Q9_RIGHTS_OWNER_EXEC    0x0008
+#define Q9_RIGHTS_GROUP_READ    0x0010
+#define Q9_RIGHTS_GROUP_WRITE   0x0020
+#define Q9_RIGHTS_GROUP_SRCH    0x0040
+#define Q9_RIGHTS_GROUP_EXEC    0x0080
+#define Q9_RIGHTS_WORLD_READ    0x0100
+#define Q9_RIGHTS_WORLD_WRITE   0x0200
+#define Q9_RIGHTS_WORLD_SRCH    0x0400
+#define Q9_RIGHTS_WORLD_EXEC    0x0800
+/* Bit 12-31: reserviert fuer eine kuenftige Capability-Erweiterung,
+ * s. rightsVersion im Erweiterungsblock */
+
+typedef struct {
+    uint16_t sync;
+    uint8_t  hdrVersion;
+    uint8_t  abiClass;
+    uint16_t size;
+    uint16_t owner;
+    uint16_t nameOffset;
+    uint16_t access;
+    uint16_t type;
+    uint16_t lang;
+    uint8_t  attr;
+    uint8_t  revs;
+    uint16_t edit;
+    uint16_t execOffset;
+    uint16_t exceptOffset;
+    uint16_t dataSize;
+    uint16_t stackSize;
+    uint16_t idataOffset;
+    uint16_t idrefOffset;
+    uint16_t hdExtOffset;
+    uint16_t hdExtSize;
+    uint16_t parity;
+} Q9_ModHeadOwn16;   /* abiClass Breite = Q9_ABICLASS_WIDTH_16 */
+
+typedef struct {
+    uint16_t sync;
+    uint8_t  hdrVersion;
+    uint8_t  abiClass;
+    uint32_t size;
+    uint32_t owner;
+    uint32_t nameOffset;
+    uint16_t access;
+    uint16_t type;
+    uint16_t lang;
+    uint8_t  attr;
+    uint8_t  revs;
+    uint16_t edit;
+    uint32_t execOffset;
+    uint32_t exceptOffset;
+    uint32_t dataSize;
+    uint32_t stackSize;
+    uint32_t idataOffset;
+    uint32_t idrefOffset;
+    uint32_t hdExtOffset;
+    uint32_t hdExtSize;
+    uint16_t parity;
+} Q9_ModHeadOwn32;   /* abiClass Breite = Q9_ABICLASS_WIDTH_32 */
+
+typedef struct {
+    uint16_t sync;
+    uint8_t  hdrVersion;
+    uint8_t  abiClass;
+    uint64_t size;
+    uint64_t owner;
+    uint64_t nameOffset;
+    uint16_t access;
+    uint16_t type;
+    uint16_t lang;
+    uint8_t  attr;
+    uint8_t  revs;
+    uint16_t edit;
+    uint64_t execOffset;
+    uint64_t exceptOffset;
+    uint64_t dataSize;
+    uint64_t stackSize;
+    uint64_t idataOffset;
+    uint64_t idrefOffset;
+    uint64_t hdExtOffset;
+    uint64_t hdExtSize;
+    uint16_t parity;
+} Q9_ModHeadOwn64;   /* abiClass Breite = Q9_ABICLASS_WIDTH_64 */
+
+/* Q9-Erweiterungsblock -- ueber hdExtOffset/hdExtSize erreichbar, fuer
+ * alle drei Breitenvarianten identisch (enthaelt selbst keine breiten-
+ * abhaengigen Zeigerfelder) */
+typedef struct {
+    uint8_t  extVersion;
+    uint8_t  spare0;
+    uint32_t rights;          /* Q9_RIGHTS_* */
+    uint8_t  rightsVersion;
+    uint8_t  spare1[3];
+    uint64_t cpuAffinityMask; /* bitweise, bis zu 64 Kerne, unabhaengig von abiClass */
+    uint16_t smpFlags;        /* Q9_SMP_* */
+    uint16_t cpuArch;         /* Q9_ARCH_* */
+    uint8_t  addrModel;       /* Q9_ADDRMODEL_* */
+    uint8_t  spare2[7];
+} Q9_ModHeadOwnExt;
+
+/* ====================================================================
  * Format-Erkennung -- liest die ersten 2 Byte roh (ohne Endian-Annahme)
  * und vergleicht gegen alle bekannten Sync-Werte in beiden moeglichen
  * Byte-Reihenfolgen. Reine Deklaration hier; Implementierung folgt in
@@ -252,7 +441,8 @@ typedef enum {
     Q9_MHFMT_6809,       /* Sync $87CD */
     Q9_MHFMT_68K,        /* Sync $4AFC, Big-Endian, 46-Byte-Standardheader */
     Q9_MHFMT_OS9000_BE,  /* Sync $4AFC, Big-Endian, 88-Byte-Standardheader (PowerPC/ARM/...) */
-    Q9_MHFMT_OS9000_LE   /* Sync $FC4A on-disk (=$4AFC), Little-Endian, 88-Byte-Standardheader (x86) */
+    Q9_MHFMT_OS9000_LE,  /* Sync $FC4A on-disk (=$4AFC), Little-Endian, 88-Byte-Standardheader (x86) */
+    Q9_MHFMT_Q9OWN       /* Sync $5139/$3951 ("Q9") [ENTWURF] -- Breite/Endianness NICHT ueber separate Enum-Werte unterschieden wie bei OS9000_BE/LE oben, sondern aus dem selbstbeschreibenden abiClass-Byte gelesen (s. Q9_ABICLASS_*) */
 } Q9_ModHeadFormat;
 
 Q9_ModHeadFormat Q9_DetectModuleHeaderFormat(const uint8_t *rawBytes, uint32_t availableLen);
