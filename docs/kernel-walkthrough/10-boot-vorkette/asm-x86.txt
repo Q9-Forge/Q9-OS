@@ -1,0 +1,59 @@
+Quelle: modules/os9000-x86/vendor/vectx86 (kleines Systm-Typ-Modul,
+Name "vectors" laut eingebettetem String, im gesamten bisherigen
+Walkthrough noch nie untersucht). Ghidra-Projekt
+/Volumes/SSD1TB/projects/Q9-OS-ghidra-os9000-vectx86/, Skript
+modules/os9000-x86/ghidra_scripts/vectx86_AnalyzeAndDump.java.
+
+Header bestaetigt: Sync `FC4A` (little-endian-gespiegelt = 0x4AFC, s.
+Thema 00), `m_tylan`=`0x0C01` (Typ Systm, Lang 1), `m_exec`(Offset 0x24)
+= `0x60`.
+
+=== Q9X_vectx86_entry @ 0x60 (JMP-Stub) -> 0x68, 298 Byte ===
+00000060: JMP 0x00000068
+00000068: PUSH EBP
+00000069: MOV EBP,ESP
+0000006b: SUB ESP,0x8
+...
+; baut ueber mehrere PIC-Trampoline (CALL $+5/POP EDI/LEA, das bereits in
+; frueheren Themen als Compiler-/Toolchain-Artefakt dokumentierte Muster)
+; drei feste Modul-Adressen zusammen (EDI+0x1e1, EDI+0x1cc, EDI+0x1d8) und
+; schreibt sie in Kernel-Globals-relative Felder:
+0000014a: MOV ECX,dword ptr [EBP + -0x8]
+0000014d: MOV dword ptr [ECX + 0xac0],EAX   ; Handler-Adresse 1
+0000015f: MOV ECX,dword ptr [EBP + -0x8]
+00000162: MOV dword ptr [ECX + 0xac4],EAX   ; Handler-Adresse 2
+00000183: MOV ECX,dword ptr [EBP + -0x8]
+00000186: MOV dword ptr [ECX + 0xac8],EAX   ; Handler-Adresse 3
+00000171: MOV dword ptr [EAX + 0xad0],ECX   ; (vierter Wert, EBX-basiert)
+;
+; ==> installiert mehrere feste Adressen in Kernel-Globals-Felder
+;     (+0xac0/+0xac4/+0xac8/+0xad0) -- konzeptionell dieselbe Art
+;     Operation wie die in Thema 06 gefundenen PC-relativen Konstanten-
+;     Installationen bei +0xa0c..+0xa98, nur mit anderen Offsets und in
+;     einem EIGENEN, bisher unbekannten Modul statt im Kernel selbst.
+;     Vermutlich ein frueher Bootstrap-Schritt VOR oder WAEHREND
+;     Q9X_kernel_globals_init (Thema 01) -- nicht abschliessend verifiziert.
+
+=== Danach: derselbe Syscall-Wrapper wie scllio (Thema 09) ===
+00000198: MOV EAX,0xe
+0000019a: PUSH 0x1
+0000019c: CALL 0x00000454          ; "SET"-Wrapper, identisch zu scllios FUN_00000880
+
+00000454: PUSH EBP
+00000455: MOV EBP,ESP
+00000457: SUB ESP,0x18
+...
+00000468: MOV word ptr [EBP + -0x18],0x1d   ; Callcode = 0x1D -- IDENTISCH zu
+                                             ; scllios FUN_00000880 (Thema 09)
+0000048c: CALL 0x00000498                   ; -> derselbe INT-0xFF-Trampolin-Typ
+
+00000498: PUSH ECX
+00000499: MOV ECX,EAX
+0000049b: INT 0xff                 ; <<< derselbe Systemaufruf-Mechanismus
+                                    ;     wie in scllio (Thema 09) -- bestaetigt:
+                                    ;     INT 0xFF ist kein Einzelfall in einem
+                                    ;     Treiber, sondern ein modulweit
+                                    ;     verwendeter, generischer Kernel-Gate
+0000049d: MOV EAX,dword ptr [ECX + 0x4]
+000004a0: POP ECX
+000004a1: RET

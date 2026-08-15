@@ -1,0 +1,119 @@
+Quelle: Q9-Flux/local_images/roms/romimage.dev.running.BIN (524288 Byte,
+LOKAL, proprietaer, NICHT im Repo -- siehe Q9-Flux/docs/OS9SYS_BOOT.md
+Zeile 6-7). Ghidra-Projekt AUSSERHALB beider Repos unter
+/Volumes/SSD1TB/projects/Q9-OS-ghidra-bootrom/, Skript
+modules/bootrom/ghidra_scripts/BootRomAnalyzeAndDump.java, Import mit
+`-processor 68000:BE:32:MC68030 -loader BinaryLoader -loader-baseAddr
+0xFE000000` (Basisadresse aus dem Reset-Vektor selbst hergeleitet, s. u.).
+NUR kurze, benannte Exzerpte hier -- keine Bulk-Dumps der ROM-Datei.
+
+=== Reset-Vektortabelle (Datei-Offset 0x00, roh) ===
+00000000: 0000 4a00   ; Vektor 0 (initialer SSP)        = 0x00004A00
+00000004: fe00 0494   ; Vektor 1 (initialer PC / Reset)  = 0xFE000494
+00000008: fe00 1b0e   ; Vektor 2 (Bus Error)             = 0xFE001B0E
+0000000c: fe00 1b14   ; Vektor 3 (Address Error)         = 0xFE001B14
+00000010: fe00 1b1a   ; Vektor 4 (Illegal Instruction)   = 0xFE001B1A
+00000014: 0000 041e   ; Vektor 5 (Zero Divide)           = 0x0000041E  <- "niedrige" Adresse!
+00000018: 0000 0428   ; Vektor 6 (CHK)                   = 0x00000428
+...                    ; Vektoren 6-8,10-30: durchgehend "niedrige" 0x0000xxxx-Adressen
+00000024: fe00 1b20   ; Vektor 9 (Trace)                 = 0xFE001B20  <- "hohe" Adresse
+0000007c: fe00 1b08   ; Vektor 31 (Level-7/NMI)          = 0xFE001B08  <- "hohe" Adresse
+
+BEFUND: Vektor 1 zeigt auf 0xFE000494 -- das IST exakt Datei-Offset 0x494.
+Damit ist die Basisadresse der ROM-Abbildung im finalen Speicherlayout
+0xFE000000 zweifelsfrei bestimmt (Datei-Offset + 0xFE000000 = Ziel-
+adresse). Gleichzeitig liest die CPU dieselbe Tabelle beim Reset an
+Adresse 0x00000000 -- klassischer 68K-"Overlay"-Bootmechanismus: das ROM
+ist beim Reset zusaetzlich an Adresse 0 gespiegelt, bis der Reset-Code
+selbst die Spiegelung abschaltet (s. u., Bit-4-Test bei 0x5EA).
+Vektoren, die dauerhaft gueltig bleiben muessen (Reset selbst, Bus-/
+Address-/Illegal-Instruction-Error als frueheste Diagnose, Trace, NMI),
+zeigen konsequent auf die "hohe", dauerhaft gueltige ROM-Adresse; die
+uebrigen (Zero Divide, CHK, TRAPV, Line-A/F, ...) zeigen auf "niedrige"
+Adressen -- plausibel Platzhalter, die erst durch den spaeter geladenen
+Kernel (Thema 01) mit echten RAM-Handlern ueberschrieben werden.
+
+=== Boot-Strings (Datei-Offset 0x4c8, roh) ===
+000004c8: "OS-9/68K System Bootstrap\0"
+000004e2: "Boot failed, error status $\0"
+(exakt die Strings aus dem in Q9-Flux/docs/OS9SYS_BOOT.md dokumentierten
+Boot-Log: "OS-9/68K System Bootstrap" -- bestaetigt, dass dies wirklich
+der live genutzte Boot-Code ist, nicht totes/altes ROM-Material.)
+
+=== Q9_bootrom_reset_entry @ 0xFE000494 (Sprung-Stub) ===
+fe000494: bra.w 0xfe0005a6      ; springt in den eigentlichen Reset-Code
+
+=== Diagnose-Sprungtabelle @ 0xFE000498-0xFE0004BD ===
+; Zehn BRA.W-Eintraege, je einer pro Fehlerklasse -- installiert vor dem
+; Sprung zurueck zum Reset (s. Fehlerpfad unten) eine passende
+; Fehlermeldungs-Adresse.
+
+=== Q9_bootrom_reset_body @ 0xFE0005B4 (756 Byte, zentrale Boot-Vorkette) ===
+fe0005b4: movec VBR,SP            ; SP = Vector Base Register
+fe0005b8: movea.l (SP),SP         ; SP = *(VBR+0) = Vektor 0 = 0x00004A00
+                                   ; -> echter System-Stack wird HIER gesetzt,
+                                   ;    aus dem Wert der eigenen Vektortabelle
+fe0005ba: movea.l (-0x15c,PC),A5  ; A5 = System-Global-Basisadresse (ROM-Konstante)
+fe0005be: moveq 0x0,D0
+fe0005c0: moveq 0x0,D1
+fe0005c2: moveq 0x0,D2
+fe0005c4: moveq 0x0,D3
+fe0005c6: move.l #0x5600,D4       ; D4 = Groesse des zu nullenden Bereichs
+fe0005cc: lea (0x0,A5,D4*0x1),A0  ; A0 = A5+0x5600 (oberes Ende)
+fe0005d0: subi.l #0x9e0,D4        ; D4 = 0x5600-0x9E0 = 0x4C20
+fe0005d6: lsr.w #0x4,D4w          ; D4 /= 16   <- 16-Byte-Granularitaet,
+                                   ;    dieselbe Konstante wie Thema 01 (Kernel!)
+fe0005d8: subq.l #0x1,D4
+fe0005da: movem.l {D3 D2 D1 D0},-(A0)   ; 16 Byte auf einmal nullen
+fe0005de: dbf D4w,0xfe0005da      ; Schleife -> nullt A5+0x9E0 .. A5+0x5600
+;
+; ==> DAS IST DIE ANTWORT AUF DIE OFFENE FRAGE AUS THEMA 01/`docs/KERNEL.md`:
+;     der System-Global-Bereich, den der Kernel beim eigenen Start bereits
+;     als existent voraussetzt, wird HIER, NOCH VOR DEM KERNEL, vom
+;     Boot-ROM angelegt und genullt -- nicht vom Kernel selbst.
+;
+fe0005e2: move USP,A0             ; A0 = User Stack Pointer (privilegierter Zugriff)
+fe0005e4: move.l A0,(0x9f0,A5)    ; -> in System-Globals ablegen (Flags-Feld)
+fe0005e8: move.l A0,D0
+fe0005ea: btst.l #0x4,D0          ; Bit 4 der USP-Adresse pruefen
+fe0005ee: beq.b 0xfe0005f4
+fe0005f0: andi #-0x701,SR         ; (bedingt) IPL/Statusbits anpassen
+
+=== RAM-Groessentest @ ~0xFE000742 (klassisches Schreib-Verifizieren-Muster) ===
+fe000742: move.l #0x5a5a5a5a,(A2)         ; Testmuster A schreiben
+fe000748: move.l #-0x5a5a5a5b,(0x4,A2)    ; Testmuster B (invertiert) schreiben
+fe000750: cmpi.l #0x5a5a5a5a,(A2)         ; zuruecklesen und vergleichen
+fe000756: bne.b 0xfe000780                ; falsch -> kein echtes RAM an dieser Adresse
+fe00075c: move.l #-0x5a5a5a5b,(A2)        ; zweiter Durchlauf, Muster vertauscht
+fe000762: move.l #0x5a5a5a5a,(0x4,A2)
+fe00076a: cmpi.l #-0x5a5a5a5b,(A2)
+fe000770: bne.b 0xfe000780
+; -> Standard-Speichergroessenermittlung durch Schreib/Lese-Test mit
+;    invertiertem Muster (erkennt Adress-Wraparound/nicht bestuecktes RAM)
+
+=== Modulketten-Scanner @ ~0xFE000860-0xFE0008D8 (Bootfile-Validierung) ===
+fe00088a: cmpi.w #0x4afc,(A0)     ; Sync-Wort pruefen -- EXAKT die Konstante
+                                   ; aus Thema 00 (M$ID)
+fe00088e: bne.w 0xfe000914        ; kein gueltiges Modul -> Fehlerpfad
+fe000892: moveq 0x2e,D1           ; D1 = 0x2E = 46 (Byte), D1/2=23 -> DBF
+                                   ; laeuft 24x = 48 Byte = 24 Words
+fe000894: asr.w #0x1,D1w
+fe000896: moveq -0x1,D2           ; Checksummen-Akkumulator = 0xFFFFFFFF
+fe000898: move.w (A0)+,D0w
+fe00089a: eor.w D0w,D2w
+fe00089c: dbf D1w,0xfe000898      ; XOR ueber 24 Words (Offset 0x00-0x2F)
+fe0008a2: bne.b 0xfe000914        ; Ergebnis != 0 -> Pruefsumme falsch, Fehlerpfad
+; ==> IDENTISCHER Algorithmus wie der bereits in docs/REVERSE_ENGINEERING.md
+;     dokumentierte Modul-Pruefsummen-Check ("XOR aller 24 Words 0x00-0x2F
+;     ergibt 0xFFFF") -- das Boot-ROM validiert Module also mit demselben
+;     Verfahren wie der Kernel selbst.
+fe0008d4: adda.l (0x30,A0),A0     ; A0 += *(A0+0x30) -- vermutlich Modulgroesse,
+                                   ; um zum naechsten verketteten Modul im
+                                   ; Bootfile zu springen (exakte Feldidentitaet
+                                   ; nicht doku-verifiziert, s. "Offene Punkte")
+
+=== Fehlerpfad: Register-Dump + Warmstart, kein Recovery ===
+fe000908: movem.l {SP A6 A5 A4 A3 A2 A1 A0 D7 D6 D5 D4 D3 D2 D1 D0},-(SP)
+fe00090c: bsr.w 0xfe0004ba        ; vermutlich Register-/Fehler-Ausgabe
+fe000910: bra.w 0xfe0005a6        ; <- kompletter Warmstart des ROM-Codes,
+                                   ;    KEIN selektives Recovery

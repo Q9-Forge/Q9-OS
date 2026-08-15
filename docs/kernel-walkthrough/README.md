@@ -30,6 +30,7 @@ echtem Code direkt dabei.
 | [07](07-ssm-mmu/) | SSM — MMU-Initialisierung als eigenständiges Modul (nicht Kernel, nicht Treiber/Deskriptor); 68K: Funktionscode-Umschaltung (`MOVEC SFC`) + Blockgrößen-Konstante; x86: echte `CR3`-Seitentabellen-Programmierung gefunden | ⚠️ teilweise (komplett neues Thema, beide Module nur in Ausschnitten gelesen, s. Thema selbst) |
 | [08](08-rbf-handler/) | RBF-Handler-Körper — `I$Read`/`I$Write` im Detail; x86: `Q9X_rbf_driver_dispatch` gefunden (Laufzeit-Liste aus Geräte-ID/Funktionszeiger-Paaren, indirekter Aufruf in den Treiber) | ⚠️ teilweise (68K: ~10 interne Hilfsroutinen nicht im Detail gelesen; x86 `I$Read` bestätigt trivialer Stub, Grund offen) |
 | [09](09-treiber-hardware/) | Treiber-Hardware-Zugriff — 68K `cfide`: lehrbuchmäßiger ATA/IDE-PIO-Treiber (Status-/Command-/Datenregister, Command `0x20`/`0x30`); x86 `scllio`: **kein** `IN`/`OUT` im Modul, dafür `INT 0xFF`-Syscall-Trampolin gefunden — beantwortet Thema 06s offene Frage nach dem x86-Systemaufruf-Auslöser | ⚠️ teilweise (x86: Ziel der drei indirekten `CALL`s und der `INT 0xFF`-Handler selbst nicht lokalisiert; Namens-Hypothese "SCF Line I/O" unverifiziert) |
+| [10](10-boot-vorkette/) | Boot-Vorkette vor dem Kernel-Einsprung — 68K: echte Boot-ROM-Binärdatei disassembliert, System-Global-Bereich wird dort (nicht im Kernel) genullt, Modulketten-Scanner nutzt identisches Sync-Wort/Prüfsummen-Verfahren wie Thema 00; x86: bisher unbekanntes Modul `vectx86` gefunden, bestätigt `INT 0xFF`-Syscall-Mechanismus aus Thema 09 ein zweites Mal | ⚠️ teilweise (68K: CompactFlash-Gerätesuche selbst nicht lokalisiert; x86: kein echtes Boot-ROM-Äquivalent gefunden, nur ein Kernel-naher Bootstrap-Baustein) |
 
 **Hinweis zur Konsolidierung:** Themen 01-05 aus der ursprünglichen Planung
 (Speicher-Init, Exception-Dispatch, Prozesstabellen, Modul-Nachladen,
@@ -111,6 +112,17 @@ enthält keinerlei Port-I/O — dafür einen `INT 0xFF`-Trampolin, der
 (der Handler selbst bleibt weiterhin ungefunden, nur der Auslöser ist
 jetzt bekannt). Drei indirekte `CALL`s (gleiches Verkettete-Liste-Muster
 wie Thema 08) nicht weiterverfolgt.
+
+**Hinweis zu Thema 10:** viertes komplett neues Thema, erstmals ohne
+OS-9-Moduldatei als Quelle. 68K: eine echte, lokale (nicht im Repo
+liegende) Boot-ROM-Binärdatei (`romimage.dev.running.BIN`, von Q9-Flux
+selbst beim Booten genutzt) erstmals disassembliert — Reset-Vektortabelle
+mit Overlay-Bootmechanismus entschlüsselt, System-Global-Zeroing-Schleife
+gefunden (beantwortet die seit Thema 01 offene Frage, woher der
+Kernel-vorausgesetzte System-Global-Bereich kommt), Modulketten-Scanner
+nutzt nachweislich dasselbe Sync-Wort/Prüfsummen-Verfahren wie der
+Kernel selbst. x86: bisher unbekanntes Modul `vectx86` gefunden — bestätigt
+den `INT 0xFF`-Syscall-Fund aus Thema 09 ein zweites Mal, unabhängig.
 
 ## Konvention
 

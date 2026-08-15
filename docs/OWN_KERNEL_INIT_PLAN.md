@@ -278,6 +278,53 @@ einer erkennbaren Erst-Initialisierung) — für eine konkrete Umsetzung
 bräuchte es eine weitere Vertiefungsrunde, keine reine Übernahme aus den
 hier gefundenen Ausschnitten.
 
+## 2e. Boot-Vorkette — was vor dem Kernel-Einsprung passiert (aus Thema 10)
+
+Aus [Thema 10](kernel-walkthrough/10-boot-vorkette/): alle bisherigen
+Abschnitte (2-2d) setzen voraus, dass der System-Global-Bereich beim
+Kernel-Einsprung bereits existiert — dieser Abschnitt klärt, wer ihn
+anlegt. Antwort, gefunden durch Disassemblierung der echten Q9-Flux-
+Boot-ROM-Datei: **der Boot-ROM selbst**, in einer eigenen Routine vor
+jedem Kernel-Code — eine `DBF`-Schleife nullt einen ca. 19,5-KByte-
+Bereich in **16-Byte-Schritten** (dieselbe Granularität wie Abschnitt 2,
+Punkt 3 — jetzt ein drittes Mal, eine Ebene *unter* dem Kernel,
+bestätigt).
+
+**Klare Übernahme-Empfehlung für den eigenen Kernel:** diese
+Verantwortung sauber trennen — ein eigener Q9-Bootlader (nicht der
+Kernel selbst) legt den System-Global-Bereich an und nullt ihn, bevor er
+den Kernel überhaupt anspringt. Das entlastet den Kernel-Bootstrap
+(Abschnitt 2) von dieser Aufgabe und spiegelt exakt, was das 68K-Vorbild
+tut.
+
+**Zweiter Fund, ebenfalls klare Übernahme-Empfehlung:** der Boot-ROM
+validiert Boot-Kandidaten (Module in der Bootdatei) mit **demselben**
+Sync-Wort- und Prüfsummen-Verfahren, das auch beim regulären Modul-Linken
+zur Laufzeit gilt (Sync `$4AFC`, 24-Word-XOR-Prüfsumme über Offset
+`0x00`-`0x2F`, muss `0xFFFF` ergeben) — kein separates Bootfile-Format
+nötig, ein einziges Validierungsverfahren für beide Fälle.
+
+**Dritter Fund, eine Design-Lehre:** die Fehlerbehandlung des 68K-Boot-
+ROMs ist bewusst simpel — bei jedem grundlegenden Fehler (RAM-Test
+fehlgeschlagen, Bootfile ungültig) wird **kein** selektives Recovery
+versucht, sondern die komplette ROM-Logik neu gestartet. Für die
+allerfrüheste Boot-Phase (bevor irgendein Dateisystem, Scheduler oder
+Fehlerbehandlungs-Infrastruktur existiert) ist das plausibel die
+robustere Wahl als ein komplexer Fehlerbehandlungspfad, der selbst
+fehlerhaft sein könnte.
+
+**x86-Seite, neuer Baustein:** `vectx86` — ein bisher unbekanntes,
+eigenständiges Modul (nicht Teil des Kernels), das feste Handler-Adressen
+in Kernel-Globals-Felder installiert. Bestätigt außerdem ein zweites Mal,
+unabhängig von `scllio` (Abschnitt 3b), dass `INT 0xFF` der generische
+x86-Systemaufruf-Mechanismus ist — kein treiberspezifischer Einzelfall.
+Kein echtes BIOS-/IPL-Äquivalent zum 68K-Boot-ROM wurde auf der x86-Seite
+gefunden (liegt vermutlich außerhalb des gesamten Microware-Modulfundus,
+in QEMUs eigener Firmware) — für den eigenen Kernel kein Hindernis, aber
+ein Hinweis, dass die x86-Vorkette strukturell anders organisiert sein
+könnte als die 68K-Vorkette (mehrere kleine Bootstrap-Module statt eines
+monolithischen ROM-Codes).
+
 ## 3. Der Dreiklang — jetzt eine Pflichtanforderung
 
 Aus [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/) und
@@ -447,5 +494,6 @@ dem Kernel-Walkthrough — keine neuen Behauptungen, nur Synthese:
 - [`kernel-walkthrough/07-ssm-mmu/`](kernel-walkthrough/07-ssm-mmu/README.md)
 - [`kernel-walkthrough/08-rbf-handler/`](kernel-walkthrough/08-rbf-handler/README.md)
 - [`kernel-walkthrough/09-treiber-hardware/`](kernel-walkthrough/09-treiber-hardware/README.md)
+- [`kernel-walkthrough/10-boot-vorkette/`](kernel-walkthrough/10-boot-vorkette/README.md)
 
 **Erstellt**: 2026-08-14, zuletzt ergänzt 2026-08-15
