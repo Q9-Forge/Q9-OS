@@ -73,6 +73,25 @@ das schon alle drei Layouts als Parser-Definitionen enthält) nutzen und
 beim Lesen eines Moduls anhand des Sync-Werts entscheiden, welches der
 bekannten Layouts gilt.
 
+**Eigenes Q9-Header-Format entworfen (2026-08-16, 💡, in
+`src/q9moduleheader.h` als Layout 4 festgehalten):** eigener Sync-Wert
+(`$5139`, ASCII "Q9", kollisionsfrei zu `$87CD`/`$4AFC`), `type`-Feld auf
+16 Bit erweitert (`0x00`-`0x0F` wortidentisch zu den Legacy-Typcodes,
+`0x0C`-`0x0F` weiterhin zwingend für den Dreiklang reserviert, `0x10`+
+frei für eigene Modularten), und ein selbstbeschreibendes `abiClass`-Byte
+direkt nach einem `hdrVersion`-Byte (noch vor jedem breitenabhängigen
+Feld, nach ELF-`EI_CLASS`-Vorbild) — kodiert Pointerbreite (16/32/64 Bit)
+UND Endianness in einem Feld, fünf real genutzte Kombinationen
+(16BE/32BE/32LE/64BE/64LE; 16-Bit fürs 6809-Erbe, absichtlich nur
+Big-Endian). Ein optionaler Erweiterungsblock (über `hdExtOffset`/
+`hdExtSize`, dasselbe Prinzip, das der 68K-Header schon selbst mitbringt)
+trägt erweiterte Owner/Group/World-Rechte, SMP-Metadaten
+(`cpuAffinityMask`, `smpFlags`), Zielarchitektur-Kennung und das
+Adressierungsmodell-Flag (Bezug: Abschnitt 2d/6). Details, Bitlayouts und
+die drei Struct-Varianten (`Q9_ModHeadOwn16/32/64`): siehe
+`src/q9moduleheader.h`. Noch offen: konkrete Feldbelegung für
+Abschnitt-5-Punkt-5 (welche eigenen Modularten `0x10`+ bekommen).
+
 ## 2. Boot-Init-Reihenfolge — was beide Kernel in derselben Grundform tun
 
 Aus [Thema 01](kernel-walkthrough/01-kernel-bootstrap/) (komplette
