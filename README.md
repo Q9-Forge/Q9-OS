@@ -14,7 +14,9 @@ Beschränkung aufgehoben (2026-08-14) — Ziel ist jetzt ein **eigener
 Kernel**, mit **verbindlicher Kompatibilität zu echten OS-9/68K- und
 OS-9000-Modulen** (bestehende Treiber/File-Manager müssen weiterhin
 laufen), aber offen für zusätzliche, eigene Modularten. Erster grober
-Anforderungsentwurf dafür: [`docs/OWN_KERNEL_INIT_PLAN.md`](docs/OWN_KERNEL_INIT_PLAN.md).
+Anforderungsentwurf dafür: [`docs/OWN_KERNEL_INIT_PLAN.md`](docs/OWN_KERNEL_INIT_PLAN.md),
+dazu die konkrete Modul-/Syscall-Stückliste:
+[`docs/OWN_KERNEL_MODULES_OVERVIEW.md`](docs/OWN_KERNEL_MODULES_OVERVIEW.md).
 Frühere, unabhängige Vorarbeit dazu: [Q9RESUME-Kernel](https://github.com/foellmy51/Q9RESUME-Kernel)
 (archiviert).
 
