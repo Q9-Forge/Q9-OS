@@ -567,13 +567,19 @@ konkreter:
    definiert werden?** Andreas ist dafür offen, aber ohne Eingrenzung
    bleibt das komplett unbestimmt — auch nur ein paar Stichworte würden
    reichen, um die Modulformat-Erweiterung (Abschnitt 1) konkreter zu
-   planen. **Teilweise entschieden (2026-08-15):** ein eigenes Q9-Modul-/
-   Header-Format ist für Phase 1 (s. Abschnitt 6) grundsätzlich in Scope —
-   u.a. weil erweiterte Zugriffsrechte (mehr als Owner/Public) auf den
-   echten Legacy-Headern strukturell nicht nachrüstbar sind (klassisches
-   68K-`FD_ATT`/`PD_ATT` ist nur 8 Bit breit, kein Platz für eine
-   Gruppen-Ebene — die kam erst mit OS-9000). Konkrete Feldliste des
-   eigenen Headers noch offen.
+   planen. **Entschieden (2026-08-15/16):** ein eigenes Q9-Modul-/
+   Header-Format ist für Phase 1 (s. Abschnitt 6) in Scope und in
+   `src/q9moduleheader.h` als Layout 4 festgehalten — u.a. weil erweiterte
+   Zugriffsrechte (mehr als Owner/Public) auf den echten Legacy-Headern
+   strukturell nicht nachrüstbar sind (klassisches 68K-`FD_ATT`/`PD_ATT`
+   ist nur 8 Bit breit, kein Platz für eine Gruppen-Ebene — die kam erst
+   mit OS-9000). Konkrete neue Top-Level-Modulart: `0x10` =
+   Q9_MT_BOOTLOADER (eigener Bootlader, läuft vor dem Kernel, s. Abschnitt
+   2e). Für alles andere Neue (Netzwerk-File-Manager, Systemmonitor-
+   Streaming, `/proc`) bewusst **kein** eigener Top-Level-Typ, sondern ein
+   neues `subType`-Feld innerhalb `Fmgr` (`0x0D`) — analog zu OS-9000s
+   `DT_*`-Konzept, aber eigene Nummerierung, hält den Top-Level-
+   Namensraum klein.
 
 ## 6. Phasenplan und SMP-Grundsatzentscheidungen (2026-08-15, 💡 Vorschlag)
 

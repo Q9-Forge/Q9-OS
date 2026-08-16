@@ -251,9 +251,13 @@ typedef struct {
  *
  * 1. 16-Bit-taugliches `type`-Feld statt Nibble: Werte 0x00-0x0F sind
  *    WORT-IDENTISCH zu Q9_MT_* oben (0x0C-0x0F bleiben fuer den Dreiklang
- *    zwingend reserviert, siehe Abschnitt 1 von OWN_KERNEL_INIT_PLAN.md),
- *    0x10 aufwaerts frei fuer eigene, neue Modularten -- bisher keine
- *    vergeben.
+ *    zwingend reserviert, siehe Abschnitt 1 von OWN_KERNEL_INIT_PLAN.md).
+ *    0x10 = Q9_MT_BOOTLOADER, die bisher einzige zusaetzliche Top-Level-
+ *    Modulart [ENTWURF, 2026-08-16] -- fuer alles andere Neue (Netzwerk,
+ *    Systemmonitor-Streaming, /proc) reicht ein gewoehnliches Fmgr (0x0D)
+ *    plus dem neuen `subType`-Feld (Q9_SUBTYPE_*, analog zu OS-9000s
+ *    DT_*-Konzept, aber eigene Nummerierung), statt den Top-Level-
+ *    Namensraum aufzublaehen.
  * 2. Ein `abiClass`-Byte direkt nach `hdrVersion`, noch VOR jedem
  *    breitenabhaengigen Feld (dasselbe Prinzip wie ELFs `EI_CLASS`),
  *    kodiert Pointerbreite UND Endianness in einem Feld ("zusammen
@@ -282,9 +286,10 @@ typedef struct {
  * Feldbreite skaliert mit abiClass fuer alle Offset-/Groessenfelder
  * (size/owner/nameOffset/execOffset/exceptOffset/dataSize/stackSize/
  * idataOffset/idrefOffset/hdExtOffset/hdExtSize); sync/hdrVersion/
- * abiClass/access/type/lang/attr/revs/edit/parity bleiben in allen drei
- * Breitenvarianten gleich breit (reine Ein-Byte-/Zwei-Byte-Werte, keine
- * Zeiger). Deshalb DREI eigene Struct-Varianten statt eines gemeinsamen
+ * abiClass/access/type/lang/subType/attr/revs/edit/parity bleiben in
+ * allen drei Breitenvarianten gleich breit (reine Ein-Byte-/Zwei-Byte-
+ * Werte, keine Zeiger). Deshalb DREI eigene Struct-Varianten statt eines
+ * gemeinsamen
  * Offset-Schemas -- echte Byte-Offsets verschieben sich je Variante,
  * exakt wie bei ELFs Elf32_Ehdr/Elf64_Ehdr.
  * ==================================================================== */
@@ -299,8 +304,28 @@ typedef struct {
 #define Q9_ABICLASS_ENDIAN_LE    0x04
 
 /* Typ-Codes: 0x00-0x0F identisch zu Q9_MT_* oben, 0x10+ frei fuer eigene
- * Q9-native Modularten (Abschnitt 5 des Plans, noch offen) */
+ * Q9-native Modularten (Abschnitt 5 des Plans) */
 #define Q9_MT_LEGACY_MAX         0x0F
+#define Q9_MT_BOOTLOADER         0x10  /* [ENTWURF, 2026-08-16] Q9-eigener Bootlader -- laeuft VOR dem Kernel, legt laut Thema 10 den System-Global-Bereich an, aber mit demselben Sync-/Pruefsummen-Verfahren validiert wie ein regulaeres Modul (ein Scanner fuer beide Faelle) -- keine Dreiklang-Rolle, deshalb eigener Top-Level-Typ statt Sub-Type */
+/* 0x11+ weiterhin frei, noch keine weitere eigene Top-Level-Modulart als
+ * noetig identifiziert -- die meisten neuen Ideen (Netzwerk, Systemmonitor-
+ * Streaming, /proc) passen als gewoehnliches Fmgr (0x0D) + subType, s.u.,
+ * statt einen eigenen Top-Level-Typ zu brauchen */
+
+/* Sub-Type: zweite Klassifizierungsachse, analog zu OS-9000s DT_*-Konzept
+ * (DT_NFM/DT_SOCK/... in os9k_tech.pdf), aber EIGENE Nummerierung -- keine
+ * Microware-Werte uebernommen, gleiches Prinzip wie bei Q9_RIGHTS_* oben.
+ * Nur fuer Fmgr-Module (Q9_MT_FILEMAN) relevant; bei allen anderen Typen
+ * 0/Q9_SUBTYPE_NONE. Haelt den Top-Level-`type`-Namensraum klein: neue
+ * "Arten von Datei-Manager" brauchen keinen neuen Top-Level-Typ, nur einen
+ * neuen Sub-Type-Wert. */
+#define Q9_SUBTYPE_NONE          0x00
+#define Q9_SUBTYPE_RBF_COMPAT    0x01  /* eigenes RBF-Aequivalent, falls kein reales RBF-Modul wiederverwendet wird */
+#define Q9_SUBTYPE_NETFM         0x02  /* Netzwerk-File-Manager, s. Abschnitt 6 -- bleibt Dreiklang-Ebene, nie Kernel */
+#define Q9_SUBTYPE_SOCK          0x03  /* Socket-Communication-Manager */
+#define Q9_SUBTYPE_SYSMON        0x04  /* Kernel-Table-Streaming/Lockless-Ringpuffer, "/pipe/sysmon"-Idee */
+#define Q9_SUBTYPE_PROCFS        0x05  /* virtuelles /proc-artiges Text-Dateisystem */
+/* 0x06+ frei */
 
 /* Zielarchitektur-Kennung (Erweiterungsblock) */
 #define Q9_ARCH_6809      0
@@ -351,6 +376,7 @@ typedef struct {
     uint16_t access;
     uint16_t type;
     uint16_t lang;
+    uint16_t subType;   /* Q9_SUBTYPE_*, nur bei Q9_MT_FILEMAN relevant */
     uint8_t  attr;
     uint8_t  revs;
     uint16_t edit;
@@ -375,6 +401,7 @@ typedef struct {
     uint16_t access;
     uint16_t type;
     uint16_t lang;
+    uint16_t subType;   /* Q9_SUBTYPE_*, nur bei Q9_MT_FILEMAN relevant */
     uint8_t  attr;
     uint8_t  revs;
     uint16_t edit;
@@ -399,6 +426,7 @@ typedef struct {
     uint16_t access;
     uint16_t type;
     uint16_t lang;
+    uint16_t subType;   /* Q9_SUBTYPE_*, nur bei Q9_MT_FILEMAN relevant */
     uint8_t  attr;
     uint8_t  revs;
     uint16_t edit;
