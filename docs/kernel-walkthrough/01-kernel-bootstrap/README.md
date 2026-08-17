@@ -175,6 +175,21 @@ Typ-Code-Filterung:**
    erneut hier bei der Init-Modul-Suche — eine gemeinsame Quelle für
    beide Zwecke.
 
+   **Nachtrag 2026-08-17, Andreas' Frage "gab es dort auch einen Hinweis
+   auf das Init-Modul, oder müssen wir es selber suchen?":** kein
+   Hinweis — der Boot-ROM gibt nur *wo* zu suchen ist (die
+   Speicherregion-Liste), nicht *welches* Modul es ist. Beim genaueren
+   Nachlesen (`0x69b0`-`0x69fc`) außerdem eine bisher zu grob
+   zusammengefasste Nuance: Bei einem Namenstreffer bricht der Scan NICHT
+   sofort ab, sondern läuft über alle Regionen weiter — bei mehreren
+   "init"-benannten Kandidaten gewinnt der mit der **höchsten
+   Revisionsnummer** (`M$Rev`, Header-Offset `0x15`, per `cmp.b
+   (0x15,A0),D4b`/`bge.b`-Vergleichskette). Das `D3`-Bit-3 (s. u.) ist
+   damit eher ein "nimm den ersten Treffer sofort, brich den Scan ab"-
+   Schalter als ein "überspringe den Namensvergleich" — es wird erst NACH
+   einem erfolgreichen Namenstreffer geprüft (`0x69d8`-`0x69e0`), nicht
+   davor.
+
    **Bonus-Fund dabei — ein fünftes Boot-Register:** `btst.l #0x4,D3`
    ist die allererste Instruktion der Funktion (`0x67a0`), noch vor dem
    Stack-Zugriff. `D3` wird bei `0x681e` komplett nach `Q9_D_BOOTFLAGS`
