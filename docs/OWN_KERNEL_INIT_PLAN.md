@@ -545,7 +545,22 @@ konkreter:
 1. **Strukturelle Kompatibilität oder tatsächliche Binärausführung für
    OS-9000/x86-Module?** (s. Statusabschnitt oben) — Bedeutung 2 braucht
    einen x86-Interpreter zusätzlich zu Musashi, ein substanzielles neues
-   Stück Technik, kein Nebeneffekt der übrigen Punkte hier.
+   Stück Technik, kein Nebeneffekt der übrigen Punkte hier. **Bootstrap-
+   Strategie entschieden (2026-08-17):** kein eigener x86-Interpreter als
+   Voraussetzung für den Start von Phase 2 — dasselbe Muster wie beim
+   68K/CB030-Ansatz (Schritt 5.2 in `Q9-Flux/.claude/ARBEITSPLAN.md`)
+   übertragen: echtes, unverändertes OS-9000/x86 zuerst unter dem bereits
+   bewährten **QEMU** laufen lassen (bootet laut Kernel-Walkthrough-Serie
+   schon zuverlässig echte v4.9- und v6.1-Images — liefert also bereits
+   "echte Binärausführung", ohne dass Q9-Flux selbst dafür eine x86-CPU
+   emulieren muss), dann schrittweise durch eigene Q9-Module ersetzen,
+   sobald der Syscall-Bridge-Teil steht. QEMU übernimmt damit faktisch die
+   Rolle von "Typ A" (Board-Emulator) für x86 in der Multi-Arch-Planung.
+   Eine reale x86-Hardware liegt zusätzlich vor (Andreas hat sie schon
+   besorgt) — aufwendigerer Alternativ-/Später-Pfad, kein Blocker für den
+   Start. Ob langfristig zusätzlich ein eigener x86-Interpreter in
+   Q9-Flux selbst entsteht, bleibt offen — aber kein Hard-Prerequisite
+   mehr.
 2. **Eigenes Syscall-Nummerierungsschema oder 68K-`F$`/`I$`-Codes
    übernehmen?** Für Kompatibilität zu echten 68K-Treibern/File-Managern
    ohnehin zwingend die 68K-Codes — die Frage ist eher, ob eigene, neue
@@ -595,10 +610,14 @@ konkreter:
    Zeiger auf diese Tabellen, die selbst laut Manual dynamisch aus dem
    allgemeinen RAM alloziert werden ("allocated from the general RAM area
    when needed").
-4. **Modul-Scanner beim Boot: ja oder nein?** Empfehlung oben war "ja,
-   x86-Ansatz übernehmen" — aber das ist eine echte Design-Entscheidung
-   mit Aufwandsfolgen (Prüfsummen-Logik, Namenskollisions-Handling bei
-   mehreren Revisionen), keine reine Formsache.
+4. **Modul-Scanner beim Boot: ja oder nein?** **Entschieden (2026-08-17):
+   ja.** Übernimmt das aus Thema 10 bestätigte 68K-Prinzip — ein einziges
+   Sync-/Prüfsummen-Validierungsverfahren für Boot-Zeit UND Laufzeit-
+   Linking, kein separates Bootfile-Format. Der in der Doku oben schon
+   benannte Zusatzaufwand (Namenskollisions-Handling bei mehreren
+   Revisionen im selben Bootlauf) bleibt ein eigener, kleinerer
+   Design-Punkt, ist aber kein Grund, den Scanner grundsätzlich zu
+   verwerfen.
 5. **Wie viele/welche eigenen Modularten sollen zusätzlich zum Dreiklang
    definiert werden?** Andreas ist dafür offen, aber ohne Eingrenzung
    bleibt das komplett unbestimmt — auch nur ein paar Stichworte würden
