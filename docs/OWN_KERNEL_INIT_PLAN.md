@@ -134,6 +134,27 @@ Reihenfolge):
    bei x86) statt dynamischem Wachstum — für einen eigenen, eher
    ressourcenbeschränkten Zielsystem-Kontext ebenfalls die pragmatischere
    Wahl.
+6a. **Init-Modul per Namenssuche finden** — **neu, 2026-08-17** (bisher
+   nur 68K bestätigt, x86-Seite in dieser Runde nicht geprüft): der
+   68K-Kernel sucht das Init-Modul NICHT über eine vom Boot-ROM
+   übergebene Adresse und NICHT über Typ-Code-Filterung, sondern scannt
+   eine Liste von Speicherregionen nach einem gültigen Modul-Header
+   (derselbe Sync-/Prüfsummen-Scanner wie sonst auch) und vergleicht
+   dessen Namen groß-/kleinschreibungsunabhängig gegen den festen String
+   `"init"` (Fund bei `0x6986`-`0x6a06` in `dker030s`, s.
+   [Thema 01](kernel-walkthrough/01-kernel-bootstrap/) für Details/Beleg).
+   Bei Erfolg werden mehrere Init-Modul-Felder direkt in Kernel-Globals
+   kopiert (u. a. `M$SysConf` → `D_SysConf`, deckt sich mit dem
+   unabhängig gefundenen `SSM_NoProt`-Flag aus `MMU_SSM_WORKFLOW_de.md`).
+   Bei Misserfolg: fest einprogrammierte Fehlermeldung, vermutlich Abbruch.
+   **Klare Übernahme-Empfehlung**: derselbe Mechanismus (Namenssuche über
+   den ohnehin vorhandenen Modul-Scanner, s. Abschnitt 5 Punkt 4) statt
+   eine feste Adresse oder ein separates Discovery-Protokoll zu erfinden —
+   beantwortet direkt Andreas' Boot-Reihenfolge-Frage: das Init-Modul-Lesen
+   ist ein regulärer Schritt MITTEN im Kernel-Bootstrap (nach den
+   Ready-Queues/Dispatch-Tabellen, vor dem Sprung in den Scheduler), keine
+   Sonderbehandlung davor oder danach.
+
 7. **Ersten Ausführungskontext von Hand konstruieren und hineinspringen**
    — beide Kernel bauen sich am Ende einen künstlichen Rücksprung-/
    Stack-Rahmen (68K: direkter Sprung in den Scheduler-Trampolin; x86: ein

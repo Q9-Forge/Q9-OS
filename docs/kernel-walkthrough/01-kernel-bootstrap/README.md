@@ -139,6 +139,70 @@ der 68K-Kernel tut das direkt auf seinem eigenen Stack, der x86-Kernel
 über einen echten Stack-Wechsel in einen frisch berechneten, dynamischen
 Speicherbereich hinein.
 
+## Neuer Fund (2026-08-17): Wie findet der Kernel das Init-Modul?
+
+Bisher offene Lücke (`Q9_D_INIT` nur `[HANDBUCH]`, kein Schritt in der
+chronologischen Übersicht unten) — Anlass war Andreas' Frage zur Boot-
+Reihenfolge des eigenen Kernels ("kommt zuerst die Init einlesen?").
+Gezielt in `dker030s` nachgesucht, Fund bei `0x6986`-`0x6a06`:
+
+**Der Kernel sucht das Init-Modul über einen eigenen Speicher-Scan,
+nicht über eine vom Boot-ROM übergebene Adresse und nicht über
+Typ-Code-Filterung:**
+
+1. `0x698c`-`0x69f6`: eine Liste von Speicherregionen wird durchlaufen
+   (Paare aus Basisadresse/Länge, nullterminiert, Quellregister `D6` — wo
+   diese Liste selbst herkommt, nicht in dieser Runde weiter verfolgt).
+   Innerhalb jeder Region wird an aufsteigenden geraden Adressen nach
+   einem gültigen Modul-Header gesucht (Aufruf von `0x4410`, der bekannten
+   Sync-/Prüfsummen-Validierung aus Thema 00/10 entsprechend).
+2. Für jeden gefundenen, gültigen Kandidaten (`0x69b0`-`0x69d8`): der
+   Name wird über `M$Name` (`+0xC`-Offset) gelesen und **Byte für Byte,
+   groß-/kleinschreibungsunabhängig** (XOR + `andi.b #$DF`-Maskierung von
+   Bit 5) gegen den festen String `"init"` verglichen — kein Typ-Code-
+   Filter, reiner Namensvergleich.
+3. Bei Treffer (`0x6a06`): `move.l A5,(0x20,A6)` — die gefundene
+   Modul-Adresse wird in `Q9_D_INIT` gespeichert. **Wichtig:** `A5` hält
+   an dieser Stelle NICHT mehr den Exception-Tabellen-Zeiger aus Zeile 22
+   oben — das Register wird zwischen `0x6986` und `0x6a06` für die
+   Namenssuche umgebogen und danach neu belegt. Reines Register-Recycling
+   in dichtem Assembler, kein Widerspruch zum ersten Fund.
+4. Direkt danach (`0x6a0a`-`0x6a4a`): mehrere Init-Modul-Felder werden
+   gelesen und in Kernel-Globals kopiert — drei davon eindeutig
+   identifiziert, weil sie exakt zu bereits bekannten `q9sysglob.h`-Feldern
+   passen:
+
+   | Init-Modul-Offset (rel. A5) | Ziel in Kernel-Globals | Breite |
+   |---|---|---|
+   | `0x68` | `Q9_D_COMPAT` (`0x2E`) | 1 Byte |
+   | `0x69` | `Q9_D_COMPAT2` (`0x3E0`) | 1 Byte |
+   | `0x7A` | `Q9_D_SYSCONF` (`0x38`) — deckt sich mit dem unabhängig in `Q9-Flux/docs/MMU_SSM_WORKFLOW_de.md` gefundenen `M$SysConf`/`SSM_NoProt` | 2 Byte |
+   | `0x5E` | **neu, noch unbenannt** (`Q9_D_UNKN8A6` = `0x8A6`) | 2 Byte |
+   | `0x60` | **neu, noch unbenannt** (`Q9_D_UNKN8A8` = `0x8A8`) | 2 Byte |
+
+5. Falls **kein** Modul namens "init" gefunden wird: der Kernel gibt eine
+   fest einprogrammierte Meldung aus — wörtlich `"kernel: can't find Init
+   module"` (Fundort `0x64c5`, direkt neben dem Vergleichs-String `"init"`
+   bei `0x64c0`) — und bricht vermutlich ab (Fortsetzung des Fehlerpfads
+   nicht weiter verfolgt).
+
+**Konsequenz für den eigenen Kernel** (Andreas' eigentliche Frage): das
+Init-Modul-Einlesen ist kein Sonderfall vor dem Bootstrap, sondern ein
+regulärer, eigenständiger Namenssuchschritt **mitten im** Kernel-
+Bootstrap — nach der Exception-Tabellen-Übernahme (Zeile 22ff.), vor dem
+Sprung in den Scheduler (Schritt 15 unten). Für Q9-OS' eigenen Kernel
+spricht das dafür, denselben Grundablauf zu übernehmen (Namenssuche über
+denselben Sync-/Prüfsummen-Scanner, den auch der Boot-Vorketten-Fund aus
+Thema 10 beschreibt — ein einziger Mechanismus für beide Zwecke, wie dort
+schon empfohlen), statt eine feste Adresse oder ein separates
+Discovery-Protokoll zu erfinden.
+
+`Q9_D_INIT`, `Q9_D_COMPAT`, `Q9_D_COMPAT2` und `Q9_D_SYSCONF` in
+`q9sysglob.h`/`.a` sind mit diesem Fund von `[HANDBUCH]`/`[PLATZHALTER]`
+auf `[VERIFIZIERT]` hochgestuft (bereits nachgetragen). Zwei neue,
+bisher unbekannte Felder (`Q9_D_UNKN8A6`/`Q9_D_UNKN8A8`) sind als
+`[PLATZHALTER]` ergänzt.
+
 ## Die chronologische Übersicht
 
 Eine Zeile pro Schritt, in der tatsächlichen Ausführungsreihenfolge. Wo
@@ -157,6 +221,7 @@ ein Schritt nur bei einer Architektur vorkommt, steht das explizit dabei
 | 8 | Speicher für die Exception-/Trap-Tabelle bereitstellen | vom Boot-ROM über Register A5 übergeben (s. o.) | selbst aus der eigenen Speichergrößen-Abfrage berechnet — **echter Unterschied** |
 | 9 | Exception-/Trap-Dispatch-Tabelle aus kompakter Quelltabelle befüllen | `Q9_kernel_init_67a0` (256 Einträge aus Quelle bei `0x3802`) | `Q9X_dispatch_table_build` (2× aufgerufen) |
 | 10 | *(nur 68K)* Syscall-Dispatch-Tabellen (`D_SysDis`/`D_UsrDis`) einrichten | `Q9_kernel_init_67a0` | — (x86-Äquivalent nicht in diesem Bootstrap-Abschnitt identifiziert) |
+| 10a | Init-Modul per Namenssuche ("init", Speicherregionen scannen, Sync-/Prüfsummen-Check) finden, Adresse in `D_Init` speichern, Konfigurationsfelder in Kernel-Globals kopieren — **neu, 2026-08-17, s. o.** | `Q9_kernel_init_67a0` (`0x6986`-`0x6a4a`) | nicht in dieser Runde auf der x86-Seite gesucht |
 | 11 | *(nur x86)* Weitere Module im Speicher suchen (Modul-Scanner) | — | `Q9X_kernel_globals_init` |
 | 12 | *(nur x86)* Prozess-/Pfad-Deskriptor-Tabellen mit Freiliste einrichten | — (68K macht das vermutlich an anderer Stelle, nicht Teil dieses Bootstraps) | `Q9X_kernel_globals_init` |
 | 13 | *(nur x86)* Geräte-/Modul-Init-Schleife | — | `Q9X_device_module_init_loop` |

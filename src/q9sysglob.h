@@ -14,17 +14,17 @@
 /* System-Global-Bereich */
 #define Q9_D_ID             0x0000  /* Sync-Kennzeichen, nach Coldstart gesetzt [PLATZHALTER] */
 #define Q9_D_NOSLEEP        0x0002  /* Ungleich 0 verhindert, dass der Systemprozess schlafen geht [PLATZHALTER] */
-#define Q9_D_INIT           0x0020  /* Zeiger auf das Init-Konfigurationsmodul [HANDBUCH] */
+#define Q9_D_INIT           0x0020  /* Zeiger auf das Init-Konfigurationsmodul [VERIFIZIERT, 2026-08-17 -- move.l A5,(0x20,A6) bei 0x6a06 in dker030s; A5 haelt an dieser Stelle NICHT mehr den Exception-Tabellen-Zeiger von 0x68ec, sondern wurde zwischen 0x6986-0x6a06 auf das per Namenssuche gefundene Init-Modul umgebogen -- Suchmechanismus s. docs/kernel-walkthrough/01-kernel-bootstrap/README.md] */
 #define Q9_D_CLOCK          0x0024  /* Adresse der Tick-Routine [PLATZHALTER] */
 #define Q9_D_TCKSEC         0x0028  /* Ticks pro Sekunde [PLATZHALTER] */
 #define Q9_D_YEAR           0x002A  /* Jahr [PLATZHALTER] */
 #define Q9_D_MONTH          0x002C  /* Monat [PLATZHALTER] */
 #define Q9_D_DAY            0x002D  /* Tag [PLATZHALTER] */
-#define Q9_D_COMPAT         0x002E  /* Kompatibilitaets-Flags (1) [PLATZHALTER] */
+#define Q9_D_COMPAT         0x002E  /* Kompatibilitaets-Flags (1) [VERIFIZIERT, 2026-08-17 -- kopiert aus Init-Modul-Offset (0x68,A5) bei $6a22 in dker030s, Teil der Init-Modul-Einlese-Sequenz s. Q9_D_INIT/kernel-walkthrough Thema 01] */
 #define Q9_D_FPU            0x002F  /* FPU-Typ: 0=keine, 1=68881, 2=68882, 40=68040, 60=68060 [PLATZHALTER] */
 #define Q9_D_JULIAN         0x0030  /* laufende Tagesnummer im Jahr [PLATZHALTER] */
 #define Q9_D_SECOND         0x0034  /* verbleibende Sekunden bis Mitternacht [PLATZHALTER] */
-#define Q9_D_SYSCONF        0x0038  /* Systemkonfigurations-Flags [PLATZHALTER] */
+#define Q9_D_SYSCONF        0x0038  /* Systemkonfigurations-Flags [VERIFIZIERT, 2026-08-17 -- kopiert aus Init-Modul-Offset (0x7a,A5) bei $6a2e in dker030s, s. Q9_D_INIT; deckt sich mit dem in Q9-Flux/docs/MMU_SSM_WORKFLOW_de.md dokumentierten M$SysConf/SSM_NoProt-Flag] */
 #define Q9_D_IRQFLAG        0x003A  /* IRQ-Statusflag [PLATZHALTER] */
 #define Q9_D_UNKIRQ         0x003B  /* Zaehler fuer unbekannte IRQs in Folge [PLATZHALTER] */
 #define Q9_D_MODDIR         0x003C  /* Modulverzeichnis: Start-/Endzeiger [VERIFIZIERT -- (0x3c,A6)/(0x40,A6) in Q9_syscall_27d6 bestaetigt] */
@@ -57,7 +57,7 @@
 #define Q9_D_EVID           0x03D4  /* naechste, fortlaufende Event-ID [PLATZHALTER] */
 #define Q9_D_SPUMEM         0x03D8  /* Zeiger auf SPU-Globaldaten (0 = nicht aktiv) [PLATZHALTER] */
 #define Q9_D_ADDRLIM        0x03DC  /* hoechste beim Start gefundene Adresse [PLATZHALTER] */
-#define Q9_D_COMPAT2        0x03E0  /* Cache-Kompatibilitaets-/Konfigurationsflags [PLATZHALTER] */
+#define Q9_D_COMPAT2        0x03E0  /* Cache-Kompatibilitaets-/Konfigurationsflags [VERIFIZIERT, 2026-08-17 -- kopiert aus Init-Modul-Offset (0x69,A5) bei $6a28 in dker030s, s. Q9_D_INIT */
 #define Q9_D_SNOOPD         0x03E1  /* ungleich 0, wenn alle Daten-Caches kohaerent/snoopy sind [PLATZHALTER] */
 #define Q9_D_PROCSZ         0x03E2  /* Groesse eines Prozessdeskriptors [PLATZHALTER] */
 #define Q9_D_POLTBL         0x03E4  /* Polling-Tabellenkoepfe fuer Autovektor-IRQs [PLATZHALTER] */
@@ -116,6 +116,8 @@
 #define Q9_D_IRQHEADS       0x0600  /* IRQ-Kopfregionen (fuer Nicht-MSP-Kernel) [PLATZHALTER] */
 #define Q9_D_ALMQ1          0x0774  /* F$Alarm-Warteschlange 1 (sofortige/D1=0-Variante, Q9_alarm_set_157e), sortiert nach Faelligkeit (Knotenfelder +0x20/+0x24), Verkettung ueber +0xC/+0x10; beim Boot als leere Ringliste initialisiert (Q9_kernel_init_67a0, 0x6886-0x688e); Walk/Insert in Q9_alarm_insert_15c4 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/] */
 #define Q9_D_ALMQ2          0x077C  /* F$Alarm-Warteschlange 2 (intervallbasierte Variante, Q9_alarm_set_1580), sonst identischer Aufbau zu Q9_D_ALMQ1 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/] */
+#define Q9_D_UNKN8A6        0x08A6  /* NEU GEFUNDEN 2026-08-17, Bedeutung noch offen [PLATZHALTER] -- kopiert aus Init-Modul-Offset (0x5e,A5) bei $6a0a in dker030s, s. Q9_D_INIT; 2 Byte laut move.w-Breite */
+#define Q9_D_UNKN8A8        0x08A8  /* NEU GEFUNDEN 2026-08-17, Bedeutung noch offen [PLATZHALTER] -- kopiert aus Init-Modul-Offset (0x60,A5) bei $6a10 in dker030s, s. Q9_D_INIT; 2 Byte laut move.w-Breite */
 #define Q9_D_END          0x1000
 
 /* Exception-Sprungtabelle (Basis: *Q9_D_ExcJmp) */

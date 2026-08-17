@@ -25,7 +25,7 @@
 Q9_D_Id:        do.w 1    Sync-Kennzeichen, nach Coldstart gesetzt [PLATZHALTER]
 Q9_D_NoSleep:   do.w 1    Ungleich 0 verhindert, dass der Systemprozess schlafen geht [PLATZHALTER]
                 do.b 28   reserviert [PLATZHALTER]
-Q9_D_Init:      do.l 1    Zeiger auf das Init-Konfigurationsmodul [HANDBUCH]
+Q9_D_Init:      do.l 1    Zeiger auf das Init-Konfigurationsmodul [VERIFIZIERT, 2026-08-17 -- move.l A5,(0x20,A6) bei $6a06 in dker030s, s. docs/kernel-walkthrough/01-kernel-bootstrap/README.md]
 Q9_D_Clock:     do.l 1    Adresse der Tick-Routine [PLATZHALTER]
 Q9_D_TckSec:    do.w 1    Ticks pro Sekunde [PLATZHALTER]
 Q9_D_Year:      do.w 1    Jahr [PLATZHALTER]
