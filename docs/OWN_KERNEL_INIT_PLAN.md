@@ -556,9 +556,45 @@ konkreter:
    `0x30` u.a.) kollidierte real mit `F$AllPD`/`F$RetPD`/`F$SSvc`/
    `F$DelTsk`. Offen bleibt nur noch die exakte Lage/Größe dieses neuen
    Raums.
-3. **Wie groß soll der Kernel-Global-Bereich sein, und wo liegt er?** (68K
-   nutzt `0x1000` Byte ab einer über VBR erreichten Adresse) — abhängig
-   von Q9-Flux' RAM-Layout.
+3. **Wie groß soll der Kernel-Global-Bereich sein, und wo liegt er?**
+   **Entschieden (2026-08-17).** Der reale CB030-Kernel nutzt `0x1000` Byte
+   (`Q9_D_END`, System-Global-Bereich, A6-relativ) + `0x400` Byte
+   (`Q9_T_END`, Exception-Sprungtabelle — das ist tatsächlich die normale
+   68k-Hardware-Vektortabelle selbst, 256×4 Byte, keine separate
+   OS-9-Erfindung) = ~5K. Laut `68k_tech.pdf` (Reset-Vektor-Kapitel)
+   verlangt OS-9 offiziell **mindestens 4K unterhalb und 4K oberhalb** der
+   Reset-SSP-Adresse für System-Global-Storage (macht 8K Minimum, deckt
+   sich mit der separaten Aussage "OS-9 uses a minimum of 8K RAM for
+   internal use"); ein typisches kleines System nutzt laut Manual insgesamt
+   **~32K** (inklusive der dynamisch allozierten Tabellen, deren Zeiger im
+   Global-Bereich liegen). **Für den eigenen Kernel:** 32K fest reserviert,
+   an der niedrigsten RAM-Adresse (Manual-Konvention, deckt sich mit
+   Q9-Flux' Remap-Verhalten in `BOARD.md`) — deutlich über der realen
+   CB030-Nutzung, aber immer noch <0,2 % selbst bei der kleinsten Q9-Flux-
+   RAM-Bestückung (16 MiB). Absolute Basisadresse ist frei wählbar (echte
+   Module greifen nur A6-relativ über dokumentierte Offsets zu, nie über
+   eine absolute Adresse).
+
+   **Zusätzlich entschieden: 4 MByte als Mindest-RAM-Baseline** für ein
+   68K-Zielsystem (statt an der historischen, sehr knappen Auslegung zu
+   planen) — erlaubt, mehrere Init-Modul-Tabellengrößen deutlich
+   großzügiger zu setzen als die Manual-Beispielwerte (drei verschiedene
+   Beispiel-Init-Module im Manual mit unterschiedlichen Zahlen bestätigen,
+   dass das normale, erwartete Praxis ist, keine feste Kernel-Grenze):
+
+   | Feld | Manual-Beispielbereich | Q9-OS-Vorgabe | Begründung |
+   |---|---|---|---|
+   | `MDirSz` (Moduldirectory) | 64–100 | 256 | eigene Modularten (Bootloader, subType) + Dreiklang wachsen |
+   | `PollSz` (IRQ-Polling) | 32–44 | 64 | Q9-Flux hat laut `BOARD.md` schon ~14-16 IRQ-Quellen (Netz-Terminals ×8, QUICC, Timer/IRQ3, CF2, RTC, DUART-Kanäle), Reserve für weiteres Wachstum |
+   | `DevCnt` (Gerätetabelle) | 32–69 | 128 | `BOARD.md` listet schon >12 Geräte, Q9-Frame-Erweiterungen wachsen erfahrungsgemäß weiter |
+   | `Procs` (Prozesstabelle) | 64 | 256 | 4-MB-Baseline erlaubt deutlich mehr gleichzeitige Prozesse |
+   | `Paths` (Pfadtabelle) | 64 | 256 | skaliert mit `Procs` |
+   | `Events` | 32 | 64 | moderat angehoben |
+
+   Der feste 32K-Global-Bereich wächst dadurch NICHT mit — er enthält nur
+   Zeiger auf diese Tabellen, die selbst laut Manual dynamisch aus dem
+   allgemeinen RAM alloziert werden ("allocated from the general RAM area
+   when needed").
 4. **Modul-Scanner beim Boot: ja oder nein?** Empfehlung oben war "ja,
    x86-Ansatz übernehmen" — aber das ist eine echte Design-Entscheidung
    mit Aufwandsfolgen (Prüfsummen-Logik, Namenskollisions-Handling bei
