@@ -6,12 +6,17 @@
 * V2.9.1", lokal unter MWOS/tools/macos/bin/r68 als Wine-Wrapper um die
 * echte DOS-exe): "Errors: 00000", echte 68K-Opcode-Bytes erzeugt (z.B.
 * movea.l #x,a6 -> $2c7c..., dbra -> $51ca, move.l d0,off(a6) -> $2d40...).
-* Zwei erwartbare Warnungen, kein Fehler:
+* Erwartbare Warnungen, kein Fehler (Stand 2026-08-17, nach Ergaenzung der
+* Boot-Listen-Sicherung, s. u.):
 *   - "absolute addressing" beim jsr Q9K_CInit -- normal, weil Q9K_CInit
 *     noch nirgends definiert ist (separate C-Funktion, s. u.); sollte
 *     sich aendern/aufloesen, sobald ein echtes Ziel dazukommt.
-*   - "destination in short branch range" bei bra Q9K_HaltLoop -- rein
-*     informativ, bestaetigt nur die automatisch gewaehlte kurze Kodierung.
+*   - "absolute addressing" bei lea Q9K_BootList,a1 -- erwartet und
+*     bewusst so: unsere Kernel-Global-Basis ist absichtlich fest/absolut
+*     (Adresse 0), nicht PIC-relativ wie bei echten OS-9-Modulen ueblich.
+*   - "destination in short branch range" bei bra Q9K_HaltLoop und bei
+*     beq Q9K_BootListDone -- rein informativ, bestaetigt nur die
+*     automatisch gewaehlte kurze Kodierung.
 * NICHT getestet: Verlinkung mit l68 (kein Q9K_CInit vorhanden, um damit
 * zu linken).
 *
@@ -60,9 +65,11 @@
 *     zusammen gelinkt (l68). Q9K_CInit implementiert bisher nur die
 *     Ready-Queues, nicht Dispatch-Tabellen/Init-Modul-Suche (Schritt 6a)
 *     -- s. dessen eigenen Kopfkommentar fuer den aktuellen Stand.
-*   - Die Speicherregion-Liste, auf die sp beim Einsprung zeigt (fuer
-*     Schritt 6a noetig), wird hier noch NICHT gesichert -- s. TODO direkt
-*     vor der Stack-Umschaltung unten.
+*   - Die Speicherregion-Liste, auf die sp beim Einsprung zeigt, wird
+*     jetzt nach Q9K_BootList kopiert (2026-08-17) -- Q9K_CInit liest sie
+*     aber noch nicht aus, Schritt 6a (Init-Modul-Suche) selbst braucht
+*     zusaetzlich noch die Sync-/Pruefsummen-Validierung (Q9_MH_CRC_POLY),
+*     die ebenfalls noch nicht implementiert ist.
 *   - Zero-Fill hier als EIN einfacher Durchlauf ueber den ganzen
 *     32K-Bereich -- der reale Kernel macht das in drei Teilaufrufen
 *     (s. Thema 01, Schritt 5). Bewusste Vereinfachung, funktional
@@ -84,6 +91,17 @@ Q9K_GlobBase    equ     $000000                 * Basis Kernel-Global-Bereich (3
 Q9K_GlobSize    equ     $008000                 * 32K, s. OWN_KERNEL_INIT_PLAN.md Abschnitt 5.3
 Q9K_StackSize   equ     $002000                 * 8K Boot-/Supervisor-Stack, direkt hinter den Globals
 Q9K_StackTop    equ     Q9K_GlobBase+Q9K_GlobSize+Q9K_StackSize
+
+* Eigene Ablage fuer die vom Boot-ROM per sp uebergebene Speicherregion-
+* Liste (s. Thema 01, "Neuer Fund" zu sp/D6) -- KEIN Feld aus dem echten
+* Kernel-Layout (q9sysglob.h beschreibt nur dessen Struktur, nicht
+* unsere eigenen Erweiterungen), deshalb hier lokal definiert, direkt
+* hinter dem legacy-kompatiblen Bereich (Q9_D_End=$1000). Defensive
+* Obergrenze (64 Eintraege) -- das Original terminiert per Nullwert, aber
+* eine Obergrenze schuetzt vor endlosem Kopieren, falls der Terminator
+* fehlt/beschaedigt ist (kein Original-Verhalten, eigene Vorsichtsmassnahme).
+Q9K_BootListMax  equ    64                      * max. Anzahl (Basis,Laenge)-Eintraege
+Q9K_BootList     equ    Q9K_GlobBase+$1000       * eigene Ablage, 8 Byte/Eintrag + Nullterminator
 
 * Kernel-Global-Offsets (s. src/q9sysglob.h) -- lokal dupliziert, da kein
 * getesteter Include-Mechanismus fuer eine .h-Datei in diesem Assembler
@@ -122,11 +140,26 @@ Q9K_ZeroLoop:
         move.l  a1,Q9_D_SysRom(a6)              * Boot-ROM-Einsprungpunkt
         move.l  a5,Q9_D_ExcJmp(a6)              * Exception-Tabellen-Speicherblock
 
-* TODO (2026-08-17): sp zeigt HIER, vor dem Stack-Wechsel, noch auf die
-* vom Boot-ROM uebergebene Speicherregion-Liste (s. Thema 01, "Neuer Fund"
-* zu D6/sp) -- fuer Schritt 6a (Init-Modul-Suche) muesste diese Liste HIER
-* gesichert werden, bevor der naechste Befehl sp umbiegt und sie
-* ueberschreibbar macht. Noch nicht implementiert.
+* Boot-Zeit-Speicherregion-Liste sichern -- sp zeigt HIER, vor dem
+* Stack-Wechsel, noch auf die vom Boot-ROM uebergebene Original-Liste
+* (s. Thema 01, "Neuer Fund" zu sp/D6). Kopiert sie in die eigene Ablage,
+* GENAU WIE der reale Kernel es an dieser Stelle tut (dort per lea/beq-
+* Schleife in eine eigene Stack-Kopie -- hier stattdessen in eine feste
+* Kernel-Global-Erweiterung, weil unser Kernel-Global-Layout ohnehin
+* schon fest statt Stack-basiert ist). d0/d1/d3/a1(Originalwert)/a5 sind
+* an dieser Stelle bereits sicher in Kernel-Globals gespeichert, deshalb
+* hier frei als Kopierschleifen-Register nutzbar.
+        movea.l sp,a0                           * a0 = Original-Liste vom Boot-ROM
+        lea     Q9K_BootList,a1                 * a1 = eigene Ablage
+        move.w  #Q9K_BootListMax-1,d3           * Zaehler fuer dbra (defensive Obergrenze)
+Q9K_BootListCopy:
+        tst.l   (a0)                            * Listenende? (Basisadresse = 0)
+        beq     Q9K_BootListDone
+        move.l  (a0)+,(a1)+                     * Basisadresse kopieren
+        move.l  (a0)+,(a1)+                     * Laenge kopieren
+        dbra    d3,Q9K_BootListCopy
+Q9K_BootListDone:
+        clr.l   (a1)                            * eigene Kopie nullterminieren (auch falls die Obergrenze zuerst griff)
 
 * Boot-/Supervisor-Stack einrichten
         movea.l #Q9K_StackTop,sp
