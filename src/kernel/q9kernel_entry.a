@@ -1,0 +1,126 @@
+*******************************************************************************
+* q9kernel_entry.a -- Q9-OS eigener Kernel: Modulkopf + Assembler-Einstieg
+*
+* ERSTER ENTWURF, 2026-08-17 -- ERFOLGREICH gegen den echten Microware-
+* Assembler getestet (r68, "Microware OS-9/68020 Cross Macro Assembler
+* V2.9.1", lokal unter MWOS/tools/macos/bin/r68 als Wine-Wrapper um die
+* echte DOS-exe): "Errors: 00000", echte 68K-Opcode-Bytes erzeugt (z.B.
+* movea.l #x,a6 -> $2c7c..., dbra -> $51ca, move.l d0,off(a6) -> $2d40...).
+* Zwei erwartbare Warnungen, kein Fehler:
+*   - "absolute addressing" beim jsr Q9K_CInit -- normal, weil Q9K_CInit
+*     noch nirgends definiert ist (separate C-Funktion, s. u.); sollte
+*     sich aendern/aufloesen, sobald ein echtes Ziel dazukommt.
+*   - "destination in short branch range" bei bra Q9K_HaltLoop -- rein
+*     informativ, bestaetigt nur die automatisch gewaehlte kurze Kodierung.
+* NICHT getestet: Verlinkung mit l68 (kein Q9K_CInit vorhanden, um damit
+* zu linken).
+*
+* WICHTIGER FUND beim Testen: Code/Daten MUESSEN in einem psect/endsect-
+* Rahmen stehen, sonst meldet der Assembler pauschal "bad mnemonic" fuer
+* JEDE Zeile (irrefuehrende Fehlermeldung, aber empirisch bestaetigt).
+* psect erzeugt den kompletten Modulkopf automatisch (Groesse, Paritaet/
+* Pruefsumme inklusive) -- deshalb hier KEINE manuellen dc.w/dc.l-Felder
+* mehr, anders als im allerersten (verworfenen) Entwurf.
+*
+* psect-Parameterreihenfolge empirisch aus zwei echten Referenzdateien
+* rekonstruiert (kein lokal dokumentiertes r68-Handbuch gefunden):
+*   src/kernel/kernel.r        (Ghidra-Rekonstruktion von dker030s)
+*   MWOS/TMP/q9_cstart.a       (Andreas' eigenes Q9-C-Startmodul)
+* Format: psect name,tylang,attrrev,edition,mem/stack,exec-label,trap-label
+* -- Systm-Module (wie hier) nutzen laut Manual kein M$Mem/M$Stack, beide
+* Referenzdateien bestaetigen das mit 0 an dieser Stelle.
+*
+* Konstantenwerte gegen MWOS/TMP/q9defs.d gegengeprueft (Andreas' eigene,
+* schon etablierte Definitionsdatei) -- Q9Systm=12, Q9Objct=1, Q9ReEnt=$80,
+* Q9SupStat=$20 stimmen exakt mit Q9_MT_SYSTEM/Q9_ML_OBJECT/Q9_MA_REENT/
+* Q9_MA_SUPER aus src/q9moduleheader.h ueberein. Hier trotzdem eigene,
+* lokale equ-Zeilen (nicht per "use" eingebunden) -- q9defs.d ist laut
+* eigenem Kommentar ein Uebergangsstand ("wird spaeter durch eine
+* Q9-eigene Definitionsdatei ersetzt"), diese Datei soll nicht fragil
+* davon abhaengen.
+*
+* Registerkonvention beim Einsprung (verifiziert, docs/kernel-walkthrough/
+* 01-kernel-bootstrap/README.md, Thema 01): d0=Gesamt-RAM-Groesse,
+* d1=erkannter CPU-Typ, a1=Boot-ROM-Einsprungpunkt, a5=vorbereiteter
+* Speicherblock fuer die Exception-Sprungtabelle. Alle vier werden vom
+* Boot-ROM direkt uebergeben, nicht vom Kernel selbst alloziert.
+*
+* Kernel-Global-Basis: fest auf Adresse 0 (niedrigste RAM-Adresse nach
+* Remap, s. Q9-Flux/docs/BOARD.md) -- Entscheidung aus
+* OWN_KERNEL_INIT_PLAN.md Abschnitt 5 Punkt 3 (32K reserviert, absolute
+* Basisadresse frei waehlbar, da echte Module nur A6-relativ zugreifen).
+*
+* Offene Punkte, bewusst nicht in diesem ersten Entwurf geloest:
+*   - Q9K_CInit (Sprungziel nach der Registeruebernahme) existiert noch
+*     nicht -- dort wuerde laut Abschnitt 2/6a der Plan-Doku als naechstes
+*     hingehoeren: Dispatch-Tabellen aufbauen, Ready-Queues anlegen,
+*     Init-Modul per Namenssuche finden (Schritt 6a).
+*   - Zero-Fill hier als EIN einfacher Durchlauf ueber den ganzen
+*     32K-Bereich -- der reale Kernel macht das in drei Teilaufrufen
+*     (s. Thema 01, Schritt 5). Bewusste Vereinfachung, funktional
+*     aequivalent, kein Bruch mit der Kompatibilitaetsanforderung (die
+*     betrifft nur den ECHTEN Modul-Header/Dreiklang, nicht interne
+*     Kernel-Implementierungsdetails).
+*   - xref/externe Verlinkung von Q9K_CInit nicht gegen den echten l68
+*     getestet (r68 hat die Datei bisher nur als Ganzes assembliert,
+*     nicht mit l68 gelinkt).
+*******************************************************************************
+
+Q9_MT_SYSTEM    equ     12                      * Systm [Q9_MT_SYSTEM]
+Q9_ML_OBJECT    equ     1                       * Maschinencode [Q9_ML_OBJECT]
+Q9_MA_REENT     equ     $80                     * Reentrant [Q9_MA_REENT]
+Q9_MA_SUPER     equ     $20                     * System-State [Q9_MA_SUPER]
+Q9K_Edition     equ     1
+
+Q9K_GlobBase    equ     $000000                 * Basis Kernel-Global-Bereich (32K)
+Q9K_GlobSize    equ     $008000                 * 32K, s. OWN_KERNEL_INIT_PLAN.md Abschnitt 5.3
+Q9K_StackSize   equ     $002000                 * 8K Boot-/Supervisor-Stack, direkt hinter den Globals
+Q9K_StackTop    equ     Q9K_GlobBase+Q9K_GlobSize+Q9K_StackSize
+
+* Kernel-Global-Offsets (s. src/q9sysglob.h) -- lokal dupliziert, da kein
+* getesteter Include-Mechanismus fuer eine .h-Datei in diesem Assembler
+Q9_D_SysRom     equ     $064                    * Boot-ROM-Einsprungpunkt
+Q9_D_ExcJmp     equ     $068                    * Exception-Tabellen-Speicherblock
+Q9_D_TotRam     equ     $06c                    * Gesamt-RAM-Groesse
+Q9_D_MpuTyp     equ     $3c8                    * erkannter CPU-Typ
+
+        psect   q9kernel,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,Q9K_Edition,0,Q9K_Entry,0
+
+* ===== Assembler-Einstieg =====
+*
+* Einziger Zweck: die vom Boot-ROM in Registern uebergebenen Boot-
+* Parameter in die Kernel-Globals uebernehmen, den C-Stack einrichten,
+* dann nach C springen. Kein direkter Registerzugriff aus C moeglich,
+* deshalb muss das hier in Assembler passieren -- gleiches Prinzip wie
+* der reale x86-OS-9000-Kernel (5-Byte-JMP-Trampolin -> C-Init-Funktion,
+* s. modules/os9000-x86/docs/KERNEL_INIT.md).
+
+Q9K_Entry:
+        movea.l #Q9K_GlobBase,a6                * Kernel-Globals-Basis -- ALLES Folgende ist a6-relativ
+
+* Kernel-Global-Bereich (32K) nullen, BEVOR irgendein Feld beschrieben wird
+        movea.l a6,a0
+        move.l  #(Q9K_GlobSize/4)-1,d2          * Langwort-Zaehler fuer dbra (Groesse/4, minus 1)
+Q9K_ZeroLoop:
+        clr.l   (a0)+
+        dbra    d2,Q9K_ZeroLoop
+
+* Boot-Register-Konvention uebernehmen (verifiziert, Thema 01) -- MUSS
+* passieren, bevor d0/d1/a1/a5 fuer etwas anderes wiederverwendet werden
+        move.l  d0,Q9_D_TotRam(a6)              * Gesamt-RAM-Groesse
+        move.l  d1,Q9_D_MpuTyp(a6)              * erkannter CPU-Typ
+        move.l  a1,Q9_D_SysRom(a6)              * Boot-ROM-Einsprungpunkt
+        move.l  a5,Q9_D_ExcJmp(a6)              * Exception-Tabellen-Speicherblock
+
+* Boot-/Supervisor-Stack einrichten
+        movea.l #Q9K_StackTop,sp
+
+* Weiter in C -- Q9K_CInit existiert noch nicht (s. Kopfkommentar)
+        jsr     Q9K_CInit
+
+* Sollte Q9K_CInit jemals zurueckkehren (im Normalfall nicht, da es in
+* den Scheduler springt): keine unkontrollierte Weiterausfuehrung
+Q9K_HaltLoop:
+        bra     Q9K_HaltLoop
+
+        endsect
