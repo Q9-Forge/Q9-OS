@@ -143,6 +143,18 @@ Reihenfolge):
    dessen Namen groß-/kleinschreibungsunabhängig gegen den festen String
    `"init"` (Fund bei `0x6986`-`0x6a06` in `dker030s`, s.
    [Thema 01](kernel-walkthrough/01-kernel-bootstrap/) für Details/Beleg).
+   **Herkunft der Speicherregion-Liste geklärt (2026-08-17):** kommt vom
+   Boot-ROM **über den Stack**, nicht über ein Register — beim
+   Kernel-Einsprung zeigt `SP` bereits darauf, ganz am Anfang der
+   Funktion (`0x67aa`) kopiert der Kernel sie in einen eigenen
+   Stack-Bereich. Für den eigenen Kernel heißt das: derselbe Mechanismus
+   (Boot-ROM legt die Liste vor dem Sprung in den Kernel auf den Stack)
+   ist direkt übernehmbar, kein separates Discovery-Protokoll nötig.
+   Zusätzlich ein **fünftes Boot-Register gefunden: `D3`** (Boot-Zeit-
+   Flags, komplett nach `Q9_D_BOOTFLAGS`/`0x93C` gesichert) — Bit 4
+   steuert, ob der Kernel selbst Interrupts maskiert, Bit 3 kann während
+   der Init-Suche den Namensvergleich überspringen (genaue Absicht nicht
+   abschließend verifiziert).
    Bei Erfolg werden mehrere Init-Modul-Felder direkt in Kernel-Globals
    kopiert (u. a. `M$SysConf` → `D_SysConf`, deckt sich mit dem
    unabhängig gefundenen `SSM_NoProt`-Flag aus `MMU_SSM_WORKFLOW_de.md`).

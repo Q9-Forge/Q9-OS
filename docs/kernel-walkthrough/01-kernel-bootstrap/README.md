@@ -42,6 +42,8 @@ Kernel beim Start direkt in die Kernel-Globals kopiert:
 | `D1` | erkannter CPU-Typ | `Q9_D_MPUTYP` (`0x3C8`) — bestätigt bereits dokumentierten Wert |
 | `A1` | Boot-ROM-Einsprungpunkt | `Q9_D_SYSROM` (`0x64`) — bestätigt bereits dokumentierten Wert |
 | `A5` | Speicherblock für die Exception-Tabelle | `D_ExcJmp` (`0x68`) — **neu geklärt, s. o.** |
+| `D3` | Boot-Zeit-Flags — **neu, 2026-08-17, s. u.** | `Q9_D_BOOTFLAGS` (`0x93C`) |
+| `SP` (beim Einsprung) | Zeiger auf eine Boot-Zeit-Speicherregion-Liste — **neu, 2026-08-17, s. u.** | wird in eine eigene Stack-Kopie übernommen, kein fester Kernel-Global-Slot |
 
 Damit sind vier der bisher als „PLATZHALTER“ markierten Felder in
 `q9sysglob.h`/`.a` jetzt auf `VERIFIZIERT` hochstufbar (nicht in dieser
@@ -151,11 +153,42 @@ nicht über eine vom Boot-ROM übergebene Adresse und nicht über
 Typ-Code-Filterung:**
 
 1. `0x698c`-`0x69f6`: eine Liste von Speicherregionen wird durchlaufen
-   (Paare aus Basisadresse/Länge, nullterminiert, Quellregister `D6` — wo
-   diese Liste selbst herkommt, nicht in dieser Runde weiter verfolgt).
+   (Paare aus Basisadresse/Länge, nullterminiert, Quellregister `D6`).
    Innerhalb jeder Region wird an aufsteigenden geraden Adressen nach
    einem gültigen Modul-Header gesucht (Aufruf von `0x4410`, der bekannten
    Sync-/Prüfsummen-Validierung aus Thema 00/10 entsprechend).
+
+   **Herkunft der Liste, nachgetragen 2026-08-17** (Andreas' Frage: "wird
+   das nicht vorher vom Bootloader in die Register geladen?"): **teilweise
+   ja** — sie kommt vom Boot-ROM, aber über den **Stack**, nicht über ein
+   Register. Ganz am Anfang von `Q9_kernel_init_67a0` (`0x67aa`):
+   `movea.l SP,A0` — der Stackpointer zeigt beim Einsprung bereits auf
+   diese Liste. Der Kernel kopiert sie sofort in einen frisch reservierten
+   eigenen Stack-Bereich (`0x67b0`-`0x67b6`, `move.l (A0)+,(A2)+`-Schleife,
+   nullterminiert per `clr.l (A2)`), **bevor** er irgendetwas anderes tut
+   — vermutlich um die Kopie vor späteren eigenen Stack-Operationen
+   (Register-Sichern, weitere Aufrufe) zu schützen. `D6` wird direkt danach
+   (`0x67b8`) auf diese **eigene Kopie** gesetzt, nicht auf die
+   Originaladresse — deshalb wirkte die Herkunft beim ersten Blick
+   unklar. Dieselbe kopierte Liste wird zweimal durchlaufen: einmal früh
+   (`0x68d0`-`0x68de`, offenbar allgemeine Bereichs-Buchführung) und
+   erneut hier bei der Init-Modul-Suche — eine gemeinsame Quelle für
+   beide Zwecke.
+
+   **Bonus-Fund dabei — ein fünftes Boot-Register:** `btst.l #0x4,D3`
+   ist die allererste Instruktion der Funktion (`0x67a0`), noch vor dem
+   Stack-Zugriff. `D3` wird bei `0x681e` komplett nach `Q9_D_BOOTFLAGS`
+   (`0x93C`) gesichert — ein Boot-Zeit-Flags-Wort, neben D0/D1/A1/A5 das
+   fünfte vom Boot-ROM übergebene Register. Zwei Bits mit beobachtbarer
+   Wirkung: Bit 4 (bei `0x67a0`) steuert, ob der Kernel selbst die
+   Interrupts maskiert (`ori #$700,SR`) oder ob der Aufrufer das schon
+   erledigt hat; Bit 3 (bei `0x69dc`, s. u.) überspringt während der
+   Init-Modul-Suche den Namensvergleich für den aktuellen Kandidaten und
+   springt direkt zum Erfolgspfad — genaue Absicht (z. B. "Init-Modul-
+   Adresse ist dem Bootloader schon bekannt") nicht abschließend
+   verifiziert. `D3` wird ab `0x698a` mehrfach als gewöhnliches
+   Scratch-Register wiederverwendet, die Flags-Bedeutung gilt nur bis
+   dahin (gleiches Registerrecycling-Muster wie bei `A5`, s. o.).
 2. Für jeden gefundenen, gültigen Kandidaten (`0x69b0`-`0x69d8`): der
    Name wird über `M$Name` (`+0xC`-Offset) gelesen und **Byte für Byte,
    groß-/kleinschreibungsunabhängig** (XOR + `andi.b #$DF`-Maskierung von

@@ -142,6 +142,7 @@ Q9_D_IrqHeads:  do.b 32   IRQ-Kopfregionen (fuer Nicht-MSP-Kernel) [PLATZHALTER]
 * deshalb als eigenstaendige EQUs statt do.b -- analog zu Q9_D_End unten):
 Q9_D_AlmQ1:     equ $774  F$Alarm-Warteschlange 1 (sofortige/D1=0-Variante, Q9_alarm_set_157e), sortiert nach Faelligkeit (Knotenfelder +$20/+$24), Verkettung ueber +$C/+$10; beim Boot als leere Ringliste initialisiert (Q9_kernel_init_67a0, $6886-$688e); Walk/Insert in Q9_alarm_insert_15c4 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/]
 Q9_D_AlmQ2:     equ $77C  F$Alarm-Warteschlange 2 (intervallbasierte Variante, Q9_alarm_set_1580), sonst identischer Aufbau zu Q9_D_AlmQ1 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/]
+Q9_D_BootFlags: equ $93C  NEU GEFUNDEN 2026-08-17 [VERIFIZIERT] -- Boot-Zeit-Flags, komplettes Register D3 bei $681e gesichert (fuenftes Boot-Register neben D0/D1/A1/A5). Bit 4 (bei $67a0): wenn gesetzt, ueberspringt der Kernel das eigene Interrupt-Maskieren. Bit 3 (bei $69dc, waehrend der Init-Modul-Suche): wenn gesetzt, ueberspringt den Namensvergleich fuer den aktuellen Kandidaten. D3 wird ab $698a mehrfach als gewoehnliches Scratch-Register wiederverwendet -- die Flags-Bedeutung gilt nur bis dahin.
 
 Q9_D_End:		equ $1000			Ende des System-Global-Bereichs
 

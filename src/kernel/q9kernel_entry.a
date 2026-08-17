@@ -42,8 +42,12 @@
 * Registerkonvention beim Einsprung (verifiziert, docs/kernel-walkthrough/
 * 01-kernel-bootstrap/README.md, Thema 01): d0=Gesamt-RAM-Groesse,
 * d1=erkannter CPU-Typ, a1=Boot-ROM-Einsprungpunkt, a5=vorbereiteter
-* Speicherblock fuer die Exception-Sprungtabelle. Alle vier werden vom
-* Boot-ROM direkt uebergeben, nicht vom Kernel selbst alloziert.
+* Speicherblock fuer die Exception-Sprungtabelle, d3=Boot-Zeit-Flags
+* (5. Register, 2026-08-17 gefunden). Alle fuenf werden vom Boot-ROM
+* direkt uebergeben, nicht vom Kernel selbst alloziert. ZUSAETZLICH zeigt
+* sp beim Einsprung schon auf eine Boot-Zeit-Speicherregion-Liste (fuer
+* die spaetere Init-Modul-Suche, Schritt 6a) -- hier noch NICHT
+* uebernommen/gesichert, s. TODO unten.
 *
 * Kernel-Global-Basis: fest auf Adresse 0 (niedrigste RAM-Adresse nach
 * Remap, s. Q9-Flux/docs/BOARD.md) -- Entscheidung aus
@@ -51,10 +55,14 @@
 * Basisadresse frei waehlbar, da echte Module nur A6-relativ zugreifen).
 *
 * Offene Punkte, bewusst nicht in diesem ersten Entwurf geloest:
-*   - Q9K_CInit (Sprungziel nach der Registeruebernahme) existiert noch
-*     nicht -- dort wuerde laut Abschnitt 2/6a der Plan-Doku als naechstes
-*     hingehoeren: Dispatch-Tabellen aufbauen, Ready-Queues anlegen,
-*     Init-Modul per Namenssuche finden (Schritt 6a).
+*   - Q9K_CInit existiert jetzt (src/kernel/q9kernel_cinit.c, real gegen
+*     die xcc-Pipeline getestet), aber Entry+CInit sind noch NICHT
+*     zusammen gelinkt (l68). Q9K_CInit implementiert bisher nur die
+*     Ready-Queues, nicht Dispatch-Tabellen/Init-Modul-Suche (Schritt 6a)
+*     -- s. dessen eigenen Kopfkommentar fuer den aktuellen Stand.
+*   - Die Speicherregion-Liste, auf die sp beim Einsprung zeigt (fuer
+*     Schritt 6a noetig), wird hier noch NICHT gesichert -- s. TODO direkt
+*     vor der Stack-Umschaltung unten.
 *   - Zero-Fill hier als EIN einfacher Durchlauf ueber den ganzen
 *     32K-Bereich -- der reale Kernel macht das in drei Teilaufrufen
 *     (s. Thema 01, Schritt 5). Bewusste Vereinfachung, funktional
@@ -83,6 +91,7 @@ Q9_D_SysRom     equ     $064                    * Boot-ROM-Einsprungpunkt
 Q9_D_ExcJmp     equ     $068                    * Exception-Tabellen-Speicherblock
 Q9_D_TotRam     equ     $06c                    * Gesamt-RAM-Groesse
 Q9_D_MpuTyp     equ     $3c8                    * erkannter CPU-Typ
+Q9_D_BootFlags  equ     $93c                    * Boot-Zeit-Flags (Register d3)
 
         psect   q9kernel,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,Q9K_Edition,0,Q9K_Entry,0
 
@@ -109,13 +118,21 @@ Q9K_ZeroLoop:
 * passieren, bevor d0/d1/a1/a5 fuer etwas anderes wiederverwendet werden
         move.l  d0,Q9_D_TotRam(a6)              * Gesamt-RAM-Groesse
         move.l  d1,Q9_D_MpuTyp(a6)              * erkannter CPU-Typ
+        move.l  d3,Q9_D_BootFlags(a6)           * Boot-Zeit-Flags
         move.l  a1,Q9_D_SysRom(a6)              * Boot-ROM-Einsprungpunkt
         move.l  a5,Q9_D_ExcJmp(a6)              * Exception-Tabellen-Speicherblock
+
+* TODO (2026-08-17): sp zeigt HIER, vor dem Stack-Wechsel, noch auf die
+* vom Boot-ROM uebergebene Speicherregion-Liste (s. Thema 01, "Neuer Fund"
+* zu D6/sp) -- fuer Schritt 6a (Init-Modul-Suche) muesste diese Liste HIER
+* gesichert werden, bevor der naechste Befehl sp umbiegt und sie
+* ueberschreibbar macht. Noch nicht implementiert.
 
 * Boot-/Supervisor-Stack einrichten
         movea.l #Q9K_StackTop,sp
 
-* Weiter in C -- Q9K_CInit existiert noch nicht (s. Kopfkommentar)
+* Weiter in C (src/kernel/q9kernel_cinit.c) -- noch nicht mit dieser
+* Datei gelinkt, s. Kopfkommentar
         jsr     Q9K_CInit
 
 * Sollte Q9K_CInit jemals zurueckkehren (im Normalfall nicht, da es in
