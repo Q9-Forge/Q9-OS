@@ -475,4 +475,12 @@ typedef enum {
 
 Q9_ModHeadFormat Q9_DetectModuleHeaderFormat(const uint8_t *rawBytes, uint32_t availableLen);
 
+/* Liest den NUL-terminierten Namensstring eines 68K-/OS-9000-/Q9-eigenen
+ * Moduls (alle drei: Offset-Feld + NUL-terminiert, 6809 bewusst NICHT
+ * unterstuetzt -- High-Bit-Terminierung, andere Fehlerbehandlung noetig).
+ * Implementierung in q9moduleheader.c. */
+uint32_t Q9_ReadModuleName(const uint8_t *rawBytes, uint32_t availableLen,
+                            uint32_t nameOffset, int littleEndian,
+                            char *dest, uint32_t destSize);
+
 #endif /* Q9MODULEHEADER_H */
