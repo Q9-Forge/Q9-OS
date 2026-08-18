@@ -70,6 +70,7 @@ typedef unsigned char  Q9_u8;
 extern const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *targetName, Q9_u32 *outAvailableLen);
 extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
 extern void Q9K_ArenaInit(Q9_u32 freeBase, Q9_u32 freeSize);
+extern Q9_u32 Q9K_BuildExcTable(void);
 
 /* Eigene Kernel-Global-Erweiterungen (KEIN Feld aus dem echten Kernel-
  * Layout, deshalb hier lokal definiert statt in q9sysglob.h, s. dessen
@@ -162,10 +163,17 @@ void Q9K_CInit(void)
         }
     }
 
-    /* TODO (Abschnitt 2, Punkt 4): Exception-/Trap-Dispatch-Tabelle aus
-     * kompakter Quelltabelle in die volle, direkt indizierbare Tabelle
-     * expandieren (Q9_D_EXCJMP zeigt auf den vom Boot-ROM bereitgestellten
-     * Speicherblock dafuer, s. q9kernel_entry.a). */
+    /* Abschnitt 2, Punkt 4: Exception-/Trap-Dispatch-Tabelle aus
+     * kompakter Quelltabelle expandieren (q9kernel_exctable.c) --
+     * Q9_D_EXCJMP zeigt auf den vom Boot-ROM bereitgestellten
+     * Speicherblock dafuer (s. q9kernel_entry.a). Alle Vektoren zeigen
+     * bisher auf denselben generischen Halt-Handler (kein IRQ-/Syscall-
+     * Dispatcher existiert noch, s. dortige Kopfkommentare/TODOs).
+     * Rueckgabewert (Konsistenzcheck der Quelltabelle) noch nicht
+     * ausgewertet -- kein Panic-Mechanismus vorhanden, dem ein
+     * Fehlschlag hier ohnehin mitgeteilt werden koennte (TODO, sobald
+     * es einen gibt). */
+    Q9K_BuildExcTable();
 
     /* Schritt 6a: Init-Modul per Namenssuche finden (2026-08-18,
      * verdrahtet nach einer Session-Pause -- Q9K_FindModuleByName/

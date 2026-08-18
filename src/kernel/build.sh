@@ -34,7 +34,7 @@ cd "$OUTDIR"
 
 cp "$SRCDIR"/q9kernel_entry.a "$SRCDIR"/q9kernel_cinit.c "$SRCDIR"/q9kernel_modcheck.c \
    "$SRCDIR"/q9kernel_modsearch.c "$SRCDIR"/q9kernel_initext.c "$SRCDIR"/q9kernel_arena.c \
-   "$SRCDIR"/q9kernel_config.h .
+   "$SRCDIR"/q9kernel_exctable.c "$SRCDIR"/q9kernel_config.h .
 cp "$SRCDIR"/../q9sysglob.h .
 sed -i.bak 's#"../q9sysglob.h"#"q9sysglob.h"#' q9kernel_cinit.c && rm q9kernel_cinit.c.bak
 
@@ -43,20 +43,21 @@ source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh
 CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_ALLOC_STANDARD"
 cat > makefile <<EOF
 CFLAGS = -b -O7 -cq -cw $CDEFS
-all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r
+all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r
 q9kernel_cinit.r: q9kernel_cinit.c
 q9kernel_modcheck.r: q9kernel_modcheck.c
 q9kernel_initext.r: q9kernel_initext.c
 q9kernel_modsearch.r: q9kernel_modsearch.c
 q9kernel_arena.r: q9kernel_arena.c
+q9kernel_exctable.r: q9kernel_exctable.c
 EOF
 
 echo "== C-Dateien kompilieren (Development/Standard-Variante, s. q9kernel_config.h) =="
 # "all" selbst schlaegt am Ende fehl (os9make versucht danach ein
-# Programm "all" zu linken) -- das ist erwartet, die fuenf echten .r-
+# Programm "all" zu linken) -- das ist erwartet, die sechs echten .r-
 # Ziele sind zu diesem Zeitpunkt schon fertig. Deshalb || true.
 mwos-build . all < /dev/null || true
-for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r; do
+for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r; do
     [ -f "$f" ] || { echo "FEHLER: $f wurde nicht erzeugt"; exit 1; }
 done
 
@@ -71,7 +72,7 @@ echo "== Verlinken (kein csl.l/acstart.r -- eigener Assembler-Einstieg) =="
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
     -o=q9kernel -f=orowoe \
     q9kernel_entry.r q9kernel_cinit.r q9kernel_modcheck.r q9kernel_modsearch.r q9kernel_initext.r \
-    q9kernel_arena.r \
+    q9kernel_arena.r q9kernel_exctable.r \
     < /dev/null
 
 echo "== Fertig: $OUTDIR/q9kernel =="
