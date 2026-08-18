@@ -27,9 +27,17 @@
  * = 0 durch alle Stufen (424-Byte-Objekt). Noch nicht mit
  * q9kernel_cinit.c zusammen gelinkt (l68).
  *
+ * Braucht seit q9kernel_config.h zwingend -DQ9K_KERNEL_ATOMIC oder
+ * -DQ9K_KERNEL_DEVELOPMENT PLUS -DQ9K_ALLOC_STANDARD oder
+ * -DQ9K_ALLOC_BUDDY beim Bauen (sonst #error) -- inhaltlich noch ohne
+ * Wirkung hier, reine Vorbereitung fuer kuenftigen variantenabhaengigen
+ * Code, s. q9kernel_config.h. Alle vier Kombinationen real getestet.
+ *
  * Bewusst klassische C-Typen, kein stdint.h/stddef.h -- gleiche
  * Begruendung wie in q9kernel_cinit.c (Zieltoolchain-Unsicherheit).
  */
+
+#include "q9kernel_config.h"
 
 typedef unsigned short Q9_u16;
 typedef unsigned long  Q9_u32;
