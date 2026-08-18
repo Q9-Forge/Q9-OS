@@ -69,6 +69,7 @@ typedef unsigned char  Q9_u8;
  * ueberall in diesem Verzeichnis. */
 extern const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *targetName, Q9_u32 *outAvailableLen);
 extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
+extern void Q9K_ArenaInit(Q9_u32 freeBase, Q9_u32 freeSize);
 
 /* Eigene Kernel-Global-Erweiterungen (KEIN Feld aus dem echten Kernel-
  * Layout, deshalb hier lokal definiert statt in q9sysglob.h, s. dessen
@@ -86,6 +87,17 @@ extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
  *                                             SMP-Abschnitt. */
 #define Q9K_BOOTLIST_ADDR   0x1000UL
 #define Q9K_CPUCOUNT_ADDR   0x1200UL
+
+/* Freispeicher-Basis fuer die Arena (Abschnitt 2, Punkt 3) -- 2026-08-18
+ * mit Andreas abgestimmt: fester Offset, VORLAEUFIG, unter der Annahme,
+ * dass der Boot-ROM das Kernel-Abbild selbst oberhalb dieser Adresse
+ * laedt (noch NICHT am echten/emulierten Boot-Pfad verifiziert -- der
+ * neue Kernel wird testweise parallel zum echten dker030s ladbar
+ * gemacht, s. build.sh/vendor, dort dann pruefen). Liegt bewusst deutlich
+ * oberhalb von Q9K_CpuCount ($1200), damit spaeter noch Platz fuer
+ * weitere eigene Kernel-Global-Erweiterungen bleibt, ohne die Arena-
+ * Basis wieder verschieben zu muessen. */
+#define Q9K_FREEMEM_BASE    0x2000UL
 
 /* Schreibt einen 32-Bit-Wert an eine absolute Adresse (=Kernel-Global-
  * Offset, da Kernel-Globals-Basis bei diesem Kernel $000000 ist) */
@@ -134,10 +146,21 @@ void Q9K_CInit(void)
     Q9K_InitEmptyQueue(Q9_D_ALMQ1,  0x0C, 0x10);
     Q9K_InitEmptyQueue(Q9_D_ALMQ2,  0x0C, 0x10);
 
-    /* TODO (Abschnitt 2, Punkt 3): Speichergroesse aus Q9_D_TOTRAM lesen,
+    /* Abschnitt 2, Punkt 3: Speichergroesse aus Q9_D_TOTRAM lesen (vom
+     * Assembler-Einstieg schon aus D0 gesichert, s. q9kernel_entry.a),
      * echten freien Speicherblock im Arena-Kontrollblock registrieren --
-     * die Ringliste oben ist nur der leere Ausgangszustand, nicht das
-     * eigentliche Aufsetzen der Speicherverwaltung. */
+     * die Ringliste oben war nur der leere Ausgangszustand.
+     * Q9K_FREEMEM_BASE ist VORLAEUFIG (s. dortiger Kommentar) -- falls
+     * Q9_D_TOTRAM kleiner als die Basis ist (unplausibel kleines RAM
+     * oder falsch gelesener Wert), bewusst KEINE Initialisierung statt
+     * mit einer negativ/riesig unterlaufenden Groesse zu rechnen. */
+    {
+        Q9_u32 totalRam = *(volatile Q9_u32 *)Q9_D_TOTRAM;
+
+        if (totalRam > Q9K_FREEMEM_BASE) {
+            Q9K_ArenaInit(Q9K_FREEMEM_BASE, totalRam - Q9K_FREEMEM_BASE);
+        }
+    }
 
     /* TODO (Abschnitt 2, Punkt 4): Exception-/Trap-Dispatch-Tabelle aus
      * kompakter Quelltabelle in die volle, direkt indizierbare Tabelle
