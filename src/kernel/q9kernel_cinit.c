@@ -75,6 +75,13 @@ extern Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod);
 extern Q9_u32 Q9K_StartFirstProcess(void);
 extern void   Q9K_JumpToFirstProc(void);   /* q9kernel_entry.a, kein Ruecksprung vorgesehen */
 
+/* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
+ * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
+ * wieder entfernen oder hinter ein Q9K_DIAG-Flag stellen (TODO). */
+extern void Q9K_Diag4(void);
+extern void Q9K_Diag5(void);
+extern void Q9K_Diag6(void);
+
 /* Eigene Kernel-Global-Erweiterungen (KEIN Feld aus dem echten Kernel-
  * Layout, deshalb hier lokal definiert statt in q9sysglob.h, s. dessen
  * eigenen Kopfkommentar) -- direkt hinter dem legacy-kompatiblen
@@ -136,6 +143,8 @@ static void Q9K_InitEmptyQueue(Q9_u32 queueBase, Q9_u32 headOff, Q9_u32 tailOff)
 
 void Q9K_CInit(void)
 {
+    Q9K_Diag4(); /* TEMPORAERE DIAGNOSE, s. o. */
+
     /* Sechs leere Ringlisten -- exakte Offsets aus q9sysglob.h bzw. dem
      * verifizierten Fund in Thema 01 (Kopf-/Schwanz-Unteroffsets je
      * Warteschlangenart unterschiedlich, s. dortige Tabelle):
@@ -185,6 +194,8 @@ void Q9K_CInit(void)
     {
         Q9_u32 initAvailableLen = 0;
         const Q9_u8 *initMod = Q9K_FindModuleByName((const Q9_u8 *)Q9K_BOOTLIST_ADDR, "init", &initAvailableLen);
+
+        Q9K_Diag5(); /* TEMPORAERE DIAGNOSE, s. o. -- Suche abgeschlossen, unabhaengig vom Ergebnis */
 
         if (initMod != 0) {
             Q9K_PutU32(Q9_D_INIT, (Q9_u32)(unsigned long)initMod);
@@ -239,8 +250,10 @@ void Q9K_CInit(void)
      * reiner Platzhalter). Bei Fehlschlag (Pool/Arena erschoepft) fallen
      * wir bewusst durch bis zum return unten -- Q9K_HaltLoop faengt das
      * ab, kein Fake-Fortschritt. */
-    if (Q9K_StartFirstProcess() == 0)
+    if (Q9K_StartFirstProcess() == 0) {
+        Q9K_Diag6(); /* TEMPORAERE DIAGNOSE, s. o. */
         Q9K_JumpToFirstProc(); /* kein Ruecksprung erwartet */
+    }
 
     return; /* -> Q9K_HaltLoop in q9kernel_entry.a (nur bei Fehlschlag oben) */
 }
