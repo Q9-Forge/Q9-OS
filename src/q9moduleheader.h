@@ -483,4 +483,13 @@ uint32_t Q9_ReadModuleName(const uint8_t *rawBytes, uint32_t availableLen,
                             uint32_t nameOffset, int littleEndian,
                             char *dest, uint32_t destSize);
 
+/* Pruefsummen-Berechnung/-Verifikation fuer klassische 68K-Header
+ * (24-Word-XOR ueber die ersten Q9_MH68K_STDLEN Byte, muss $FFFF
+ * ergeben). Q9_ComputeModuleChecksum68K = Verifikation (Ergebnis mit
+ * echtem M$Parity == 0xFFFF pruefen); Q9_ComputeRequiredParity68K =
+ * "Setzen" (liefert den noetigen M$Parity-Wert fuer ein neu gebautes
+ * Modul). Implementierung in q9moduleheader.c. */
+uint16_t Q9_ComputeModuleChecksum68K(const uint8_t *rawBytes, uint32_t availableLen);
+uint16_t Q9_ComputeRequiredParity68K(const uint8_t *rawBytes, uint32_t availableLen);
+
 #endif /* Q9MODULEHEADER_H */
