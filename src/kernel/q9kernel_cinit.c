@@ -71,6 +71,7 @@ extern const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *ta
 extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
 extern void Q9K_ArenaInit(Q9_u32 freeBase, Q9_u32 freeSize);
 extern Q9_u32 Q9K_BuildExcTable(void);
+extern Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod);
 
 /* Eigene Kernel-Global-Erweiterungen (KEIN Feld aus dem echten Kernel-
  * Layout, deshalb hier lokal definiert statt in q9sysglob.h, s. dessen
@@ -205,6 +206,15 @@ void Q9K_CInit(void)
                  * kein SMP-Scheduler existiert bisher, aber der
                  * permanente Platz dafuer ist jetzt belegt. */
                 Q9K_PutU32(Q9K_CPUCOUNT_ADDR, Q9K_GetCpuCount(initMod, initAvailableLen));
+
+                /* Abschnitt 2, Punkt 5/6: M$Procs/M$Paths/M$MDirSz lesen
+                 * (alle < 0x7C, durch denselben Bounds-Check oben
+                 * abgedeckt), SYSDIS/USRDIS/Modulverzeichnis + Prozess-/
+                 * Pfad-Pools ueber den Arena-Allokator aufsetzen
+                 * (q9kernel_tables.c). Rueckgabewert (Allokationsfehler)
+                 * noch nicht ausgewertet -- gleiche Begruendung wie bei
+                 * Q9K_BuildExcTable (kein Panic-Mechanismus vorhanden). */
+                Q9K_SetupTables(initMod);
             }
             /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/
              * unplausibles Init-Modul -- bewusst KEIN Zugriff auf die
@@ -217,20 +227,7 @@ void Q9K_CInit(void)
          * aktuell faellt die Funktion einfach durch bis zum return
          * unten, Q9K_HaltLoop faengt das ab (kein Fortschritt, aber
          * auch kein Absturz). */
-
-        /* TODO (Abschnitt 2, Punkt 3/5/6): M$MDirSz (Init-Modul-Offset
-         * 0x62) lesen, daraus zusammen mit Procs/Paths einen
-         * zusammenhaengenden Speicherblock alloziert und in Prozess-/
-         * Pfad-Tabellen + Dispatch-Tabellen + Modulverzeichnis aufteilen
-         * -- exakt wie beim echten Kernel (Thema 01, Nachtrag zur
-         * Modulverzeichnis-Frage). Braucht einen echten Speicher-
-         * allokator, der bisher noch gar nicht existiert -- eigenes,
-         * groesseres TODO, nicht Teil dieser Runde.
-         */
     }
-
-    /* TODO (Abschnitt 2, Punkt 5/6): Prozess-/Pfad-Deskriptor-Tabellen mit
-     * Freiliste einrichten. */
 
     /* TODO (Abschnitt 2, Punkt 7): ersten Ausfuehrungskontext konstruieren
      * und in den Scheduler springen -- existiert noch nicht. */
