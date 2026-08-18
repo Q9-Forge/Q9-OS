@@ -251,6 +251,40 @@ auf `[VERIFIZIERT]` hochgestuft (bereits nachgetragen). Zwei neue,
 bisher unbekannte Felder (`Q9_D_UNKN8A6`/`Q9_D_UNKN8A8`) sind als
 `[PLATZHALTER]` ergänzt.
 
+### Nachtrag 2026-08-18: Wird das Modulverzeichnis gleich mit aufgebaut?
+
+Andreas' Frage: da der Scan wegen des Revisions-Tiebreaks ohnehin jedes
+gültige Modul im durchsuchten Speicher anschaut, würde es nahe liegen,
+das gleich als Modulverzeichnis (`Q9_D_MODDIR`, `0x3C`/`0x40`) mit
+aufzubauen. Direkt im Anschluss an den Fund (`0x6a9e`-`0x6ade`)
+passiert tatsächlich etwas mit `Q9_D_MODDIR` — aber anders:
+
+1. `0x6a74`: `M$MDirSz` wird direkt aus dem gefundenen Init-Modul
+   gelesen (`move.w (0x62,A5),D2w` — `A5` zeigt seit `0x6a06`
+   unverändert auf das gefundene Init-Modul).
+2. `0x6a8a`-`0x6a9e`: daraus (zusammen mit weiteren Init-Werten) wird
+   eine Gesamtgröße berechnet und **ein einziger großer Speicherblock**
+   alloziert.
+3. `0x6aa6`-`0x6ade`: dieser Block wird contiguous aufgeteilt —
+   Prozess-Deskriptor-Tabelle → System-Dispatch-Tabelle (`0x800` Byte,
+   `Q9_D_SYSDIS`) → User-Dispatch-Tabelle (`0x800` Byte, `Q9_D_USRDIS`)
+   → **Modulverzeichnis** (`MDirSz×16` Byte). `Q9_D_MODDIR` bekommt dabei
+   nur Start-/Ende-Zeiger auf diesen reservierten, leeren Bereich — keine
+   einzige Modul-Eintragung aus dem vorangegangenen Scan.
+
+**Antwort**: das Verzeichnis wird direkt im Anschluss an die Init-Suche
+**angelegt** (weil `MDirSz` aus dem gerade gefundenen Init-Modul
+gebraucht wird), aber nicht aus dem Scan heraus **befüllt**. Und das ist
+keine Design-Präferenz, sondern zwingend: zum Zeitpunkt der Namenssuche
+selbst ist `MDirSz` schlicht noch unbekannt — es gibt also noch gar
+keine Tabelle, in die man währenddessen etwas eintragen könnte
+(Andreas' eigene Erkenntnis dazu, per Nachfrage bestätigt). Für den
+eigenen Kernel: dieselbe Reihenfolge zwingend übernehmen (Init-Suche vor
+jeder Verzeichnis-Allokation); tatsächliche Verzeichnis-Einträge sollten
+trotzdem nur für wirklich gelinkte Module entstehen, nicht für alles,
+was der breite Speicher-Scan nebenbei findet (sonst landen verworfene
+Revisionen oder nie gelinkte ROM-Kopien im Verzeichnis).
+
 ## Die chronologische Übersicht
 
 Eine Zeile pro Schritt, in der tatsächlichen Ausführungsreihenfolge. Wo
