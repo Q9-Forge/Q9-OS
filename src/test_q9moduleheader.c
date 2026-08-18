@@ -58,6 +58,47 @@ static void checkName(const char *label, const char *got, const char *want)
     }
 }
 
+static void checkU16(const char *label, uint16_t got, uint16_t want)
+{
+    if (got == want) {
+        printf("[OK]   %-55s = 0x%04X\n", label, got);
+    } else {
+        printf("[FAIL] %-55s = 0x%04X (erwartet 0x%04X)\n", label, got, want);
+        failures++;
+    }
+}
+
+/* Prueft Q9_ComputeModuleChecksum68K/Q9_ComputeRequiredParity68K gegen
+ * eine echte 68K-Datei -- ergaenzt 2026-08-18 auf Andreas' Nachfrage nach
+ * einer "CRC setzen"-Methode. */
+static void testChecksum68K(const char *repoRoot, const char *relPath)
+{
+    char fullPath[1024];
+    FILE *f;
+    static unsigned char buf[64 * 1024];
+    size_t n;
+    uint16_t realParity, computedParity, checksum;
+    char label[128];
+
+    snprintf(fullPath, sizeof(fullPath), "%s/%s", repoRoot, relPath);
+    f = fopen(fullPath, "rb");
+    if (!f) {
+        printf("[SKIP] %s nicht gefunden -- Vendor-Datei fehlt lokal?\n", relPath);
+        return;
+    }
+    n = fread(buf, 1, sizeof(buf), f);
+    fclose(f);
+
+    snprintf(label, sizeof(label), "%s: Pruefsumme (echtes M$Parity)", relPath);
+    checksum = Q9_ComputeModuleChecksum68K(buf, (uint32_t)n);
+    checkU16(label, checksum, 0xFFFF);
+
+    realParity = (uint16_t)((buf[Q9_MH68K_PARITY] << 8) | buf[Q9_MH68K_PARITY + 1]);
+    computedParity = Q9_ComputeRequiredParity68K(buf, (uint32_t)n);
+    snprintf(label, sizeof(label), "%s: berechnetes M$Parity == echtes M$Parity", relPath);
+    checkU16(label, computedParity, realParity);
+}
+
 static int testRealFile(const char *repoRoot, const char *relPath,
                          Q9_ModHeadFormat wantFmt, const char *wantName,
                          int littleEndian, uint32_t nameOffsetFieldOffset)
@@ -110,6 +151,19 @@ int main(int argc, char *argv[])
                  1, Q9_MH9K_NAME);
     testRealFile(repoRoot, "modules/os9000-x86/vendor-live/ssm", Q9_MHFMT_OS9000_LE, "ssm",
                  1, Q9_MH9K_NAME);
+
+    printf("\n== Pruefsummen (alle acht echten 68K-Kernel-Varianten) ==\n");
+    {
+        static const char *kernelVariants[] = {
+            "vendor/68020/dker020s", "vendor/68020/dker020b",
+            "vendor/68020/dker030s", "vendor/68020/dker030b",
+            "vendor/68020/aker020s", "vendor/68020/aker020b",
+            "vendor/68020/aker030s", "vendor/68020/aker030b",
+        };
+        size_t i;
+        for (i = 0; i < sizeof(kernelVariants) / sizeof(kernelVariants[0]); i++)
+            testChecksum68K(repoRoot, kernelVariants[i]);
+    }
 
     printf("\n== Synthetische Grenzfaelle ==\n");
     {
