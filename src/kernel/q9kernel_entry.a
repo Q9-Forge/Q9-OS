@@ -111,7 +111,14 @@ Q9_D_TotRam     equ     $06c                    * Gesamt-RAM-Groesse
 Q9_D_MpuTyp     equ     $3c8                    * erkannter CPU-Typ
 Q9_D_BootFlags  equ     $93c                    * Boot-Zeit-Flags (Register d3)
 
-        psect   q9kernel,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,Q9K_Edition,0,Q9K_Entry,0
+* WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
+* literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
+* gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
+* einfach auf den Exec-Offset zurueckfallen (exceptOffset==execOffset,
+* FALSCH -- genau der Fund vom vorherigen Kernel-Link). Ein fehlender
+* Parameter ergibt dagegen echte 0, passend zum verifizierten M$Excpt=0
+* am realen Referenzkernel.
+        psect   q9kernel,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,Q9K_Edition,0,Q9K_Entry
 
 * ===== Assembler-Einstieg =====
 *
