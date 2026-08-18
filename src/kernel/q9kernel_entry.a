@@ -197,4 +197,54 @@ _stklimit:
 _stkhandler:
         bra     _stkhandler                  * kein Recovery -- anhalten statt unkontrolliert weiterlaufen
 
+* __multiply -- vom Compiler (xcc/cpfe, "-p68000"-Ziel) erwartetes
+* Laufzeitsymbol fuer 32x32->32-Bit-Multiplikation (32-Bit-"unsigned
+* long"-Multiplikation, wie sie z. B. q9kernel_tables.c fuer
+* Procs*Descsize/Paths*Descsize/MDirSz*16 verwendet) -- reines 68000 hat
+* keine MULU.L-Instruktion (die kam erst mit 68020), deshalb generiert
+* der Compiler einen Aufruf statt einer Inline-Instruktion. Normalerweise
+* aus der echten OS-9-C-Runtime (csl.l), die wir nicht linken (s.
+* _stkhandler/_stklimit oben) -- csl.l selbst ist ein ladbares Modul,
+* kein l68-kompatibles Objektarchiv (per l68-Fehlermeldung "is not a
+* relocatable module" bestaetigt, 2026-08-18), deshalb keine Option, es
+* einfach mitzulinken. Aufrufkonvention EMPIRISCH ermittelt (keine lokale
+* Dokumentation gefunden): per manueller cpfe/ilink/iopt/be68k/opt68k-
+* Pipeline (ohne os9make/mwos-build, die die .a-Zwischendatei sofort
+* aufraeumen) die generierte Zwischenassemblierung direkt inspiziert --
+* "move.l d4,d0 / move.l d3,d1 / bsr __multiply / ... add.l d0,..."
+* zeigt eindeutig D0=Faktor A, D1=Faktor B, Ergebnis in D0.
+*
+* Algorithmus: klassische 68000-Zerlegung in vier 16x16->32-Teilprodukte
+* ueber MULU.W (Basisinstruktion, auf jedem 68000 vorhanden), nur das
+* untere Ergebnis-Langwort wird gebraucht (passend zur "unsigned long"-
+* Multiplikationssemantik des Compilers): A*B = Alo*Blo +
+* ((Ahi*Blo+Alo*Bhi)<<16) mod 2^32 (Ahi*Bhi faellt komplett aus dem
+* unteren Langwort heraus, wird nicht gebraucht). Manuell mit zwei
+* Testfaellen durchgerechnet (3*5=15, 0x10001*3=0x30003) vor dem
+* Einbau, s. auch die Wiederholung der gleichen Rechnung im Host-Test.
+__multiply:
+        movem.l d2-d5,-(sp)
+        move.l  d0,d2                   * d2 = A
+        move.l  d1,d3                   * d3 = B (Blo im unteren Wort)
+
+        move.l  d2,d4
+        mulu.w  d3,d4                   * d4 = Alo * Blo (voll 32 Bit)
+
+        move.l  d2,d5
+        swap    d5                      * d5.w = Ahi
+        mulu.w  d3,d5                   * d5 = Ahi * Blo (d3 noch ungeswapt = Blo)
+
+        swap    d3                      * d3.w = Bhi
+        mulu.w  d2,d3                   * d3 = Alo * Bhi (d2 nie geswapt = Alo)
+
+        add.l   d5,d3                   * d3 = Ahi*Blo + Alo*Bhi
+        lsl.l   #8,d3
+        lsl.l   #8,d3                   * d3 = Kreuzterme << 16 (mod 2^32)
+
+        add.l   d3,d4                   * d4 = Alo*Blo + (Kreuzterme<<16) = A*B (unteres Langwort)
+
+        move.l  d4,d0                   * Ergebnis-Konvention: D0
+        movem.l (sp)+,d2-d5
+        rts
+
         endsect
