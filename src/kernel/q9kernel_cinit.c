@@ -41,11 +41,21 @@
  * Suche/Schritt 6a, Prozess-/Pfad-Tabellen, Scheduler-Sprung) ist bewusst
  * NICHT implementiert, klar als TODO markiert, keine Attrappen/Fake-Logik.
  *
- * Offene Design-Frage fuer Schritt 6a (Init-Modul-Suche), noch NICHT
- * beantwortet: der reale Kernel bekommt seine Speicherregion-Liste zum
- * Durchsuchen aus Register D6 (Herkunft in dieser Runde nicht verfolgt,
- * s. Thema 01). Unser eigener Kernel hat keine aequivalente Quelle dafuer
- * -- muss vor der Implementierung geklaert werden, nicht hier geraten.
+ * NACHTRAG 2026-08-18: die Speicherregion-Liste fuer Schritt 6a ist
+ * inzwischen geklaert und in q9kernel_entry.a als Q9K_BootList gesichert
+ * (die urspruengliche "keine Quelle"-Frage war ein Irrtum -- der Boot-
+ * ROM uebergibt sie ueber sp beim Einsprung, s. Thema 01). Ebenfalls
+ * fertig: Q9K_CheckSyncWord/Q9K_ValidModuleHeader (q9kernel_modcheck.c)
+ * fuer die Kandidatenpruefung. Der eigentliche Such-/Vergleichs-Code
+ * (Namensvergleich "init", Revisions-Tiebreak) fehlt noch.
+ *
+ * Ebenfalls neu: die Modulverzeichnis-Anlage (Q9_D_MODDIR) direkt nach
+ * der Init-Suche haengt an M$MDirSz AUS dem gefundenen Init-Modul --
+ * kann also erst NACH Schritt 6a passieren, nicht parallel dazu (echte
+ * Reihenfolge-Zwangslaeufigkeit im Original, s. Thema 01, nicht nur
+ * Design-Praeferenz). CPU-Anzahl fuer SMP kommt optional ueber dieselbe
+ * Art Erweiterungsmechanismus (Q9K_GetCpuCount, q9kernel_initext.c) --
+ * Default 1, falls das Init-Modul keine Q9-Erweiterung hat.
  */
 
 #include "../q9sysglob.h"
