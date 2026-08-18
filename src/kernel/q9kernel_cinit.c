@@ -72,6 +72,8 @@ extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
 extern void Q9K_ArenaInit(Q9_u32 freeBase, Q9_u32 freeSize);
 extern Q9_u32 Q9K_BuildExcTable(void);
 extern Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod);
+extern Q9_u32 Q9K_StartFirstProcess(void);
+extern void   Q9K_JumpToFirstProc(void);   /* q9kernel_entry.a, kein Ruecksprung vorgesehen */
 
 /* Eigene Kernel-Global-Erweiterungen (KEIN Feld aus dem echten Kernel-
  * Layout, deshalb hier lokal definiert statt in q9sysglob.h, s. dessen
@@ -229,8 +231,16 @@ void Q9K_CInit(void)
          * auch kein Absturz). */
     }
 
-    /* TODO (Abschnitt 2, Punkt 7): ersten Ausfuehrungskontext konstruieren
-     * und in den Scheduler springen -- existiert noch nicht. */
+    /* Abschnitt 2, Punkt 7 (minimales Geruest, mit Andreas abgestimmt
+     * 2026-08-18): ersten Ausfuehrungskontext konstruieren
+     * (q9kernel_firstproc.c) und, falls erfolgreich, hineinspringen --
+     * kein echter Scheduler (nur EIN Kontext existiert), kein echtes
+     * geladenes Programm (F$Link existiert nicht, Sprungziel ist ein
+     * reiner Platzhalter). Bei Fehlschlag (Pool/Arena erschoepft) fallen
+     * wir bewusst durch bis zum return unten -- Q9K_HaltLoop faengt das
+     * ab, kein Fake-Fortschritt. */
+    if (Q9K_StartFirstProcess() == 0)
+        Q9K_JumpToFirstProc(); /* kein Ruecksprung erwartet */
 
-    return; /* -> Q9K_HaltLoop in q9kernel_entry.a */
+    return; /* -> Q9K_HaltLoop in q9kernel_entry.a (nur bei Fehlschlag oben) */
 }
