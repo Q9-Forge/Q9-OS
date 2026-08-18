@@ -62,12 +62,50 @@
 #include "q9kernel_config.h"
 
 typedef unsigned long  Q9_u32;
+typedef unsigned char  Q9_u8;
+
+/* Aus q9kernel_modsearch.c/q9kernel_initext.c -- externe Deklarationen
+ * statt gemeinsamer Header, gleiche bewusst schlanke Konvention wie
+ * ueberall in diesem Verzeichnis. */
+extern const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *targetName, Q9_u32 *outAvailableLen);
+extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
+
+/* Eigene Kernel-Global-Erweiterungen (KEIN Feld aus dem echten Kernel-
+ * Layout, deshalb hier lokal definiert statt in q9sysglob.h, s. dessen
+ * eigenen Kopfkommentar) -- direkt hinter dem legacy-kompatiblen
+ * Bereich (Q9_D_End=$1000):
+ *   Q9K_BootList  ($1000, 64x8=512 Byte)  -- s. q9kernel_entry.a
+ *   Q9K_CpuCount  ($1200, 4 Byte)          -- neu hier, Ergebnis von
+ *                                             Q9K_GetCpuCount, noch von
+ *                                             niemandem konsumiert
+ *                                             (kein SMP-Scheduler
+ *                                             existiert bisher) --
+ *                                             trotzdem schon ein
+ *                                             permanenter Platz dafuer,
+ *                                             s. OWN_KERNEL_INIT_PLAN.md
+ *                                             SMP-Abschnitt. */
+#define Q9K_BOOTLIST_ADDR   0x1000UL
+#define Q9K_CPUCOUNT_ADDR   0x1200UL
 
 /* Schreibt einen 32-Bit-Wert an eine absolute Adresse (=Kernel-Global-
  * Offset, da Kernel-Globals-Basis bei diesem Kernel $000000 ist) */
 static void Q9K_PutU32(Q9_u32 addr, Q9_u32 value)
 {
     *(volatile Q9_u32 *)addr = value;
+}
+
+/* Wie Q9K_PutU32, aber fuer 1-/2-Byte-Felder -- WICHTIG, nicht einfach
+ * Q9K_PutU32 fuer schmalere Felder wiederverwenden, das wuerde
+ * benachbarte Kernel-Global-Bytes ueberschreiben (Q9_D_COMPAT/
+ * Q9_D_COMPAT2 sind je 1 Byte breit, s. q9sysglob.h). */
+static void Q9K_PutU8(Q9_u32 addr, Q9_u8 value)
+{
+    *(volatile Q9_u8 *)addr = value;
+}
+
+static void Q9K_PutU16(Q9_u32 addr, unsigned short value)
+{
+    *(volatile unsigned short *)addr = value;
 }
 
 /* Initialisiert eine leere, zirkulaere Warteschlange: Kopf- und Schwanz-
@@ -106,16 +144,59 @@ void Q9K_CInit(void)
      * expandieren (Q9_D_EXCJMP zeigt auf den vom Boot-ROM bereitgestellten
      * Speicherblock dafuer, s. q9kernel_entry.a). */
 
-    /* TODO (Abschnitt 2, Punkt 6a): Init-Modul per Namenssuche ("init",
-     * gross-/kleinschreibungsunabhaengig, Revisions-Tiebreak bei mehreren
-     * Treffern) finden. Beide Bausteine dafuer existieren jetzt bereits
-     * als eigene, kleine, real kompilierte Dateien: die Speicherregion-
-     * Liste liegt seit q9kernel_entry.a in Q9K_BootList (noch nicht von
-     * hier aus gelesen), und Q9K_ValidModuleHeader (q9kernel_modcheck.c)
-     * prueft einen Kandidaten auf Sync+Pruefsumme. Der eigentliche
-     * Such-/Vergleichs-Code, der beides zusammenfuehrt, fehlt noch.
-     * Danach dessen Konfigurationsfelder (M$SysConf etc.) in die
-     * Kernel-Globals uebernehmen. */
+    /* Schritt 6a: Init-Modul per Namenssuche finden (2026-08-18,
+     * verdrahtet nach einer Session-Pause -- Q9K_FindModuleByName/
+     * Q9K_GetCpuCount existierten schon, waren aber noch nicht
+     * aufgerufen). */
+    {
+        Q9_u32 initAvailableLen = 0;
+        const Q9_u8 *initMod = Q9K_FindModuleByName((const Q9_u8 *)Q9K_BOOTLIST_ADDR, "init", &initAvailableLen);
+
+        if (initMod != 0) {
+            Q9K_PutU32(Q9_D_INIT, (Q9_u32)(unsigned long)initMod);
+
+            /* Einfache Init-Modul-Konfigurationsfelder direkt uebernehmen
+             * -- exakt wie beim echten Kernel verifiziert (Thema 01):
+             * M$Compat->D_Compat, M$Compat2->D_Compat2, M$SysConf->
+             * D_SysConf. Offsets sind Init-Modul-interne Felder (Manual
+             * Table 2-4), NICHT Q9_MH68K_*-Header-Offsets -- liegen
+             * ausserhalb des von Q9K_ValidModuleHeader geprueften
+             * 0x30-Byte-Bereichs, deshalb Bounds-Check gegen
+             * initAvailableLen zwingend vor jedem Zugriff. */
+            if (initAvailableLen >= 0x7C) {
+                Q9K_PutU8(Q9_D_COMPAT,  initMod[0x68]);
+                Q9K_PutU8(Q9_D_COMPAT2, initMod[0x69]);
+                Q9K_PutU16(Q9_D_SYSCONF, (unsigned short)((initMod[0x7A] << 8) | initMod[0x7B]));
+
+                /* SMP-CPU-Anzahl: optional, Default 1 falls das
+                 * Init-Modul keine Q9-Erweiterung hat (s.
+                 * q9kernel_initext.c). Noch von niemandem konsumiert --
+                 * kein SMP-Scheduler existiert bisher, aber der
+                 * permanente Platz dafuer ist jetzt belegt. */
+                Q9K_PutU32(Q9K_CPUCOUNT_ADDR, Q9K_GetCpuCount(initMod, initAvailableLen));
+            }
+            /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/
+             * unplausibles Init-Modul -- bewusst KEIN Zugriff auf die
+             * Konfigurationsfelder in diesem Fall, aber auch keine
+             * explizite Fehlerbehandlung dafuer (noch offen). */
+        }
+        /* TODO: kein Init-Modul gefunden -- der echte Kernel gibt eine
+         * feste Meldung aus ("kernel: can't find Init module", Thema 01)
+         * und bricht vermutlich ab. Fuer uns noch nicht entschieden --
+         * aktuell faellt die Funktion einfach durch bis zum return
+         * unten, Q9K_HaltLoop faengt das ab (kein Fortschritt, aber
+         * auch kein Absturz). */
+
+        /* TODO (Abschnitt 2, Punkt 3/5/6): M$MDirSz (Init-Modul-Offset
+         * 0x62) lesen, daraus zusammen mit Procs/Paths einen
+         * zusammenhaengenden Speicherblock alloziert und in Prozess-/
+         * Pfad-Tabellen + Dispatch-Tabellen + Modulverzeichnis aufteilen
+         * -- exakt wie beim echten Kernel (Thema 01, Nachtrag zur
+         * Modulverzeichnis-Frage). Braucht einen echten Speicher-
+         * allokator, der bisher noch gar nicht existiert -- eigenes,
+         * groesseres TODO, nicht Teil dieser Runde.
+         */
+    }
 
     /* TODO (Abschnitt 2, Punkt 5/6): Prozess-/Pfad-Deskriptor-Tabellen mit
      * Freiliste einrichten. */

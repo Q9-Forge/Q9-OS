@@ -173,4 +173,21 @@ Q9K_BootListDone:
 Q9K_HaltLoop:
         bra     Q9K_HaltLoop
 
+* _stklimit/_stkhandler -- vom Compiler (xcc/cpfe, Stack-Ueberlauf-
+* Pruefung) erwartete Laufzeitsymbole, normalerweise aus der echten
+* OS-9-C-Runtime (csl.l), die wir als Kernel nicht haben (wir SIND die
+* Runtime). Gefunden erst beim ersten echten l68-Linkversuch aller
+* Kernel-.r-Dateien zusammen (2026-08-18) -- vorher nie aufgefallen,
+* weil jede .c-Datei bisher nur einzeln kompiliert, nie gelinkt wurde.
+* _stklimit-Layout (4 Byte, untere Stackgrenze) uebernommen aus Andreas'
+* eigenem MWOS/TMP/q9_cstart.a (dort "Noch nicht verifizierter Stack").
+* _stkhandler dort NICHT definiert (kommt aus der kompilierten csl.l,
+* kein Quelltext lokal verfuegbar) -- eigene, bewusst minimale Version:
+* haelt einfach an (kein Recovery-Mechanismus vorhanden), sicher
+* unabhaengig davon, ob der Aufrufer einen Ruecksprung erwartet.
+_stklimit:
+        dc.l    Q9K_GlobBase+Q9K_GlobSize    * untere Grenze unseres 8K-Kernel-Stacks
+_stkhandler:
+        bra     _stkhandler                  * kein Recovery -- anhalten statt unkontrolliert weiterlaufen
+
         endsect
