@@ -111,6 +111,12 @@ Q9_D_TotRam     equ     $06c                    * Gesamt-RAM-Groesse
 Q9_D_MpuTyp     equ     $3c8                    * erkannter CPU-Typ
 Q9_D_BootFlags  equ     $93c                    * Boot-Zeit-Flags (Register d3)
 
+* Eigene Kernel-Global-Erweiterung (Abschnitt 2, Punkt 7, s.
+* q9kernel_firstproc.c) -- Uebergabe an Q9K_JumpToFirstProc ueber feste
+* Adressen statt Funktionsparameter, s. dortigen Kommentar.
+Q9K_FirstProcSP equ     $1224                   * Ziel-SP fuer den ersten Ausfuehrungskontext
+Q9K_FirstProcPC equ     $122c                   * Ziel-PC fuer den ersten Ausfuehrungskontext
+
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
 * gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
@@ -246,5 +252,28 @@ __multiply:
         move.l  d4,d0                   * Ergebnis-Konvention: D0
         movem.l (sp)+,d2-d5
         rts
+
+* Q9K_FirstProcPlaceholder -- reiner Platzhalter fuer den allerersten
+* "Prozess" (Abschnitt 2, Punkt 7, minimales Geruest, mit Andreas
+* abgestimmt 2026-08-18: Mechanismus zeigen, ohne F$Link/Modul-Laden
+* vorwegzunehmen -- das existiert noch nicht, es gibt also noch nichts
+* Echtes zum Ausfuehren). Haelt einfach an, kein Rueckspringen vorgesehen.
+Q9K_FirstProcPlaceholder:
+        bra     Q9K_FirstProcPlaceholder
+
+* Q9K_JumpToFirstProc -- schaltet auf den in Q9K_FirstProcSP/PC
+* hinterlegten Kontext um (s. q9kernel_firstproc.c, Q9K_StartFirstProcess)
+* und springt hinein. Liest ueber feste Kernel-Global-Adressen statt
+* Funktionsparameter -- vermeidet jede Unsicherheit ueber die C-Aufruf-
+* konvention fuer Mehr-Parameter-Funktionen (bisher nirgends im Projekt
+* verifiziert, anders als der Ein-Wert-/Register-Fall von __multiply
+* oben). Aufruf per einfachem "jsr Q9K_JumpToFirstProc" (parameterlos,
+* gleiches Muster wie "jsr Q9K_CInit"). Kein Ruecksprung vorgesehen
+* (kein RTS) -- a6 ist an dieser Stelle noch unveraendert Q9K_GlobBase.
+Q9K_JumpToFirstProc:
+        movea.l Q9K_FirstProcSP(a6),a0  * neue SP-Adresse laden
+        movea.l Q9K_FirstProcPC(a6),a1  * Ziel-PC laden
+        movea.l a0,sp                   * Stack umschalten
+        jmp     (a1)                    * in den "Prozess" springen
 
         endsect
