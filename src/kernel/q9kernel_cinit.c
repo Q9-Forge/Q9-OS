@@ -8,6 +8,13 @@
  * Stufen "exit status = 0", echtes 375-Byte-Objekt (.r) erzeugt. Nicht
  * mit dem Kernel-Modul selbst (q9kernel_entry.a) gelinkt -- dafuer
  * braeuchte es ein gemeinsames Makefile-Ziel, noch nicht angelegt.
+ *
+ * NACHTRAG 2026-08-18: bindet jetzt q9kernel_config.h ein, braucht also
+ * zwingend -DQ9K_KERNEL_ATOMIC/-DQ9K_KERNEL_DEVELOPMENT PLUS
+ * -DQ9K_ALLOC_STANDARD/-DQ9K_ALLOC_BUDDY beim Bauen (sonst #error,
+ * s. q9kernel_config.h) -- inhaltlich noch ohne Wirkung, reine
+ * Vorbereitung fuer kuenftigen variantenabhaengigen Code. Erneut real
+ * kompiliert (Development+Standard), weiterhin exit status = 0.
  * BEWUSST klassische C-Typen (unsigned long/short/char) statt stdint.h/
  * uint32_t -- die xcc-Pipeline zeigt Defines wie _OSK/_MPF68000/_BIG_END,
  * die auf einen aelteren C-Sprachstand hindeuten; stdint.h-Verfuegbarkeit
@@ -42,6 +49,7 @@
  */
 
 #include "../q9sysglob.h"
+#include "q9kernel_config.h"
 
 typedef unsigned long  Q9_u32;
 
