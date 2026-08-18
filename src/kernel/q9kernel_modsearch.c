@@ -111,11 +111,22 @@ static int Q9K_NamesMatch(const Q9_u8 *moduleName, Q9_u32 nameMaxLen, const char
  * besten Treffers zurueck (hoechste Revisionsnummer bei mehreren
  * Treffern), oder 0 wenn nichts gefunden wurde. targetName muss NUL-
  * terminiert sein und darf hoechstens 63 Zeichen lang sein (Sicherheits-
- * grenze fuer den Namensvergleich). */
-const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *targetName)
+ * grenze fuer den Namensvergleich).
+ *
+ * outAvailableLen (optional, darf 0/NULL sein): liefert bei einem
+ * Treffer, wie viele Byte ab der zurueckgegebenen Adresse sicher
+ * innerhalb der urspruenglichen Region liegen (Regionende minus
+ * Kandidaten-Offset) -- WICHTIG fuer den Aufrufer, der ueber den
+ * standardmaessigen 0x30-Byte-Header hinaus lesen will (z.B. Init-
+ * Modul-spezifische Felder ab Offset 0x62/0x68/0x7A, s.
+ * q9kernel_cinit.c). Nachtrag 2026-08-18, gefunden beim Verdrahten
+ * von Schritt 6a -- ohne dieses Feld haette der Aufrufer keine
+ * verlaessliche Grenze fuer solche Zusatzfelder gehabt. */
+const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *targetName, Q9_u32 *outAvailableLen)
 {
     const Q9_u8 *bestMatch = 0;
     Q9_u32 bestRevision = 0;
+    Q9_u32 bestAvailableLen = 0;
     Q9_u32 regionIndex;
 
     if (regionList == 0 || targetName == 0)
@@ -157,6 +168,7 @@ const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *targetNam
                     if (bestMatch == 0 || revision > bestRevision) {
                         bestMatch = candidate;
                         bestRevision = revision;
+                        bestAvailableLen = remaining;
                     }
                 }
 
@@ -165,5 +177,7 @@ const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *targetNam
         }
     }
 
+    if (outAvailableLen != 0)
+        *outAvailableLen = bestAvailableLen;
     return bestMatch;
 }

@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# build.sh -- baut und verlinkt alle Q9-eigenen Kernel-Quelldateien zu
+#             einem echten OS-9/68K-Modul.
+#
+# 2026-08-18: erster erfolgreicher End-zu-Ende-Link ueberhaupt. Vorher
+# wurde jede Datei nur EINZELN gegen die echte Toolchain getestet (nie
+# zusammen gelinkt) -- dabei kam ans Licht, dass die vom Compiler
+# eingebaute Stack-Ueberlauf-Pruefung zwei Laufzeitsymbole braucht
+# (_stkhandler/_stklimit), die normalerweise aus der echten OS-9-C-
+# Runtime (csl.l) kommen -- die haben wir als Kernel nicht (wir SIND die
+# Runtime), deshalb jetzt selbst in q9kernel_entry.a definiert.
+#
+# Ergebnis (2026-08-18): echtes, gueltiges OS-9/68K-Modul erzeugt --
+# von macOS' eigenem `file`-Kommando UND unserem eigenen q9ident (s.
+# src/q9ident.c) unabhaengig korrekt erkannt (Format OS-9/68K, Typ
+# Systm, Name "q9kernel", Attribut REENT|SUPER).
+#
+# Bewusst kein os9make-Makefile fuer den Link-Schritt -- os9make hat
+# beim Versuch, eine "all"-Sammelregel zu definieren, automatisch
+# versucht, ein Programm "all" ueber die normale C-Programm-Kette
+# (inkl. acstart.r/csl.l) zu bauen, was wir explizit NICHT wollen (wir
+# haben keinen C-Runtime-Start, unser eigener Assembler-Einstieg
+# uebernimmt das). Direkter l68-Aufruf ohne jede Bibliothek ist
+# einfacher und war das, was tatsaechlich funktioniert hat.
+#
+# Aufruf: ./build.sh [ausgabeverzeichnis] (Default: ./build)
+
+set -euo pipefail
+
+OUTDIR="${1:-$(dirname "$0")/build}"
+SRCDIR="$(cd "$(dirname "$0")" && pwd)"
+mkdir -p "$OUTDIR"
+cd "$OUTDIR"
+
+cp "$SRCDIR"/q9kernel_entry.a "$SRCDIR"/q9kernel_cinit.c "$SRCDIR"/q9kernel_modcheck.c \
+   "$SRCDIR"/q9kernel_modsearch.c "$SRCDIR"/q9kernel_initext.c "$SRCDIR"/q9kernel_config.h .
+cp "$SRCDIR"/../q9sysglob.h .
+sed -i.bak 's#"../q9sysglob.h"#"q9sysglob.h"#' q9kernel_cinit.c && rm q9kernel_cinit.c.bak
+
+source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh
+
+CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_ALLOC_STANDARD"
+cat > makefile <<EOF
+CFLAGS = -b -O7 -cq -cw $CDEFS
+all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r
+q9kernel_cinit.r: q9kernel_cinit.c
+q9kernel_modcheck.r: q9kernel_modcheck.c
+q9kernel_initext.r: q9kernel_initext.c
+q9kernel_modsearch.r: q9kernel_modsearch.c
+EOF
+
+echo "== C-Dateien kompilieren (Development/Standard-Variante, s. q9kernel_config.h) =="
+# "all" selbst schlaegt am Ende fehl (os9make versucht danach ein
+# Programm "all" zu linken) -- das ist erwartet, die vier echten .r-
+# Ziele sind zu diesem Zeitpunkt schon fertig. Deshalb || true.
+mwos-build . all < /dev/null || true
+for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r; do
+    [ -f "$f" ] || { echo "FEHLER: $f wurde nicht erzeugt"; exit 1; }
+done
+
+echo "== Assembler-Einstieg assemblieren =="
+WINE_BIN="$HOME/.local/wine-stable/Wine Stable.app/Contents/Resources/wine/bin/wine"
+export WINEPREFIX="$HOME/.local/wineprefix-os9"
+export WINEDEBUG=-all
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+    -o=q9kernel_entry.r "q9kernel_entry.a" < /dev/null
+
+echo "== Verlinken (kein csl.l/acstart.r -- eigener Assembler-Einstieg) =="
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+    -o=q9kernel -f=orowoe \
+    q9kernel_entry.r q9kernel_cinit.r q9kernel_modcheck.r q9kernel_modsearch.r q9kernel_initext.r \
+    < /dev/null
+
+echo "== Fertig: $OUTDIR/q9kernel =="
+file q9kernel || true
