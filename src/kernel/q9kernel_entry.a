@@ -89,7 +89,12 @@ Q9K_Edition     equ     1
 
 Q9K_GlobBase    equ     $000000                 * Basis Kernel-Global-Bereich (32K)
 Q9K_GlobSize    equ     $008000                 * 32K, s. OWN_KERNEL_INIT_PLAN.md Abschnitt 5.3
-Q9K_StackSize   equ     $002000                 * 8K Boot-/Supervisor-Stack, direkt hinter den Globals
+* 8K -> 16K (2026-08-18, DIAGNOSE-EXPERIMENT): echter Q9-Flux-Boot-Test
+* zeigt, dass _stkhandler beim Aufruf von Q9K_CInit mit 8K wirklich
+* auslöst (echter Stack-Ueberlauf, kein Diagnose-Artefakt -- verifiziert
+* NACH dem jsr->bsr-Fix unten). Vorlaeufige Verdopplung zum Testen, ob
+* das reicht; endgueltige Groesse noch offen (TODO).
+Q9K_StackSize   equ     $004000                 * 16K Boot-/Supervisor-Stack, direkt hinter den Globals
 Q9K_StackTop    equ     Q9K_GlobBase+Q9K_GlobSize+Q9K_StackSize
 
 * Eigene Ablage fuer die vom Boot-ROM per sp uebergebene Speicherregion-
@@ -135,15 +140,120 @@ Q9K_FirstProcPC equ     $122c                   * Ziel-PC fuer den ersten Ausfue
 * der reale x86-OS-9000-Kernel (5-Byte-JMP-Trampolin -> C-Init-Funktion,
 * s. modules/os9000-x86/docs/KERNEL_INIT.md).
 
+* ===== TEMPORAERE DIAGNOSE (2026-08-18) =====
+* Auf Andreas' Wunsch beim ersten echten Q9-Flux-Boot-Test eingebaut, um
+* einen unerklaerten einzelnen Muellzeichen-Fund auf der Konsole
+* aufzuklaeren (s. Session-Notizen) -- schreibt an mehreren
+* Checkpoints je EIN festes Zeichen direkt auf die Q9-Konsole (68681-
+* DUART, s. Q9-Flux/docs/BOARD.md), um zu sehen, wie weit die
+* Ausfuehrung tatsaechlich kommt. NICHT Teil des eigentlichen Kernel-
+* Designs -- vor dem naechsten "echten" Meilenstein-Commit wieder
+* entfernen oder hinter ein Q9K_DIAG-Flag stellen (TODO).
+Q9_IO_DUART_SRA  equ    $FFFFF002               * Status A (Lesen): Bit 2 = TXRDY
+Q9_IO_DUART_THRA equ    $FFFFF006               * Tx-Hold-Register A (Schreiben)
+
+* Q9K_DiagWriteD7 -- schreibt das Zeichen aus D7.b auf die Konsole,
+* pollt vorher SRA auf TXRDY (Bit 2). Reine Diagnose-Hilfsroutine, kein
+* Teil der eigentlichen Boot-Logik.
+Q9K_DiagWriteD7:
+        movea.l #Q9_IO_DUART_SRA,a0
+Q9K_DiagWait:
+        move.b  (a0),d6
+        btst    #2,d6
+        beq     Q9K_DiagWait
+        move.b  d7,Q9_IO_DUART_THRA
+        rts
+
+* Q9K_DiagWriteHex32 -- schreibt D5 als 8 ASCII-Hex-Ziffern (MSB zuerst)
+* auf die Konsole. Reine Diagnose-Hilfsroutine, um die tatsaechliche
+* Lade-Adresse des Moduls sichtbar zu machen (Verdacht: das Modul liegt
+* selbst im Bereich, den der 32K-Zero-Fill gleich ueberschreibt).
+Q9K_DiagWriteHex32:
+        movem.l d4-d5,-(sp)
+        moveq   #7,d4                  * 8 Nibbles
+Q9K_DiagHexLoop:
+        rol.l   #4,d5                  * naechstes (hoechstwertige zuerst) Nibble in die unteren 4 Bit rotieren
+        move.l  d5,d7
+        and.l   #$F,d7
+        cmp.b   #10,d7
+        blt     Q9K_DiagHexDigit
+        add.b   #'A'-10,d7
+        bra     Q9K_DiagHexEmit
+Q9K_DiagHexDigit:
+        add.b   #'0',d7
+Q9K_DiagHexEmit:
+        bsr     Q9K_DiagWriteD7
+        dbra    d4,Q9K_DiagHexLoop
+        movem.l (sp)+,d4-d5             * nach 8 Rotationen (32 Bit) ist d5 wieder im Original-Zustand
+        rts
+* ===== ENDE TEMPORAERE DIAGNOSE (Deklarationen) =====
+
 Q9K_Entry:
+* Interrupts SOFORT maskieren, noch VOR jedem Zugriff auf den unten
+* folgenden Zero-Fill (der die ECHTE, noch aktive 68K-Hardware-
+* Vektortabelle bei Adresse 0 mit-loescht) -- ohne das koennte ein
+* waehrend des Loeschens auftretender Interrupt durch eine bereits
+* (teilweise) genullte Vektortabelle vektorisieren = Sprung ins Leere.
+* Per echtem Q9-Flux-Boot-Test 2026-08-18 als wahrscheinliche Absturz-
+* ursache diagnostiziert (Konsole brach exakt waehrend des Zero-Fill
+* mitten in der Ausgabe ab, CPU blieb danach in einer heissen, stummen
+* Schleife -- kein Selbstueberschreiben, Lade-Adresse per Diagnose-
+* Ausgabe verifiziert weit ausserhalb des 32K-Bereichs).
+        move.w  #$2700,sr
+        moveq   #'1',d7                         * DIAGNOSE: M$Exec erreicht, allererste Instruktion
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_Entry(pc),a0                * DIAGNOSE: tatsaechliche Lade-/Ausfuehrungsadresse
+        move.l  a0,d5                           * (Verdacht: liegt im 32K-Zero-Fill-Bereich selbst!)
+        bsr     Q9K_DiagWriteHex32
         movea.l #Q9K_GlobBase,a6                * Kernel-Globals-Basis -- ALLES Folgende ist a6-relativ
 
 * Kernel-Global-Bereich (32K) nullen, BEVOR irgendein Feld beschrieben wird
         movea.l a6,a0
-        move.l  #(Q9K_GlobSize/4)-1,d2          * Langwort-Zaehler fuer dbra (Groesse/4, minus 1)
+* Bug 2 (_stklimit) ist inzwischen geloest -- das 4K-Test-Experiment hat
+* seinen Zweck erfuellt (bestaetigt: Q9K_CInit wird jetzt sauber
+* erreicht). Zurueck auf die volle Groesse fuer Bug 3 (Absturz mitten in
+* dieser Schleife bei voller 32K, noch ungeklaert).
+* Bug 3 (2026-08-18, TEIL-UNGELOEST): mit voller Groesse (Q9K_GlobSize=
+* 32K) stuerzt der echte Q9-Flux-Boot-Test beim Nullen konsistent ab.
+* Per Bisektion eingegrenzt: 0x7000 (28K) durchgaengig sauber (bis
+* Checkpoint 'H'), 0x7100 ebenfalls sauber, 0x7180 zeigt ein DRITTES,
+* noch unerklaertes Verhalten (alle Fortschritts-Marker erscheinen, aber
+* zeitlich VERZOEGERT -- 4 in 15s, aber 8 in 45s bei IDENTISCHER
+* Konfiguration -- passt zu einer langsamen Fehler-Wiederholungsschleife,
+* nicht zu einem einmaligen Absturz), 0x7200 stuerzt sauber mit einem
+* Muellzeichen ab (wie urspruenglich bei voller Groesse). Echte Ursache
+* noch nicht gefunden -- braucht vermutlich einen echten Debugger/
+* Disassembler statt weiterer Bisektion. VORLAEUFIG (bis geklaert) auf
+* 0x7000 (28K statt 32K) reduziert -- kleiner als die urspruengliche
+* Design-Absicht (68k_tech.pdf-Headroom), aber die groesste per echtem
+* Boot-Test bestaetigt saubere Groesse. TODO: Ursache finden, dann
+* zurueck auf die volle, beabsichtigte Groesse.
+        move.l  #($7000/4)-1,d2
 Q9K_ZeroLoop:
         clr.l   (a0)+
+* DIAGNOSE: alle 0x800 Iterationen einen Marker ausgeben, um die genaue
+* Fehlerstelle im 32K-Bereich einzugrenzen. BEWUSST OHNE bsr/Stack-
+* Benutzung (a4/d6 statt movem/-(sp)) -- der erste Versuch nutzte
+* Q9K_DiagWriteD7 per bsr, was den noch vom Boot-ROM uebergebenen
+* Original-Stack braucht; falls DER zufaellig innerhalb des gerade
+* genullten Bereichs liegt, wuerde die fortschreitende Nullung die
+* eigene gepushte Ruecksprungadresse zerstoeren -- das waere dann ein
+* Diagnose-Artefakt, kein echter Kernel-Bug. Diese Version ist davon
+* unabhaengig: a4/d6/d7 sind frei, a0/d2/a1/a6 bleiben unangetastet.
+        move.l  d2,d6
+        and.l   #$7FF,d6
+        bne     Q9K_ZeroNoMark
+        movea.l #Q9_IO_DUART_SRA,a4
+Q9K_ZeroDiagWait:
+        move.b  (a4),d6
+        btst    #2,d6
+        beq     Q9K_ZeroDiagWait
+        move.b  #'.',Q9_IO_DUART_THRA
+Q9K_ZeroNoMark:
         dbra    d2,Q9K_ZeroLoop
+
+        moveq   #'2',d7                         * DIAGNOSE: 32K-Nullen abgeschlossen
+        bsr     Q9K_DiagWriteD7
 
 * Boot-Register-Konvention uebernehmen (verifiziert, Thema 01) -- MUSS
 * passieren, bevor d0/d1/a1/a5 fuer etwas anderes wiederverwendet werden
@@ -179,12 +289,61 @@ Q9K_BootListDone:
 
 * Weiter in C (src/kernel/q9kernel_cinit.c) -- noch nicht mit dieser
 * Datei gelinkt, s. Kopfkommentar
-        jsr     Q9K_CInit
+        moveq   #'3',d7                         * DIAGNOSE: Entry-Stub fertig, Sprung nach C
+        bsr     Q9K_DiagWriteD7
+* WICHTIGER FUND (echter Q9-Flux-Boot-Test, 2026-08-18): "jsr Q9K_CInit"
+* (absolute Adressierung, s. r68-Warnung) ist FALSCH fuer ein REENT-
+* Modul, das an einer variablen Laufzeitadresse laedt (per Diagnose-
+* Ausgabe verifiziert: dieses Modul lud beim Test bei $00071886, nicht
+* bei der von l68 beim Linken angenommenen Basis) -- anders als
+* "lea Q9K_BootList,a1" oben (dort bewusst absolut, weil Q9K_BootList
+* eine ECHTE, modul-UNABHAENGIGE feste Kernel-Global-Adresse ist).
+* Q9K_CInit dagegen liegt INNERHALB des Moduls selbst, seine tatsaech-
+* liche Adresse haengt von der Lade-Adresse ab -- ohne PC-relative
+* Adressierung sprang die CPU nach dem Aufruf ins Leere (kein
+* Diagnose-Zeichen mehr nach dem letzten Checkpoint vor diesem Aufruf,
+* auch _stkhandler wurde NICHT erreicht -- also kein Stack-Problem,
+* sondern echter Sprung an eine falsche Adresse). bsr ist als Branch-
+* Instruktion immer PC-relativ, loest das Problem ohne weitere Aenderung.
+* WICHTIGER FUND (echter Q9-Flux-Boot-Test, 2026-08-18): "_stklimit(a6)"
+* (vom Compiler fuer JEDE C-Funktion mit Stack-Rahmen erzeugt, s.
+* Kopfkommentar bei _stklimit unten) folgt der ECHTEN OS-9-C-ABI: A6
+* zeigt normalerweise auf einen vom Kernel per F$Fork frisch
+* zugeteilten kleinen "Prozessdaten"-vsect-Bereich, in dem _stklimit
+* NUR einen kleinen, direkt (16-Bit-Verschiebung) adressierbaren Offset
+* hat -- NICHT auf irgendeine feste Systemadresse. Per Diagnose
+* verifiziert: mit UNSEREM a6=Q9K_GlobBase(=0) las "_stklimit(a6)"
+* durchgaengig 0 statt des von uns dort abgelegten Werts -- die reale
+* Distanz zwischen a6=0 und der tatsaechlichen _stklimit-Adresse
+* innerhalb unseres Moduls (laedt bei ~$71886 in diesem Test) sprengt
+* die 16-Bit-Verschiebung, die der Compiler fuer diese Adressierungsart
+* erzeugt (wird stillschweigend abgeschnitten -- kein Assembler-Fehler).
+* Da wir selbst der Kernel sind (kein F$Fork vorhanden), muessen WIR
+* diesen "Prozessdaten"-Bereich bereitstellen: echtes vsect-Feld
+* _stklimit (s. u.) + ein eigener kleiner Laufzeitpuffer
+* (Q9K_CRuntimeData), auf den a6 HIER (unmittelbar vor dem C-Aufruf)
+* umgeschaltet wird. Puffer-Adresse per PC-relativem lea geladen (nicht
+* absolut) -- liegt selbst INNERHALB unseres relozierbaren Moduls,
+* gleiche Begruendung wie beim jsr->bsr-Fund oben.
+        lea     Q9K_CRuntimeData(pc),a6
+* _stklimit muss VOR dem ersten C-Aufruf mit einem echten "Restbudget"
+* initialisiert werden -- Q9K_CRuntimeData ist bislang nur genullt
+* (dc.l 0,...), und die Compiler-Pruefung ("sub.l #48,_stklimit(a6)")
+* liest das als Restbudget-Zaehler: bei 0 unterlaeuft JEDE Subtraktion
+* sofort. Grosszuegiger Platzhalterwert (1 MByte), da die exakte
+* Semantik (folgt sie der tatsaechlichen SP-Tiefe, oder ist es nur ein
+* grober Gesamtaufruf-Zaehler unabhaengig vom echten Stack?) noch nicht
+* abschliessend geklaert ist -- TODO, sobald mehr bekannt ist.
+        move.l  #$00100000,_stklimit(a6)
+        bsr     Q9K_CInit
 
 * Sollte Q9K_CInit jemals zurueckkehren (im Normalfall nicht, da es in
 * den Scheduler springt): keine unkontrollierte Weiterausfuehrung
 Q9K_HaltLoop:
-        bra     Q9K_HaltLoop
+        moveq   #'H',d7                         * DIAGNOSE: Fallback-Pfad erreicht (Q9K_CInit zurueckgekehrt/fehlgeschlagen)
+        bsr     Q9K_DiagWriteD7
+Q9K_HaltLoopSpin:
+        bra     Q9K_HaltLoopSpin
 
 * _stklimit/_stkhandler -- vom Compiler (xcc/cpfe, Stack-Ueberlauf-
 * Pruefung) erwartete Laufzeitsymbole, normalerweise aus der echten
@@ -192,16 +351,46 @@ Q9K_HaltLoop:
 * Runtime). Gefunden erst beim ersten echten l68-Linkversuch aller
 * Kernel-.r-Dateien zusammen (2026-08-18) -- vorher nie aufgefallen,
 * weil jede .c-Datei bisher nur einzeln kompiliert, nie gelinkt wurde.
-* _stklimit-Layout (4 Byte, untere Stackgrenze) uebernommen aus Andreas'
-* eigenem MWOS/TMP/q9_cstart.a (dort "Noch nicht verifizierter Stack").
+*
+* _stklimit als ECHTES vsect-Feld (NACHTRAG 2026-08-18, s. ausfuehrlichen
+* Fund-Kommentar oben bei "lea Q9K_CRuntimeData(pc),a6"): eine erste
+* Fassung legte _stklimit als gewoehnliches psect-Datum mit einem
+* absoluten Wert ab -- funktional falsch, weil der Compiler dafuer
+* IMMER eine kleine, A6-relative vsect-Verschiebung erzeugt, keinen
+* Verweis auf eine feste Adresse. vsect matcht Andreas' eigenem
+* MWOS/TMP/q9_cstart.a (dort Teil des dritten vsect-Blocks
+* _fcbs/_ofcbs/environ/_stklimit) -- hier bewusst nur das tatsaechlich
+* referenzierte Feld, da wir keine eigene "echte" OS-9-C-Runtime
+* nachbilden, nur das, was unser eigener Compiler-Output braucht.
+        vsect
+_stklimit:
+        ds.l    1
+        ends
 * _stkhandler dort NICHT definiert (kommt aus der kompilierten csl.l,
 * kein Quelltext lokal verfuegbar) -- eigene, bewusst minimale Version:
 * haelt einfach an (kein Recovery-Mechanismus vorhanden), sicher
 * unabhaengig davon, ob der Aufrufer einen Ruecksprung erwartet.
-_stklimit:
-        dc.l    Q9K_GlobBase+Q9K_GlobSize    * untere Grenze unseres 8K-Kernel-Stacks
+*
+* Q9K_CRuntimeData -- ECHTER, beschreibbarer Laufzeitpuffer fuer den
+* vsect-Bereich oben (kein F$Fork vorhanden, das diesen normalerweise
+* automatisch zuteilt -- wir tun es selbst). Bewusst grosszuegig (64
+* Byte) statt exakt auf die vsect-Groesse abgestimmt: der tatsaechliche
+* Offset, den der Linker fuer _stklimit innerhalb des vsect vergibt,
+* ist von hier aus nicht direkt einsehbar -- ein Puffer, der deutlich
+* groesser als die einzige vsect-Variable ist, deckt jede plausible
+* Offset-Zuweisung sicher ab. NICHT Teil des vsect selbst (das haette
+* wieder keine echte Lade-Adresse); ein normales Datum in unserem
+* eigenen psect, per PC-relativem lea adressiert (s. o.).
+* "ds.l" ist hier NICHT erlaubt (nur innerhalb vsect, per r68-Fehler
+* "bad mnemonic" real getestet) -- ein psect enthaelt nur INITIALISIERTEN
+* Inhalt, deshalb hier 16 explizite Nullen statt einer Reservierung.
+Q9K_CRuntimeData:
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 _stkhandler:
-        bra     _stkhandler                  * kein Recovery -- anhalten statt unkontrolliert weiterlaufen
+        moveq   #'S',d7                      * DIAGNOSE: Stack-Ueberlauf-Handler wurde aufgerufen
+        bsr     Q9K_DiagWriteD7
+Q9K_StkHandlerSpin:
+        bra     Q9K_StkHandlerSpin           * kein Recovery -- anhalten statt unkontrolliert weiterlaufen
 
 * __multiply -- vom Compiler (xcc/cpfe, "-p68000"-Ziel) erwartetes
 * Laufzeitsymbol fuer 32x32->32-Bit-Multiplikation (32-Bit-"unsigned
@@ -259,7 +448,10 @@ __multiply:
 * vorwegzunehmen -- das existiert noch nicht, es gibt also noch nichts
 * Echtes zum Ausfuehren). Haelt einfach an, kein Rueckspringen vorgesehen.
 Q9K_FirstProcPlaceholder:
-        bra     Q9K_FirstProcPlaceholder
+        moveq   #'7',d7                         * DIAGNOSE: Kontextwechsel erfolgreich, im ersten "Prozess"
+        bsr     Q9K_DiagWriteD7
+Q9K_FirstProcPlaceholderSpin:
+        bra     Q9K_FirstProcPlaceholderSpin
 
 * Q9K_JumpToFirstProc -- schaltet auf den in Q9K_FirstProcSP/PC
 * hinterlegten Kontext um (s. q9kernel_firstproc.c, Q9K_StartFirstProcess)
@@ -270,10 +462,36 @@ Q9K_FirstProcPlaceholder:
 * oben). Aufruf per einfachem "jsr Q9K_JumpToFirstProc" (parameterlos,
 * gleiches Muster wie "jsr Q9K_CInit"). Kein Ruecksprung vorgesehen
 * (kein RTS) -- a6 ist an dieser Stelle noch unveraendert Q9K_GlobBase.
+* NACHTRAG 2026-08-18: a6-relative Adressierung hier ENTFERNT -- a6
+* zeigt seit der C-Runtime-Umstellung oben (s. "lea Q9K_CRuntimeData
+* (pc),a6" vor "bsr Q9K_CInit") nicht mehr auf Q9K_GlobBase, sondern
+* auf den vsect-Laufzeitpuffer, und bleibt dort fuer die gesamte
+* C-Ausfuehrung (auch beim Aufruf hierher aus Q9K_CInit's C-Code, "bsr
+* Q9K_JumpToFirstProc"). Q9K_FirstProcSP/PC sind wie Q9K_BootList
+* echte, modul-UNABHAENGIGE feste Kernel-Global-Adressen -- absolute
+* Adressierung ist hier deshalb korrekt (kein a6-Bezug noetig).
 Q9K_JumpToFirstProc:
-        movea.l Q9K_FirstProcSP(a6),a0  * neue SP-Adresse laden
-        movea.l Q9K_FirstProcPC(a6),a1  * Ziel-PC laden
+        movea.l Q9K_FirstProcSP,a0      * neue SP-Adresse laden
+        movea.l Q9K_FirstProcPC,a1      * Ziel-PC laden
         movea.l a0,sp                   * Stack umschalten
         jmp     (a1)                    * in den "Prozess" springen
+
+* Q9K_Diag4/5/6 -- C-aufrufbare Checkpoints innerhalb von Q9K_CInit
+* (q9kernel_cinit.c), parameterlos + RTS (gleiches Muster wie
+* Q9K_CInit selbst aus C-Sicht) -- vermeidet jede Unsicherheit ueber
+* die C-Mehrparameter-Aufrufkonvention. Teil der TEMPORAEREN DIAGNOSE,
+* s. Kommentar bei Q9K_Entry oben.
+Q9K_Diag4:
+        moveq   #'4',d7                * DIAGNOSE: Q9K_CInit (C-Code) erreicht
+        bsr     Q9K_DiagWriteD7
+        rts
+Q9K_Diag5:
+        moveq   #'5',d7                * DIAGNOSE: Init-Modul-Suche (Schritt 6a) abgeschlossen
+        bsr     Q9K_DiagWriteD7
+        rts
+Q9K_Diag6:
+        moveq   #'6',d7                * DIAGNOSE: Punkt 7 erfolgreich, Sprung in Q9K_JumpToFirstProc steht bevor
+        bsr     Q9K_DiagWriteD7
+        rts
 
         endsect
