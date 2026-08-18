@@ -57,6 +57,61 @@ Q9_ModHeadFormat Q9_DetectModuleHeaderFormat(const uint8_t *rawBytes, uint32_t a
     return Q9_MHFMT_UNKNOWN;
 }
 
+/* Berechnet die 24-Word-XOR-Pruefsumme ueber die ersten 0x30 Byte eines
+ * klassischen 68K-Modul-Headers (Standard-Header + typabhaengige
+ * Erweiterung bis Q9_MH68K_STDLEN). Fuer ein GUELTIGES, unveraendertes
+ * Modul muss das Ergebnis $FFFF sein (rawBytes inkl. des echten
+ * M$Parity-Feldes) -- Andreas, 2026-08-18: "brauchen wir auch eine
+ * Methode um den CRC zu setzen". Diese Funktion ist die Verifikations-
+ * Haelfte; Q9_ComputeRequiredParity68K (unten) die Setz-Haelfte. Gehoert
+ * bewusst hierher (Host-Tooling), nicht in den Kernel selbst -- der
+ * Kernel braucht das zur Laufzeit nicht (er verifiziert nur bestehende
+ * Module, s. src/kernel/q9kernel_modcheck.c, absichtlich unabhaengig
+ * implementiert, beide gegen dieselben echten Dateien verifiziert),
+ * "Setzen" ist ein Bau-/Werkzeug-Vorgang fuer neu erzeugte Module. */
+uint16_t Q9_ComputeModuleChecksum68K(const uint8_t *rawBytes, uint32_t availableLen)
+{
+    uint16_t checksum = 0;
+    uint32_t i;
+
+    if (rawBytes == NULL || availableLen < Q9_MH68K_STDLEN)
+        return 0;
+
+    for (i = 0; i < Q9_MH68K_STDLEN; i += 2)
+        checksum ^= readU16(rawBytes + i, 0); /* 68K ist immer Big-Endian */
+
+    return checksum;
+}
+
+/* Berechnet den Wert, den M$Parity (Offset Q9_MH68K_PARITY) haben muss,
+ * damit Q9_ComputeModuleChecksum68K anschliessend $FFFF ergibt -- das
+ * eigentliche "Prüfsumme setzen" fuer neu gebaute/veraenderte 68K-Header.
+ * rawBytes muss die ersten Q9_MH68K_STDLEN Byte bereits enthalten; der
+ * aktuelle Inhalt des Parity-Feldes selbst wird beim Aufsummieren
+ * ausgelassen (beliebiger Platzhalterwert dort ist unproblematisch).
+ * Schreibt NICHT in rawBytes -- reine Berechnung, der Aufrufer setzt den
+ * zurueckgegebenen Wert selbst an Offset Q9_MH68K_PARITY (Trennung von
+ * Berechnung und Schreibzugriff). Empirisch verifiziert (2026-08-18)
+ * gegen alle acht echten 68K-Kernel-Varianten in vendor/68020/ -- der
+ * berechnete Wert trifft exakt den echten, eingebetteten M$Parity-Wert
+ * in jeder einzelnen Datei. */
+uint16_t Q9_ComputeRequiredParity68K(const uint8_t *rawBytes, uint32_t availableLen)
+{
+    uint16_t sumExcludingParity = 0;
+    uint32_t i;
+
+    if (rawBytes == NULL || availableLen < Q9_MH68K_STDLEN)
+        return 0;
+
+    for (i = 0; i < Q9_MH68K_STDLEN; i += 2) {
+        if (i == Q9_MH68K_PARITY)
+            continue;
+        sumExcludingParity ^= readU16(rawBytes + i, 0);
+    }
+
+    return (uint16_t)(sumExcludingParity ^ 0xFFFF);
+}
+
 /* Liest den NUL-terminierten Namensstring eines 68K- oder OS-9000-Moduls
  * (beide Formate: 4-Byte-Offset ab Headerbasis, NUL-terminiert -- s.
  * [[feedback_q9_check_official_manuals]], die fruehere High-Bit-Annahme
