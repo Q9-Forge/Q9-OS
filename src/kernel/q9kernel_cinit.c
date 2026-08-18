@@ -89,10 +89,15 @@ void Q9K_CInit(void)
      * Speicherblock dafuer, s. q9kernel_entry.a). */
 
     /* TODO (Abschnitt 2, Punkt 6a): Init-Modul per Namenssuche ("init",
-     * gross-/kleinschreibungsunabhaengig) finden -- Speicherregion-Liste
-     * dafuer noch nicht entschieden, s. Kopfkommentar. Danach dessen
-     * Konfigurationsfelder (M$SysConf etc.) in die Kernel-Globals
-     * uebernehmen. */
+     * gross-/kleinschreibungsunabhaengig, Revisions-Tiebreak bei mehreren
+     * Treffern) finden. Beide Bausteine dafuer existieren jetzt bereits
+     * als eigene, kleine, real kompilierte Dateien: die Speicherregion-
+     * Liste liegt seit q9kernel_entry.a in Q9K_BootList (noch nicht von
+     * hier aus gelesen), und Q9K_ValidModuleHeader (q9kernel_modcheck.c)
+     * prueft einen Kandidaten auf Sync+Pruefsumme. Der eigentliche
+     * Such-/Vergleichs-Code, der beides zusammenfuehrt, fehlt noch.
+     * Danach dessen Konfigurationsfelder (M$SysConf etc.) in die
+     * Kernel-Globals uebernehmen. */
 
     /* TODO (Abschnitt 2, Punkt 5/6): Prozess-/Pfad-Deskriptor-Tabellen mit
      * Freiliste einrichten. */
