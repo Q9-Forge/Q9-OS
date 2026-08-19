@@ -273,10 +273,34 @@ Q9K_Entry:
 * Treiber) INNERHALB des 32K-Kernel-Global-Bereichs laden, nicht immer
 * sicher darueber (ein frueherer, kleinerer Testbuild lud bei $71886,
 * dieser Build bei ca. $71a8 -- deutlich UNTER $8000, also mitten im
-* Nullungsziel). Fix: eigenes Modul (Q9K_Entry..Q9K_ModuleEnd) beim
+* Nullungsziel). Fix: eigenes Modul (Q9K_ModuleStart..Modulende) beim
 * Nullen aussparen, statt blind linear zu nullen -- Q9K_ZeroRange nullt
 * jetzt bei Bedarf zwei Teilbereiche (vor/nach dem eigenen Modul) statt
 * eines einzigen durchgehenden.
+*
+* NACHTRAG 2026-08-19, ECHTER BUG GEFUNDEN + GEFIXT (per Q9-Flux-
+* Instruktions-Trace, temporaer in m68krt.c/q9board.c, s. Session-Notizen
+* -- nicht Teil dieses Repos): "Q9K_ModuleEnd" (ein Compile-Zeit-Label
+* ganz am Ende DIESER Datei) markiert NUR das Ende von q9kernel_entry.a
+* SELBST -- l68 gibt JEDER C-Datei beim Linken ihr EIGENES, separates
+* psect und reiht sie HINTER unser eigenes "q9kernel"-psect (per echter
+* Linker-Map verifiziert: q9kernel_entry.a belegte in einem Testbuild nur
+* 520 von insgesamt 2994 Modul-Byte). Q9K_ModuleEnd schuetzte also nur
+* die ersten 520 Byte -- Q9K_CInit und ALLE weiteren C-Dateien
+* (q9kernel_modcheck.c/modsearch.c/initext.c/arena.c/exctable.c/
+* tables.c/firstproc.c) blieben faelschlich UNGESCHUETZT und wurden vom
+* Nullungslauf mit geloescht, noch bevor sie je liefen -- "bsr Q9K_CInit"
+* sprang dadurch in eine bereits genullte Region; die CPU exekutierte
+* endlos Nullbytes als "ori.b #0,d0" (per PC-Trace verifiziert: PC stieg
+* ab dort in Schritten von genau 4 immer weiter) -- daher der stille
+* Stillstand ohne jede weitere Konsolenausgabe (kein 'S', kein '4', kein
+* 'H'). Fix: die WAHRE Modulendadresse nicht mehr ueber ein Label,
+* sondern aus dem eigenen, per psect automatisch erzeugten Modulkopf
+* lesen (M$Size-Feld, 4 Byte bei Offset +4 ab Q9K_ModuleStart, s.
+* Q9_MH68K_SIZE in q9moduleheader.h) -- dieses Feld deckt IMMER das
+* komplette gelinkte Modul ab, unabhaengig davon, aus wie vielen
+* psects/Dateien es zusammengesetzt wurde. Q9K_ModuleEnd-Label bleibt
+* nur noch als Kommentar-Anker stehen, wird hierfuer nicht mehr benutzt.
         lea     Q9K_ModuleStart(pc),a2   * a2 = eigene Modul-Startadresse (Laufzeit, nicht Assemblierzeit!)
         move.l  a2,d4
         cmp.l   #Q9K_GlobSize,d4
@@ -287,7 +311,9 @@ Q9K_Entry:
         movea.l a6,a0                    * a0 = Q9K_GlobBase (=0)
         bsr     Q9K_ZeroRange            * nullt [0, Modulanfang) -- d4 ist bereits die Byte-Anzahl dahin
 
-        lea     Q9K_ModuleEnd(pc),a0     * a0 = Modulende
+        move.l  4(a2),d0                 * d0 = M$Size aus dem eigenen (echten) Modulkopf
+        add.l   a2,d0                    * d0 = Modulstart + Groesse = WAHRE Modulendadresse
+        movea.l d0,a0                    * a0 = wahres Modulende (nicht Q9K_ModuleEnd-Label!)
         move.l  a0,d4
         move.l  #Q9K_GlobSize,d6
         sub.l   d4,d6                    * d6 = Q9K_GlobSize - Modulende (als vorzeichenbehaftete Byte-Anzahl)
@@ -547,10 +573,11 @@ Q9K_Diag6:
         bsr     Q9K_DiagWriteD7
         rts
 
-* Q9K_ModuleEnd -- markiert das Ende des eigenen Moduls (fuer den
-* Selbstueberschreibungs-Schutz beim Nullen, s. Q9K_Entry oben). MUSS
-* die LETZTE Zeile vor endsect bleiben, sonst stimmt die Modul-Ausdehnung
-* nicht mehr.
+* Q9K_ModuleEnd -- NACHTRAG 2026-08-19: nicht mehr fuer den
+* Selbstueberschreibungs-Schutz benutzt (s. ausfuehrlichen Fund-
+* Kommentar bei Q9K_Entry oben -- markierte nur das Ende DIESER Datei,
+* nicht des ganzen gelinkten Moduls, echter Bug). Bleibt als reiner
+* Kommentar-Anker/Bytezaehler stehen, funktional ungenutzt.
 Q9K_ModuleEnd:
 
         endsect
