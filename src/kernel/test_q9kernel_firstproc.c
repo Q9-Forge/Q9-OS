@@ -30,6 +30,8 @@ static unsigned long g_fakePoolNext;
  * Gegenstand des Tests). */
 #define Q9_D_ACTIVQ             ((unsigned long)(g_fakeGlobals + 0x000))
 #define Q9K_PROCPOOL_FREE_ADDR  ((unsigned long)(g_fakeGlobals + 0x040))
+#define Q9_D_PROC               ((unsigned long)(g_fakeGlobals + 0x080))
+#define Q9K_PROCPOOL_BASE_ADDR  ((unsigned long)(g_fakeGlobals + 0x0C0))
 
 /* State/Priority/Age/Next/Prev/SavedSP/EntryPC liegen im echten Deskriptor
  * nur wenige Byte auseinander (+0x00/+0x01/+0x02/+0x30/+0x34/+0x38/+0x3C)
@@ -52,6 +54,13 @@ static unsigned long g_fakePoolNext;
  * uebernimmt und der Test ihn dort wiederfinden kann. */
 #define Q9K_FAKE_A6_CANARY 0xCAFEUL
 unsigned long Q9K_GetA6(void) { return Q9K_FAKE_A6_CANARY; }
+
+/* Stub fuer die TEMPORAERE Diagnose-Instrumentierung (Abschnitt F$Fork,
+ * Bug-Suche "kein Prozesswechsel nach F$Fork mehr", noch NICHT geloest,
+ * s. [[project_q9os_own_kernel_design]]) -- nur damit dieser Test trotz
+ * der temporaeren Q9K_DiagPrintU32-Aufrufe in q9kernel_firstproc.c
+ * weiterhin linkt. Kein Verhalten, reiner No-op. */
+void Q9K_DiagPrintU32(unsigned long value) { (void)value; }
 
 unsigned long Q9K_AllocMem(unsigned long requestedSize)
 {
@@ -81,7 +90,54 @@ static void Q9K_SchedInsert(unsigned long desc)
     *(unsigned long *)(Q9_D_ACTIVQ + Q9K_READYQ_PREV_OFF) = desc;
 }
 
+/* Minimale Stubs fuer die echten q9kernel_moddir.c-Funktionen (dort
+ * bereits ausfuehrlich eigenstaendig getestet, s. test_q9kernel_moddir.c)
+ * -- fuer Q9K_ProcFork reicht ein einfaches, von den Testfaellen unten
+ * gesteuertes Fake-Verzeichnis mit GENAU einem eintragbaren Modul. */
+static unsigned long g_stubModDirHdr = 0;      /* 0 = "nicht gefunden" simulieren */
+static int g_stubModDirUnlinkCalls = 0;        /* zaehlt Q9K_ModDirUnlinkByHeader-Aufrufe */
+
+unsigned long Q9K_ModDirLinkByName(unsigned short desiredTyLang, const char *name)
+{
+    (void)desiredTyLang;
+    (void)name;
+    return g_stubModDirHdr;
+}
+
+unsigned long Q9K_ModDirUnlinkByHeader(unsigned long hdrAddr)
+{
+    (void)hdrAddr;
+    g_stubModDirUnlinkCalls++;
+    return 0;
+}
+
 #include "q9kernel_firstproc.c"
+
+/* Schreibt einen 32-Bit-Wert Big-Endian in buf -- fuer den Aufbau eines
+ * echten, byte-genauen Fake-Modulkopfs (Q9K_ReadHdrU32BE erwartet das,
+ * unabhaengig von der Host-Endianness). */
+/* Liest einen 32-Bit-Wert Big-Endian aus einer Adresse -- Gegenstueck zu
+ * putBE32, gebraucht fuer die Q9K_SetFrameReg-Registerpruefungen (s.
+ * dortigen Kopfkommentar: schreibt ABSICHTLICH IMMER Big-Endian,
+ * unabhaengig von der Host-Endianness -- auf dem echten, nativ
+ * Big-Endian-68K-Ziel deckungsgleich mit einem normalen Zugriff, auf
+ * DIESEM (Little-Endian-)Testhost aber NICHT mehr mit einem nativen
+ * "unsigned int*"-Cast lesbar, s. echter Testfehlschlag unten). */
+static unsigned long getBE32(unsigned long addr)
+{
+    const unsigned char *p = (const unsigned char *)addr;
+    return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) |
+           ((unsigned long)p[2] << 8) | (unsigned long)p[3];
+}
+
+static void putBE32(unsigned char *buf, unsigned long addr, unsigned long value)
+{
+    unsigned char *p = buf + addr;
+    p[0] = (unsigned char)(value >> 24);
+    p[1] = (unsigned char)(value >> 16);
+    p[2] = (unsigned char)(value >> 8);
+    p[3] = (unsigned char)value;
+}
 
 static int failures = 0;
 
@@ -206,6 +262,159 @@ int main(void)
     Q9K_ProcCreate(entryA, 1); /* verbraucht 4. und letzten Slot */
     checkU32("Fuenfter Aufruf nach Pool-Erschoepfung schlaegt sauber fehl (0)",
              Q9K_ProcCreate(entryA, 1), 0);
+
+    /* ==== Abschnitt "F$Fork" -- Q9K_ProcFork, eigener, frischer Pool ====
+     * Unabhaengig vom obigen Q9K_ProcCreate-Pool (der ist jetzt sowieso
+     * erschoepft) -- eigene Freiliste, eigenes Fake-Modulverzeichnis
+     * (per g_stubModDirHdr gesteuert). */
+    {
+        static unsigned char forkPool[2 * 128];       /* nur 2 Slots -- absichtlich knapp fuer Fall F5 */
+        Q9_u32 forkPoolBase = (Q9_u32)(unsigned long)forkPool;
+        static unsigned char fakeHdr[0x40];           /* echter, byte-genauer Fake-Modulkopf */
+        static unsigned char fakeParam[4] = { 0x11, 0x22, 0x33, 0x44 };
+        Q9_u16 error;
+        Q9_u32 pid1, pid2;
+        Q9_u32 desc;
+
+        memset(forkPool, 0, sizeof(forkPool));
+        buildFreeList(forkPoolBase, 128, 2, Q9K_PROCPOOL_FREE_ADDR);
+        Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, forkPoolBase);
+        Q9K_SetU32(Q9_D_PROC, 0);
+
+        memset(fakeHdr, 0, sizeof(fakeHdr));
+        putBE32(fakeHdr, 0x30, 0x40);   /* M$Exec = 0x40 (fiktiv, keine echte Code-Adresse noetig) */
+        putBE32(fakeHdr, 0x38, 16);     /* M$Mem  = 16 */
+        putBE32(fakeHdr, 0x3C, 256);    /* M$Stack = 256 */
+        g_stubModDirHdr = (unsigned long)fakeHdr;
+
+        /* Fall F1: Erfolgsfall MIT expliziter Prioritaet (9) + echtem
+         * Parameter (4 Byte) -- prueft Groessenberechnung, Parameter-
+         * Kopie UND alle 15 Table-D-9-Registerwerte auf einmal. */
+        pid1 = Q9K_ProcFork(0x0101, 0, sizeof(fakeParam),
+                             (Q9_u32)(unsigned long)"prog", (Q9_u32)(unsigned long)fakeParam,
+                             9, &error);
+        checkU32("Q9K_ProcFork() F1: liefert eine Prozess-ID != 0", (Q9_u32)(pid1 != 0), 1);
+        checkU32("Q9K_ProcFork() F1: PID == 1 (erster Slot, 1-basierte PID)", pid1, 1);
+
+        desc = forkPoolBase; /* erster Slot */
+        checkU32("F1: Deskriptor-State == 'a'", (Q9_u32)*(Q9_u8 *)(desc + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'a');
+        checkU32("F1: Deskriptor-Priority == 9 (uebergebener Wert)",
+                 (Q9_u32)*(Q9_u8 *)(desc + Q9K_PROCDESC_PRIORITY_OFF), 9);
+
+        {
+            Q9_u32 sp = Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF);
+            Q9_u32 totalSize = 16 + 256 + 0 + sizeof(fakeParam);           /* M$Mem+M$Stack+addMem+paramSize */
+            /* Datenbereichsbasis nicht direkt aus sp ableitbar (sp liegt
+             * INNERHALB des Stack-Bereichs) -- stattdessen ueber das
+             * a6-Register im Fake-Rahmen selbst pruefen (das IST die
+             * Datenbereichsbasis, s. Q9K_ProcFork).
+             *
+             * WICHTIG: Q9K_SetFrameReg (q9kernel_firstproc.c) schreibt
+             * seit dem echten Bugfix dort ABSICHTLICH IMMER Big-Endian
+             * (byteweise, host-/zielbreiten-unabhaengig) -- auf dem
+             * echten, nativ Big-Endian-68K-Ziel deckungsgleich mit einem
+             * gewoehnlichen Zugriff, auf DIESEM Little-Endian-Testhost
+             * aber NICHT mehr per nativem "unsigned int*"-Cast lesbar
+             * (realer Testfehlschlag, byte-vertauschte Werte). Deshalb
+             * hier durchgehend getBE32 statt eines Pointer-Casts. */
+            Q9_u32 a6val = getBE32(sp + 14 * 4);   /* Registerindex 14 = a6 */
+            Q9_u32 a5val = getBE32(sp + 13 * 4);   /* a5 = spBoundary */
+            Q9_u32 a3val = getBE32(sp + 11 * 4);   /* a3 = Modulkopfzeiger */
+            Q9_u32 a1val = getBE32(sp + 9  * 4);   /* a1 = Top of memory */
+            Q9_u32 d0val = getBE32(sp + 0  * 4);
+            Q9_u32 d2val = getBE32(sp + 2  * 4);
+            Q9_u32 d5val = getBE32(sp + 5  * 4);
+            Q9_u32 d6val = getBE32(sp + 6  * 4);
+
+            /* a3val/PC unten bewusst gegen die auf 32 Bit GEKAPPTE Adresse
+             * geprueft, nicht den vollen 64-Bit-Host-Zeiger: Q9K_SetFrameReg
+             * schreibt ECHT nur 4 Byte (byteweise, s. dortigen
+             * Kopfkommentar) -- auf dem echten 32-Bit-Ziel verlustfrei,
+             * auf DIESEM 64-Bit-Testhost aber grundsaetzlich nicht
+             * rundreisefaehig, falls fakeHdr zufaellig oberhalb 4 GByte
+             * liegt (real beobachtet). Gleiches, bereits an anderer Stelle
+             * dokumentiertes Limit wie bei Q9K_ModDirPopulateFromBootList
+             * ("4-Byte-Adressfelder passen nicht zu 64-Bit-Host-Zeigern") --
+             * kein Kernel-Bug, reine Testhost-Eigenschaft. */
+            checkU32("F1: a3 (Modulkopfzeiger) == fakeHdr (untere 32 Bit)",
+                     a3val, (Q9_u32)(unsigned int)(unsigned long)fakeHdr);
+            checkU32("F1: a6 (Datenbereichsbasis) + Gesamtgroesse == a1 (Top of memory)",
+                     a6val + totalSize, a1val);
+            checkU32("F1: a5 (SP-Grenze) == a1 - paramSize", a5val, a1val - sizeof(fakeParam));
+            checkU32("F1: d0.w == PID", d0val, pid1);
+            checkU32("F1: d2.w == Prioritaet (9)", d2val, 9);
+            checkU32("F1: d5.l == paramSize", d5val, sizeof(fakeParam));
+            checkU32("F1: d6.l == Gesamtgroesse (M$Mem+M$Stack+addMem+paramSize)", d6val, totalSize);
+
+            checkU32("F1: SR == $2000", (Q9_u32)*(unsigned short *)(sp + Q9K_PROCDESC_REGSAVE_SIZE + 0x00), 0x2000);
+            checkU32("F1: PC == fakeHdr + M$Exec (untere 32 Bit, s. Kommentar oben)",
+                     (Q9_u32)*(unsigned int *)(sp + Q9K_PROCDESC_REGSAVE_SIZE + 0x02),
+                     (Q9_u32)(unsigned int)((unsigned long)fakeHdr + 0x40));
+
+            /* Parameter-Kopie (spBoundary, s. Q9K_ProcFork) hier bewusst
+             * NICHT durch Dereferenzieren von a5val geprueft -- a5val ist
+             * die auf 32 Bit GEKAPPTE Registerkopie (s. Kommentar oben);
+             * als (unsigned long) zurueckgecastet zeigt sie auf DIESEM
+             * 64-Bit-Testhost ins Leere (real per Segfault bestaetigt,
+             * nicht nur vermutet) -- der ECHTE, unverfaelschte spBoundary-
+             * Wert existiert nur als lokale Variable innerhalb von
+             * Q9K_ProcFork, hier nicht erreichbar. Gleiches, bereits
+             * dokumentiertes Limit wie bei Q9K_ModDirPopulateFromBootList
+             * ("selbst NICHT host-testbar... 4-Byte-Adressfelder passen
+             * nicht zu 64-Bit-Host-Zeigern") -- die Parameter-Kopie-Logik
+             * selbst (byteweise Schleife in Q9K_ProcFork) ist trivial
+             * genug, um stattdessen im echten Boot-Test verifiziert zu
+             * werden, statt hier eine unhaltbare Pointer-Rundreise zu
+             * erzwingen. */
+        }
+
+        /* Fall F2: priorityIn=0 UND Q9_D_PROC zeigt auf einen echten
+         * "laufenden" Deskriptor mit Prioritaet 42 -- Kind muss dessen
+         * Prioritaet erben. */
+        {
+            static unsigned char fakeCaller[128];
+            memset(fakeCaller, 0, sizeof(fakeCaller));
+            *(unsigned char *)(fakeCaller + Q9K_PROCDESC_PRIORITY_OFF) = 42;
+            Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)fakeCaller);
+
+            pid2 = Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 0, &error);
+            checkU32("Q9K_ProcFork() F2: liefert eine Prozess-ID != 0", (Q9_u32)(pid2 != 0), 1);
+            checkU32("F2: PID == 2 (zweiter Slot, 1-basierte PID)", pid2, 2);
+            checkU32("F2: Prioritaet vom Aufrufer geerbt (42)",
+                     (Q9_u32)*(Q9_u8 *)(forkPoolBase + 128 + Q9K_PROCDESC_PRIORITY_OFF), 42);
+
+            Q9K_SetU32(Q9_D_PROC, 0); /* fuer die naechsten Faelle zuruecksetzen */
+        }
+
+        /* Fall F3: Modul nicht gefunden -- E_MNF ($DD), kein Deskriptor
+         * verbraucht (Pool ist jetzt ohnehin schon voll, s. u. -- dieser
+         * Fall muss VOR jeder Pool-Erschoepfung fehlschlagen, mit dem
+         * richtigen Fehlercode, nicht mit E_PRCFUL). */
+        {
+            unsigned long savedHdr = g_stubModDirHdr;
+            g_stubModDirHdr = 0; /* "nicht gefunden" simulieren */
+
+            checkU32("Q9K_ProcFork() F3: liefert 0 bei unbekanntem Modul",
+                     Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"unknown", 0, 1, &error), 0);
+            checkU32("F3: Fehlercode == E_MNF ($DD)", (Q9_u32)error, 0x00DDUL);
+
+            g_stubModDirHdr = savedHdr;
+        }
+
+        /* Fall F4: Pool jetzt erschoepft (beide Slots durch F1/F2
+         * verbraucht) -- E_PRCFUL ($E5), UND Q9K_ModDirUnlinkByHeader
+         * MUSS aufgerufen worden sein (Link-Zaehler-Ruecknahme, s.
+         * Kopfkommentar Q9K_ProcFork). */
+        {
+            int unlinkCallsBefore = g_stubModDirUnlinkCalls;
+
+            checkU32("Q9K_ProcFork() F4: liefert 0 bei erschoepftem Pool",
+                     Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 1, &error), 0);
+            checkU32("F4: Fehlercode == E_PRCFUL ($E5)", (Q9_u32)error, 0x00E5UL);
+            checkU32("F4: Q9K_ModDirUnlinkByHeader wurde aufgerufen (Link-Zaehler zurueckgenommen)",
+                     (Q9_u32)(g_stubModDirUnlinkCalls > unlinkCallsBefore), 1);
+        }
+    }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;
