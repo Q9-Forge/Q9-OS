@@ -27,6 +27,19 @@ static unsigned char  g_fakeVectorTable[256 * 16];   /* simuliert den Boot-ROM-B
 #define Q9_D_EXCJMP ((unsigned long)&g_fakeExcJmpPtr)
 #include "q9kernel_exctable.c"
 
+/* Minimale Stubs fuer die drei echten q9kernel_entry.a-Symbole, deren
+ * ADRESSE Q9K_BuildExcTable in die Tabelle eintraegt (Q9K_TrapDispatch/
+ * Q9K_TimerIRQHandler) bzw. die es direkt aufruft (Q9K_SetVBR) -- werden
+ * hier nie wirklich ausgefuehrt, muessen aber als echte Symbole
+ * existieren, damit der Host-Test ueberhaupt linkt. NACHTRAG 2026-08-21:
+ * fehlten schon VOR dem Scheduler-Abschnitt (Q9K_SetVBR/Q9K_TrapDispatch
+ * waren bereits seit der F$Link/F$UnLink-Runde unentdeckt unverlinkbar --
+ * dieser Test wurde seither offenbar nicht mehr neu gebaut), hier bei
+ * Gelegenheit mitgefixt statt liegen gelassen. */
+void Q9K_SetVBR(Q9_u32 tableBase) { (void)tableBase; }
+void Q9K_TrapDispatch(void) { }
+void Q9K_TimerIRQHandler(void) { }
+
 static int failures = 0;
 
 static void checkU32(const char *label, Q9_u32 got, Q9_u32 want)
