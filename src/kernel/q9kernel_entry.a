@@ -128,6 +128,23 @@ Q9_D_BootFlags  equ     $93c                    * Boot-Zeit-Flags (Register d3)
 Q9K_FirstProcSP equ     $1224                   * Ziel-SP fuer den ersten Ausfuehrungskontext
 Q9K_FirstProcPC equ     $122c                   * Ziel-PC fuer den ersten Ausfuehrungskontext
 
+* Kernel-Global-Offset fuer die User-Service-Dispatch-Tabelle (s.
+* q9sysglob.h, Q9_D_USRDIS) -- lokal dupliziert wie die anderen oben.
+* Feld selbst ist ein ZEIGER auf die echte, 0x800 Byte grosse Tabelle
+* (q9kernel_tables.c, Q9K_SYSDIS_SIZE/USRDIS_SIZE), nicht die Tabelle
+* selbst -- deshalb hier immer ueber "Q9_D_USRDIS" (Speicherinhalt),
+* niemals "#Q9_D_USRDIS" (Adresse selbst) zugreifen.
+Q9_D_USRDIS     equ     $3a8
+
+* Eigene Kernel-Global-Erweiterung fuer Q9K_TrapDispatch (TRAP #0,
+* s. u.) -- haelt kurzzeitig die aufzurufende Handler-Adresse, waehrend
+* der Aufrufer-Registersatz (d2-d7/a3-a5) von der gesicherten Stack-
+* Kopie zurueckgeholt wird (a4 ist Teil dieser Menge und wird dabei
+* selbst ueberschrieben -- ein Speicher-Zwischenspeicher vermeidet
+* fehleranfaellige Stack-Offset-Rechnerei). Nicht reentrant-sicher
+* (kein SMP/verschachtelte Traps vorgesehen).
+Q9K_TrapHandlerScratch equ $1230
+
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
 * gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
@@ -556,8 +573,47 @@ __multiply:
 Q9K_FirstProcPlaceholder:
         moveq   #'7',d7                         * DIAGNOSE: Kontextwechsel erfolgreich, im ersten "Prozess"
         bsr     Q9K_DiagWriteD7
+
+* NOCH TEMPORAERER TEST (2026-08-21, Abschnitt "F$Link/F$UnLink"):
+* echten F$Link/F$UnLink-Aufruf ueber TRAP #0 ausloesen -- exakt die
+* reale OS-9-Aufrufkonvention (TRAP #0, direkt danach im Code ein Wort
+* mit dem Funktionscode) -- prueft den kompletten neuen Pfad
+* (Q9K_TrapDispatch -> Q9K_SysFLink/Q9K_SysFUnLink ->
+* Q9K_ModDirLinkByName/UnlinkByHeader) real im Emulator, nicht nur
+* durch Bauen/Linken. Vor dem naechsten "echten" Meilenstein wieder
+* entfernen, gleiche Philosophie wie Q9K_Diag4/5/6.
+        clr.w   d0                    * d0.w = Typ/Sprache-Filter (0 = beliebig)
+        lea     Q9K_TestLinkName(pc),a0
+        trap    #0
+        dc.w    0                      * Funktionscode 0 = F$Link (s. modules/SYSCALL_MODULE_MAP.md)
+        bcs     Q9K_TestLinkFail
+        moveq   #'L',d7                 * DIAGNOSE: F$Link("init") erfolgreich
+        bsr     Q9K_DiagWriteD7
+        move.l  a2,d5                    * a2 = echter Modulzeiger -- zur Kontrolle ausgeben
+        bsr     Q9K_DiagWriteHex32
+
+        trap    #0
+        dc.w    2                        * Funktionscode 2 = F$UnLink -- a2 aus F$Link steht noch bereit
+        bcs     Q9K_TestUnlinkFail
+        moveq   #'U',d7                   * DIAGNOSE: F$UnLink erfolgreich
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_FirstProcPlaceholderSpin
+
+Q9K_TestUnlinkFail:
+        moveq   #'u',d7                    * DIAGNOSE: F$UnLink fehlgeschlagen
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_FirstProcPlaceholderSpin
+
+Q9K_TestLinkFail:
+        moveq   #'l',d7                     * DIAGNOSE: F$Link("init") fehlgeschlagen
+        bsr     Q9K_DiagWriteD7
+
 Q9K_FirstProcPlaceholderSpin:
         bra     Q9K_FirstProcPlaceholderSpin
+
+Q9K_TestLinkName:
+        dc.b    "init",0
+        dc.b    0                      * Fuellbyte -- haelt das nachfolgende Codewort wortausgerichtet
 
 * Q9K_JumpToFirstProc -- schaltet auf den in Q9K_FirstProcSP/PC
 * hinterlegten Kontext um (s. q9kernel_firstproc.c, Q9K_StartFirstProcess)
@@ -598,6 +654,203 @@ Q9K_Diag5:
 Q9K_Diag6:
         moveq   #'6',d7                * DIAGNOSE: Punkt 7 erfolgreich, Sprung in Q9K_JumpToFirstProc steht bevor
         bsr     Q9K_DiagWriteD7
+        rts
+
+*******************************************************************************
+* Q9K_TrapDispatch -- TRAP #0, der echte OS-9-Systemaufruf-Mechanismus
+* (2026-08-21, Abschnitt "F$Link/F$UnLink"). Reale, verifizierte
+* Konvention (docs/REVERSE_ENGINEERING.md, "Fund: Q9_disp_488"): direkt
+* nach der TRAP #0-Instruktion steht im Code ein Wort mit dem
+* Funktionscode (0-255); der Handler liest es ueber den geretteten PC
+* auf dem Exception-Frame, erhoeht den geretteten PC um 2 (damit RTE
+* hinter das Funktionscode-Wort zurueckspringt), und schlaegt den
+* Handler in einer Tabelle nach.
+*
+* UNTERSCHIED zum echten Kernel: dort wird Q9_disp_488 ueber mehrere
+* PEA/RTS-Trampolin-Ebenen erreicht (Fund: der Frame liegt bei
+* (0x42,SP), nicht direkt bei SP). Unser Handler ist DIREKT als
+* Vektor-Ziel eingetragen (s. q9kernel_exctable.c) -- kein Trampolin
+* dazwischen, deshalb liegt der echte 68030-Kurzformat-Frame (Format
+* $0: SR word/PC long/Format-Vektor-Wort, 8 Byte total) direkt bei SP.
+*
+* Nur EINE Tabelle (Q9_D_USRDIS) statt der beiden echten parallelen
+* Tabellen (SYSDIS fuer Supervisor-verschachtelte Aufrufe, per Bit 5
+* des geretteten SR unterschieden) -- wir haben noch keine echte
+* User-/Supervisor-Prozesstrennung, TODO sobald es sie gibt.
+*
+* WICHTIG, per Analyse gefunden (nicht durch einen Testfehlschlag --
+* s. Kommentar bei Q9K_SysFLink weiter unten): A6 wird hier BEWUSST
+* NICHT gesichert/wiederhergestellt, obwohl es laut OS-9-Konvention
+* eigentlich zu den "vom Aufrufer unangetasteten" Registern gehoert.
+* Grund: A6 ist seit der C-Laufzeit-Umstellung (s. Kopfkommentar bei
+* Q9K_Entry, "lea Q9K_CRuntimeData(pc),a6" vor "bsr Q9K_CInit") FEST
+* auf Q9K_CRuntimeData umgeschaltet -- jeder von uns compilierte
+* C-Code (also auch die Syscall-Handler unten, die C-Funktionen
+* aufrufen) erwartet A6 GENAU DORT (der Compiler erzeugt fuer JEDEN
+* Funktionsaufruf mit Stack-Rahmen "sub.l #N,_stklimit(a6)"). Wuerden
+* wir hier einen "echten" A6-Wert eines Aufrufers sichern und
+* wiederherstellen, wuerde A6 waehrend des Handler-Aufrufs falsch
+* zeigen -- der Compiler-generierte Stack-Ueberlauf-Check wuerde
+* Datenmuell lesen/schreiben. A6 bleibt also fuer die gesamte
+* Kernel-Laufzeit fest, wird von KEINEM Syscall beruehrt (F$Link
+* dokumentiert ohnehin keine A6-Aenderung) -- kein Bug, sondern
+* Konsequenz der schon bestehenden Laufzeit-Konvention.
+Q9K_TrapDispatch:
+* 36 Byte: kompletter "durch Syscalls unantastbarer" Registersatz sichern
+* (A6 bewusst NICHT dabei, s. Kopfkommentar oben).
+        movem.l d2-d7/a3-a5,-(sp)
+        movea.l 38(sp),a4                 * a4 = geretteter PC (Frame jetzt bei sp+36; PC-Feld bei +2 davon)
+        move.w  (a4),d7                    * d7 = Funktionscode (0-255), direkt aus dem Code-Strom
+        addq.l  #2,38(sp)                   * geretteten PC im Frame um 2 erhoehen (hinter das Funktionscode-Wort)
+        cmp.w   #256,d7
+        bcc     Q9K_TrapUnknown
+        movea.l Q9_D_USRDIS,a4               * a4 = echte Tabellenbasis (Q9_D_USRDIS ist ein Zeiger-Feld!)
+        add.w   d7,d7
+        add.w   d7,d7                         * d7 = Funktionscode*4 (Tabellen-Byte-Offset)
+        movea.l 0(a4,d7.w),a4                  * a4 = registrierte Handler-Adresse (0 = nicht registriert)
+        move.l  a4,d7
+        beq     Q9K_TrapUnknown
+        move.l  a4,Q9K_TrapHandlerScratch        * Handler-Adresse zwischenspeichern (s. Kopfkommentar)
+* ECHTEN Registersatz des Aufrufers zurueckholen (a4 dabei ueberschrieben
+* -- Handler-Adresse liegt sicher im Speicher, s. o.).
+        movem.l (sp),d2-d7/a3-a5
+        movea.l Q9K_TrapHandlerScratch,a4           * Handler-Adresse zurueckholen
+* gesicherte Registerkopie verwerfen -- sp zeigt jetzt wieder GENAU auf
+* den echten Hardware-Frame.
+        lea     36(sp),sp
+* echter Syscall-Aufruf -- Handler bekommt/aendert a0/a1/a2/d0/d1 frei
+* (reale F$-Konvention), MUSS d2-d7/a3-a5 unangetastet lassen (gleiche
+* Disziplin wie schon bei den Diagnose-Routinen gefunden+gefixt).
+        jsr     (a4)
+        rte
+
+Q9K_TrapUnknown:
+        movem.l (sp)+,d2-d7/a3-a5             * Registersatz zurueckholen (Postinkrement -- sp wieder auf dem Frame)
+        ori.w   #1,(sp)                         * Carry im geretteten SR setzen -- unbekannter/unregistrierter Funktionscode
+        move.w  #$00ce,d1                        * d1.w = E_UNKSVC (Unknown Service Code, 0xCE)
+        rte
+
+*******************************************************************************
+* Q9K_SysFLink -- TRAP-#0-Handler fuer den echten F$Link-Callcode (0x00,
+* s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention (68k_tech.pdf
+* S. 461): IN d0.w=Typ/Sprache-Filter (0=beliebig), (a0)=Namenszeiger.
+* OUT (Erfolg): d0.w=echte Typ/Sprache, d1.w=Attribut/Revision,
+* (a0)=hinter den Namen aktualisiert, (a1)=Einsprungpunkt,
+* (a2)=Modulzeiger, Carry im geretteten SR geloescht. OUT (Fehlschlag):
+* Carry gesetzt, d1.w=E_MNF ($DD, Module Not Found).
+*
+* Wird per jsr DIREKT aus Q9K_TrapDispatch aufgerufen (nichts sonst
+* dazwischen) -- der Hardware-Frame liegt deshalb bei (4,sp) (die 4
+* Byte Ruecksprungadresse dieses einen jsr obendrauf). Darf laut Manual
+* nur d0/d1/a0/a1/a2 aendern -- eigenes Scratch (d7) wird gesichert/
+* wiederhergestellt, bevor der Carry/d1-Fehlerpfad die Rueckkehr
+* vorbereitet.
+Q9K_SysFLink:
+* NACHTRAG 2026-08-21: das Manual garantiert fuer d0 nur das untere Wort
+* (d0.w) -- oberes Wort defensiv maskieren, bevor es als C-Parameter
+* dient (empirisch verifiziert per opt68k-Probe: der Compiler liest
+* Q9_u16-Parameter selbst zwar schon korrekt per "move.w d0,..." -- war
+* NICHT die Ursache des unten dokumentierten Bugs -- aber ein sauberer
+* Wert schadet nicht und ist fuer echte, externe Aufrufer ohnehin
+* korrekter als sich auf geraeumte obere Bits zu verlassen).
+        and.l   #$0000ffff,d0
+        move.l  d7,-(sp)              * eigenes Scratch sichern
+        move.l  a0,-(sp)              * urspruenglichen Namenszeiger separat merken (C-Aufruf braucht a0->d1)
+
+* d1 = Namenszeiger (2. C-Parameter, s. q9kernel_moddir.c) -- d0
+* (Typ/Sprache-Filter) ist bereits der 1. C-Parameter, unveraendert
+* aus dem Aufrufer.
+        move.l  a0,d1
+        bsr     Q9K_ModDirLinkByName     * -> d0 = Headerzeiger oder 0 (Ein-Ausgabe-Konvention wie __multiply)
+
+        move.l  d0,d7                     * d7 = Headerzeiger (0 = kein Treffer), zwischengesichert
+        tst.l   d7
+        beq     Q9K_SysFLink_Fail
+
+* Erfolg: die echten Ausgaberegister aus dem gefundenen Modulkopf
+* ableiten -- Q9_MH68K_TYPE/LANG (Offset $12/$13) liegen im echten
+* 68K-Header direkt hintereinander, ein einziger Wortzugriff liefert
+* also genau das erwartete "Typ(hi)/Sprache(lo)"-Wortformat; dasselbe
+* gilt fuer ATTR/REVS ($14/$15).
+        movea.l d7,a2                      * a2 = Modulzeiger (echte Ausgabe)
+        move.w  $12(a2),d0                  * d0.w = Typ/Sprache
+        move.w  $14(a2),d1                   * d1.w = Attribut/Revision
+        move.l  $30(a2),a1                    * a1 = M$Exec (modul-relativer Offset)
+        adda.l  a2,a1                          * a1 = echte, absolute Einsprungadresse
+
+        movea.l (sp)+,a0                        * a0 = urspruenglicher Namenszeiger zurueck
+Q9K_SysFLink_SkipName:
+        tst.b   (a0)+                             * (a0) hinter den Namen aktualisieren (bis zum NUL-Byte)
+        bne     Q9K_SysFLink_SkipName
+
+        move.l  (sp)+,d7                            * eigenes Scratch wiederherstellen
+        andi.w  #$fffe,4(sp)                          * Carry im geretteten SR loeschen -- Erfolg
+        rts
+
+Q9K_SysFLink_Fail:
+        addq.l  #4,sp                    * gemerkten Namenszeiger verwerfen (auf Fehlerpfad nicht gebraucht)
+        move.l  (sp)+,d7                   * eigenes Scratch wiederherstellen
+        ori.w   #1,4(sp)                     * Carry im geretteten SR setzen -- Fehlschlag
+        move.w  #$00dd,d1                     * d1.w = E_MNF (Module Not Found)
+        rts
+
+*******************************************************************************
+* Q9K_SysFUnLink -- TRAP-#0-Handler fuer den echten F$UnLink-Callcode
+* (0x02). Reale Konvention (68k_tech.pdf S. 531): IN (a2)=Modulkopf-
+* adresse. OUT (Erfolg): keine Registeraenderung ausser dem geloeschten
+* Carry-Bit. OUT (Fehlschlag): Carry gesetzt, d1.w=E_MNF -- das Manual
+* listet fuer F$UnLink keinen eigenen Fehlercode-Katalog, E_MNF passt
+* aber inhaltlich (Header nicht/nicht mehr im Verzeichnis).
+Q9K_SysFUnLink:
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21, per direkter Code-Inspektion,
+* nachdem F$UnLink trotz korrektem F$Link-Treffer immer fehlschlug):
+* "move.l (sp)+,d7" AENDERT die CCR-Flags (N/Z nach dem bewegten Wert,
+* V/C geloescht) -- stand hier ZWISCHEN "tst.l d0" und dem darauf
+* aufbauenden "beq", das dadurch nicht mehr das echte Rueckgabeergebnis
+* von Q9K_ModDirUnlinkByHeader testete, sondern nur noch, ob der
+* WIEDERHERGESTELLTE Aufrufer-d7-Wert zufaellig 0 war (praktisch nie,
+* da d7 zuvor immer ein Diagnose-ASCII-Zeichen hielt) -- F$UnLink schlug
+* dadurch IMMER fehl, unabhaengig vom echten Ergebnis. Q9K_SysFLink hatte
+* dasselbe Muster zufaellig NICHT (dort steht "beq" direkt nach "tst.l",
+* ohne dazwischenliegende CCR-aendernde Instruktion), deshalb funktionierte
+* F$Link bereits korrekt. Fix: Verzweigung DIREKT nach "tst.l d0", d7 auf
+* JEDEM der beiden Pfade separat wiederherstellen.
+        move.l  d7,-(sp)               * eigenes Scratch sichern
+        move.l  a2,d0                    * d0 = 1. C-Parameter (Modulkopfadresse)
+        bsr     Q9K_ModDirUnlinkByHeader   * -> d0 = 0 (Erfolg) / 1 (nicht gefunden)
+        tst.l   d0
+        beq     Q9K_SysFUnLink_Ok
+        move.l  (sp)+,d7                     * eigenes Scratch wiederherstellen (Fehlerpfad)
+        ori.w   #1,4(sp)                       * Carry im geretteten SR setzen -- Fehlschlag
+        move.w  #$00dd,d1                        * d1.w = E_MNF
+        rts
+Q9K_SysFUnLink_Ok:
+        move.l  (sp)+,d7                            * eigenes Scratch wiederherstellen (Erfolgspfad)
+        andi.w  #$fffe,4(sp)                          * Carry im geretteten SR loeschen -- Erfolg
+        rts
+
+*******************************************************************************
+* Q9K_SetVBR -- ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21, per Diagnose-
+* Ausgabe direkt nachgewiesen): TRAP #0 sprang trotz korrekt aufgebauter
+* Tabelle bei *Q9_D_EXCJMP ins Leere (PC landete bei genullter Adresse 0
+* und lief dort als "ori.b #0,d0"-Muell weiter, exakt wie beim schon
+* geloesten Bug 3/Boot-Listen-Fund). Ursache: VBR (Vector Base Register)
+* stand nachweislich auf $00000000 (per "movec vbr,d5" ausgelesen und
+* auf die Konsole ausgegeben), waehrend unsere Tabelle bei $00000400
+* liegt (*Q9_D_EXCJMP) -- die CPU vektorisiert also durch die eigene,
+* GENULLTE Adresse-0-Region, nicht durch die von uns befuellte Tabelle.
+* Anders als beim ECHTEN Referenzkernel (der VBR nur PER "movec VBR,A6"
+* LIEST, s. docs/REVERSE_ENGINEERING.md "Fund: System-Global-Zeiger
+* ueber VBR" -- setzt es dort vermutlich der Boot-ROM bereits korrekt
+* vor, fuer UNSEREN eigenen Kernel gilt diese Annahme offenbar nicht)
+* muessen WIR VBR selbst setzen. "movec" ist eine privilegierte
+* Instruktion (nur im Supervisor-Zustand erlaubt, hier unproblematisch,
+* da unser gesamter Kernel bisher ausschliesslich Supervisor-Code ist)
+* und in C nicht ausdrueckbar -- deshalb dieser winzige Assembler-
+* Helfer, Ein-Parameter-C-Aufrufkonvention (D0), s. Q9K_DiagHex32/
+* __multiply oben.
+Q9K_SetVBR:
+        movec   d0,vbr
         rts
 
 * Q9K_ModuleEnd -- NACHTRAG 2026-08-19: nicht mehr fuer den

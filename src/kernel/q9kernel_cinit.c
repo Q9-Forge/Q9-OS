@@ -74,6 +74,9 @@ extern Q9_u32 Q9K_BuildExcTable(void);
 extern Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod);
 extern Q9_u32 Q9K_StartFirstProcess(void);
 extern void   Q9K_JumpToFirstProc(void);   /* q9kernel_entry.a, kein Ruecksprung vorgesehen */
+extern Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList); /* q9kernel_moddir.c */
+extern void   Q9K_SysFLink(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Link (Callcode 0x00) */
+extern void   Q9K_SysFUnLink(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$UnLink (Callcode 0x02) */
 
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
  * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
@@ -228,6 +231,29 @@ void Q9K_CInit(void)
                  * noch nicht ausgewertet -- gleiche Begruendung wie bei
                  * Q9K_BuildExcTable (kein Panic-Mechanismus vorhanden). */
                 Q9K_SetupTables(initMod);
+
+                /* NACHTRAG 2026-08-21 (Abschnitt "F$Link/F$UnLink"):
+                 * Modulverzeichnis JETZT befuellen (braucht den von
+                 * Q9K_SetupTables gerade erst als Freiliste vorbereiteten
+                 * Slot-Pool) -- durchsucht Q9K_BootList kein zweites Mal
+                 * fuer "init" gezielt, sondern traegt JEDES gueltige
+                 * Modul ein (also auch "init" selbst und den Kernel,
+                 * sofern er als eigenes Modul im Boot-Bereich erkennbar
+                 * ist). Rueckgabewert (Anzahl) noch nicht ausgewertet --
+                 * kein Panic-Mechanismus vorhanden, gleiche Begruendung
+                 * wie an anderen Stellen. Danach F$Link/F$UnLink in die
+                 * echte, per Manual dokumentierte Callcode-Position der
+                 * User-Service-Dispatch-Tabelle eintragen (0x00/0x02,
+                 * s. modules/SYSCALL_MODULE_MAP.md) -- Q9_D_USRDIS ist
+                 * ein ZEIGER-Feld (von Q9K_SetupTables gerade gesetzt),
+                 * kein direkter Adressbereich. */
+                Q9K_ModDirPopulateFromBootList((const Q9_u8 *)Q9K_BOOTLIST_ADDR);
+                {
+                    Q9_u32 usrdisBase = *(volatile Q9_u32 *)Q9_D_USRDIS;
+
+                    Q9K_PutU32(usrdisBase + 0x00UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFLink);
+                    Q9K_PutU32(usrdisBase + 0x02UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFUnLink);
+                }
             }
             /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/
              * unplausibles Init-Modul -- bewusst KEIN Zugriff auf die

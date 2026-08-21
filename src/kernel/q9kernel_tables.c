@@ -95,6 +95,18 @@ extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
 #define Q9K_PATHPOOL_FREE_ADDR 0x121CUL
 #endif
 
+/* Modulverzeichnis-Freiliste (Abschnitt "F$Link/F$UnLink", 2026-08-21)
+ * -- hinter Q9K_TrapHandlerScratch ($1230, q9kernel_entry.a). Der
+ * aktive-Verzeichnisliste-Kopf (Q9K_MODDIR_HEAD_ADDR) lebt in
+ * q9kernel_moddir.c, wird aber HIER auf 0 initialisiert (gleicher Ort
+ * wie der Rest des Tabellenaufbaus). */
+#ifndef Q9K_MODDIR_FREE_ADDR
+#define Q9K_MODDIR_FREE_ADDR 0x1234UL
+#endif
+#ifndef Q9K_MODDIR_HEAD_ADDR
+#define Q9K_MODDIR_HEAD_ADDR 0x1238UL
+#endif
+
 /* Byteweise Zusammensetzung statt Roh-Pointer-Cast -- WICHTIG (gleiche
  * Konvention wie q9kernel_cinit.c's M$SysConf-Lesezugriff): initMod
  * zeigt auf FREMDE, extern geschriebene Moduldaten (immer Big-Endian,
@@ -180,6 +192,12 @@ Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod)
 
     Q9K_SetU32(Q9_D_MODDIR, cursor);                     /* Start-Zeiger, s. Thema 01 */
     Q9K_SetU32(Q9_D_MODDIR_END, cursor + moddirSize);    /* Ende-Zeiger */
+    /* NACHTRAG 2026-08-21 (Abschnitt "F$Link/F$UnLink"): Slot-Pool jetzt
+     * ZUSAETZLICH als Freiliste vorbereitet (gleiches Muster wie Proc-/
+     * Pfad-Pool unten) -- Q9K_ModDirAdd (q9kernel_moddir.c) allokiert
+     * daraus, statt den Bereich nur als rohen Adressbereich zu kennen. */
+    Q9K_BuildFreeList(cursor, Q9K_MODDIR_ENTRY_SIZE, mdirSz, Q9K_MODDIR_FREE_ADDR);
+    Q9K_SetU32(Q9K_MODDIR_HEAD_ADDR, 0);                 /* aktive Verzeichnisliste startet leer */
     cursor += moddirSize;
 
     Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, cursor);
