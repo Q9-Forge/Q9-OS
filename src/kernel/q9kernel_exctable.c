@@ -98,6 +98,14 @@ extern void Q9K_TrapDispatch(void);
  * befuellte Tabelle. S. ausfuehrlichen Kommentar bei Q9K_SetVBR. */
 extern void Q9K_SetVBR(Q9_u32 tableBase);
 
+/* q9kernel_entry.a -- echter Interrupt-Handler fuer Autovector 30 (Level
+ * 6, Board-Timer, 10ms, s. Q9-Flux/src/kernel/m68krt.c q9_m68krt_attach_quicc
+ * -- s. ausfuehrlichen Bugfix-Kommentar unten, docs/BOARD.md ist hier
+ * noch veraltet), Abschnitt "Scheduler" (2026-08-21). Wie Q9K_TrapDispatch
+ * KEIN normaler C-aufrufbarer Handler (RTE statt RTS, eigene
+ * Registerkonvention). */
+extern void Q9K_TimerIRQHandler(void);
+
 /* NUR Integer-Zaehler, KEINE Zeiger -- s. Kopfkommentar (echter l68-
  * Linker-Fund: Zeiger als const-Daten sind in Systm-Modulen verboten).
  * Reihenfolge/Werte = die reale MC68030-Standard-Vektorgruppierung
@@ -160,6 +168,43 @@ Q9_u32 Q9K_BuildExcTable(void)
     {
         Q9K_ExcHandler *trapSlot = (Q9K_ExcHandler *)(tableBase + 32 * sizeof(Q9K_ExcHandler));
         *trapSlot = Q9K_TrapDispatch;
+    }
+
+    /* NACHTRAG 2026-08-21 (Abschnitt "Scheduler"): Vektor 30 (Autovector
+     * Level 6, Board-Timer, s. Quelltabelle oben, Gruppe "25-31") jetzt
+     * gezielt auf den echten Timer-Interrupt-Handler umbiegen -- gleiches
+     * Vorgehen wie eben bei Vektor 32.
+     *
+     * ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21, per Boot-Test: kein
+     * Prozesswechsel fand je statt, obwohl F$Link/F$UnLink/Q9K_SchedRun
+     * alle sauber liefen): urspruenglich hier Vektor 27 (Level 3)
+     * eingetragen, gestuetzt auf Q9-Flux/docs/BOARD.md ("Der 100Hz-Timer
+     * ... laeuft ueber Autovector 27 (= Level 3)") UND den Session-
+     * Notizen von vor diesem Abschnitt. TATSAECHLICH lag der Board-Timer
+     * zu diesem Zeitpunkt aber schon auf LEVEL 6 (s. Q9-Flux/src/kernel/
+     * m68krt.c, q9_m68krt_attach_quicc: "d.irq_level = 6;" fuer
+     * "timer_irq") -- eine NOCH TAGESAKTUELLE, in BOARD.md noch nicht
+     * nachgezogene "Hardware-Vereinheitlichung" (selber Tag) hatte den
+     * Timer von Level 3 auf Level 6 verschoben (Grund laut dortigem
+     * Kommentar: Level 6 muss in der IRQ-Registrierungsreihenfolge NACH
+     * QUICC/Level 5 stehen). Mit Vektor 27 verdrahtet liess der
+     * tatsaechlich auf Vektor 30 (24+6) einlaufende Interrupt den
+     * generischen Halt-Handler (Q9K_ExcDefault, reines "for(;;){}")
+     * laufen -- KEIN Absturz, KEINE Ausgabe, einfach eine fuer immer
+     * unterbrochene Rueckkehr aus der Interrupt-Behandlung, die dem
+     * unterbrochenen Prozess (der selbst weiterhin druckte, bis ER
+     * getroffen wurde) von aussen wie ein irgendwann eintretendes
+     * Verstummen erschien -- per verkuerztem Testverzoegerungswert
+     * (viele schnelle "AAAA..."-Wiederholungen statt einzelner
+     * Zeichen) zweifelsfrei von einem echten Haenger IN Q9K_TestProcA
+     * selbst unterschieden. Fix: Vektor 30 statt 27. Alle anderen
+     * fuenf Eintraege dieser Gruppe (Level 1/2/3/4/7) bleiben bewusst
+     * auf dem generischen Halt-Handler -- es gibt fuer sie noch keine
+     * Hardware/keinen Anwendungsfall in diesem Kernel (TODO, s.
+     * Quelltabellen-Kommentar). */
+    {
+        Q9K_ExcHandler *timerSlot = (Q9K_ExcHandler *)(tableBase + 30 * sizeof(Q9K_ExcHandler));
+        *timerSlot = Q9K_TimerIRQHandler;
     }
 
     /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21): ohne dies bleibt VBR auf

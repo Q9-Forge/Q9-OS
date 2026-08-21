@@ -121,12 +121,18 @@ Q9_D_ExcJmp     equ     $068                    * Exception-Tabellen-Speicherblo
 Q9_D_TotRam     equ     $06c                    * Gesamt-RAM-Groesse
 Q9_D_MpuTyp     equ     $3c8                    * erkannter CPU-Typ
 Q9_D_BootFlags  equ     $93c                    * Boot-Zeit-Flags (Register d3)
+Q9_D_Proc       equ     $04c                    * Zeiger auf den aktuell laufenden Prozessdeskriptor [VERIFIZIERT]
 
-* Eigene Kernel-Global-Erweiterung (Abschnitt 2, Punkt 7, s.
-* q9kernel_firstproc.c) -- Uebergabe an Q9K_JumpToFirstProc ueber feste
-* Adressen statt Funktionsparameter, s. dortigen Kommentar.
-Q9K_FirstProcSP equ     $1224                   * Ziel-SP fuer den ersten Ausfuehrungskontext
-Q9K_FirstProcPC equ     $122c                   * Ziel-PC fuer den ersten Ausfuehrungskontext
+* Eigene Kernel-Global-Erweiterung (Abschnitt "Scheduler", 2026-08-21) --
+* Offset des gesicherten Stack-Zeigers im Prozessdeskriptor, gleicher Wert
+* wie Q9K_PROCDESC_SAVEDSP_OFF in q9kernel_firstproc.c/q9kernel_sched.c
+* (C-seitig eigenstaendig definiert, hier nur der Assembler-seitige
+* Zwilling fuer Q9K_TimerIRQHandler/Q9K_SchedRun unten). NACHTRAG: die
+* fruehere feste Uebergabe ueber Q9K_FirstProcSP/PC ist entfallen --
+* Q9K_SchedRun liest den Zielkontext jetzt direkt ueber Q9_D_Proc +
+* diesen Offset, wie jeder spaetere Prozesswechsel auch (echter
+* Scheduler, kein Einzelfall-Sondermechanismus mehr).
+Q9K_PROCDESC_SAVEDSP_OFF equ $38
 
 * Kernel-Global-Offset fuer die User-Service-Dispatch-Tabelle (s.
 * q9sysglob.h, Q9_D_USRDIS) -- lokal dupliziert wie die anderen oben.
@@ -565,78 +571,104 @@ __multiply:
         movem.l (sp)+,d2-d5
         rts
 
-* Q9K_FirstProcPlaceholder -- reiner Platzhalter fuer den allerersten
-* "Prozess" (Abschnitt 2, Punkt 7, minimales Geruest, mit Andreas
-* abgestimmt 2026-08-18: Mechanismus zeigen, ohne F$Link/Modul-Laden
-* vorwegzunehmen -- das existiert noch nicht, es gibt also noch nichts
-* Echtes zum Ausfuehren). Haelt einfach an, kein Rueckspringen vorgesehen.
-Q9K_FirstProcPlaceholder:
-        moveq   #'7',d7                         * DIAGNOSE: Kontextwechsel erfolgreich, im ersten "Prozess"
-        bsr     Q9K_DiagWriteD7
-
-* NOCH TEMPORAERER TEST (2026-08-21, Abschnitt "F$Link/F$UnLink"):
-* echten F$Link/F$UnLink-Aufruf ueber TRAP #0 ausloesen -- exakt die
-* reale OS-9-Aufrufkonvention (TRAP #0, direkt danach im Code ein Wort
-* mit dem Funktionscode) -- prueft den kompletten neuen Pfad
-* (Q9K_TrapDispatch -> Q9K_SysFLink/Q9K_SysFUnLink ->
-* Q9K_ModDirLinkByName/UnlinkByHeader) real im Emulator, nicht nur
-* durch Bauen/Linken. Vor dem naechsten "echten" Meilenstein wieder
-* entfernen, gleiche Philosophie wie Q9K_Diag4/5/6.
+* Q9K_TestProcA/Q9K_TestProcB -- zwei einfache Test-"Prozesse" fuer den
+* Abschnitt "Scheduler" (2026-08-21): der reale Nachweis von echtem
+* preemptivem Multitasking. Beide laufen in einer Endlosschleife und
+* geben dabei periodisch je ein eigenes ASCII-Zeichen aus ('A'/'B'),
+* dazwischen eine sichtbare Leerschleife -- das mit Andreas etablierte
+* Kriterium gegen Fake-Fortschritt: nur ein wirklich vom Timer-Interrupt
+* (Q9K_TimerIRQHandler unten) getriebener Kontextwechsel kann im
+* Konsolen-Ausgabestrom ein GEMISCHTES Muster wie "AABAABBA..." erzeugen
+* -- ein rein sequentielles "AAAA...BBBB..." waere ein Indiz dafuer, dass
+* gar kein echter Wechsel stattfindet, sondern nur einer der beiden
+* jemals laeuft.
+*
+* Q9K_TestProcA fuehrt zusaetzlich EINMALIG, vor der Endlosschleife, den
+* bisherigen F$Link/F$UnLink-Test aus (uebernommen aus dem alten, jetzt
+* entfallenen Q9K_FirstProcPlaceholder, s. Bugfix-Kommentare bei
+* Q9K_SysFLink/Q9K_SysFUnLink oben) -- zeigt damit, dass echte
+* TRAP-#0-Syscalls auch INNERHALB eines per Scheduler gestarteten
+* Prozesses funktionieren.
+Q9K_TestProcA:
         clr.w   d0                    * d0.w = Typ/Sprache-Filter (0 = beliebig)
         lea     Q9K_TestLinkName(pc),a0
         trap    #0
-        dc.w    0                      * Funktionscode 0 = F$Link (s. modules/SYSCALL_MODULE_MAP.md)
-        bcs     Q9K_TestLinkFail
+        dc.w    0                      * Funktionscode 0 = F$Link
+        bcs     Q9K_TestProcA_LinkFail
         moveq   #'L',d7                 * DIAGNOSE: F$Link("init") erfolgreich
         bsr     Q9K_DiagWriteD7
-        move.l  a2,d5                    * a2 = echter Modulzeiger -- zur Kontrolle ausgeben
-        bsr     Q9K_DiagWriteHex32
-
         trap    #0
-        dc.w    2                        * Funktionscode 2 = F$UnLink -- a2 aus F$Link steht noch bereit
-        bcs     Q9K_TestUnlinkFail
+        dc.w    2                        * Funktionscode 2 = F$UnLink
+        bcs     Q9K_TestProcA_UnlinkFail
         moveq   #'U',d7                   * DIAGNOSE: F$UnLink erfolgreich
         bsr     Q9K_DiagWriteD7
-        bra     Q9K_FirstProcPlaceholderSpin
+        bra     Q9K_TestProcA_Loop
 
-Q9K_TestUnlinkFail:
+Q9K_TestProcA_UnlinkFail:
         moveq   #'u',d7                    * DIAGNOSE: F$UnLink fehlgeschlagen
         bsr     Q9K_DiagWriteD7
-        bra     Q9K_FirstProcPlaceholderSpin
+        bra     Q9K_TestProcA_Loop
 
-Q9K_TestLinkFail:
+Q9K_TestProcA_LinkFail:
         moveq   #'l',d7                     * DIAGNOSE: F$Link("init") fehlgeschlagen
         bsr     Q9K_DiagWriteD7
 
-Q9K_FirstProcPlaceholderSpin:
-        bra     Q9K_FirstProcPlaceholderSpin
+Q9K_TestProcA_Loop:
+        moveq   #'A',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  #Q9K_TestProcDelay,d6
+Q9K_TestProcA_Wait:
+        subq.l  #1,d6
+        bne     Q9K_TestProcA_Wait
+        bra     Q9K_TestProcA_Loop
+
+Q9K_TestProcB:
+Q9K_TestProcB_Loop:
+        moveq   #'B',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  #Q9K_TestProcDelay,d6
+Q9K_TestProcB_Wait:
+        subq.l  #1,d6
+        bne     Q9K_TestProcB_Wait
+        bra     Q9K_TestProcB_Loop
+
+* Leerschleifen-Zaehler fuer Q9K_TestProcA/B -- Groessenordnung
+* experimentell gewaehlt: lang genug, dass mehrere Timer-Ticks (10ms,
+* Zeitscheibe=2 Ticks) waehrend eines einzelnen Zeichens vergehen, kurz
+* genug fuer eine zumutbare Konsolenausgabe-Frequenz im Emulator.
+Q9K_TestProcDelay equ $4000
 
 Q9K_TestLinkName:
         dc.b    "init",0
         dc.b    0                      * Fuellbyte -- haelt das nachfolgende Codewort wortausgerichtet
 
-* Q9K_JumpToFirstProc -- schaltet auf den in Q9K_FirstProcSP/PC
-* hinterlegten Kontext um (s. q9kernel_firstproc.c, Q9K_StartFirstProcess)
-* und springt hinein. Liest ueber feste Kernel-Global-Adressen statt
-* Funktionsparameter -- vermeidet jede Unsicherheit ueber die C-Aufruf-
-* konvention fuer Mehr-Parameter-Funktionen (bisher nirgends im Projekt
-* verifiziert, anders als der Ein-Wert-/Register-Fall von __multiply
-* oben). Aufruf per einfachem "jsr Q9K_JumpToFirstProc" (parameterlos,
-* gleiches Muster wie "jsr Q9K_CInit"). Kein Ruecksprung vorgesehen
-* (kein RTS) -- a6 ist an dieser Stelle noch unveraendert Q9K_GlobBase.
-* NACHTRAG 2026-08-18: a6-relative Adressierung hier ENTFERNT -- a6
-* zeigt seit der C-Runtime-Umstellung oben (s. "lea Q9K_CRuntimeData
-* (pc),a6" vor "bsr Q9K_CInit") nicht mehr auf Q9K_GlobBase, sondern
-* auf den vsect-Laufzeitpuffer, und bleibt dort fuer die gesamte
-* C-Ausfuehrung (auch beim Aufruf hierher aus Q9K_CInit's C-Code, "bsr
-* Q9K_JumpToFirstProc"). Q9K_FirstProcSP/PC sind wie Q9K_BootList
-* echte, modul-UNABHAENGIGE feste Kernel-Global-Adressen -- absolute
-* Adressierung ist hier deshalb korrekt (kein a6-Bezug noetig).
-Q9K_JumpToFirstProc:
-        movea.l Q9K_FirstProcSP,a0      * neue SP-Adresse laden
-        movea.l Q9K_FirstProcPC,a1      * Ziel-PC laden
-        movea.l a0,sp                   * Stack umschalten
-        jmp     (a1)                    * in den "Prozess" springen
+* Q9K_SchedRun -- startet die ALLERERSTE Prozessausfuehrung (Abschnitt
+* "Scheduler", 2026-08-21, ersetzt das fruehere Q9K_JumpToFirstProc).
+* Liest den vom C-seitigen Q9K_SchedFirstPick (q9kernel_sched.c) bereits
+* in Q9_D_Proc eingetragenen Deskriptor, schaltet auf dessen SavedSP um
+* und "kehrt" ueber RTE in ihn zurueck -- GENAU DERSELBE Mechanismus wie
+* die zweite Haelfte von Q9K_TimerIRQHandler (unten) beim Umschalten auf
+* einen anderen Prozess, kein Sonderfall mehr: q9kernel_firstproc.c baut
+* fuer JEDEN neu erzeugten Prozess (Q9K_ProcCreate) von Anfang an den
+* vollstaendigen "Fake"-Rahmen auf dessen eigenem Stack auf (60 Byte
+* genullter Registersatz + 8 Byte Hardware-Exception-Frame mit SR=$2000/
+* PC=Einsprungadresse/Format-Vektor-Wort=0) -- ein frisch erzeugter
+* Prozess "erwacht" deshalb ueber denselben "movem.l (sp)+,d0-d7/a0-a6 /
+* rte"-Pfad wie jeder spaeter vom Timer unterbrochene. RTE ist hier
+* AUSSERHALB eines echten Interrupt-Kontexts gueltig -- es ist einfach
+* der Hardware-Mechanismus "SR/PC/Format-Wort vom Stack laden und dort
+* weiterlaufen", an keine echte Ausnahme gebunden. Aufruf per einfachem
+* "jsr Q9K_SchedRun" (parameterlos, gleiches Muster wie "jsr
+* Q9K_CInit"). Kein Ruecksprung vorgesehen. a6 wird hier bewusst NICHT
+* gesondert behandelt -- der per movem wiederhergestellte a6-Wert kommt
+* direkt aus dem beim Erzeugen genullten Registersatz, ist fuer den
+* allerersten Prozessstart also einfach 0 (unproblematisch -- die
+* Testprozesse unten benutzen a6 nicht).
+Q9K_SchedRun:
+        movea.l Q9_D_Proc,a0            * a0 = aktueller (per Q9K_SchedFirstPick gewaehlter) Prozessdeskriptor
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp   * auf dessen vorbereiteten Fake-Rahmen umschalten
+        movem.l (sp)+,d0-d7/a0-a6         * genullten Registersatz zurueckholen (a6 dabei ebenfalls genullt)
+        rte                              * SR/PC aus dem Fake-Exception-Frame uebernehmen -- Prozess "startet"
 
 * Q9K_Diag4/5/6 -- C-aufrufbare Checkpoints innerhalb von Q9K_CInit
 * (q9kernel_cinit.c), parameterlos + RTS (gleiches Muster wie
@@ -652,9 +684,73 @@ Q9K_Diag5:
         bsr     Q9K_DiagWriteD7
         rts
 Q9K_Diag6:
-        moveq   #'6',d7                * DIAGNOSE: Punkt 7 erfolgreich, Sprung in Q9K_JumpToFirstProc steht bevor
+        moveq   #'6',d7                * DIAGNOSE: Punkt 7 erfolgreich, Sprung in Q9K_SchedRun steht bevor
         bsr     Q9K_DiagWriteD7
         rts
+
+*******************************************************************************
+* Q9K_TimerActivate -- aktiviert den Board-Timer (100Hz/10ms, Autovector
+* 30, Level 6 -- s. Q9-Flux/src/kernel/m68krt.c q9_m68krt_attach_quicc,
+* docs/BOARD.md ist hier noch veraltet -- durch einen einzigen Lesezugriff
+* auf die TI_IRQ_ON-Adressregion ("$FFFF9800-$FFFF9FFF ... jeder
+* Buszugriff aktiviert" -- reiner Adress-Trigger, kein bestimmter Wert
+* noetig). Parameterlose C-Aufrufkonvention (kein Rueckgabewert),
+* gleiches Muster wie Q9K_Diag4/5/6.
+Q9K_TimerActivate:
+        movea.l #$FFFF9800,a0
+        tst.b   (a0)
+        rts
+
+*******************************************************************************
+* Q9K_TimerIRQHandler -- echter Interrupt-Handler fuer Autovector 30
+* (Level 6, Board-Timer, 10ms, s. Q9-Flux/src/kernel/m68krt.c
+* q9_m68krt_attach_quicc -- ECHTER BUG GEFUNDEN+GEFIXT, urspruenglich
+* faelschlich Vektor 27/Level 3 verdrahtet, s. ausfuehrlichen Kommentar
+* bei Q9K_BuildExcTable in q9kernel_exctable.c), als Ziel in
+* der Vektortabelle eingetragen (s. q9kernel_exctable.c, gleiches
+* Prinzip wie Vektor 32 -> Q9K_TrapDispatch).
+*
+* Sichert den KOMPLETTEN Registersatz des unterbrochenen Prozesses auf
+* DESSEN EIGENEM Stack (movem.l d0-d7/a0-a6,-(sp)) -- ANDERS als
+* Q9K_TrapDispatch KEIN A6-Sonderfall: dort gibt es einen synchronen
+* C-Aufrufer mit fester A6-Erwartung (Q9K_CRuntimeData bleibt fuer die
+* gesamte Kernel-Laufzeit fest), hier dagegen kann JEDER beliebige
+* Prozess unterbrochen werden -- auch mitten in eigenem Code mit
+* eigenem, echtem A6 --, der Registersatz muss deshalb vollstaendig und
+* neutral gesichert werden.
+*
+* Aktualisiert danach das SavedSP-Feld des aktuellen Prozessdeskriptors
+* (Q9_D_Proc) und ruft Q9K_SchedReschedule (C, q9kernel_sched.c) auf --
+* DAFUER wird a6 hier, LOKAL, auf Q9K_CRuntimeData gesetzt (der
+* compilierte C-Code braucht das fuer seinen eigenen Stack-Ueberlauf-
+* Check, s. ausfuehrlicher Kommentar bei Q9K_TrapDispatch oben), aber
+* NICHT zurueckgesetzt -- unproblematisch, weil der ECHTE, zu rettende
+* Prozess-A6-Wert bereits sicher im movem-Bereich auf dessen eigenem
+* Stack liegt und von diesem temporaeren a6-Wert fuer die Dauer des
+* C-Aufrufs komplett unbenommen ist.
+*
+* Liefert Q9K_SchedReschedule 0 zurueck, wird einfach der eben gesicherte
+* Kontext direkt wiederhergestellt (kein Wechsel). Liefert sie einen
+* neuen Deskriptorzeiger, wird zuerst auf DESSEN SavedSP umgeschaltet,
+* bevor der (fremde) Registersatz zurueckgeholt wird -- funktioniert fuer
+* einen frisch per Q9K_ProcCreate erzeugten Prozess genauso wie fuer
+* einen zuvor selbst unterbrochenen (s. Kopfkommentar bei Q9K_SchedRun
+* oben zum gemeinsamen Fake-Rahmen-Mechanismus).
+Q9K_TimerIRQHandler:
+        movem.l d0-d7/a0-a6,-(sp)              * kompletten Registersatz des unterbrochenen Prozesses sichern
+        movea.l Q9_D_Proc,a0                    * a0 = aktueller Prozessdeskriptor
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * dessen SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
+
+        lea     Q9K_CRuntimeData(pc),a6           * a6 fuer den C-Aufruf (Q9K_SchedReschedule) auf den Kernel-Laufzeitpuffer setzen
+        bsr     Q9K_SchedReschedule                 * -> d0 = 0 (kein Wechsel) / neuer Deskriptorzeiger
+
+        tst.l   d0
+        beq     Q9K_TimerIRQ_Resume
+        movea.l d0,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp      * auf den Stack des NEUEN Prozesses umschalten
+Q9K_TimerIRQ_Resume:
+        movem.l (sp)+,d0-d7/a0-a6               * (eigenen oder neuen) Registersatz zurueckholen
+        rte
 
 *******************************************************************************
 * Q9K_TrapDispatch -- TRAP #0, der echte OS-9-Systemaufruf-Mechanismus
@@ -851,6 +947,27 @@ Q9K_SysFUnLink_Ok:
 * __multiply oben.
 Q9K_SetVBR:
         movec   d0,vbr
+        rts
+
+* Q9K_GetA6 -- liefert den AKTUELLEN Inhalt von a6 in d0 (C-Rueckgabe-
+* Konvention). Abschnitt "Scheduler" (2026-08-21): a6 zeigt seit der
+* C-Laufzeit-Umstellung (s. "lea Q9K_CRuntimeData(pc),a6" oben) permanent
+* auf Q9K_CRuntimeData -- aber NUR pc-relativ berechnet (das Modul laedt
+* REENT an variabler Laufzeitadresse, s. Kopfkommentar bei Q9K_Entry),
+* die absolute Adresse ist deshalb zur Compile-/Linkzeit NICHT bekannt.
+* q9kernel_firstproc.c braucht genau diesen Wert, um ihn in den
+* Fake-Rahmen jedes neu erzeugten Prozesses einzutragen (sonst wuerde
+* ein frischer Prozess mit a6=0 starten -- der naechste TRAP-#0-Aufruf
+* aus seinem Kontext heraus wuerde dann mit falschem a6 in
+* Q9K_ModDirLinkByName & Co. laufen, deren compilergenerierter
+* Stack-Ueberlauf-Check "sub.l #N,_stklimit(a6)" Datenmuell liest/
+* schreibt -- exakt der reale Bug, der Q9K_StkHandler ('S'-Diagnose)
+* ausgeloest hat, bevor dieser Fix kam). Da Q9K_CInit (und alles, was
+* es aufruft, auch Q9K_ProcCreate) IMMER MIT bereits korrekt gesetztem
+* a6 laeuft, liefert dieser einfache Auslese-Helfer zur Laufzeit genau
+* den richtigen Wert, ganz ohne die Adresse selbst zu kennen.
+Q9K_GetA6:
+        move.l  a6,d0
         rts
 
 * Q9K_ModuleEnd -- NACHTRAG 2026-08-19: nicht mehr fuer den

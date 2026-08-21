@@ -72,8 +72,12 @@ extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
 extern void Q9K_ArenaInit(Q9_u32 freeBase, Q9_u32 freeSize);
 extern Q9_u32 Q9K_BuildExcTable(void);
 extern Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod);
-extern Q9_u32 Q9K_StartFirstProcess(void);
-extern void   Q9K_JumpToFirstProc(void);   /* q9kernel_entry.a, kein Ruecksprung vorgesehen */
+extern Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority);  /* q9kernel_firstproc.c */
+extern Q9_u32 Q9K_SchedFirstPick(void);    /* q9kernel_sched.c -- waehlt+setzt Q9_D_PROC, 0 = keiner angelegt */
+extern void   Q9K_SchedRun(void);          /* q9kernel_entry.a, kein Ruecksprung vorgesehen */
+extern void   Q9K_TimerActivate(void);     /* q9kernel_entry.a -- aktiviert den Board-Timer (Level 6, Autovector 30) */
+extern void   Q9K_TestProcA(void);         /* q9kernel_entry.a -- Test-"Prozess" A, s. dortigen Kommentar */
+extern void   Q9K_TestProcB(void);         /* q9kernel_entry.a -- Test-"Prozess" B, s. dortigen Kommentar */
 extern Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList); /* q9kernel_moddir.c */
 extern void   Q9K_SysFLink(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Link (Callcode 0x00) */
 extern void   Q9K_SysFUnLink(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$UnLink (Callcode 0x02) */
@@ -101,6 +105,19 @@ extern void Q9K_Diag6(void);
  *                                             SMP-Abschnitt. */
 #define Q9K_BOOTLIST_ADDR   0x1000UL
 #define Q9K_CPUCOUNT_ADDR   0x1200UL
+
+/* Eigene Ready-Queue-Sentinel-Adresse (Abschnitt "Scheduler", 2026-08-21)
+ * -- MUSS mit Q9K_READYQ_SENTINEL_ADDR in q9kernel_sched.c uebereinstimmen.
+ * ECHTER BUG GEFUNDEN + GEFIXT (per Boot-Test, s. ausfuehrlichen
+ * Kommentar dort): die reale Q9_D_ACTIVQ-Adresse ($3AC) ist dafuer NICHT
+ * geeignet -- sie liegt zu dicht neben anderen echten, dokumentierten
+ * Kernel-Globals (Q9_D_ACTIVQ+0x34 kollidiert wortgleich mit dem echten
+ * Q9_D_COMPAT2), um dort zusaetzlich eigene Next/Prev-Selbstverweis-
+ * Felder bei +0x30/+0x34 unterzubringen. Q9_D_ACTIVQ selbst bleibt weiter
+ * unten als leere Ringliste initialisiert (Kompat-Vollstaendigkeit, TODO
+ * bei Gelegenheit pruefen ob ueberhaupt noch noetig), wird aber von
+ * unserem eigenen Scheduler NICHT mehr gelesen/geschrieben. */
+#define Q9K_READYQ_SENTINEL_ADDR 0x1240UL
 
 /* Freispeicher-Basis fuer die Arena (Abschnitt 2, Punkt 3) -- 2026-08-18
  * mit Andreas abgestimmt: fester Offset, VORLAEUFIG, unter der Annahme,
@@ -155,7 +172,8 @@ void Q9K_CInit(void)
      *   Q9_D_ARENA                        -- Speicher-Kontrollblock,  +0x8/+0xC
      *   Q9_D_ALMQ1/Q9_D_ALMQ2              -- F$Alarm-Warteschlangen,  +0xC/+0x10
      */
-    Q9K_InitEmptyQueue(Q9_D_ACTIVQ, 0x30, 0x34);
+    Q9K_InitEmptyQueue(Q9_D_ACTIVQ, 0x30, 0x34);   /* NACHTRAG: nicht mehr von unserem Scheduler benutzt, s. Q9K_READYQ_SENTINEL_ADDR-Kommentar oben */
+    Q9K_InitEmptyQueue(Q9K_READYQ_SENTINEL_ADDR, 0x30, 0x34); /* die WIRKLICH vom Scheduler benutzte eigene Ready-Queue */
     Q9K_InitEmptyQueue(Q9_D_SLEEPQ, 0x30, 0x34);
     Q9K_InitEmptyQueue(Q9_D_WAITQ,  0x30, 0x34);
     Q9K_InitEmptyQueue(Q9_D_ARENA,  0x08, 0x0C);
@@ -268,17 +286,43 @@ void Q9K_CInit(void)
          * auch kein Absturz). */
     }
 
-    /* Abschnitt 2, Punkt 7 (minimales Geruest, mit Andreas abgestimmt
-     * 2026-08-18): ersten Ausfuehrungskontext konstruieren
-     * (q9kernel_firstproc.c) und, falls erfolgreich, hineinspringen --
-     * kein echter Scheduler (nur EIN Kontext existiert), kein echtes
-     * geladenes Programm (F$Link existiert nicht, Sprungziel ist ein
-     * reiner Platzhalter). Bei Fehlschlag (Pool/Arena erschoepft) fallen
-     * wir bewusst durch bis zum return unten -- Q9K_HaltLoop faengt das
-     * ab, kein Fake-Fortschritt. */
-    if (Q9K_StartFirstProcess() == 0) {
-        Q9K_Diag6(); /* TEMPORAERE DIAGNOSE, s. o. */
-        Q9K_JumpToFirstProc(); /* kein Ruecksprung erwartet */
+    /* Abschnitt "Scheduler" (2026-08-21, im Anschluss an F$Link/
+     * F$UnLink): ersetzt das fruehere "minimale Geruest" (Abschnitt 2,
+     * Punkt 7, EIN Kontext, roher Sprung) durch einen ECHTEN,
+     * Timer-getriebenen preemptiven Scheduler. Zwei Test-"Prozesse"
+     * (Q9K_TestProcA/B, q9kernel_entry.a) werden angelegt -- absichtlich
+     * mit UNTERSCHIEDLICHER Prioritaet (5 bzw. 3), um sowohl den
+     * Normalfall (Zeitscheiben-Ablauf) als auch das Altern/Nicht-
+     * Verhungern des niedrigpriorigeren Prozesses real zu zeigen, s.
+     * Kopfkommentar q9kernel_sched.c. Reihenfolge zwingend:
+     *   1. beide Prozesse anlegen (Q9K_ProcCreate haengt sie bereits in
+     *      die Ready-Queue ein, s. dortigen Kommentar)
+     *   2. Board-Timer aktivieren (Q9K_TimerActivate) -- ERST NACHDEM
+     *      Q9_D_PROC unten gesetzt ist waere ein zufaelliger Tick
+     *      zwischen Aktivierung und Q9K_SchedRun unproblematisch (VBR
+     *      steht bereits laenger, der Handler ist real eingetragen),
+     *      aus Vorsicht trotzdem so spaet wie sinnvoll platziert
+     *   3. Q9K_SchedFirstPick waehlt den ersten Prozess aus und setzt
+     *      Q9_D_PROC direkt (KEIN "aktueller" Prozess existiert vorher,
+     *      anders als bei jedem spaeteren Q9K_SchedReschedule-Aufruf)
+     *   4. Q9K_SchedRun schaltet auf dessen Fake-Rahmen um und "kehrt"
+     *      per RTE erstmals hinein zurueck -- kein Ruecksprung erwartet.
+     * Bei jedem Fehlschlag (Pool/Arena erschoepft, oder KEIN Prozess
+     * ueberhaupt anlegbar) fallen wir bewusst durch bis zum return
+     * unten -- Q9K_HaltLoop faengt das ab, kein Fake-Fortschritt. */
+    {
+        Q9_u32 picked;
+
+        Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
+        Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcB, 3);
+
+        picked = Q9K_SchedFirstPick();
+
+        if (picked != 0) {
+            Q9K_Diag6(); /* TEMPORAERE DIAGNOSE, s. o. */
+            Q9K_TimerActivate();
+            Q9K_SchedRun(); /* kein Ruecksprung erwartet */
+        }
     }
 
     return; /* -> Q9K_HaltLoop in q9kernel_entry.a (nur bei Fehlschlag oben) */
