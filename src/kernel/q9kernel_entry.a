@@ -151,6 +151,23 @@ Q9_D_USRDIS     equ     $3a8
 * (kein SMP/verschachtelte Traps vorgesehen).
 Q9K_TrapHandlerScratch equ $1230
 
+* Abschnitt "F$Fork" (2026-08-21) -- eigene Kernel-Global-Erweiterungen
+* fuer die ASM<->C-Uebergabe von Q9K_SysFFork (s. dortigen Kopfkommentar
+* und den identischen, dupliziert gehaltenen Konstanten in
+* q9kernel_firstproc.c, Q9K_FORK_SCRATCH_*). Direkt hinter
+* Q9K_READYQ_SENTINEL_ADDR ($1240, q9kernel_sched.c) + dessen 0x38 Byte
+* eigenem Next/Prev-Bereich -- naechste freie Adresse $1278.
+Q9K_ForkScratch_TypeLang   equ $1278       * Q9_u16, d0.w EIN
+Q9K_ForkScratch_AddMem     equ $127C       * Q9_u32, d1.l EIN
+Q9K_ForkScratch_ParamSize  equ $1280       * Q9_u32, d2.l EIN
+Q9K_ForkScratch_NumPaths   equ $1284       * Q9_u16, d3.w EIN (bisher ungenutzt)
+Q9K_ForkScratch_Priority   equ $1288       * Q9_u16, d4.w EIN
+Q9K_ForkScratch_NamePtr    equ $128C       * Q9_u32, (a0) EIN/AUS
+Q9K_ForkScratch_ParamPtr   equ $1290       * Q9_u32, (a1) EIN
+Q9K_ForkScratch_ChildPID   equ $1294       * Q9_u16, d0.w AUS (Erfolg)
+Q9K_ForkScratch_ErrorCode  equ $1298       * Q9_u16, d1.w AUS (Fehlschlag)
+Q9K_ForkScratch_Success    equ $129C       * Q9_u16, 0=Fehlschlag/1=Erfolg
+
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
 * gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
@@ -602,6 +619,38 @@ Q9K_TestProcA:
         bcs     Q9K_TestProcA_UnlinkFail
         moveq   #'U',d7                   * DIAGNOSE: F$UnLink erfolgreich
         bsr     Q9K_DiagWriteD7
+
+* NOCH TEMPORAERER TEST (2026-08-21, Abschnitt "F$Fork"): echten
+* F$Fork-Aufruf ueber TRAP #0 ausloesen -- beweist den kompletten neuen
+* Pfad (Q9K_TrapDispatch -> Q9K_SysFFork -> Q9K_ProcFork ->
+* Q9K_ModDirLinkByName + echte Speicherallokation aus M$Mem/M$Stack +
+* echter Table-D-9-Registersatz-Aufbau) real im Emulator -- forkchild.a
+* (eigenstaendiges Modul, s. dortigen Kopfkommentar) wird dem Bootfile
+* als drittes Modul angehaengt und muss deshalb im Modulverzeichnis
+* auffindbar sein. d1-d4 bewusst genullt (keine zusaetzliche Speicher-/
+* Parametergroesse, keine Pfade, Prioritaet vom Aufrufer -- also von
+* Q9K_TestProcA selbst -- geerbt). Der frisch geforkte Prozess druckt ab
+* jetzt selbststaendig 'F' -- ein echtes DREIER-Interleaving A/B/F
+* beweist, dass F$Fork wirklich einen neuen, vom Scheduler verwalteten
+* Prozess gestartet hat, nicht nur einen Deskriptor angelegt hat. Vor
+* dem naechsten "echten" Meilenstein wieder entfernen, gleiche
+* Philosophie wie der F$Link/F$UnLink-Test oben.
+        clr.w   d0
+        clr.l   d1
+        clr.l   d2
+        clr.w   d3
+        clr.w   d4
+        lea     Q9K_TestForkName(pc),a0
+        trap    #0
+        dc.w    3                      * Funktionscode 3 = F$Fork
+        bcs     Q9K_TestForkFail
+        moveq   #'K',d7                 * DIAGNOSE: F$Fork erfolgreich (K wie "Kind")
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+
+Q9K_TestForkFail:
+        moveq   #'k',d7                  * DIAGNOSE: F$Fork fehlgeschlagen
+        bsr     Q9K_DiagWriteD7
         bra     Q9K_TestProcA_Loop
 
 Q9K_TestProcA_UnlinkFail:
@@ -641,6 +690,13 @@ Q9K_TestProcDelay equ $4000
 Q9K_TestLinkName:
         dc.b    "init",0
         dc.b    0                      * Fuellbyte -- haelt das nachfolgende Codewort wortausgerichtet
+
+* Q9K_TestForkName -- Name des eigenstaendigen Testmoduls, s. forkchild.a
+* -- 9 Zeichen + NUL = 10 Byte, bereits geradzahlig, KEIN Fuellbyte
+* noetig (anders als bei Q9K_TestLinkName oben, "init"+NUL = 5 Byte,
+* ungerade).
+Q9K_TestForkName:
+        dc.b    "forkchild",0
 
 * Q9K_SchedRun -- startet die ALLERERSTE Prozessausfuehrung (Abschnitt
 * "Scheduler", 2026-08-21, ersetzt das fruehere Q9K_JumpToFirstProc).
@@ -738,6 +794,8 @@ Q9K_TimerActivate:
 * oben zum gemeinsamen Fake-Rahmen-Mechanismus).
 Q9K_TimerIRQHandler:
         movem.l d0-d7/a0-a6,-(sp)              * kompletten Registersatz des unterbrochenen Prozesses sichern
+        moveq   #'.',d7                        * TEMPORAERE DIAGNOSE (Abschnitt F$Fork): bestaetigt, dass der Tick real ankommt
+        bsr     Q9K_DiagWriteD7                  * TEMPORAERE DIAGNOSE
         movea.l Q9_D_Proc,a0                    * a0 = aktueller Prozessdeskriptor
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * dessen SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
 
@@ -823,7 +881,13 @@ Q9K_TrapDispatch:
 Q9K_TrapUnknown:
         movem.l (sp)+,d2-d7/a3-a5             * Registersatz zurueckholen (Postinkrement -- sp wieder auf dem Frame)
         ori.w   #1,(sp)                         * Carry im geretteten SR setzen -- unbekannter/unregistrierter Funktionscode
-        move.w  #$00ce,d1                        * d1.w = E_UNKSVC (Unknown Service Code, 0xCE)
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21, Abschnitt "F$Fork", beim
+* Nachschlagen echter Fehlercodes fuer E_MEMFUL aufgefallen): $00CE war
+* NIE der echte E_UNKSVC-Wert -- MWOS/SRC/DEFS/errno.h definiert
+* "#define E_UNKSVC 0xd0" (nicht 0xce). $CE gehoert zu keinem dort
+* definierten Fehlercode, war also schlicht falsch abgeschrieben. Fix:
+* echten Wert $00D0 uebernommen.
+        move.w  #$00d0,d1                        * d1.w = E_UNKSVC (Unknown Service Code, MWOS/SRC/DEFS/errno.h)
         rte
 
 *******************************************************************************
@@ -926,6 +990,64 @@ Q9K_SysFUnLink_Ok:
         rts
 
 *******************************************************************************
+* Q9K_SysFFork -- TRAP-#0-Handler fuer den echten F$Fork-Callcode (0x03,
+* s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention (68k_tech.pdf S.
+* 430, echt per Read gelesen): IN d0.w=Typ/Revision-Filter,
+* d1.l=zusaetzliche Speichergroesse, d2.l=Parametergroesse,
+* d3.w=Anzahl zu kopierender I/O-Pfade (bisher immer 0 wirksam -- kein
+* Pfadsystem, s. Q9K_ProcFork), d4.w=Prioritaet (0=vom Aufrufer erben),
+* (a0)=Namenszeiger, (a1)=Parameterzeiger. OUT (Erfolg): d0.w=Kind-
+* Prozess-ID, (a0)=hinter den Namen aktualisiert, Carry im geretteten SR
+* geloescht. OUT (Fehlschlag): Carry gesetzt, d1.w=echter Fehlercode
+* (E_MNF/E_MEMFUL/E_PRCFUL, s. Q9K_ProcFork).
+*
+* Uebergibt alle sieben Eingaben ueber feste Kernel-Global-Scratch-
+* Adressen (s. o.) an das parameterlose Q9K_SysForkImpl
+* (q9kernel_firstproc.c) statt ueber eine in diesem Projekt bisher
+* nirgends fuer derart viele Werte verifizierte Assembler<->C-
+* Mehrparameter-Aufrufkonvention -- gleiches, bereits etabliertes Muster
+* wie Q9K_TrapHandlerScratch/Q9K_MODDIR_FREE_ADDR/HEAD_ADDR. Q9K_ProcFork
+* SELBST (von Q9K_SysForkImpl aufgerufen) ist dagegen eine ganz normale
+* Mehrparameter-C-Funktion -- reiner C-zu-C-Aufruf, kein Assembler<->C-
+* Grenzuebertritt, deshalb dort kein Risiko.
+*
+* d1 wird um den bsr herum GESICHERT: die reale F$Fork-Konvention laesst
+* d1/d2/d3/d4 bei ERFOLG fuer den Aufrufer unveraendert -- d2/d3/d4
+* ueberleben automatisch (compilierter C-Code laesst sie laut ABI in
+* Ruhe, s. bereits bei Q9K_DiagWriteD7 real gefundene a0-Erhaltungspflicht),
+* d1 aber NICHT (d0/d1 sind die ueblichen Rueckgabe-/Scratch-Register) --
+* deshalb hier explizit gesichert/wiederhergestellt, gleiche Vorsicht wie
+* schon bei d7 in Q9K_SysFLink/SysFUnLink oben.
+Q9K_SysFFork:
+        move.w  d0,Q9K_ForkScratch_TypeLang
+        move.l  d1,Q9K_ForkScratch_AddMem
+        move.l  d2,Q9K_ForkScratch_ParamSize
+        move.w  d3,Q9K_ForkScratch_NumPaths
+        move.w  d4,Q9K_ForkScratch_Priority
+        move.l  a0,Q9K_ForkScratch_NamePtr
+        move.l  a1,Q9K_ForkScratch_ParamPtr
+
+        move.l  d1,-(sp)              * echten Aufrufer-d1 sichern (s. Kopfkommentar)
+        bsr     Q9K_SysForkImpl
+        move.l  (sp)+,d1              * echten Aufrufer-d1 zurueckholen
+
+        tst.w   Q9K_ForkScratch_Success
+        beq     Q9K_SysFFork_Fail
+
+        move.w  Q9K_ForkScratch_ChildPID,d0
+        movea.l Q9K_ForkScratch_NamePtr,a0
+Q9K_SysFFork_SkipName:
+        tst.b   (a0)+                             * (a0) hinter den Namen aktualisieren (bis zum NUL-Byte)
+        bne     Q9K_SysFFork_SkipName
+        andi.w  #$fffe,4(sp)                        * Carry im geretteten SR loeschen -- Erfolg
+        rts
+
+Q9K_SysFFork_Fail:
+        move.w  Q9K_ForkScratch_ErrorCode,d1
+        ori.w   #1,4(sp)                              * Carry im geretteten SR setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
 * Q9K_SetVBR -- ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21, per Diagnose-
 * Ausgabe direkt nachgewiesen): TRAP #0 sprang trotz korrekt aufgebauter
 * Tabelle bei *Q9_D_EXCJMP ins Leere (PC landete bei genullter Adresse 0
@@ -947,6 +1069,22 @@ Q9K_SysFUnLink_Ok:
 * __multiply oben.
 Q9K_SetVBR:
         movec   d0,vbr
+        rts
+
+* Q9K_DiagPrintU32 -- TEMPORAERE DIAGNOSE (2026-08-21, Abschnitt
+* "F$Fork", zur Eingrenzung des ausbleibenden Prozesswechsels nach
+* F$Fork). Vor dem naechsten "echten" Meilenstein wieder entfernen.
+* ECHTER BUG GEFUNDEN + GEFIXT: urspruenglich wurde d5 NICHT gesichert
+* -- Q9K_DiagWriteHex32 verbraucht d5 als Eingabe-/Arbeitsregister
+* (rol.l-Schleife), das verletzt aber die C-ABI-Erhaltungspflicht fuer
+* d2-d7/a2-a6, wenn dieser Helfer (wie hier) aus COMPILIERTEM C-Code
+* aufgerufen wird, der d5 selbst fuer eine lokale Variable benutzen
+* koennte (anders als bei den bisherigen reinen Assembler-Aufrufstellen).
+Q9K_DiagPrintU32:
+        move.l  d5,-(sp)      * d5 sichern (s. Kopfkommentar)
+        move.l  d0,d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  (sp)+,d5
         rts
 
 * Q9K_GetA6 -- liefert den AKTUELLEN Inhalt von a6 in d0 (C-Rueckgabe-
