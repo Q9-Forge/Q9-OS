@@ -1,0 +1,84 @@
+*******************************************************************************
+* forkchild.a -- winziges, eigenstaendiges OS-9/68K-Programmmodul zum
+* echten Testen von F$Fork (Abschnitt "F$Fork", 2026-08-21, im Anschluss
+* an den Scheduler). KEIN Teil des Kernel-Moduls selbst -- wird als
+* SEPARATE Datei assembliert/gelinkt und dem Bootfile als drittes Modul
+* angehaengt (kernel, init_disk, forkchild -- gleiches Prinzip wie das
+* bereits etablierte 2-Modul-Bootfile), damit Q9K_ModDirPopulateFromBootList
+* (q9kernel_moddir.c) es beim Scannen der Boot-Zeit-Speicherregionen als
+* GENUIN EIGENSTAENDIGES Modul findet (kein Einbetten in den Kernel noetig
+* -- der Scanner haette es sonst ueberhaupt nicht als separaten Treffer
+* gesehen, s. Kommentar in q9kernel_moddir.c ueber "offset += moduleSize").
+*
+* Zweck: druckt wiederholt 'F' auf die Konsole (gleiche DUART-Adressen wie
+* Q9K_DiagWriteD7 im Kernel -- eigenstaendig dupliziert, da dieses Modul
+* NICHT mit dem Kernel gelinkt wird). Beweist, sichtbar im Konsolen-
+* Ausgabestrom, dass F$Fork wirklich einen unabhaengigen, vom Scheduler
+* verwalteten dritten Prozess gestartet hat (echtes Dreier-Interleaving
+* A/B/F statt nur der bisherigen zwei internen Testprozesse).
+*
+* psect-Format (empirisch aus MWOS/TMP/q9_cstart.a rekonstruiert, s.
+* ausfuehrlichen Fund-Kommentar in q9kernel_entry.a):
+*   psect name,tylang,attrrev,edition,STACKSIZE,exec-label
+* -- die 5. Zahl ist NICHT "mem/stack" gemeinsam, sondern EXPLIZIT NUR
+* M$Stack (per echtem Boot-Test/Byte-Vergleich verifiziert, 2026-08-21):
+* M$Mem wird STATTDESSEN automatisch aus der GESAMTEN Groesse aller
+* deklarierten vsect-Bloecke berechnet (Q9K_CRuntimeData/_stklimit im
+* Kernel selbst liefert dafuer den Gegenbeweis: vsect deklariert exakt
+* EIN ds.l 1 = 4 Byte, "psect ...,0,..." fuer den Stack-Parameter, und
+* M$Mem im real gebauten Kernel-Binary steht exakt auf 4 -- waere die
+* 5. Zahl "mem" statt "stack" gewesen, haette dort 0 stehen muessen).
+* Deshalb hier ein eigenes vsect fuer den Datenbereich, dessen Groesse
+* bestimmt, was M$Mem tatsaechlich wird.
+
+Q9Prgrm                 equ     1               * OS-9-Programmmodul (Q9_MT_PROGRAM)
+Q9Objct                 equ     1               * Maschinencode (Q9_ML_OBJECT)
+Q9K_ForkChildEdition    equ     1
+Q9K_ForkChildStackSize  equ     $800            * 2048 Byte -- reicht fuer die winzige Testschleife
+
+Q9_IO_DUART_SRA  equ    $FFFFF002               * Status A (Lesen): Bit 2 = TXRDY -- identisch zu q9kernel_entry.a
+Q9_IO_DUART_THRA equ    $FFFFF006               * Tx-Hold-Register A (Schreiben)
+
+Q9K_ForkChildDelay equ  $4000                   * gleiche Groessenordnung wie Q9K_TestProcDelay im Kernel
+
+        psect   forkchild,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_ForkChildEdition,Q9K_ForkChildStackSize,Q9K_ForkChildStart
+
+* Eigener Datenbereich -- winzig (reiner Platzhalter, dieses Testmodul
+* braucht keine echten globalen Variablen), bestimmt aber M$Mem, s.
+* Kopfkommentar oben. a6 zeigt beim Prozessstart laut Manual (68k_tech.pdf
+* Table D-9) hierher (Basis des Datenbereichs) -- dieses Modul benutzt a6
+* selbst nicht (reiner Assembler-Code, kein compilierter C-Stack-Check),
+* deshalb reicht ein Ein-Wort-Platzhalter.
+        vsect
+Q9K_ForkChildData:
+        ds.l    1
+        ends
+
+Q9K_ForkChildStart:
+Q9K_ForkChildLoop:
+        moveq   #'F',d7
+        bsr     Q9K_ForkChildWriteD7
+        move.l  #Q9K_ForkChildDelay,d6
+Q9K_ForkChildWait:
+        subq.l  #1,d6
+        bne     Q9K_ForkChildWait
+        bra     Q9K_ForkChildLoop
+
+* Q9K_ForkChildWriteD7 -- eigenstaendige Kopie von Q9K_DiagWriteD7
+* (q9kernel_entry.a), da dieses Modul separat gelinkt wird. Registerschutz
+* (a0/d6 sichern) aus demselben, dort real gefundenen Grund uebernommen --
+* auch wenn dieses winzige Testmodul selbst keinen C-Aufrufer hat, der
+* sich darauf verlaesst, ist es die konsistente, bereits verifizierte
+* Implementierung.
+Q9K_ForkChildWriteD7:
+        movem.l a0/d6,-(sp)
+        movea.l #Q9_IO_DUART_SRA,a0
+Q9K_ForkChildDiagWait:
+        move.b  (a0),d6
+        btst    #2,d6
+        beq     Q9K_ForkChildDiagWait
+        move.b  d7,Q9_IO_DUART_THRA
+        movem.l (sp)+,a0/d6
+        rts
+
+        endsect

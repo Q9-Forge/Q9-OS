@@ -133,8 +133,8 @@
 #define Q9_MH68K_EXEC       0x30  /* 4 Byte, Einsprungoffset [VERIFIZIERT] */
 #define Q9_MH68K_EXCPT      0x34  /* 4 Byte, Trap-Einsprung fuer unbehandelte User-Traps [VERIFIZIERT, Wert 0 am Kernel] */
 /* Nur bei Program/TrapLib/Drivr (laut Manual NICHT bei Systm/Flmgr): */
-#define Q9_MH68K_MEM        0x38  /* 4 Byte, Speicherbedarf [PLATZHALTER -- Systm-Module nutzen dieses Feld laut Manual nicht] */
-#define Q9_MH68K_STACK      0x3C  /* 4 Byte, Stackgroesse [PLATZHALTER] */
+#define Q9_MH68K_MEM        0x38  /* 4 Byte, Speicherbedarf (M$Mem) [VERIFIZIERT, 2026-08-21 -- s. src/kernel/forkchild.a: reale r68/l68-Assemblierung mit genau EINEM vsect-Feld (ds.l 1 = 4 Byte) ergab im gelinkten Binary exakt 0x00000004 an diesem Offset -- vom Assembler AUTOMATISCH aus der Gesamtgroesse aller deklarierten vsect-Bloecke berechnet, NICHT ueber einen expliziten psect-Parameter (Gegenprobe am eigenen Kernel-Modul: q9kernel_entry.a's "psect ...,0,..." mit dessen einzigem vsect [_stklimit, ds.l 1] ergab ebenfalls 4, obwohl der psect-Parameter selbst 0 war)] */
+#define Q9_MH68K_STACK      0x3C  /* 4 Byte, Stackgroesse (M$Stack) [VERIFIZIERT, 2026-08-21 -- s. src/kernel/forkchild.a: "psect forkchild,...,Q9K_ForkChildStackSize,..." mit Q9K_ForkChildStackSize=$800 ergab im real gelinkten Binary exakt 0x00000800 an diesem Offset -- die 5. psect-Zahl (in q9_cstart.a explizit "StackSize" genannt) setzt ALSO NICHT "mem/stack" gemeinsam, sondern NUR M$Stack; M$Mem kommt separat aus den vsects, s. o.] */
 
 /* ====================================================================
  * Header-Layout 3: OS-9000 universell (x86/PowerPC/ARM/MIPS/SPARC/...)

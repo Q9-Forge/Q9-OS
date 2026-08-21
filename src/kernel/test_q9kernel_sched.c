@@ -27,6 +27,13 @@ static unsigned char g_fakeGlobals[0x2000];
 
 #define Q9K_TEST_DESC_SIZE      96UL   /* muss > Q9K_READYQ_PREV_OFF+8 sein */
 
+/* Stub fuer die TEMPORAERE Diagnose-Instrumentierung (Abschnitt F$Fork,
+ * Bug-Suche "kein Prozesswechsel nach F$Fork mehr", noch NICHT geloest,
+ * s. [[project_q9os_own_kernel_design]]) -- nur damit dieser Test trotz
+ * der temporaeren Q9K_DiagPrintU32-Aufrufe in q9kernel_sched.c
+ * weiterhin linkt. Kein Verhalten, reiner No-op. */
+void Q9K_DiagPrintU32(unsigned long value) { (void)value; }
+
 #include "q9kernel_sched.c"
 
 static int failures = 0;

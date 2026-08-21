@@ -83,3 +83,12 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
 
 echo "== Fertig: $OUTDIR/q9kernel =="
 file q9kernel || true
+
+echo "== forkchild.a bauen (eigenstaendiges Testmodul fuer F\$Fork, s. dortigen Kopfkommentar) =="
+cp "$SRCDIR"/forkchild.a .
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+    -o=forkchild.r "forkchild.a" < /dev/null
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+    -o=forkchild -f=orowoe forkchild.r < /dev/null
+echo "== Fertig: $OUTDIR/forkchild =="
+file forkchild || true
