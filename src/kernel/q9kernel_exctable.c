@@ -84,6 +84,20 @@ static void Q9K_ExcDefault(void)
     for (;;) { } /* keine Rueckkehr moeglich/vorgesehen -- gleiche Philosophie wie Q9K_HaltLoop */
 }
 
+/* q9kernel_entry.a -- der echte TRAP-#0-Syscall-Dispatcher (Abschnitt
+ * "F$Link/F$UnLink", 2026-08-21). KEIN normaler C-aufrufbarer Handler
+ * (RTE statt RTS, eigene Registerkonvention, direkt als Vektor-Ziel
+ * gedacht) -- hier nur die ADRESSE gebraucht, fuer den Tabelleneintrag. */
+extern void Q9K_TrapDispatch(void);
+
+/* q9kernel_entry.a -- setzt VBR (movec, privilegiert, in C nicht
+ * ausdrueckbar). ECHTER BUG GEFUNDEN (2026-08-21, per Diagnose-Ausgabe):
+ * ohne diesen Aufruf bleibt VBR auf $00000000 stehen (Boot-ROM-Default),
+ * waehrend unsere Tabelle bei *Q9_D_EXCJMP liegt -- TRAP #0 vektorisierte
+ * dadurch durch die genullte Adresse-0-Region statt durch die von uns
+ * befuellte Tabelle. S. ausfuehrlichen Kommentar bei Q9K_SetVBR. */
+extern void Q9K_SetVBR(Q9_u32 tableBase);
+
 /* NUR Integer-Zaehler, KEINE Zeiger -- s. Kopfkommentar (echter l68-
  * Linker-Fund: Zeiger als const-Daten sind in Systm-Modulen verboten).
  * Reihenfolge/Werte = die reale MC68030-Standard-Vektorgruppierung
@@ -135,5 +149,24 @@ Q9_u32 Q9K_BuildExcTable(void)
         }
     }
 
-    return (vectorIndex == Q9K_EXCTABLE_TOTAL) ? 0 : 1;
+    if (vectorIndex != Q9K_EXCTABLE_TOTAL)
+        return 1;
+
+    /* NACHTRAG 2026-08-21 (Abschnitt "F$Link/F$UnLink"): Vektor 32
+     * (TRAP #0, s. Quelltabelle oben) jetzt gezielt auf den echten
+     * Syscall-Dispatcher umbiegen, statt auf dem generischen Halt-
+     * Handler zu bleiben -- einzelner, gezielter Nachtrag statt die
+     * bestehende, konsistenzgeprueften Schleife umzubauen. */
+    {
+        Q9K_ExcHandler *trapSlot = (Q9K_ExcHandler *)(tableBase + 32 * sizeof(Q9K_ExcHandler));
+        *trapSlot = Q9K_TrapDispatch;
+    }
+
+    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21): ohne dies bleibt VBR auf
+     * dem Boot-ROM-Default $00000000 stehen -- die CPU vektorisiert dann
+     * durch die genullte Adresse-0-Region statt durch tableBase. S.
+     * Kommentar bei Q9K_SetVBR (q9kernel_entry.a). */
+    Q9K_SetVBR(tableBase);
+
+    return 0;
 }
