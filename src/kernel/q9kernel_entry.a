@@ -107,6 +107,12 @@ Q9K_StackTop    equ     Q9K_GlobBase+Q9K_GlobSize+Q9K_StackSize
 * fehlt/beschaedigt ist (kein Original-Verhalten, eigene Vorsichtsmassnahme).
 Q9K_BootListMax  equ    64                      * max. Anzahl (Basis,Laenge)-Eintraege
 Q9K_BootList     equ    Q9K_GlobBase+$1000       * eigene Ablage, 8 Byte/Eintrag + Nullterminator
+* Q9K_BootListEnd -- NACHTRAG 2026-08-21: fester Endpunkt der eigenen
+* Ablage (64*8 Byte Eintraege + 4 Byte Nullterminator), gebraucht als
+* zweite Aussparungs-Zone beim Nullen (s. Q9K_Entry, echter Bug-Fund:
+* die Boot-ROM-Liste, auf die a3 zeigt, kann selbst INNERHALB der zu
+* nullenden 32K liegen -- genau wie beim eigenen Modul).
+Q9K_BootListEnd  equ    Q9K_BootList+(Q9K_BootListMax*8)+4
 
 * Kernel-Global-Offsets (s. src/q9sysglob.h) -- lokal dupliziert, da kein
 * getesteter Include-Mechanismus fuer eine .h-Datei in diesem Assembler
@@ -168,12 +174,25 @@ Q9_IO_DUART_THRA equ    $FFFFF006               * Tx-Hold-Register A (Schreiben)
 * pollt vorher SRA auf TXRDY (Bit 2). Reine Diagnose-Hilfsroutine, kein
 * Teil der eigentlichen Boot-Logik.
 Q9K_DiagWriteD7:
+* NACHTRAG 2026-08-21, ECHTER BUG GEFUNDEN + GEFIXT: diese Routine
+* ueberschrieb a0/d6, ohne sie zu sichern -- der Compiler haelt bei
+* compiliertem C-Code (z.B. einen Zeiger-Rueckgabewert) durchaus in a0
+* ueber einen "bsr Q9K_Diag5"-Aufruf hinweg (per echter opt68k-
+* Zwischenassemblierung verifiziert: "move.l d0,a0 / bsr Q9K_Diag5 /
+* move.l a0,d0"), weil normale Funktionsaufrufe a0 laut C-ABI-Konvention
+* NICHT zerstoeren duerfen -- unsere eigenen Diagnose-Helfer hielten
+* sich bisher NICHT daran. Fuehrte zu einem realen, verwirrenden
+* Fehlbefund (Init-Modul-Suche schien erfolgreich ('F'), war es aber
+* nicht -- initAvailableLen blieb korrekt 0). Fix: a0/d6 sichern/
+* wiederherstellen, gleiches Prinzip wie __multiply (d2-d5) oben.
+        movem.l a0/d6,-(sp)
         movea.l #Q9_IO_DUART_SRA,a0
 Q9K_DiagWait:
         move.b  (a0),d6
         btst    #2,d6
         beq     Q9K_DiagWait
         move.b  d7,Q9_IO_DUART_THRA
+        movem.l (sp)+,a0/d6
         rts
 
 * Q9K_DiagWriteHex32 -- schreibt D5 als 8 ASCII-Hex-Ziffern (MSB zuerst)
@@ -191,6 +210,10 @@ Q9K_DiagWait:
 * jetzt komplett OHNE bsr/Stack -- direkt inline wie beim Nullungs-
 * Marker (a4/d6/d7 statt movem/-(sp)).
 Q9K_DiagWriteHex32:
+* NACHTRAG 2026-08-21: gleiche Registerschutz-Korrektur wie bei
+* Q9K_DiagWriteD7 oben -- d4/d6/d7/a4 sichern (d5 bleibt bewusst der
+* Eingabe-/Verbrauchsregister, wie d7 bei Q9K_DiagWriteD7).
+        movem.l d4/d6/d7/a4,-(sp)
         moveq   #7,d4                  * 8 Nibbles
 Q9K_DiagHexLoop:
         rol.l   #4,d5                  * naechstes (hoechstwertige zuerst) Nibble in die unteren 4 Bit rotieren
@@ -210,6 +233,7 @@ Q9K_DiagHexWait:
         beq     Q9K_DiagHexWait
         move.b  d7,Q9_IO_DUART_THRA
         dbra    d4,Q9K_DiagHexLoop
+        movem.l (sp)+,d4/d6/d7/a4
         rts
 * ===== ENDE TEMPORAERE DIAGNOSE (Deklarationen) =====
 
@@ -260,96 +284,24 @@ Q9K_Entry:
         moveq   #'1',d7                         * DIAGNOSE: M$Exec erreicht, allererste Instruktion
         bsr     Q9K_DiagWriteD7
         lea     Q9K_Entry(pc),a0                * DIAGNOSE: tatsaechliche Lade-/Ausfuehrungsadresse
-        move.l  a0,d5                           * (Verdacht: liegt im 32K-Zero-Fill-Bereich selbst!)
+        move.l  a0,d5
         bsr     Q9K_DiagWriteHex32
         movea.l #Q9K_GlobBase,a6                * Kernel-Globals-Basis -- ALLES Folgende ist a6-relativ
 
-* Kernel-Global-Bereich (32K) nullen, BEVOR irgendein Feld beschrieben
-* wird -- Bug 3 GELOEST (2026-08-18): per Emulator-seitiger Schreib-
-* Instrumentierung (m68k_write_memory_32 in Q9-Flux/src/kernel/m68krt.c,
-* temporaer, nicht Teil dieses Repos) real nachgewiesen, dass die
-* Nullungsschleife SICH SELBST ueberschrieb -- das eigene Modul kann
-* (abhaengig von seiner Groesse/Boot-Zeit-Platzierung durch den CF-
-* Treiber) INNERHALB des 32K-Kernel-Global-Bereichs laden, nicht immer
-* sicher darueber (ein frueherer, kleinerer Testbuild lud bei $71886,
-* dieser Build bei ca. $71a8 -- deutlich UNTER $8000, also mitten im
-* Nullungsziel). Fix: eigenes Modul (Q9K_ModuleStart..Modulende) beim
-* Nullen aussparen, statt blind linear zu nullen -- Q9K_ZeroRange nullt
-* jetzt bei Bedarf zwei Teilbereiche (vor/nach dem eigenen Modul) statt
-* eines einzigen durchgehenden.
-*
-* NACHTRAG 2026-08-19, ECHTER BUG GEFUNDEN + GEFIXT (per Q9-Flux-
-* Instruktions-Trace, temporaer in m68krt.c/q9board.c, s. Session-Notizen
-* -- nicht Teil dieses Repos): "Q9K_ModuleEnd" (ein Compile-Zeit-Label
-* ganz am Ende DIESER Datei) markiert NUR das Ende von q9kernel_entry.a
-* SELBST -- l68 gibt JEDER C-Datei beim Linken ihr EIGENES, separates
-* psect und reiht sie HINTER unser eigenes "q9kernel"-psect (per echter
-* Linker-Map verifiziert: q9kernel_entry.a belegte in einem Testbuild nur
-* 520 von insgesamt 2994 Modul-Byte). Q9K_ModuleEnd schuetzte also nur
-* die ersten 520 Byte -- Q9K_CInit und ALLE weiteren C-Dateien
-* (q9kernel_modcheck.c/modsearch.c/initext.c/arena.c/exctable.c/
-* tables.c/firstproc.c) blieben faelschlich UNGESCHUETZT und wurden vom
-* Nullungslauf mit geloescht, noch bevor sie je liefen -- "bsr Q9K_CInit"
-* sprang dadurch in eine bereits genullte Region; die CPU exekutierte
-* endlos Nullbytes als "ori.b #0,d0" (per PC-Trace verifiziert: PC stieg
-* ab dort in Schritten von genau 4 immer weiter) -- daher der stille
-* Stillstand ohne jede weitere Konsolenausgabe (kein 'S', kein '4', kein
-* 'H'). Fix: die WAHRE Modulendadresse nicht mehr ueber ein Label,
-* sondern aus dem eigenen, per psect automatisch erzeugten Modulkopf
-* lesen (M$Size-Feld, 4 Byte bei Offset +4 ab Q9K_ModuleStart, s.
-* Q9_MH68K_SIZE in q9moduleheader.h) -- dieses Feld deckt IMMER das
-* komplette gelinkte Modul ab, unabhaengig davon, aus wie vielen
-* psects/Dateien es zusammengesetzt wurde. Q9K_ModuleEnd-Label bleibt
-* nur noch als Kommentar-Anker stehen, wird hierfuer nicht mehr benutzt.
-        lea     Q9K_ModuleStart(pc),a2   * a2 = eigene Modul-Startadresse (Laufzeit, nicht Assemblierzeit!)
-        move.l  a2,d4
-        cmp.l   #Q9K_GlobSize,d4
-        bcc     Q9K_ZeroNoOverlap        * Modul liegt komplett ausserhalb -- haeufigster/einfachster Fall
-
-* Modul ueberlappt den Nullungsbereich: zwei Teilbereiche nullen, das
-* Modul selbst dazwischen aussparen.
-        movea.l a6,a0                    * a0 = Q9K_GlobBase (=0)
-        bsr     Q9K_ZeroRange            * nullt [0, Modulanfang) -- d4 ist bereits die Byte-Anzahl dahin
-
-        move.l  4(a2),d0                 * d0 = M$Size aus dem eigenen (echten) Modulkopf
-        add.l   a2,d0                    * d0 = Modulstart + Groesse = WAHRE Modulendadresse
-        movea.l d0,a0                    * a0 = wahres Modulende (nicht Q9K_ModuleEnd-Label!)
-        move.l  a0,d4
-        move.l  #Q9K_GlobSize,d6
-        sub.l   d4,d6                    * d6 = Q9K_GlobSize - Modulende (als vorzeichenbehaftete Byte-Anzahl)
-        bcs     Q9K_ZeroDone             * Modul reicht bis/ueber das Bereichsende -- nichts mehr zu nullen
-        move.l  d6,d4
-        bsr     Q9K_ZeroRange
-        bra     Q9K_ZeroDone
-
-Q9K_ZeroNoOverlap:
-        movea.l a6,a0
-        move.l  #Q9K_GlobSize,d4
-        bsr     Q9K_ZeroRange
-Q9K_ZeroDone:
-
-        moveq   #'2',d7                         * DIAGNOSE: 32K-Nullen abgeschlossen
-        bsr     Q9K_DiagWriteD7
-
-* Boot-Register-Konvention uebernehmen (verifiziert, Thema 01) -- MUSS
-* passieren, bevor d0/d1/a1/a5 fuer etwas anderes wiederverwendet werden
-        move.l  d0,Q9_D_TotRam(a6)              * Gesamt-RAM-Groesse
-        move.l  d1,Q9_D_MpuTyp(a6)              * erkannter CPU-Typ
-        move.l  d3,Q9_D_BootFlags(a6)           * Boot-Zeit-Flags
-        move.l  a1,Q9_D_SysRom(a6)              * Boot-ROM-Einsprungpunkt
-        move.l  a5,Q9_D_ExcJmp(a6)              * Exception-Tabellen-Speicherblock
-
-* Boot-Zeit-Speicherregion-Liste sichern -- a3 haelt seit Q9K_Entrys
-* allererster Instruktion (s. o.) noch die vom Boot-ROM uebergebene
-* Original-Liste (frueher "movea.l sp,a0" HIER, jetzt schon ganz am
-* Anfang gesichert, weil sp selbst laengst auf unseren eigenen Stack
-* zeigt). Kopiert sie in die eigene Ablage, GENAU WIE der reale Kernel
-* es an dieser Stelle tut (dort per lea/beq-Schleife in eine eigene
-* Stack-Kopie -- hier stattdessen in eine feste Kernel-Global-
-* Erweiterung, weil unser Kernel-Global-Layout ohnehin schon fest statt
-* Stack-basiert ist). d0/d1/d3/a1(Originalwert)/a5 sind an dieser Stelle
-* bereits sicher in Kernel-Globals gespeichert, deshalb hier frei als
-* Kopierschleifen-Register nutzbar (a3 nicht mehr gebraucht danach).
+* NACHTRAG 2026-08-21, ECHTER BUG GEFUNDEN + GEFIXT (per Diagnose-Dump
+* auf die Konsole -- s. Session-Notizen): die Boot-Zeit-Speicherregion-
+* Liste, auf die a3 zeigt, kann (genau wie beim eigenen Modul, Bug 3
+* oben) INNERHALB der zu nullenden 32K liegen -- real beobachtet:
+* a3~$000049E8, mit echten, plausiblen Eintraegen ($00000400/$00005600)
+* GENAU DORT, solange direkt nach dem Einsprung gelesen. Die alte
+* Reihenfolge (erst nullen, dann kopieren) zerstoerte diese Quelldaten
+* VOR dem Kopieren -- Q9K_BootList blieb leer, Q9K_FindModuleByName fand
+* "init" folglich nie (Checkpoint '6' fehlte, Q9K_StartFirstProcess
+* scheiterte lautlos an einem leeren Prozess-Pool). Fix: die Liste JETZT
+* SOFORT kopieren, NOCH VOR dem Nullen -- das Nullen spart im Gegenzug
+* den Q9K_BootList-Zielbereich selbst aus (dritte Aussparung neben dem
+* eigenen Modul), sonst wuerde die frisch kopierte Liste vom eigenen
+* Nullungslauf gleich wieder geloescht.
         movea.l a3,a0                           * a0 = Original-Liste vom Boot-ROM
         lea     Q9K_BootList,a1                 * a1 = eigene Ablage
         move.w  #Q9K_BootListMax-1,d3           * Zaehler fuer dbra (defensive Obergrenze)
@@ -361,6 +313,81 @@ Q9K_BootListCopy:
         dbra    d3,Q9K_BootListCopy
 Q9K_BootListDone:
         clr.l   (a1)                            * eigene Kopie nullterminieren (auch falls die Obergrenze zuerst griff)
+
+* Kernel-Global-Bereich (32K) nullen, BEVOR irgendein Feld beschrieben
+* wird -- Bug 3 GELOEST (2026-08-18): per Emulator-seitiger Schreib-
+* Instrumentierung real nachgewiesen, dass die Nullungsschleife SICH
+* SELBST ueberschrieb -- das eigene Modul kann (abhaengig von seiner
+* Groesse/Boot-Zeit-Platzierung durch den CF-Treiber) INNERHALB des 32K-
+* Kernel-Global-Bereichs laden, nicht immer sicher darueber. Fix: eigenes
+* Modul (Q9K_ModuleStart..Modulende) beim Nullen aussparen -- jetzt
+* ZUSAETZLICH auch Q9K_BootList..Q9K_BootListEnd aussparen (s. Fund
+* oben, gerade erst befuellt). Zwei feste Ausspar-Zonen statt einer.
+*
+* NACHTRAG 2026-08-19: die wahre Modulendadresse wird aus dem eigenen,
+* per psect automatisch erzeugten Modulkopf gelesen (M$Size-Feld, Offset
+* +4 ab Q9K_ModuleStart, s. Q9_MH68K_SIZE in q9moduleheader.h) statt aus
+* einem Compile-Zeit-Label -- deckt immer das komplette gelinkte Modul
+* ab, unabhaengig davon, aus wie vielen psects/Dateien (l68 gibt jeder
+* C-Datei ihr eigenes) es zusammengesetzt wurde. Dabei bewusst d2 statt
+* d0 als Rechenregister verwendet (NACHTRAG 2026-08-21, zweiter echter
+* Bug in derselben Stelle gefunden: d0/d1/d3/a1/a5 sind zu diesem
+* Zeitpunkt die noch UNGESICHERTEN Boot-Zeit-Registerwerte -- D0=TotRam
+* insbesondere --, die erst weiter unten in die Kernel-Globals uebernommen
+* werden; d0 hier als Rechen-Schrott zu verwenden haette den echten
+* RAM-Groessenwert VOR dessen Sicherung stillschweigend ueberschrieben).
+*
+* Q9K_BootList liegt bei einer FESTEN, sehr niedrigen Adresse ($1000)
+* und das Modul lud in jedem bisherigen Test deutlich hoeher (~$71xx) --
+* bewusst NICHT der allgemeine Fall (beide Zonen in beliebiger
+* Reihenfolge/mit Ueberlappung), sondern die einfachere, bisher immer
+* zutreffende Annahme "Q9K_BootList immer unterhalb des Moduls" -- genau
+* wie Q9K_FREEMEM_BASE bewusst vorlaeufig (TODO, falls das Modul je
+* unterhalb $1200 laden sollte).
+        movea.l a6,a0                    * a0 = Q9K_GlobBase (=0)
+        move.l  #Q9K_BootList,d4         * nullt [0, Q9K_BootList) -- unterhalb jeder Zone
+        bsr     Q9K_ZeroRange
+
+        lea     Q9K_ModuleStart(pc),a2   * a2 = eigene Modul-Startadresse (Laufzeit, nicht Assemblierzeit!)
+        move.l  a2,d4
+        cmp.l   #Q9K_GlobSize,d4
+        bcc     Q9K_ZeroNoOverlap        * Modul liegt komplett ausserhalb -- haeufigster/einfachster Fall
+
+* Modul ueberlappt den Nullungsbereich: Teilbereich zwischen
+* Q9K_BootListEnd und Modulanfang nullen, das Modul selbst aussparen.
+        movea.l #Q9K_BootListEnd,a0
+        move.l  a2,d4
+        sub.l   #Q9K_BootListEnd,d4      * d4 = Modulanfang - Q9K_BootListEnd
+        bsr     Q9K_ZeroRange
+
+        move.l  4(a2),d2                 * d2 = M$Size aus dem eigenen (echten) Modulkopf -- NICHT d0!
+        add.l   a2,d2                    * d2 = Modulstart + Groesse = WAHRE Modulendadresse
+        movea.l d2,a0                    * a0 = wahres Modulende (nicht Q9K_ModuleEnd-Label!)
+        move.l  a0,d4
+        move.l  #Q9K_GlobSize,d6
+        sub.l   d4,d6                    * d6 = Q9K_GlobSize - Modulende (als vorzeichenbehaftete Byte-Anzahl)
+        bcs     Q9K_ZeroDone             * Modul reicht bis/ueber das Bereichsende -- nichts mehr zu nullen
+        move.l  d6,d4
+        bsr     Q9K_ZeroRange
+        bra     Q9K_ZeroDone
+
+Q9K_ZeroNoOverlap:
+        movea.l #Q9K_BootListEnd,a0
+        move.l  #Q9K_GlobSize,d4
+        sub.l   #Q9K_BootListEnd,d4
+        bsr     Q9K_ZeroRange
+Q9K_ZeroDone:
+
+        moveq   #'2',d7                         * DIAGNOSE: 32K-Nullen abgeschlossen
+        bsr     Q9K_DiagWriteD7
+
+* Boot-Register-Konvention uebernehmen (verifiziert, Thema 01) -- MUSS
+* passieren, bevor d0/d1/a1/a5 fuer etwas anderes wiederverwendet werden
+        move.l  d0,Q9_D_TotRam(a6)              * Gesamt-RAM-Groesse
+        move.l  d1,Q9_D_MpuTyp(a6)               * erkannter CPU-Typ
+        move.l  d3,Q9_D_BootFlags(a6)            * Boot-Zeit-Flags
+        move.l  a1,Q9_D_SysRom(a6)               * Boot-ROM-Einsprungpunkt
+        move.l  a5,Q9_D_ExcJmp(a6)               * Exception-Tabellen-Speicherblock
 
 * Weiter in C (src/kernel/q9kernel_cinit.c) -- noch nicht mit dieser
 * Datei gelinkt, s. Kopfkommentar
