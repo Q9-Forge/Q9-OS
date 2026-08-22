@@ -100,6 +100,22 @@ typedef unsigned char  Q9_u8;
                                              * Q9K_SCHED_SLICE_ADDR ($123C, 2 Byte) */
 #endif
 
+/* Q9K_WAITQ_SENTINEL_ADDR -- eigene, kollisionsfreie Warteschlange fuer
+ * per F$Wait blockierte Prozesse (Abschnitt "F$Exit/F$Wait", 2026-08-22).
+ * GLEICHE Begruendung wie Q9K_READYQ_SENTINEL_ADDR oben: die reale
+ * Q9_D_WAITQ-Adresse ($3BC, s. q9sysglob.h) liegt zu dicht an anderen
+ * echten, teils [PLATZHALTER] deklarierten Feldern -- +0x30/+0x34 relativ
+ * dazu landet bei $3EC/$3F0, potenziell mitten in Q9_D_POLTBL ($3E4,
+ * Groesse unbekannt/[PLATZHALTER]). Q9_D_WAITQ selbst bleibt wie
+ * Q9_D_ACTIVQ unangetastet (Kompat-Vollstaendigkeit, q9kernel_cinit.c),
+ * wird aber von diesem Kernel nicht mehr gelesen/geschrieben. Direkt
+ * hinter Q9K_FORK_SCRATCH_SUCCESS ($129C+4, q9kernel_firstproc.c) --
+ * naechste freie Adresse $12A0. Braucht wie Q9K_READYQ_SENTINEL_ADDR 0x38
+ * Byte fuer die eigenen Next/Prev-Selbstverweis-Felder bei +0x30/+0x34. */
+#ifndef Q9K_WAITQ_SENTINEL_ADDR
+#define Q9K_WAITQ_SENTINEL_ADDR 0x12A0UL
+#endif
+
 #define Q9K_PROCDESC_STATE_OFF    0x00UL
 #define Q9K_PROCDESC_PRIORITY_OFF 0x01UL   /* eigene Erweiterung, 1 Byte (0-255) */
 #define Q9K_PROCDESC_AGE_OFF      0x02UL   /* eigene Erweiterung, 2 Byte -- "Ages never
@@ -155,6 +171,23 @@ void Q9K_SchedInsert(Q9_u32 desc)
 {
     Q9K_SetU16(desc + Q9K_PROCDESC_AGE_OFF, (Q9_u16)Q9K_GetU8(desc + Q9K_PROCDESC_PRIORITY_OFF));
     Q9K_ListAppend(Q9K_READYQ_SENTINEL_ADDR, desc);
+}
+
+/* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait") -- Q9K_ListAppend/
+ * Q9K_ListUnlink sind generisch (funktionieren mit JEDER Next/Prev-Liste,
+ * s. Kopfkommentare oben), aber static -- fuer die neue Wait-Queue
+ * braucht q9kernel_procend.c von AUSSEN darauf zugreifbare Varianten.
+ * Duenne, exportierte Weiterleitungen statt die bestehenden Helfer
+ * static->non-static umzustellen (kein Risiko fuer die bereits real
+ * verifizierte Ready-Queue-Logik oben). */
+void Q9K_WaitQInsert(Q9_u32 desc)
+{
+    Q9K_ListAppend(Q9K_WAITQ_SENTINEL_ADDR, desc);
+}
+
+void Q9K_WaitQRemove(Q9_u32 desc)
+{
+    Q9K_ListUnlink(desc);
 }
 
 /* Erhoeht das Alter ALLER Eintraege in der Ready-Queue um 1 ("the ages

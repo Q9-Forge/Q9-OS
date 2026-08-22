@@ -46,6 +46,11 @@ static unsigned long g_fakePoolNext;
 #define Q9K_PROCDESC_PRIORITY_OFF 0x18UL
 #define Q9K_PROCDESC_SAVEDSP_OFF 0x20UL
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x28UL
+/* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): gleiche Grosszuegig-
+ * keits-Begruendung wie oben -- reale Offsets waeren +0x04/+0x08/+0x0C. */
+#define Q9K_PROCDESC_PARENT_OFF     0x38UL
+#define Q9K_PROCDESC_MODHDR_OFF     0x48UL
+#define Q9K_PROCDESC_EXITSTATUS_OFF 0x50UL
 
 /* Minimaler Stub fuer das echte Q9K_GetA6 (q9kernel_entry.a) -- liefert
  * hier einen erfundenen, aber erkennbaren "a6-waere-hier"-Kanarienwert
@@ -293,6 +298,18 @@ int main(void)
         checkU32("F1: Deskriptor-State == 'a'", (Q9_u32)*(Q9_u8 *)(desc + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'a');
         checkU32("F1: Deskriptor-Priority == 9 (uebergebener Wert)",
                  (Q9_u32)*(Q9_u8 *)(desc + Q9K_PROCDESC_PRIORITY_OFF), 9);
+        /* NACHTRAG 2026-08-22: Q9_D_PROC ist hier 0 (kein laufender
+         * Aufrufer, s. Zeile oben "Q9K_SetU32(Q9_D_PROC, 0)") -- ParentDesc
+         * muss deshalb ebenfalls 0 sein. ModuleHdr muss auf fakeHdr zeigen. */
+        checkU32("F1: Deskriptor-ParentDesc == 0 (kein laufender Aufrufer)",
+                 Q9K_GetU32(desc + Q9K_PROCDESC_PARENT_OFF), 0);
+        /* ModuleHdr laeuft ueber das normale, hostbreite Q9K_SetU32/GetU32
+         * (volle Rundreise, wie SavedSP/EntryPC auch) -- ANDERS als die
+         * Table-D-9-Frame-Register (Q9K_SetFrameReg, absichtlich 32-Bit-
+         * kappend, s. dortigen Kopfkommentar). Deshalb hier der VOLLE
+         * Host-Zeiger, NICHT auf "unsigned int" gekappt. */
+        checkU32("F1: Deskriptor-ModuleHdr == fakeHdr",
+                 Q9K_GetU32(desc + Q9K_PROCDESC_MODHDR_OFF), (Q9_u32)(unsigned long)fakeHdr);
 
         {
             Q9_u32 sp = Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF);
@@ -375,6 +392,9 @@ int main(void)
             checkU32("F2: PID == 2 (zweiter Slot, 1-basierte PID)", pid2, 2);
             checkU32("F2: Prioritaet vom Aufrufer geerbt (42)",
                      (Q9_u32)*(Q9_u8 *)(forkPoolBase + 128 + Q9K_PROCDESC_PRIORITY_OFF), 42);
+            checkU32("F2: Deskriptor-ParentDesc == fakeCaller",
+                     Q9K_GetU32(forkPoolBase + 128 + Q9K_PROCDESC_PARENT_OFF),
+                     (Q9_u32)(unsigned long)fakeCaller);
 
             Q9K_SetU32(Q9_D_PROC, 0); /* fuer die naechsten Faelle zuruecksetzen */
         }

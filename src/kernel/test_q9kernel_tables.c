@@ -38,6 +38,16 @@ static unsigned long g_fakePoolNext;
 #define Q9K_PROCPOOL_FREE_ADDR  ((unsigned long)(g_fakeGlobals + 0x050))
 #define Q9K_PATHPOOL_BASE_ADDR  ((unsigned long)(g_fakeGlobals + 0x060))
 #define Q9K_PATHPOOL_FREE_ADDR  ((unsigned long)(g_fakeGlobals + 0x070))
+#define Q9K_PROCPOOL_COUNT_ADDR ((unsigned long)(g_fakeGlobals + 0x080))
+/* NACHTRAG 2026-08-22: Q9K_MODDIR_FREE_ADDR/HEAD_ADDR fehlten hier bisher
+ * komplett -- ohne #define-Override griffen die echten Zieladressen
+ * ($1234/$1238, s. q9kernel_tables.c) durch, auf die dieser Testhost
+ * nicht schreiben darf (SEGV, per AddressSanitizer verifiziert:
+ * "SEGV on unknown address 0x1234" in Q9K_SetU32 <- Q9K_BuildFreeList
+ * <- Q9K_SetupTables). Gleiches Muster wie alle anderen Pool-Felder
+ * oben: in den Fake-Puffer umgebogen. */
+#define Q9K_MODDIR_FREE_ADDR    ((unsigned long)(g_fakeGlobals + 0x090))
+#define Q9K_MODDIR_HEAD_ADDR    ((unsigned long)(g_fakeGlobals + 0x0A0))
 
 /* Fake-Allokator: einfacher Bump-Allocator, kein Freigeben noetig fuer
  * diesen Test (jeder Testfall alloziert einmal, komplett unabhaengig von
@@ -85,6 +95,12 @@ int main(void)
     static unsigned char fakeInit[0x80];
 
     memset(g_fakeGlobals, 0xCC, sizeof(g_fakeGlobals));
+    /* NACHTRAG 2026-08-22: g_fakePool ist statischer Speicher, also OHNE
+     * dieses memset schon BSS-genullt -- der ParentDesc==0-Test unten
+     * waere sonst keine echte Pruefung (er wuerde auch ohne die neue
+     * Nullungsschleife in Q9K_SetupTables "zufaellig" bestehen). Bewusst
+     * mit Muell gefuellt, damit ein Fehlen der Schleife real durchfaellt. */
+    memset(g_fakePool, 0xCC, sizeof(g_fakePool));
     buildFakeInit(fakeInit, /*procs=*/4, /*paths=*/2, /*mdirSz=*/3);
 
     checkU32("Q9K_SetupTables() Rueckgabewert (0 = Erfolg)", Q9K_SetupTables(fakeInit), 0);
@@ -115,6 +131,40 @@ int main(void)
             count++;
         }
         checkU32("Proc-Freiliste hat genau 4 Eintraege", (Q9_u32)count, 4);
+    }
+
+    /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): procs-Anzahl muss
+     * jetzt auch global persistiert werden (vorher nur lokale Variable in
+     * Q9K_SetupTables), damit F$Waits Pool-Scan seine Grenze kennt. */
+    checkU32("Q9K_PROCPOOL_COUNT_ADDR == procs (4)", *(Q9_u32 *)Q9K_PROCPOOL_COUNT_ADDR, 4);
+
+    /* NACHTRAG 2026-08-22: die neue Nullungsschleife in Q9K_SetupTables
+     * soll den ganzen Proc-Pool-Block nullen, BEVOR Q9K_BuildFreeList die
+     * Freilisten-Zeiger (Offset 0 jedes Slots) einbaut -- fuellt den Fake-
+     * Allokator bewusst mit 0xCC statt Nullen (s. Q9K_AllocMem oben: kein
+     * Zero-on-Alloc), damit dieser Test einen echten Fehlschlag zeigen
+     * wuerde, falls die Schleife fehlt/falsch liegt.
+     *
+     * Geprueft wird Offset 0x08 (im echten Deskriptor: ModuleHdr), NICHT
+     * das eigentlich interessierende ParentDesc bei 0x08-4=0x04: auf
+     * DIESEM 64-Bit-Testhost ist Q9_u32 (Q9K_SetU32-Parameter in
+     * Q9K_BuildFreeList) 8 statt 4 Byte breit, jeder Freilisten-Zeiger-
+     * Schreibzugriff auf Slot-Offset 0 ueberschreibt deshalb HIER
+     * zwangslaeufig auch Offset 0x04 -- auf dem echten 32-Bit-Ziel (wo
+     * Q9K_SetU32 nur 4 Byte schreibt) passiert das nicht, dort bleibt
+     * Offset 0x04 unangetastet. Offset 0x08 liegt aujenseits dieser
+     * host-spezifischen Kollisionszone und bestaetigt trotzdem, dass die
+     * Nullungsschleife den GANZEN Slot erfasst hat, nicht nur die ersten
+     * 4 Byte -- die ParentDesc-Nullung selbst ist wie schon mehrfach an
+     * anderer Stelle dokumentiert ("4-Byte-Adressfelder passen nicht zu
+     * 64-Bit-Host-Zeigern") nicht direkt host-testbar, wird stattdessen
+     * im echten Boot-Test verifiziert. */
+    {
+        Q9_u32 base = *(Q9_u32 *)Q9K_PROCPOOL_BASE_ADDR;
+        checkU32("Proc-Pool Slot 0 Offset 0x08 == 0 (Nullungsschleife erfasst ganzen Slot)",
+                 *(Q9_u32 *)(base + 0x08), 0);
+        checkU32("Proc-Pool Slot 3 Offset 0x08 == 0 (Nullungsschleife erfasst ganzen Slot)",
+                 *(Q9_u32 *)(base + 3 * 128 + 0x08), 0);
     }
 
     /* Fall: Path-Pool hat 2 Slots */

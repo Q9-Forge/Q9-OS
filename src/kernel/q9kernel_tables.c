@@ -95,6 +95,19 @@ extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
 #define Q9K_PATHPOOL_FREE_ADDR 0x121CUL
 #endif
 
+/* Q9K_PROCPOOL_COUNT_ADDR: haelt die Anzahl der Prozess-Deskriptoren
+ * (Table-D-9-Pool) global fest -- vorher war "procs" unten in
+ * Q9K_SetupTables() nur eine lokale Variable, nirgends von aussen
+ * sichtbar. Ab 2026-08-22 (Abschnitt "F$Exit/F$Wait") gebraucht: ein
+ * O(n)-Scan ueber den Pool (statt einer echten Sibling-Liste -- "eigener
+ * Kernel, keine Kompat-Pflicht fuer interne Strukturen") muss seine
+ * Grenze kennen. Adresse 0x1220 liegt in der Luecke direkt hinter
+ * Q9K_PATHPOOL_FREE_ADDR (0x121C+4) und vor Q9K_TrapHandlerScratch
+ * (0x1230, q9kernel_entry.a) -- per grep verifiziert frei. */
+#ifndef Q9K_PROCPOOL_COUNT_ADDR
+#define Q9K_PROCPOOL_COUNT_ADDR 0x1220UL
+#endif
+
 /* Modulverzeichnis-Freiliste (Abschnitt "F$Link/F$UnLink", 2026-08-21)
  * -- hinter Q9K_TrapHandlerScratch ($1230, q9kernel_entry.a). Der
  * aktive-Verzeichnisliste-Kopf (Q9K_MODDIR_HEAD_ADDR) lebt in
@@ -201,7 +214,25 @@ Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod)
     cursor += moddirSize;
 
     Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, cursor);
+    /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): das ParentDesc-Feld
+     * (Deskriptor-Offset 0x04, s. q9kernel_firstproc.c) MUSS bei einem
+     * bisher nie belegten Slot zuverlaessig 0 sein -- F$Waits Pool-Scan
+     * (q9kernel_procend.c) erkennt "dieser Slot gehoert zu keinem
+     * lebenden/Zombie-Kind" NUR ueber "ParentDesc != aufrufender
+     * Deskriptor". Q9K_AllocMem gibt KEINEN garantiert genullten Speicher
+     * zurueck (gleicher Grund wie der bereits bestehende SYSDIS/USRDIS-
+     * Nullungscode oben) -- ohne diese explizite Nullung koennte ein
+     * frischer Slot zufaellig Arena-Muell als ParentDesc tragen und den
+     * Scan verfaelschen. MUSS VOR Q9K_BuildFreeList laufen, sonst wird die
+     * gerade aufgebaute Freiliste (Zeiger bei Offset 0 jedes Slots) gleich
+     * wieder ueberschrieben. */
+    {
+        Q9_u32 i;
+        for (i = 0; i < procPoolSize; i += 4)
+            Q9K_SetU32(cursor + i, 0);
+    }
     Q9K_BuildFreeList(cursor, Q9K_PROCDESC_SIZE, procs, Q9K_PROCPOOL_FREE_ADDR);
+    Q9K_SetU32(Q9K_PROCPOOL_COUNT_ADDR, (Q9_u32)procs);   /* fuer F$Wait's Pool-Scan */
     cursor += procPoolSize;
 
     Q9K_SetU32(Q9K_PATHPOOL_BASE_ADDR, cursor);
