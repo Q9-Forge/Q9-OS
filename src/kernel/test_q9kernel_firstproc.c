@@ -55,13 +55,6 @@ static unsigned long g_fakePoolNext;
 #define Q9K_FAKE_A6_CANARY 0xCAFEUL
 unsigned long Q9K_GetA6(void) { return Q9K_FAKE_A6_CANARY; }
 
-/* Stub fuer die TEMPORAERE Diagnose-Instrumentierung (Abschnitt F$Fork,
- * Bug-Suche "kein Prozesswechsel nach F$Fork mehr", noch NICHT geloest,
- * s. [[project_q9os_own_kernel_design]]) -- nur damit dieser Test trotz
- * der temporaeren Q9K_DiagPrintU32-Aufrufe in q9kernel_firstproc.c
- * weiterhin linkt. Kein Verhalten, reiner No-op. */
-void Q9K_DiagPrintU32(unsigned long value) { (void)value; }
-
 unsigned long Q9K_AllocMem(unsigned long requestedSize)
 {
     unsigned long addr;

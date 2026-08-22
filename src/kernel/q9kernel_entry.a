@@ -794,8 +794,6 @@ Q9K_TimerActivate:
 * oben zum gemeinsamen Fake-Rahmen-Mechanismus).
 Q9K_TimerIRQHandler:
         movem.l d0-d7/a0-a6,-(sp)              * kompletten Registersatz des unterbrochenen Prozesses sichern
-        moveq   #'.',d7                        * TEMPORAERE DIAGNOSE (Abschnitt F$Fork): bestaetigt, dass der Tick real ankommt
-        bsr     Q9K_DiagWriteD7                  * TEMPORAERE DIAGNOSE
         movea.l Q9_D_Proc,a0                    * a0 = aktueller Prozessdeskriptor
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * dessen SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
 
@@ -1071,9 +1069,12 @@ Q9K_SetVBR:
         movec   d0,vbr
         rts
 
-* Q9K_DiagPrintU32 -- TEMPORAERE DIAGNOSE (2026-08-21, Abschnitt
-* "F$Fork", zur Eingrenzung des ausbleibenden Prozesswechsels nach
-* F$Fork). Vor dem naechsten "echten" Meilenstein wieder entfernen.
+* Q9K_DiagPrintU32 -- C-aufrufbarer 32-Bit-Wert-Drucker (8 Hex-Ziffern),
+* entstanden waehrend der Bug-Suche "kein Prozesswechsel nach F$Fork"
+* (2026-08-21/22) -- bewusst NICHT wieder entfernt (anders als die
+* punktuellen Marker, die ihn benutzt haben und schon wieder raus sind),
+* sondern als wiederverwendbarer Diagnose-Baustein neben Q9K_DiagWriteD7/
+* Hex32 behalten, gleiches Prinzip wie Q9K_Diag4/5/6 oben.
 * ECHTER BUG GEFUNDEN + GEFIXT: urspruenglich wurde d5 NICHT gesichert
 * -- Q9K_DiagWriteHex32 verbraucht d5 als Eingabe-/Arbeitsregister
 * (rol.l-Schleife), das verletzt aber die C-ABI-Erhaltungspflicht fuer
