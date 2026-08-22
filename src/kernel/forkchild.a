@@ -54,7 +54,14 @@ Q9K_ForkChildData:
         ds.l    1
         ends
 
+* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): druckt jetzt nur noch
+* DREIMAL 'F' (statt einer Endlosschleife) und beendet sich danach echt
+* per F$Exit (Callcode 6, 68k_tech.pdf S. 423) mit einem eigenen,
+* erkennbaren Statuscode (42) -- beweist im echten Boot-Test den
+* kompletten neuen Pfad Q9K_TrapDispatch -> Q9K_SysFExit -> Q9K_ProcExit
+* (Elternprozess Q9K_TestProcA reaktivieren, s. dortigen Kommentar).
 Q9K_ForkChildStart:
+        moveq   #3,d5                    * Wiederholungszaehler -- 3 sichtbare 'F' vor dem echten Exit
 Q9K_ForkChildLoop:
         moveq   #'F',d7
         bsr     Q9K_ForkChildWriteD7
@@ -62,7 +69,16 @@ Q9K_ForkChildLoop:
 Q9K_ForkChildWait:
         subq.l  #1,d6
         bne     Q9K_ForkChildWait
-        bra     Q9K_ForkChildLoop
+        subq.w  #1,d5
+        bne     Q9K_ForkChildLoop
+
+        move.w  #42,d1                     * d1.w = Statuscode fuer den Elternprozess (F$Exit-Konvention)
+        trap    #0
+        dc.w    6                            * Funktionscode 6 = F$Exit -- kehrt NIE zurueck
+* unerreichbar (F$Exit kehrt nie zurueck) -- reiner Sicherheitsnetz-Stillstand,
+* falls F$Exit doch je fehlschlagen sollte (laut Manual eigentlich nicht vorgesehen).
+Q9K_ForkChildHalt:
+        bra     Q9K_ForkChildHalt
 
 * Q9K_ForkChildWriteD7 -- eigenstaendige Kopie von Q9K_DiagWriteD7
 * (q9kernel_entry.a), da dieses Modul separat gelinkt wird. Registerschutz

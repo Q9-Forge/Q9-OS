@@ -29,9 +29,25 @@
  * q9kernel_tables.c -- Deskriptor-Innenleben ist reine Kernel-
  * Implementierung, kein Modul sieht das je):
  *   +0x00  State    (1 Byte, ASCII -- 'a' = aktiv, s. Thema 01/
- *          Q9_scheduler_183a-Fund fuer die reale Konvention)
+ *          Q9_scheduler_183a-Fund fuer die reale Konvention; NACHTRAG
+ *          2026-08-22, Abschnitt "F$Exit/F$Wait": zusaetzlich 'z' =
+ *          Zombie (beendet, noch nicht von F$Wait abgeholt) und 'w' =
+ *          wartend (in F$Wait blockiert, s. q9kernel_procend.c))
  *   +0x01  Priority (1 Byte, eigene Ergaenzung, s. q9kernel_sched.c)
  *   +0x02  Age      (2 Byte, eigene Ergaenzung, s. q9kernel_sched.c)
+ *   +0x04  ParentDesc  (4 Byte, NACHTRAG 2026-08-22) -- Deskriptoradresse
+ *          des erzeugenden Prozesses, 0 = kein Elternprozess (per
+ *          Q9K_ProcCreate direkt erzeugt, z.B. TestProcA/B). Gebraucht
+ *          von F$Exit (Elternprozess reaktivieren, falls der auf genau
+ *          dieses Kind wartet) und F$Wait (Pool-Scan: "hat DIESER
+ *          Aufrufer irgendein Kind?").
+ *   +0x08  ModuleHdr   (4 Byte, NACHTRAG 2026-08-22) -- Modulkopf-Adresse
+ *          (hdrAddr aus Q9K_ProcFork), 0 falls kein echtes Modul (per
+ *          Q9K_ProcCreate erzeugt). F$Exit braucht das, um den Link-
+ *          Zaehler per Q9K_ModDirUnlinkByHeader zurueckzunehmen.
+ *   +0x0C  ExitStatus  (2 Byte, NACHTRAG 2026-08-22) -- vom Kind per
+ *          F$Exit gesetzter Statuscode, von F$Wait an den Elternprozess
+ *          zurueckgegeben. Nur gueltig, wenn State=='z'.
  *   +0x30  Next     (4 Byte) -- Ready-Queue-Link
  *   +0x34  Prev     (4 Byte) -- Ready-Queue-Link
  *   +0x38  SavedSP  (4 Byte, eigene Ergaenzung) -- zeigt auf den
@@ -110,6 +126,15 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 #ifndef Q9K_PROCDESC_PRIORITY_OFF
 #define Q9K_PROCDESC_PRIORITY_OFF 0x01UL   /* s. q9kernel_sched.c */
 #endif
+#ifndef Q9K_PROCDESC_PARENT_OFF
+#define Q9K_PROCDESC_PARENT_OFF  0x04UL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
+#endif
+#ifndef Q9K_PROCDESC_MODHDR_OFF
+#define Q9K_PROCDESC_MODHDR_OFF  0x08UL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
+#endif
+#ifndef Q9K_PROCDESC_EXITSTATUS_OFF
+#define Q9K_PROCDESC_EXITSTATUS_OFF 0x0CUL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
+#endif
 #ifndef Q9K_PROCDESC_SAVEDSP_OFF
 #define Q9K_PROCDESC_SAVEDSP_OFF 0x38UL
 #endif
@@ -117,6 +142,8 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x3CUL
 #endif
 #define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. Kopfkommentar */
+#define Q9K_PROCDESC_STATE_ZOMBIE 'z'   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
+#define Q9K_PROCDESC_STATE_WAITING 'w'  /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 
 /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21/22, Abschnitt "F$Fork"): bei
  * 2048 Byte hing das System nach einem erfolgreichen F$Fork zuverlaessig
@@ -134,8 +161,27 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
  * an diesem tiefsten Punkt, reichten 2048 Byte nicht mehr. Fix: auf 4096
  * Byte verdoppelt -- real verifiziert per Boot-Test: 499 saubere,
  * durchgehend korrekte Prozesswechsel in exakter Rotation
- * TestProcA->forkchild->TestProcB, kein Haenger mehr. */
-#define Q9K_PROC_STACK_SIZE 4096UL
+ * TestProcA->forkchild->TestProcB, kein Haenger mehr.
+ *
+ * ECHTER BUG NR. 2 DERSELBEN KLASSE, GEFUNDEN + GEFIXT (2026-08-22,
+ * Abschnitt "F$Exit/F$Wait"): nach dem Hinzufuegen von ParentDesc (neue
+ * lokale Variable `parentDesc` + zwei zusaetzliche Schreibzugriffe ans
+ * Ende von Q9K_ProcFork, s. dort) reichten die 4096 Byte NICHT MEHR --
+ * derselbe stille Haenger wie oben, per identischer Bisektions-Diagnose
+ * (temporaere 'Z'/'z'-Marker direkt vor/nach dem F$Fork-TRAP in
+ * Q9K_TestProcA, q9kernel_entry.a) auf denselben Ort eingegrenzt: 'Z'
+ * erschien, 'z' NIE -- der Haenger liegt wieder irgendwo INNERHALB der
+ * Q9K_TrapDispatch->...->Q9K_ProcFork-Verschachtelung. Bestaetigt die im
+ * ersten Fund dokumentierte Einschaetzung, dass die Marge bei 4096 knapp
+ * war -- schon eine einzige zusaetzliche lokale Variable in Q9K_ProcFork
+ * reichte, sie wieder zu ueberschreiten. Fix: auf 8192 Byte verdoppelt --
+ * real verifiziert per Boot-Test (15s, Q9-Flux-Emulator, echtes
+ * OS9SYS.hda+eigener bootfile per os9-Toolshed `gen -b=`): kompletter
+ * F$Fork->F$Exit->F$Wait-Ablauf lief exakt einmal sauber durch ("L U Z z
+ * K F F F W" je genau einmal im Diagnose-Strom, kein 'k'/'w'/'H'/'S'),
+ * danach 41101x 'A' und 41884x 'B' durchgehend fehlerfreies Round-Robin
+ * ueber die volle Laufzeit -- kein Haenger, keine Korruption. */
+#define Q9K_PROC_STACK_SIZE 8192UL
 
 /* Fake-Rahmen-Geometrie, s. Kopfkommentar -- muss exakt zu "movem.l
  * (sp)+,d0-d7/a0-a6 / rte" passen. */
@@ -315,6 +361,12 @@ Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority)
 
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
     Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, priority);
+    /* NACHTRAG 2026-08-22: kein Elternprozess/echtes Modul -- Q9K_ProcCreate
+     * wird nur fuer die beiden fest verdrahteten Testprozesse (TestProcA/B,
+     * s. q9kernel_cinit.c) direkt aus Q9K_CInit heraus aufgerufen, nicht
+     * ueber F$Fork. */
+    Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
     Q9K_SetU32(desc + Q9K_PROCDESC_ENTRYPC_OFF, entryPC);
 
@@ -385,6 +437,17 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9_u16 priority;
     Q9_u32 i;
     Q9_u32 pid;
+    Q9_u32 parentDesc;
+
+    /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): der Aufrufer wird
+     * zum Elternprozess des neuen Kindes -- MUSS vor jeder eigenen
+     * Deskriptor-Aenderung gelesen werden (Q9_D_PROC zeigt bis zum
+     * naechsten echten Kontextwechsel weiter auf den Aufrufer selbst, s.
+     * gleiche Lesestelle weiter unten fuer die Prioritaets-Vererbung). 0 =
+     * kein laufender Prozess (Aufruf direkt aus Q9K_CInit, real nie der
+     * Fall fuer F$Fork ueber TRAP #0, aber defensiv wie bei der
+     * Prioritaets-Vererbung unten behandelt). */
+    parentDesc = Q9K_GetU32(Q9_D_PROC);
 
     hdrAddr = Q9K_ModDirLinkByName(typeLang, (const char *)(unsigned long)namePtr);
     if (hdrAddr == 0) {
@@ -476,6 +539,8 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
 
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
     Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, (Q9_u8)priority);
+    Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, parentDesc);   /* NACHTRAG 2026-08-22 */
+    Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, hdrAddr);      /* NACHTRAG 2026-08-22 */
     Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
     Q9K_SetU32(desc + Q9K_PROCDESC_ENTRYPC_OFF, entryPC);
 

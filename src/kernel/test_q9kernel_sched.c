@@ -19,6 +19,7 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9_D_PROC               ((unsigned long)(g_fakeGlobals + 0x000))
 #define Q9K_READYQ_SENTINEL_ADDR             ((unsigned long)(g_fakeGlobals + 0x008))
 #define Q9K_SCHED_SLICE_ADDR    ((unsigned long)(g_fakeGlobals + 0x010))
+#define Q9K_WAITQ_SENTINEL_ADDR ((unsigned long)(g_fakeGlobals + 0x018))   /* NACHTRAG 2026-08-22 */
 
 /* Real nur 0x30/0x34 auseinander -- auf diesem 64-Bit-Testhost grosszuegig
  * auf 8-Byte-Schritte gelegt, gleiches Muster wie in den anderen Tests. */
@@ -182,6 +183,36 @@ int main(void)
 
         checkU32("Q9K_SchedFirstPick bei leerer Queue -> 0", Q9K_SchedFirstPick(), 0);
         checkU32("Q9_D_PROC bleibt 0", Q9K_GetU32(Q9_D_PROC), 0);
+    }
+
+    /* Fall 10 (NACHTRAG 2026-08-22, Abschnitt "F$Exit/F$Wait"):
+     * Q9K_WaitQInsert/Q9K_WaitQRemove -- eigene, von der Ready-Queue
+     * komplett getrennte Warteschlange, gleiches Next/Prev-Grundmuster.
+     * p1/p2 hier zweckentfremdet (Ready-Queue-Faelle sind bereits
+     * abgeschlossen), rein als generische Deskriptor-Slots. */
+    {
+        Q9K_SetU32(Q9K_WAITQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF, Q9K_WAITQ_SENTINEL_ADDR);
+        Q9K_SetU32(Q9K_WAITQ_SENTINEL_ADDR + Q9K_READYQ_PREV_OFF, Q9K_WAITQ_SENTINEL_ADDR);
+
+        Q9K_WaitQInsert(p1);
+        checkU32("Q9K_WaitQInsert(p1): Sentinel.next == p1",
+                 Q9K_GetU32(Q9K_WAITQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), p1);
+
+        Q9K_WaitQInsert(p2);
+        checkU32("Q9K_WaitQInsert(p2): Sentinel.prev == p2 (hinten angehaengt)",
+                 Q9K_GetU32(Q9K_WAITQ_SENTINEL_ADDR + Q9K_READYQ_PREV_OFF), p2);
+        checkU32("Q9K_WaitQInsert(p2): p1.next == p2 (verkettet)",
+                 Q9K_GetU32(p1 + Q9K_READYQ_NEXT_OFF), p2);
+
+        Q9K_WaitQRemove(p1);
+        checkU32("Q9K_WaitQRemove(p1): Sentinel.next == p2 (p1 entfernt)",
+                 Q9K_GetU32(Q9K_WAITQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), p2);
+
+        Q9K_WaitQRemove(p2);
+        checkU32("Q9K_WaitQRemove(p2): Warteschlange wieder leer (Sentinel.next == Sentinel)",
+                 Q9K_GetU32(Q9K_WAITQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), Q9K_WAITQ_SENTINEL_ADDR);
+        checkU32("Ready-Queue bleibt von der Wait-Queue unberuehrt (Sentinel.next == Sentinel)",
+                 Q9K_GetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), Q9K_READYQ_SENTINEL_ADDR);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

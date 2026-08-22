@@ -82,6 +82,8 @@ extern Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList); /* q9kernel
 extern void   Q9K_SysFLink(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Link (Callcode 0x00) */
 extern void   Q9K_SysFUnLink(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$UnLink (Callcode 0x02) */
 extern void   Q9K_SysFFork(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Fork (Callcode 0x03) */
+extern void   Q9K_SysFWait(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Wait (Callcode 0x04) */
+extern void   Q9K_SysFExit(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Exit (Callcode 0x06) */
 
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
  * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
@@ -119,6 +121,15 @@ extern void Q9K_Diag6(void);
  * bei Gelegenheit pruefen ob ueberhaupt noch noetig), wird aber von
  * unserem eigenen Scheduler NICHT mehr gelesen/geschrieben. */
 #define Q9K_READYQ_SENTINEL_ADDR 0x1240UL
+
+/* Eigene Wait-Queue-Sentinel-Adresse (Abschnitt "F$Exit/F$Wait",
+ * 2026-08-22) -- MUSS mit Q9K_WAITQ_SENTINEL_ADDR in q9kernel_sched.c
+ * uebereinstimmen, gleiche Begruendung/Kollisionsvermeidung wie oben bei
+ * Q9K_READYQ_SENTINEL_ADDR (dort ausfuehrlich dokumentiert, s. dortigen
+ * Kommentar). Q9_D_WAITQ selbst bleibt weiter unten als leere Ringliste
+ * initialisiert (Kompat-Vollstaendigkeit), wird aber von unserem eigenen
+ * F$Wait NICHT mehr gelesen/geschrieben. */
+#define Q9K_WAITQ_SENTINEL_ADDR 0x12A0UL
 
 /* Freispeicher-Basis fuer die Arena (Abschnitt 2, Punkt 3) -- 2026-08-18
  * mit Andreas abgestimmt: fester Offset, VORLAEUFIG, unter der Annahme,
@@ -176,7 +187,8 @@ void Q9K_CInit(void)
     Q9K_InitEmptyQueue(Q9_D_ACTIVQ, 0x30, 0x34);   /* NACHTRAG: nicht mehr von unserem Scheduler benutzt, s. Q9K_READYQ_SENTINEL_ADDR-Kommentar oben */
     Q9K_InitEmptyQueue(Q9K_READYQ_SENTINEL_ADDR, 0x30, 0x34); /* die WIRKLICH vom Scheduler benutzte eigene Ready-Queue */
     Q9K_InitEmptyQueue(Q9_D_SLEEPQ, 0x30, 0x34);
-    Q9K_InitEmptyQueue(Q9_D_WAITQ,  0x30, 0x34);
+    Q9K_InitEmptyQueue(Q9_D_WAITQ,  0x30, 0x34);   /* NACHTRAG: nicht mehr von F$Wait benutzt, s. Q9K_WAITQ_SENTINEL_ADDR-Kommentar oben */
+    Q9K_InitEmptyQueue(Q9K_WAITQ_SENTINEL_ADDR, 0x30, 0x34);  /* die WIRKLICH von F$Wait benutzte eigene Wait-Queue */
     Q9K_InitEmptyQueue(Q9_D_ARENA,  0x08, 0x0C);
     Q9K_InitEmptyQueue(Q9_D_ALMQ1,  0x0C, 0x10);
     Q9K_InitEmptyQueue(Q9_D_ALMQ2,  0x0C, 0x10);
@@ -273,6 +285,8 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x00UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFLink);
                     Q9K_PutU32(usrdisBase + 0x02UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFUnLink);
                     Q9K_PutU32(usrdisBase + 0x03UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFork);
+                    Q9K_PutU32(usrdisBase + 0x04UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFWait);
+                    Q9K_PutU32(usrdisBase + 0x06UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFExit);
                 }
             }
             /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/
