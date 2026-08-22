@@ -89,10 +89,6 @@ extern Q9_u32 Q9K_GetA6(void);  /* q9kernel_entry.a -- liefert den aktuellen (pe
                                   * Q9K_CRuntimeData fixierten) a6-Wert, s. dortigen Kommentar */
 extern Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name);   /* q9kernel_moddir.c */
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /* q9kernel_moddir.c */
-extern void   Q9K_DiagPrintU32(Q9_u32 value); /* TEMPORAERE DIAGNOSE, s. q9kernel_entry.a */
-#ifndef Q9K_READYQ_SENTINEL_ADDR
-#define Q9K_READYQ_SENTINEL_ADDR 0x1240UL /* s. q9kernel_sched.c -- TEMPORAERE DIAGNOSE */
-#endif
 
 #ifndef Q9K_PROCPOOL_FREE_ADDR
 #define Q9K_PROCPOOL_FREE_ADDR 0x120CUL   /* s. q9kernel_tables.c */
@@ -122,7 +118,24 @@ extern void   Q9K_DiagPrintU32(Q9_u32 value); /* TEMPORAERE DIAGNOSE, s. q9kerne
 #endif
 #define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. Kopfkommentar */
 
-#define Q9K_PROC_STACK_SIZE 2048UL
+/* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21/22, Abschnitt "F$Fork"): bei
+ * 2048 Byte hing das System nach einem erfolgreichen F$Fork zuverlaessig
+ * -- kein Absturz, aber ab dann kein einziger weiterer Timer-Tick mehr
+ * sichtbar (per Bisektions-Diagnose auf den Moment EXAKT am Ende von
+ * Q9K_ProcFork eingegrenzt, dort wo dessen eigener, seit Funktionseintritt
+ * "offener" Stack-Rahmen mit allen 13 lokalen Variablen am tiefsten ist).
+ * Ursache: TRAP #0 wechselt NICHT auf einen separaten Supervisor-Stack
+ * (der aufrufende Prozess ist bereits im Supervisor-Zustand, s.
+ * Q9K_INITIAL_SR) -- die komplette Verschachtelung Q9K_TrapDispatch ->
+ * Q9K_SysFFork (asm) -> Q9K_SysForkImpl -> Q9K_ProcFork ->
+ * Q9K_ModDirLinkByName/Q9K_AllocMem/Q9K_SchedInsert/Q9K_ListAppend laeuft
+ * komplett auf dem AUFRUFENDEN Prozesses EIGENEM, kleinen Stack. Kommt
+ * dazu noch ein Timer-Tick (movem.l d0-d7/a0-a6 = 60 weitere Byte) GENAU
+ * an diesem tiefsten Punkt, reichten 2048 Byte nicht mehr. Fix: auf 4096
+ * Byte verdoppelt -- real verifiziert per Boot-Test: 499 saubere,
+ * durchgehend korrekte Prozesswechsel in exakter Rotation
+ * TestProcA->forkchild->TestProcB, kein Haenger mehr. */
+#define Q9K_PROC_STACK_SIZE 4096UL
 
 /* Fake-Rahmen-Geometrie, s. Kopfkommentar -- muss exakt zu "movem.l
  * (sp)+,d0-d7/a0-a6 / rte" passen. */
@@ -373,21 +386,17 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9_u32 i;
     Q9_u32 pid;
 
-    Q9K_DiagPrintU32(1); /* TEMPORAERE DIAGNOSE: Q9K_ProcFork betreten */
-
     hdrAddr = Q9K_ModDirLinkByName(typeLang, (const char *)(unsigned long)namePtr);
     if (hdrAddr == 0) {
         *outError = (Q9_u16)Q9K_E_MNF;
         return 0;
     }
-    Q9K_DiagPrintU32(2); /* TEMPORAERE DIAGNOSE: Modul gefunden */
 
     dataSize  = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_MEM);
     stackSize = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_STACK);
     execOff   = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_EXEC);
 
     totalSize = dataSize + stackSize + addMem + paramSize; /* s. Kopfkommentar */
-    Q9K_DiagPrintU32(3); /* TEMPORAERE DIAGNOSE: Groessen berechnet */
 
     block = Q9K_AllocMem(totalSize);
     if (block == 0) {
@@ -395,7 +404,6 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
         *outError = (Q9_u16)Q9K_E_MEMFUL;
         return 0;
     }
-    Q9K_DiagPrintU32(4); /* TEMPORAERE DIAGNOSE: Speicher alloziert */
 
     desc = Q9K_ProcPoolAlloc();
     if (desc == 0) {
@@ -403,7 +411,6 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
         *outError = (Q9_u16)Q9K_E_PRCFUL;
         return 0;
     }
-    Q9K_DiagPrintU32(5); /* TEMPORAERE DIAGNOSE: Deskriptor alloziert */
 
     /* Speicherlayout, Figure D-3 (68k_tech.pdf S. 431), HOCH->NIEDRIG:
      *   [blockTop]     Parameter-Bereichsende -- (a1) zeigt hierher
@@ -428,7 +435,6 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
      * (kein Parameter, Schleife laeuft dann null Mal). */
     for (i = 0; i < paramSize; i++)
         Q9K_SetU8(spBoundary + i, Q9K_GetU8(paramPtr + i));
-    Q9K_DiagPrintU32(6); /* TEMPORAERE DIAGNOSE: Parameter kopiert */
 
     frameBase = spBoundary - Q9K_FAKEFRAME_SIZE;
 
@@ -463,7 +469,6 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetFrameReg(frameBase, 12, 0);         /* a4 = Undefined */
     Q9K_SetFrameReg(frameBase, 13, spBoundary);/* a5 = (a5),(a7)-Grenze */
     Q9K_SetFrameReg(frameBase, 14, block);     /* a6 = Datenbereichsbasis (eigene Kernel-Konvention, s. Kopfkommentar) */
-    Q9K_DiagPrintU32(7); /* TEMPORAERE DIAGNOSE: Registersatz geschrieben */
 
     Q9K_SetU16(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_SR_OFF, Q9K_INITIAL_SR);
     Q9K_SetU32(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_PC_OFF, entryPC);
@@ -474,9 +479,7 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
     Q9K_SetU32(desc + Q9K_PROCDESC_ENTRYPC_OFF, entryPC);
 
-    Q9K_DiagPrintU32(8); /* TEMPORAERE DIAGNOSE: vor Q9K_SchedInsert */
     Q9K_SchedInsert(desc);
-    Q9K_DiagPrintU32(9); /* TEMPORAERE DIAGNOSE: nach Q9K_SchedInsert */
 
     return pid;
 }

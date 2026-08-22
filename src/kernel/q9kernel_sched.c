@@ -51,8 +51,6 @@ typedef unsigned long  Q9_u32;
 typedef unsigned short Q9_u16;
 typedef unsigned char  Q9_u8;
 
-extern void Q9K_DiagPrintU32(Q9_u32 value); /* TEMPORAERE DIAGNOSE, s. q9kernel_entry.a */
-
 #ifndef Q9_D_PROC
 #define Q9_D_PROC 0x04CUL   /* [VERIFIZIERT], s. q9sysglob.h */
 #endif
@@ -140,19 +138,12 @@ static void Q9K_ListUnlink(Q9_u32 node)
 
 static void Q9K_ListAppend(Q9_u32 sentinel, Q9_u32 node)
 {
-    Q9_u32 tail;
-    Q9K_DiagPrintU32(101); /* TEMPORAERE DIAGNOSE: Q9K_ListAppend betreten */
-    tail = Q9K_GetU32(sentinel + Q9K_READYQ_PREV_OFF);
-    Q9K_DiagPrintU32(tail); /* TEMPORAERE DIAGNOSE: gelesener tail-Wert */
+    Q9_u32 tail = Q9K_GetU32(sentinel + Q9K_READYQ_PREV_OFF);
 
     Q9K_SetU32(node + Q9K_READYQ_NEXT_OFF, sentinel);
-    Q9K_DiagPrintU32(102); /* TEMPORAERE DIAGNOSE */
     Q9K_SetU32(node + Q9K_READYQ_PREV_OFF, tail);
-    Q9K_DiagPrintU32(103); /* TEMPORAERE DIAGNOSE */
     Q9K_SetU32(tail + Q9K_READYQ_NEXT_OFF, node);
-    Q9K_DiagPrintU32(104); /* TEMPORAERE DIAGNOSE */
     Q9K_SetU32(sentinel + Q9K_READYQ_PREV_OFF, node);
-    Q9K_DiagPrintU32(105); /* TEMPORAERE DIAGNOSE */
 }
 
 /* Fuegt desc in die Ready-Queue (Q9K_READYQ_SENTINEL_ADDR) ein -- Age wird auf die
@@ -162,10 +153,8 @@ static void Q9K_ListAppend(Q9_u32 sentinel, Q9_u32 node)
  * Wiedereinfuegen nach einer Zeitscheibe. */
 void Q9K_SchedInsert(Q9_u32 desc)
 {
-    Q9K_DiagPrintU32(100); /* TEMPORAERE DIAGNOSE: Q9K_SchedInsert betreten */
     Q9K_SetU16(desc + Q9K_PROCDESC_AGE_OFF, (Q9_u16)Q9K_GetU8(desc + Q9K_PROCDESC_PRIORITY_OFF));
     Q9K_ListAppend(Q9K_READYQ_SENTINEL_ADDR, desc);
-    Q9K_DiagPrintU32(106); /* TEMPORAERE DIAGNOSE: Q9K_SchedInsert fertig */
 }
 
 /* Erhoeht das Alter ALLER Eintraege in der Ready-Queue um 1 ("the ages
@@ -234,39 +223,27 @@ Q9_u32 Q9K_SchedReschedule(void)
     Q9_u32 current = Q9K_GetU32(Q9_D_PROC);
     Q9_u16 slice;
 
-    Q9K_DiagPrintU32(200); /* TEMPORAERE DIAGNOSE: Q9K_SchedReschedule betreten */
     Q9K_SchedAgeAll();
-    Q9K_DiagPrintU32(201); /* TEMPORAERE DIAGNOSE: AgeAll fertig */
 
     slice = Q9K_GetU16(Q9K_SCHED_SLICE_ADDR);
     if (slice > 0) {
         Q9K_SetU16(Q9K_SCHED_SLICE_ADDR, (Q9_u16)(slice - 1));
-        Q9K_DiagPrintU32(202); /* TEMPORAERE DIAGNOSE: kein Wechsel, Slice laeuft noch */
         return 0;
     }
 
     {
-        Q9_u32 next;
-        Q9K_DiagPrintU32(203); /* TEMPORAERE DIAGNOSE: Slice=0, waehle naechsten */
-        next = Q9K_SchedPickHighestAge();
-        Q9K_DiagPrintU32(next); /* TEMPORAERE DIAGNOSE: gewaehlter Deskriptor (0=keiner) */
+        Q9_u32 next = Q9K_SchedPickHighestAge();
 
         Q9K_SetU16(Q9K_SCHED_SLICE_ADDR, Q9K_SCHED_TSLICE);
 
-        if (next == 0) {
-            Q9K_DiagPrintU32(204); /* TEMPORAERE DIAGNOSE: kein anderer bereit */
+        if (next == 0)
             return 0; /* kein anderer Prozess bereit -- derselbe laeuft einfach weiter,
                         * eigene Zeitscheibe oben schon neu aufgeladen */
-        }
 
-        if (current != 0) {
-            Q9K_DiagPrintU32(205); /* TEMPORAERE DIAGNOSE: vor Reinsert des aktuellen */
+        if (current != 0)
             Q9K_SchedInsert(current); /* zurueck in die Ready-Queue, Age=Prioritaet */
-            Q9K_DiagPrintU32(206); /* TEMPORAERE DIAGNOSE: nach Reinsert des aktuellen */
-        }
 
         Q9K_SetU32(Q9_D_PROC, next);
-        Q9K_DiagPrintU32(207); /* TEMPORAERE DIAGNOSE: Q9_D_PROC gesetzt, vor return */
         return next;
     }
 }
