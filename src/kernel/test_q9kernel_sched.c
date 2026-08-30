@@ -20,6 +20,12 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_READYQ_SENTINEL_ADDR             ((unsigned long)(g_fakeGlobals + 0x008))
 #define Q9K_SCHED_SLICE_ADDR    ((unsigned long)(g_fakeGlobals + 0x010))
 #define Q9K_WAITQ_SENTINEL_ADDR ((unsigned long)(g_fakeGlobals + 0x018))   /* NACHTRAG 2026-08-22 */
+#define Q9K_SLEEPQ_SENTINEL_ADDR ((unsigned long)(g_fakeGlobals + 0x020))  /* NACHTRAG 2026-08-30 */
+/* Real nur 2 Byte (Deskriptor-Offset 0x0E) -- grosszuegig auf einen
+ * eigenen, von Q9K_READYQ_NEXT_OFF/PREV_OFF (0x40/0x48) weit entfernten
+ * Testoffset gelegt, damit Q9K_SetU32 (8 Byte auf diesem Host) sie nicht
+ * ueberlappt. */
+#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x18UL
 
 /* Real nur 0x30/0x34 auseinander -- auf diesem 64-Bit-Testhost grosszuegig
  * auf 8-Byte-Schritte gelegt, gleiches Muster wie in den anderen Tests. */
@@ -63,6 +69,19 @@ int main(void)
 
     memset(g_fakeGlobals, 0, sizeof(g_fakeGlobals));
     memset(pool, 0, sizeof(pool));
+
+    /* NACHTRAG 2026-08-30: Q9K_SchedReschedule ruft seit "F$Sleep"
+     * UNBEDINGT Q9K_SleepQDecrementAll auf (einmal pro Tick, s.
+     * q9kernel_sched.c) -- die Sleep-Queue-Sentinel MUSS deshalb schon
+     * VOR dem ersten Q9K_SchedReschedule-Aufruf als leere Ringliste
+     * initialisiert sein (nicht erst in Fall 11 weiter unten), sonst
+     * dereferenziert der erste Schleifendurchlauf einen ungueltigen
+     * Zeiger (real per AddressSanitizer gefunden: SEGV in Q9K_GetU32 <-
+     * Q9K_SleepQDecrementAll <- Q9K_SchedReschedule, ausgeloest durch
+     * einen der FRUEHEREN Testfaelle, die von der neuen Sleep-Queue
+     * noch nichts wissen). */
+    Q9K_SetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF, Q9K_SLEEPQ_SENTINEL_ADDR);
+    Q9K_SetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_PREV_OFF, Q9K_SLEEPQ_SENTINEL_ADDR);
 
     /* Q9K_READYQ_SENTINEL_ADDR als leere Ringliste initialisieren -- gleiches Muster
      * wie Q9K_InitEmptyQueue (q9kernel_cinit.c). */
@@ -213,6 +232,55 @@ int main(void)
                  Q9K_GetU32(Q9K_WAITQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), Q9K_WAITQ_SENTINEL_ADDR);
         checkU32("Ready-Queue bleibt von der Wait-Queue unberuehrt (Sentinel.next == Sentinel)",
                  Q9K_GetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), Q9K_READYQ_SENTINEL_ADDR);
+    }
+
+    /* Fall 11 (NACHTRAG 2026-08-30, Abschnitt "F$Sleep"):
+     * Q9K_SleepQInsert/Q9K_SleepQDecrementAll -- eigene, von Ready-/
+     * Wait-Queue komplett getrennte Warteschlange. p1/p2/p3 hier erneut
+     * zweckentfremdet als generische Deskriptor-Slots. */
+    {
+        Q9K_SetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF, Q9K_SLEEPQ_SENTINEL_ADDR);
+        Q9K_SetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_PREV_OFF, Q9K_SLEEPQ_SENTINEL_ADDR);
+        Q9K_SetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF, Q9K_READYQ_SENTINEL_ADDR);
+        Q9K_SetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_PREV_OFF, Q9K_READYQ_SENTINEL_ADDR);
+
+        /* p1: Countdown 3 -- braucht 3 Dekrement-Aufrufe bis zum Wecken. */
+        *(unsigned char *)(p1 + Q9K_PROCDESC_STATE_OFF) = 's';
+        Q9K_SetU32(p1 + Q9K_PROCDESC_SLEEPTICKS_OFF, 3);
+        /* p2: Sentinel Q9K_SLEEP_INFINITE -- darf NIE geweckt werden. */
+        *(unsigned char *)(p2 + Q9K_PROCDESC_STATE_OFF) = 's';
+        Q9K_SetU32(p2 + Q9K_PROCDESC_SLEEPTICKS_OFF, Q9K_SLEEP_INFINITE);
+        /* p3: Countdown 1 -- wacht bereits beim ERSTEN Dekrement auf. */
+        *(unsigned char *)(p3 + Q9K_PROCDESC_STATE_OFF) = 's';
+        Q9K_SetU32(p3 + Q9K_PROCDESC_SLEEPTICKS_OFF, 1);
+
+        Q9K_SleepQInsert(p1);
+        Q9K_SleepQInsert(p2);
+        Q9K_SleepQInsert(p3);
+
+        Q9K_SleepQDecrementAll();   /* Tick 1: p3 wacht auf (1->0), p1: 3->2, p2 unangetastet */
+        checkU32("Tick1: p3 wurde in die Ready-Queue verschoben (Sentinel.next == p3)",
+                 Q9K_GetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), p3);
+        checkU32("Tick1: p3.State zurueck auf 'a'",
+                 (Q9_u32)*(unsigned char *)(p3 + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'a');
+        checkU32("Tick1: p1.SleepTicks == 2 (3->2)", Q9K_GetU32(p1 + Q9K_PROCDESC_SLEEPTICKS_OFF), 2);
+        checkU32("Tick1: p2.SleepTicks bleibt Q9K_SLEEP_INFINITE (nie dekrementiert)",
+                 Q9K_GetU32(p2 + Q9K_PROCDESC_SLEEPTICKS_OFF), Q9K_SLEEP_INFINITE);
+        checkU32("Tick1: p1 noch in der Sleep-Queue (Sentinel.next == p1)",
+                 Q9K_GetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), p1);
+
+        Q9K_SleepQDecrementAll();   /* Tick 2: p1: 2->1 */
+        Q9K_SleepQDecrementAll();   /* Tick 3: p1: 1->0, wacht auf */
+        checkU32("Tick3: p1 wurde ebenfalls in die Ready-Queue verschoben",
+                 (Q9_u32)*(unsigned char *)(p1 + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'a');
+        checkU32("Tick3: Sleep-Queue enthaelt nur noch p2 (Sentinel.next == p2)",
+                 Q9K_GetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), p2);
+
+        Q9K_SleepQDecrementAll();   /* Tick 4: p2 (unendlich) bleibt unberuehrt */
+        checkU32("Tick4: p2 bleibt in der Sleep-Queue (nie geweckt)",
+                 Q9K_GetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), p2);
+        checkU32("Tick4: p2.State bleibt 's'",
+                 (Q9_u32)*(unsigned char *)(p2 + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'s');
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

@@ -198,6 +198,14 @@ Q9K_WaitScratch_Outcome    equ $12E4       * Q9_u16, 0=blockieren/1=sofort erfol
 Q9K_ExitScratch_Status     equ $12E8       * Q9_u16, d1.w EIN
 Q9K_ExitScratch_Next       equ $12EC       * Q9_u32, naechster Deskriptor AUS
 
+* Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
+* Q9K_SysFSleep (Abschnitt "F$Sleep", 2026-08-30) -- gleiches Muster wie
+* oben. Direkt hinter Q9K_SleepQ_Sentinel ($12F0, q9kernel_sched.c) +
+* dessen 0x38 Byte eigenem Next/Prev-Bereich -- naechste freie Adresse
+* $1328.
+Q9K_SleepScratch_TicksIn  equ $1328      * Q9_u32, d0.l EIN
+Q9K_SleepScratch_Next     equ $132C      * Q9_u32, naechster Deskriptor AUS
+
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
 * gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
@@ -1252,6 +1260,51 @@ Q9K_SysFExit:
         bra     Q9K_KernelPanic
 
 Q9K_SysFExit_SwitchTo:
+        movea.l d0,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+
+*******************************************************************************
+* Q9K_SysFSleep -- TRAP-#0-Handler fuer den echten F$Sleep-Callcode
+* (0x0a, s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention
+* (68k_tech.pdf S. 497-498, echt per Read gelesen): IN d0.l=Ticks/
+* Sekunden. OUT d0.l=verbleibende Ticks falls vorzeitig aktiviert (in
+* diesem Kernel IMMER 0, s. q9kernel_procsleep.c Kopfkommentar -- kein
+* Signalsystem vorhanden). Fehlerpfad entfaellt komplett -- der einzige
+* reale Fehlercode (E$NoClk) kann hier nie auftreten, der Board-Timer
+* laeuft permanent.
+*
+* IMMER ein Block-Vorgang (s. q9kernel_procsleep.c Kopfkommentar) --
+* GENAU WIE Q9K_SysFWaits Blockierpfad: kompletten Registersatz DES
+* AUFRUFERS auf dessen eigenem Stack sichern, dabei zuerst die
+* jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen (Q9K_SysFSleep
+* wird wie Q9K_SysFWait per jsr erreicht, s. dortigen ausfuehrlichen
+* Kopfkommentar zur exakten Begruendung). d0 (Ticks-Eingabe) MUSS VOR
+* dem Registersatz-Ueberschreiben in die Scratch-Adresse gerettet
+* werden -- danach ist der urspruengliche d0-Wert weg (Teil des
+* gesicherten/spaeter zurueckgeholten Rahmens, nicht mehr direkt
+* lesbar).
+Q9K_SysFSleep:
+        move.l  d0,Q9K_SleepScratch_TicksIn
+        addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
+        movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des schlafenden Aufrufers sichern
+
+        movea.l Q9_D_Proc,a0
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
+
+        lea     Q9K_CRuntimeData(pc),a6              * fuer den folgenden C-Aufruf, gleiches Muster wie oben
+        bsr     Q9K_SysSleepImpl                        * -> Q9K_SleepScratch_Next = naechster Deskriptor oder 0
+
+        move.l  Q9K_SleepScratch_Next,d0
+        tst.l   d0
+        bne     Q9K_SysFSleep_SwitchTo
+* Kein Prozess mehr bereit -- reale K$Idle-Semantik, s. Kopfkommentar
+* bei Q9K_KernelPanic.
+        moveq   #K_IDLE,d0
+        bra     Q9K_KernelPanic
+
+Q9K_SysFSleep_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         movem.l (sp)+,d0-d7/a0-a6

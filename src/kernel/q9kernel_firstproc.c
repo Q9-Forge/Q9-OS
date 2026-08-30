@@ -48,6 +48,13 @@
  *   +0x0C  ExitStatus  (2 Byte, NACHTRAG 2026-08-22) -- vom Kind per
  *          F$Exit gesetzter Statuscode, von F$Wait an den Elternprozess
  *          zurueckgegeben. Nur gueltig, wenn State=='z'.
+ *   +0x0E  SleepTicks  (4 Byte, NACHTRAG 2026-08-30, Abschnitt
+ *          "F$Sleep") -- Countdown in Ticks bis zum Aufwachen (echte
+ *          F$Sleep-Konvention: "inserted into active queue after (n-1)
+ *          ticks", s. q9kernel_procsleep.c). Sentinel 0xFFFFFFFF =
+ *          Sleep(0) = unendlich (kann in diesem Kernel nur per
+ *          F$Send/Signal geweckt werden -- existiert noch nicht,
+ *          bewusste Grenze). Nur gueltig, wenn State=='s'.
  *   +0x30  Next     (4 Byte) -- Ready-Queue-Link
  *   +0x34  Prev     (4 Byte) -- Ready-Queue-Link
  *   +0x38  SavedSP  (4 Byte, eigene Ergaenzung) -- zeigt auf den
@@ -135,6 +142,9 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 #ifndef Q9K_PROCDESC_EXITSTATUS_OFF
 #define Q9K_PROCDESC_EXITSTATUS_OFF 0x0CUL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #endif
+#ifndef Q9K_PROCDESC_SLEEPTICKS_OFF
+#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x0EUL   /* NACHTRAG 2026-08-30, s. Kopfkommentar */
+#endif
 #ifndef Q9K_PROCDESC_SAVEDSP_OFF
 #define Q9K_PROCDESC_SAVEDSP_OFF 0x38UL
 #endif
@@ -144,6 +154,7 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 #define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_ZOMBIE 'z'   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_WAITING 'w'  /* NACHTRAG 2026-08-22, s. Kopfkommentar */
+#define Q9K_PROCDESC_STATE_SLEEPING 's' /* NACHTRAG 2026-08-30, s. Kopfkommentar */
 
 /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21/22, Abschnitt "F$Fork"): bei
  * 2048 Byte hing das System nach einem erfolgreichen F$Fork zuverlaessig
