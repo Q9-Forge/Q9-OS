@@ -1393,9 +1393,28 @@ Q9K_SysFSleep_SwitchTo:
 * oben. d7 muss HIER (anders als bei Q9K_SysFLink) NICHT gesichert
 * werden -- es wird an keiner Stelle als eigenes Scratch benutzt, alle
 * Werte laufen ueber die Scratch-Adressen.
+*
+* NACHTRAG 2026-08-31 (Abschnitt "IOMan-Einbindung, Punkt 1: A6-Umschaltung"):
+* ECHTER Aufrufer dieses Slots ist NICHT nur unser eigener
+* Q9K_TrapDispatch (dort a6 IMMER schon Q9K_CRuntimeData) -- reale,
+* externe Systm-Module wie IOMan rufen F$SRqMem auch DIREKT ueber einen
+* eigenen A6-relativen PEA+RTS-Tabellensprung auf (s. modules/ioman/docs/
+* REVERSE_ENGINEERING.md), dabei erwartungsgemaess mit a6=0 (echte
+* Kernel-Global-Basis, s. Kopfkommentar bei der geplanten IOMan-
+* Einsprungstelle in Q9K_TestProcA weiter unten). Der C-Aufruf
+* (Q9K_SysSRqMemImpl) braucht aber ZWINGEND a6=Q9K_CRuntimeData (eigener
+* Stack-Ueberlauf-Check, s. Kopfkommentar Q9K_TrapDispatch weiter oben)
+* -- deshalb hier das eingehende a6 (kann 0 ODER Q9K_CRuntimeData sein,
+* je nach Aufrufweg) auf dem Stack sichern, fuer den C-Aufruf umschalten,
+* und VOR dem eigenen RTS wieder auf den EINGEHENDEN Wert zuruecksetzen
+* (der Aufrufer -- egal ob unser Q9K_TrapDispatch oder IOMans eigener
+* Code -- erwartet sein EIGENES a6 danach unveraendert vorzufinden).
 Q9K_SysFSRqMem:
+        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf, sonst Q9K_CRuntimeData)
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  d0,Q9K_SRqMemScratch_SizeIn
         bsr     Q9K_SysSRqMemImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen -- WICHTIG fuer externe Aufrufer wie IOMan
 
         tst.w   Q9K_SRqMemScratch_Success
         beq     Q9K_SysFSRqMem_Fail
