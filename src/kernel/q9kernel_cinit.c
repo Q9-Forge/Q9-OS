@@ -294,6 +294,34 @@ void Q9K_CInit(void)
                 Q9K_ModDirPopulateFromBootList((const Q9_u8 *)Q9K_BOOTLIST_ADDR);
                 {
                     Q9_u32 usrdisBase = *(volatile Q9_u32 *)Q9_D_USRDIS;
+                    /* NACHTRAG 2026-08-31 (Abschnitt "IOMan-Einbindung, Punkt 1"):
+                     * Q9_D_SYSDIS ($3a4) MUSS ebenfalls befuellt werden -- real
+                     * per Ghidra-Disassemblierung gefunden (docs/
+                     * REVERSE_ENGINEERING.md, Fund "Q9_disp_488"): welche der
+                     * beiden Tabellen ein TRAP #0 benutzt, haengt vom
+                     * Supervisor-Bit im geretteten SR ab (schon dokumentiert,
+                     * "wir haben noch keine echte User-/Supervisor-Trennung" --
+                     * betraf bisher nur TRAP #0). NEU gefunden (per echtem
+                     * Boot-Test, IOMan-Einbindung): bereits-residente,
+                     * bereits-supervisor-state Systm-Module wie IOMan rufen
+                     * F$-Primitive INTERN NIE ueber TRAP #0, sondern ueber
+                     * einen eigenen A6-relativen PEA+RTS-Tabellensprung DIREKT
+                     * auf Q9_D_SYSDIS (s. modules/ioman/docs/
+                     * REVERSE_ENGINEERING.md, Fund "IOMan ruft Kernel-Primitive
+                     * ueber dieselbe Trampolin-Tabelle wie der Kernel selbst
+                     * auf"). Ohne diese Befuellung blieb Q9_D_SYSDIS auf dem
+                     * genullten Anfangszustand (s. q9kernel_tables.c) --
+                     * IOMans eigener Trampolin sprang dadurch real auf Adresse
+                     * 0 (per Boot-Test als Fehlschlag/Q9K_StkHandler-Ausloesung
+                     * beobachtet, urspruenglich faelschlich fuer einen
+                     * Stack-Ueberlauf gehalten -- Verdopplung von
+                     * Q9K_PROC_STACK_SIZE aenderte NICHTS am Fehlerbild, ein
+                     * starkes Indiz gegen einen echten Stack-Ueberlauf).
+                     * Gleiche Handler-Adressen wie in Q9_D_USRDIS -- unsere
+                     * Handler unterscheiden ohnehin nicht zwischen den beiden
+                     * Aufrufkontexten (kein Nested-Call-Zaehler-Bezug in den
+                     * Handlern selbst). */
+                    Q9_u32 sysdisBase = *(volatile Q9_u32 *)Q9_D_SYSDIS;
 
                     Q9K_PutU32(usrdisBase + 0x00UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFLink);
                     Q9K_PutU32(usrdisBase + 0x02UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFUnLink);
@@ -304,6 +332,16 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x28UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqMem);
                     Q9K_PutU32(usrdisBase + 0x29UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRtMem);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
+
+                    Q9K_PutU32(sysdisBase + 0x00UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFLink);
+                    Q9K_PutU32(sysdisBase + 0x02UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFUnLink);
+                    Q9K_PutU32(sysdisBase + 0x03UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFork);
+                    Q9K_PutU32(sysdisBase + 0x04UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFWait);
+                    Q9K_PutU32(sysdisBase + 0x06UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFExit);
+                    Q9K_PutU32(sysdisBase + 0x0aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSleep);
+                    Q9K_PutU32(sysdisBase + 0x28UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqMem);
+                    Q9K_PutU32(sysdisBase + 0x29UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRtMem);
+                    Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                 }
             }
             /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/
