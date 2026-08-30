@@ -116,10 +116,29 @@ typedef unsigned char  Q9_u8;
 #define Q9K_WAITQ_SENTINEL_ADDR 0x12A0UL
 #endif
 
+/* Q9K_SLEEPQ_SENTINEL_ADDR -- eigene, kollisionsfreie Warteschlange fuer
+ * per F$Sleep blockierte Prozesse (Abschnitt "F$Sleep", 2026-08-30).
+ * GLEICHE Begruendung/Kollisionsvermeidung wie bei
+ * Q9K_WAITQ_SENTINEL_ADDR oben: die reale Q9_D_SLEEPQ-Adresse ($3B4)
+ * liegt genauso dicht an anderen echten Feldern (+0x30/+0x34 relativ
+ * dazu landet bei $3E4/$3E8, mitten in Q9_D_POLTBL). Q9_D_SLEEPQ selbst
+ * bleibt wie Q9_D_ACTIVQ/Q9_D_WAITQ unangetastet (Kompat-
+ * Vollstaendigkeit, q9kernel_cinit.c), wird aber nicht mehr benutzt.
+ * Direkt hinter den Wait/Exit-Scratch-Feldern ($12D8-$12F0,
+ * q9kernel_procend.c) -- naechste freie Adresse $12F0. */
+#ifndef Q9K_SLEEPQ_SENTINEL_ADDR
+#define Q9K_SLEEPQ_SENTINEL_ADDR 0x12F0UL
+#endif
+
 #define Q9K_PROCDESC_STATE_OFF    0x00UL
 #define Q9K_PROCDESC_PRIORITY_OFF 0x01UL   /* eigene Erweiterung, 1 Byte (0-255) */
 #define Q9K_PROCDESC_AGE_OFF      0x02UL   /* eigene Erweiterung, 2 Byte -- "Ages never
                                              * increment beyond $ffff" (Manual), passt exakt */
+#ifndef Q9K_PROCDESC_SLEEPTICKS_OFF
+#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x0EUL   /* s. q9kernel_firstproc.c Kopfkommentar */
+#endif
+#define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. q9kernel_firstproc.c Kopfkommentar */
+#define Q9K_SLEEP_INFINITE 0xFFFFFFFFUL   /* Sentinel fuer Sleep(0), s. q9kernel_procsleep.c */
 #ifndef Q9K_READYQ_NEXT_OFF
 #define Q9K_READYQ_NEXT_OFF 0x30UL
 #endif
@@ -139,6 +158,7 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
 static void   Q9K_SetU16(Q9_u32 addr, Q9_u16 value) { *(volatile Q9_u16 *)addr = value; }
 static Q9_u8  Q9K_GetU8(Q9_u32 addr) { return *(volatile Q9_u8 *)addr; }
+static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = value; }
 
 /* Entfernt node aus einer zirkulaeren doppelt verketteten Liste (Next/Prev
  * wie ueberall in diesem Kernel) -- funktioniert unabhaengig von der
@@ -188,6 +208,62 @@ void Q9K_WaitQInsert(Q9_u32 desc)
 void Q9K_WaitQRemove(Q9_u32 desc)
 {
     Q9K_ListUnlink(desc);
+}
+
+/* NACHTRAG 2026-08-30 (Abschnitt "F$Sleep") -- exportierte Weiterleitung
+ * fuer q9kernel_procsleep.c, gleiches Muster wie Q9K_WaitQInsert oben.
+ * KEIN Q9K_SleepQRemove -- wird erst gebraucht, sobald ein Mechanismus
+ * existiert, der einen schlafenden Prozess VORZEITIG wecken kann
+ * (F$Send/Signale, s. Kopfkommentar bei Q9K_SleepQDecrementAll unten --
+ * noch nicht implementiert). */
+void Q9K_SleepQInsert(Q9_u32 desc)
+{
+    Q9K_ListAppend(Q9K_SLEEPQ_SENTINEL_ADDR, desc);
+}
+
+/* Erniedrigt den Countdown ALLER Eintraege in der Sleep-Queue um 1 --
+ * einmal PRO TICK aufgerufen (aus Q9K_SchedReschedule, s. dort), reale
+ * F$Sleep-Konvention: "a sleep of two or more (n) ticks causes the
+ * process to be inserted into the active process queue after (n - 1)
+ * ticks occur" (68k_tech.pdf S. 497-498) -- q9kernel_procsleep.c
+ * speichert deshalb bereits (n-1) als Startwert, hier wird nur noch
+ * simpel bis 0 heruntergezaehlt. Erreicht ein Countdown 0, wird der
+ * Deskriptor aus der Sleep-Queue entfernt, State zurueck auf aktiv
+ * gesetzt (Q9K_SchedInsert selbst fasst State NICHT an, s. Kopfkommentar
+ * dort) und per Q9K_SchedInsert in die Ready-Queue verschoben.
+ *
+ * Eintraege mit dem Sentinel Q9K_SLEEP_INFINITE (Sleep(0) = unendlich)
+ * werden NIE dekrementiert/geweckt -- reale Semantik: "Sleeping
+ * indefinitely is a good way to wait for a signal or interrupt" --
+ * dieser Kernel hat noch KEIN F$Send/Signalsystem (bewusste, bereits
+ * bei Q9K_ProcSleep dokumentierte Grenze), ein solcher Prozess bleibt
+ * hier also dauerhaft schlafen. Kein Bug, sondern die ehrliche
+ * Konsequenz der fehlenden Signal-Infrastruktur.
+ *
+ * Muss rueckwaerts-sicher gegen Entfernen-waehrend-des-Durchlaufens
+ * sein -- next wird deshalb VOR einem moeglichen Q9K_ListUnlink
+ * gemerkt, gleiches Muster wie in Q9K_SchedAgeAll/-PickHighestAge. */
+static void Q9K_SleepQDecrementAll(void)
+{
+    Q9_u32 node = Q9K_GetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF);
+
+    while (node != Q9K_SLEEPQ_SENTINEL_ADDR) {
+        Q9_u32 next = Q9K_GetU32(node + Q9K_READYQ_NEXT_OFF);
+        Q9_u32 ticks = Q9K_GetU32(node + Q9K_PROCDESC_SLEEPTICKS_OFF);
+
+        if (ticks != Q9K_SLEEP_INFINITE) {
+            ticks = (ticks == 0) ? 0 : ticks - 1;   /* 0 defensiv abgefangen, s. u. */
+            Q9K_SetU32(node + Q9K_PROCDESC_SLEEPTICKS_OFF, ticks);
+
+            if (ticks == 0) {
+                Q9K_ListUnlink(node);
+                Q9K_SetU8(node + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+                Q9K_SchedInsert(node);
+            }
+        }
+
+        node = next;
+    }
 }
 
 /* Erhoeht das Alter ALLER Eintraege in der Ready-Queue um 1 ("the ages
@@ -257,6 +333,7 @@ Q9_u32 Q9K_SchedReschedule(void)
     Q9_u16 slice;
 
     Q9K_SchedAgeAll();
+    Q9K_SleepQDecrementAll();   /* NACHTRAG 2026-08-30, Abschnitt "F$Sleep" -- einmal pro Tick, s. dortigen Kopfkommentar */
 
     slice = Q9K_GetU16(Q9K_SCHED_SLICE_ADDR);
     if (slice > 0) {
