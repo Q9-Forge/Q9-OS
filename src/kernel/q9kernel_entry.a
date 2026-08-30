@@ -175,6 +175,17 @@ Q9K_ForkScratch_ChildPID   equ $1294       * Q9_u16, d0.w AUS (Erfolg)
 Q9K_ForkScratch_ErrorCode  equ $1298       * Q9_u16, d1.w AUS (Fehlschlag)
 Q9K_ForkScratch_Success    equ $129C       * Q9_u16, 0=Fehlschlag/1=Erfolg
 
+* Reale Panic-Codes fuer F$Panic (Abschnitt "F$Panic", 2026-08-30, echt
+* per MWOS/SRC/DEFS/funcs.h verifiziert: "#define K_IDLE 0x01 /* last
+* 'official' process has exited */", "#define K_PFAIL 0x02 /* power
+* failure occurred */"). K_PFAIL wird von diesem Kernel selbst NIE
+* ausgeloest (keine Stromausfall-Erkennung, s. 68k_tech.pdf S. 471 Note
+* -- "OS-9 kernel does not detect power failure" -- nur echte, externe
+* F$Panic(K$PFail)-Aufrufer waeren betroffen, werden identisch wie jeder
+* andere Panic-Code behandelt, s. Q9K_KernelPanic unten).
+K_IDLE  equ $01
+K_PFAIL equ $02
+
 * Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
 * Q9K_SysFExit/Q9K_SysFWait (Abschnitt "F$Exit/F$Wait", 2026-08-22) --
 * gleiches Muster wie Q9K_ForkScratch_* oben, s. dortigen Kopfkommentar.
@@ -502,10 +513,53 @@ Q9K_ZeroDone:
         bsr     Q9K_DiagWriteD7
         bsr     Q9K_CInit
 
+*******************************************************************************
+* Q9K_KernelPanic/Q9K_SysFPanic -- echte F$Panic-Implementierung
+* (Abschnitt "F$Panic", 2026-08-30, echt per Read gelesen, 68k_tech.pdf
+* S. 470-471). Reale Konvention: IN d0.l=Panic-Code (K$Idle=$01,
+* K$PFail=$02, s. equ-Konstanten oben). "F$Panic generally does not
+* return" -- "Ordinarily, F$Panic is undefined and the system dies."
+* "The system administrator may install a service routine for F$Panic
+* as part of an OS9P2 startup module" -- EIGENE ENTSCHEIDUNG, bewusste
+* Grenze: dieser Kernel hat KEINE OS9P2-Startup-Modul-Installations-
+* Mechanik (braucht echtes Modul-Laden/F$Load, bisher zurueckgestellt,
+* s. "erst alles fertig ohne I/Os") -- F$Panic implementiert deshalb NUR
+* den dokumentierten DEFAULT-Fall ("undefined... system dies"), niemals
+* den optionalen Handler-Pfad. Kehrt deshalb bei uns IMMER zurueck in
+* Q9K_HaltLoop, nie zum Aufrufer -- konsistent mit "generally does not
+* return" (bei uns: *nie*, mangels Handler-Mechanismus).
+*
+* Der reale Panic-Code (D0) wird zur Diagnose ausgegeben ('P' + 8 Hex-
+* Ziffern per Q9K_DiagPrintU32, das D0 als Eingabe erwartet -- passt
+* exakt zur F$Panic-Eingabekonvention, kein Umkopieren noetig).
+*
+* Wird sowohl als ECHTER TRAP-#0-Handler (Q9K_SysFPanic, Callcode $5e,
+* s. modules/SYSCALL_MODULE_MAP.md -- fuer externe Aufrufer/Module) ALS
+* AUCH intern per "moveq #K_IDLE,d0 / bra Q9K_KernelPanic" von
+* Q9K_SysFExit/Q9K_SysFWait verwendet, wenn deren erzwungener
+* Prozesswechsel (Q9K_SchedFirstPick) niemanden mehr findet -- exakt die
+* reale K$Idle-Semantik ("last 'official' process has exited"). Direkter
+* interner Sprung statt eines zweiten TRAP-#0-Umwegs -- wir sind an
+* diesen Aufrufstellen bereits im Kernel-Kontext, ein echter TRAP-
+* Ruecksprung waere ohnehin sinnlos (F$Panic kehrt nicht zurueck).
+Q9K_KernelPanic:
+        moveq   #'P',d7                * DIAGNOSE: F$Panic ausgeloest
+        bsr     Q9K_DiagWriteD7
+        bsr     Q9K_DiagPrintU32        * D0 = Panic-Code (K$Idle/K$PFail/...), unveraendert durchgereicht
+        bra     Q9K_HaltLoop
+
+Q9K_SysFPanic:
+        bra     Q9K_KernelPanic          * D0 traegt bereits den Panic-Code des Aufrufers (reale Konvention)
+
 * Sollte Q9K_CInit jemals zurueckkehren (im Normalfall nicht, da es in
-* den Scheduler springt): keine unkontrollierte Weiterausfuehrung
+* den Scheduler springt), ODER Q9K_KernelPanic aufgerufen werden: keine
+* unkontrollierte Weiterausfuehrung. Zwei reale Bedeutungen fuer densel-
+* ben Stillstand (68k_tech.pdf S. 471: "F$Panic is called only when the
+* kernel believes there are no processes remaining to be executed" --
+* passt exakt auf beide Faelle, deshalb hier bewusst EIN gemeinsamer
+* Endpunkt statt zwei separater Spin-Schleifen).
 Q9K_HaltLoop:
-        moveq   #'H',d7                         * DIAGNOSE: Fallback-Pfad erreicht (Q9K_CInit zurueckgekehrt/fehlgeschlagen)
+        moveq   #'H',d7                         * DIAGNOSE: Stillstand erreicht (Boot-Fallback ODER F$Panic-Default)
         bsr     Q9K_DiagWriteD7
 Q9K_HaltLoopSpin:
         bra     Q9K_HaltLoopSpin
@@ -1143,7 +1197,11 @@ Q9K_SysFWait:
 
         tst.l   d0
         bne     Q9K_SysFWait_SwitchTo
-        bra     Q9K_HaltLoop                                * kein Prozess mehr bereit -- echter Stillstand (TODO: Idle-Prozess)
+* Kein Prozess mehr bereit -- reale K$Idle-Semantik ("last 'official'
+* process has exited"), s. ausfuehrlichen Kopfkommentar bei
+* Q9K_KernelPanic weiter unten im File.
+        moveq   #K_IDLE,d0
+        bra     Q9K_KernelPanic
 
 Q9K_SysFWait_SwitchTo:
         movea.l d0,a0
@@ -1188,7 +1246,10 @@ Q9K_SysFExit:
 
         tst.l   d0
         bne     Q9K_SysFExit_SwitchTo
-        bra     Q9K_HaltLoop                * kein Prozess mehr bereit -- echter Stillstand (TODO: Idle-Prozess)
+* Kein Prozess mehr bereit -- reale K$Idle-Semantik, s. Kopfkommentar
+* bei Q9K_KernelPanic.
+        moveq   #K_IDLE,d0
+        bra     Q9K_KernelPanic
 
 Q9K_SysFExit_SwitchTo:
         movea.l d0,a0

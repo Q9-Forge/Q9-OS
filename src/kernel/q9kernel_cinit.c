@@ -84,6 +84,7 @@ extern void   Q9K_SysFUnLink(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F
 extern void   Q9K_SysFFork(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Fork (Callcode 0x03) */
 extern void   Q9K_SysFWait(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Wait (Callcode 0x04) */
 extern void   Q9K_SysFExit(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Exit (Callcode 0x06) */
+extern void   Q9K_SysFPanic(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Panic (Callcode 0x5e) */
 
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
  * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
@@ -287,6 +288,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x03UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFork);
                     Q9K_PutU32(usrdisBase + 0x04UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFWait);
                     Q9K_PutU32(usrdisBase + 0x06UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFExit);
+                    Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                 }
             }
             /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/
