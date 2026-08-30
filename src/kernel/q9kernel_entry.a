@@ -206,6 +206,20 @@ Q9K_ExitScratch_Next       equ $12EC       * Q9_u32, naechster Deskriptor AUS
 Q9K_SleepScratch_TicksIn  equ $1328      * Q9_u32, d0.l EIN
 Q9K_SleepScratch_Next     equ $132C      * Q9_u32, naechster Deskriptor AUS
 
+* Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
+* Q9K_SysFSRqMem/Q9K_SysFSRtMem (Abschnitt "F$SRqMem/F$SRtMem",
+* 2026-08-30, dritter Kandidat aus der "baut auf Vorhandenem auf"-
+* Gruppe -- IOMan-Vorbereitung) -- gleiches Muster wie oben. Direkt
+* hinter den Sleep-Scratch-Feldern ($1328-$1330, q9kernel_procsleep.c)
+* -- naechste freie Adresse $1330.
+Q9K_SRqMemScratch_SizeIn  equ $1330      * Q9_u32, d0.l EIN (F$SRqMem)
+Q9K_SRqMemScratch_Addr    equ $1334      * Q9_u32, (a2) AUS (Erfolg)
+Q9K_SRqMemScratch_SizeOut equ $1338      * Q9_u32, d0.l AUS (Erfolg)
+Q9K_SRqMemScratch_Error   equ $133C      * Q9_u16, d1.w AUS (Fehlschlag)
+Q9K_SRqMemScratch_Success equ $1340      * Q9_u16, 0=Fehlschlag/1=Erfolg
+Q9K_SRtMemScratch_AddrIn  equ $1344      * Q9_u32, (a2) EIN (F$SRtMem)
+Q9K_SRtMemScratch_SizeIn  equ $1348      * Q9_u32, d0.l EIN
+
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
 * gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
@@ -1309,6 +1323,55 @@ Q9K_SysFSleep_SwitchTo:
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         movem.l (sp)+,d0-d7/a0-a6
         rte
+
+*******************************************************************************
+* Q9K_SysFSRqMem -- TRAP-#0-Handler fuer den echten F$SRqMem-Callcode
+* (0x28, s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention
+* (68k_tech.pdf S. 503-504, echt per Read gelesen): IN d0.l=angeforderte
+* Byte-Anzahl (-1 = groesster freier Block). OUT (Erfolg): d0.l=gewaehrte
+* Byte-Anzahl, (a2)=Zeiger auf den Block, Carry geloescht. OUT
+* (Fehlschlag): Carry gesetzt, d1.w=echter Fehlercode (E_MEMFUL/
+* E_NORAM, s. q9kernel_sysmem.c).
+*
+* ANDERS als F$Fork/F$Wait/F$Exit/F$Sleep: KEIN Blockier-/Wechsel-Pfad
+* noetig (reiner Speicher-Allokationsaufruf, kein Scheduler-Bezug) --
+* gleiches schnelles Rueckkehr-Muster wie Q9K_SysFLink/Q9K_SysFFork
+* oben. d7 muss HIER (anders als bei Q9K_SysFLink) NICHT gesichert
+* werden -- es wird an keiner Stelle als eigenes Scratch benutzt, alle
+* Werte laufen ueber die Scratch-Adressen.
+Q9K_SysFSRqMem:
+        move.l  d0,Q9K_SRqMemScratch_SizeIn
+        bsr     Q9K_SysSRqMemImpl
+
+        tst.w   Q9K_SRqMemScratch_Success
+        beq     Q9K_SysFSRqMem_Fail
+
+        move.l  Q9K_SRqMemScratch_SizeOut,d0
+        movea.l Q9K_SRqMemScratch_Addr,a2
+        andi.w  #$fffe,4(sp)                        * Carry im geretteten SR loeschen -- Erfolg
+        rts
+
+Q9K_SysFSRqMem_Fail:
+        move.w  Q9K_SRqMemScratch_Error,d1
+        ori.w   #1,4(sp)                              * Carry im geretteten SR setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
+* Q9K_SysFSRtMem -- TRAP-#0-Handler fuer den echten F$SRtMem-Callcode
+* (0x29). Reale Konvention (68k_tech.pdf S. 505-506, echt per Read
+* gelesen): IN d0.l=zurueckzugebende Byte-Anzahl, (a2)=Blockadresse. OUT:
+* keine. Fehlerpfad (E$BPAddr) entfaellt hier bewusst -- Q9K_ProcSRtMem
+* validiert den Zeiger nicht (s. ausfuehrlichen Kopfkommentar
+* q9kernel_sysmem.c), schlaegt also nie "sauber" fehl, sondern haette
+* bei einem echten Fehlaufruf ohnehin nur die Freiliste korrumpiert --
+* ein Carry-Check haette hier keinen echten Schutz geboten.
+Q9K_SysFSRtMem:
+        move.l  a2,Q9K_SRtMemScratch_AddrIn
+        move.l  d0,Q9K_SRtMemScratch_SizeIn
+        bsr     Q9K_SysSRtMemImpl
+
+        andi.w  #$fffe,4(sp)                        * Carry im geretteten SR loeschen -- immer "Erfolg"
+        rts
 
 *******************************************************************************
 * Q9K_SetVBR -- ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21, per Diagnose-

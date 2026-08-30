@@ -163,6 +163,52 @@ Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize)
     return 0; /* kein ausreichend grosser Freiblock gefunden */
 }
 
+/* NACHTRAG 2026-08-30 (Abschnitt "F$SRqMem/F$SRtMem") -- Best-Fit-
+ * Variante fuer die reale "d0.l=-1"-Sonderform von F$SRqMem ("the
+ * largest block of free memory ... is allocated", 68k_tech.pdf S. 503):
+ * durchsucht die GESAMTE Freiliste (nicht First-Fit wie Q9K_AllocMem),
+ * gibt den GROESSTEN gefundenen Block KOMPLETT heraus (keine Aufteilung
+ * -- das Manual erwaehnt fuer diesen Sonderfall keine, und der Sinn der
+ * Anfrage ist ja gerade "so viel wie moeglich"). *outSize traegt danach
+ * die echte, unaufgerundete Blockgroesse (kann groesser sein als jede
+ * konkrete Anforderung). Rueckgabe 0 (mit *outSize=0) = Arena leer. */
+Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize)
+{
+    Q9_u32 prevAddr = 0;
+    Q9_u32 curAddr = Q9K_GetU32(Q9K_ARENA_HEAD);
+    Q9_u32 bestAddr = 0, bestSize = 0, bestPrev = 0, bestNext = 0;
+
+    while (curAddr != 0) {
+        Q9_u32 curSize = Q9K_GetU32(curAddr + sizeof(Q9_u32));
+        Q9_u32 curNext = Q9K_GetU32(curAddr);
+
+        if (curSize > bestSize) {
+            bestSize = curSize;
+            bestAddr = curAddr;
+            bestPrev = prevAddr;
+            bestNext = curNext;
+        }
+
+        prevAddr = curAddr;
+        curAddr = curNext;
+    }
+
+    if (bestAddr == 0) {
+        *outSize = 0;
+        return 0;
+    }
+
+    if (bestPrev == 0)
+        Q9K_SetU32(Q9K_ARENA_HEAD, bestNext);
+    else
+        Q9K_SetU32(bestPrev, bestNext);
+    if (bestNext == 0)
+        Q9K_SetU32(Q9K_ARENA_TAIL, bestPrev);
+
+    *outSize = bestSize;
+    return bestAddr;
+}
+
 /* Gibt einen zuvor per Q9K_AllocMem erhaltenen Block zurueck -- der
  * Aufrufer muss addr/size selbst im Kopf behalten (kein verstecktes
  * Zuteilungs-Header). Haengt den Block einfach vorn an die Freiliste --
