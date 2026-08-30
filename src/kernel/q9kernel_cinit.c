@@ -84,6 +84,7 @@ extern void   Q9K_SysFUnLink(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F
 extern void   Q9K_SysFFork(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Fork (Callcode 0x03) */
 extern void   Q9K_SysFWait(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Wait (Callcode 0x04) */
 extern void   Q9K_SysFExit(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Exit (Callcode 0x06) */
+extern void   Q9K_SysFSleep(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Sleep (Callcode 0x0a) */
 extern void   Q9K_SysFPanic(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Panic (Callcode 0x5e) */
 
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
@@ -131,6 +132,14 @@ extern void Q9K_Diag6(void);
  * initialisiert (Kompat-Vollstaendigkeit), wird aber von unserem eigenen
  * F$Wait NICHT mehr gelesen/geschrieben. */
 #define Q9K_WAITQ_SENTINEL_ADDR 0x12A0UL
+
+/* Eigene Sleep-Queue-Sentinel-Adresse (Abschnitt "F$Sleep", 2026-08-30)
+ * -- MUSS mit Q9K_SLEEPQ_SENTINEL_ADDR in q9kernel_sched.c
+ * uebereinstimmen, gleiche Begruendung/Kollisionsvermeidung wie oben.
+ * Q9_D_SLEEPQ selbst bleibt weiter unten als leere Ringliste
+ * initialisiert (Kompat-Vollstaendigkeit), wird aber von unserem eigenen
+ * F$Sleep NICHT mehr gelesen/geschrieben. */
+#define Q9K_SLEEPQ_SENTINEL_ADDR 0x12F0UL
 
 /* Freispeicher-Basis fuer die Arena (Abschnitt 2, Punkt 3) -- 2026-08-18
  * mit Andreas abgestimmt: fester Offset, VORLAEUFIG, unter der Annahme,
@@ -187,9 +196,10 @@ void Q9K_CInit(void)
      */
     Q9K_InitEmptyQueue(Q9_D_ACTIVQ, 0x30, 0x34);   /* NACHTRAG: nicht mehr von unserem Scheduler benutzt, s. Q9K_READYQ_SENTINEL_ADDR-Kommentar oben */
     Q9K_InitEmptyQueue(Q9K_READYQ_SENTINEL_ADDR, 0x30, 0x34); /* die WIRKLICH vom Scheduler benutzte eigene Ready-Queue */
-    Q9K_InitEmptyQueue(Q9_D_SLEEPQ, 0x30, 0x34);
+    Q9K_InitEmptyQueue(Q9_D_SLEEPQ, 0x30, 0x34);   /* NACHTRAG: nicht mehr von F$Sleep benutzt, s. Q9K_SLEEPQ_SENTINEL_ADDR-Kommentar oben */
     Q9K_InitEmptyQueue(Q9_D_WAITQ,  0x30, 0x34);   /* NACHTRAG: nicht mehr von F$Wait benutzt, s. Q9K_WAITQ_SENTINEL_ADDR-Kommentar oben */
     Q9K_InitEmptyQueue(Q9K_WAITQ_SENTINEL_ADDR, 0x30, 0x34);  /* die WIRKLICH von F$Wait benutzte eigene Wait-Queue */
+    Q9K_InitEmptyQueue(Q9K_SLEEPQ_SENTINEL_ADDR, 0x30, 0x34); /* die WIRKLICH von F$Sleep benutzte eigene Sleep-Queue */
     Q9K_InitEmptyQueue(Q9_D_ARENA,  0x08, 0x0C);
     Q9K_InitEmptyQueue(Q9_D_ALMQ1,  0x0C, 0x10);
     Q9K_InitEmptyQueue(Q9_D_ALMQ2,  0x0C, 0x10);
@@ -288,6 +298,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x03UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFork);
                     Q9K_PutU32(usrdisBase + 0x04UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFWait);
                     Q9K_PutU32(usrdisBase + 0x06UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFExit);
+                    Q9K_PutU32(usrdisBase + 0x0aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSleep);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                 }
             }
