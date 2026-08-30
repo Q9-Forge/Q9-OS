@@ -993,6 +993,37 @@ Q9K_TrapDispatch:
 * (reale F$-Konvention), MUSS d2-d7/a3-a5 unangetastet lassen (gleiche
 * Disziplin wie schon bei den Diagnose-Routinen gefunden+gefixt).
         jsr     (a4)
+* NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor"): ECHTE Konvention per
+* Read direkt im Kernel-Fund gelesen (docs/REVERSE_ENGINEERING.md, Fund
+* "Syscall-Tabellen sind KEIN statisches Zeiger-Array" -- der dort
+* zitierte gemeinsame Fehler-Stub bei $1380 endet mit "move.w #0xd0,D1w;
+* ori #1,CCR; rts"). Reale F$-Handler-Subroutinen signalisieren Erfolg/
+* Fehlschlag ueber das LEBENDE CCR (per "andi/ori #1,ccr"), NIEMALS ueber
+* ein SR-Wort auf dem Stack -- funktioniert dadurch universell,
+* unabhaengig vom Aufrufweg (echtes TRAP #0 hierher, ODER ein externes
+* Modul, das denselben Tabellen-Slot per eigenem PEA+RTS-Trampolin OHNE
+* echten Hardware-Frame direkt anspringt -- z. B. IOMan, s. Kopfkommentar
+* q9moduleheader.h/geplante IOMan-Einbindung). ECHTER BUG GEFUNDEN
+* (2026-08-31, per Recherche vor jeder Implementierung, nicht per
+* Boot-Test-Absturz): ALLE bisherigen Handler in dieser Datei benutzten
+* stattdessen "andi/ori.w #1,4(sp)" -- funktionierte bisher NUR, weil
+* wir sie ausschliesslich ueber DIESEN einen Aufrufweg (jsr von hier)
+* erreicht haben, waere aber bei einem direkten externen Sprung (kein
+* echter Hardware-Frame auf dem Stack) falsch gewesen (haette den
+* Aufrufer-eigenen Stack korrumpiert). Fix ueberall in dieser Datei:
+* Handler aendern nur noch CCR, HIER im Epilog wird das aktuelle CCR
+* (== unteres Byte des echten SR) ins geretteten SR-Wort uebernommen,
+* bevor RTE es an den echten, urspruenglichen Aufrufer zurueckgibt.
+* d0 wird dafuer kurzzeitig als Arbeitsregister gebraucht -- ECHTES
+* Ausgaberegister (z. B. F$SRqMems gewaehrte Byte-Anzahl), deshalb ueber
+* Q9K_TrapHandlerScratch gesichert/wiederhergestellt (derselbe, bereits
+* etablierte Scratch-Slot wie oben -- seine fruehere Nutzung dort ist
+* laengst konsumiert).
+        move.l  d0,Q9K_TrapHandlerScratch
+        move.w  ccr,d0                    * d0.w = $00xx, xx = aktuelles CCR (oberes Byte per Definition genullt)
+        andi.w  #$ff00,(sp)                 * unteres Byte des geretteten SR (=CCR-Position) loeschen, oberes (Systemflags) unangetastet
+        or.w    d0,(sp)                       * echtes, aktuelles CCR einsetzen
+        move.l  Q9K_TrapHandlerScratch,d0       * d0 wiederherstellen
         rte
 
 Q9K_TrapUnknown:
@@ -1061,13 +1092,13 @@ Q9K_SysFLink_SkipName:
         bne     Q9K_SysFLink_SkipName
 
         move.l  (sp)+,d7                            * eigenes Scratch wiederherstellen
-        andi.w  #$fffe,4(sp)                          * Carry im geretteten SR loeschen -- Erfolg
+        andi    #$fe,ccr                          * Carry im CCR loeschen -- Erfolg
         rts
 
 Q9K_SysFLink_Fail:
         addq.l  #4,sp                    * gemerkten Namenszeiger verwerfen (auf Fehlerpfad nicht gebraucht)
         move.l  (sp)+,d7                   * eigenes Scratch wiederherstellen
-        ori.w   #1,4(sp)                     * Carry im geretteten SR setzen -- Fehlschlag
+        ori     #1,ccr                     * Carry im CCR setzen -- Fehlschlag
         move.w  #$00dd,d1                     * d1.w = E_MNF (Module Not Found)
         rts
 
@@ -1098,12 +1129,12 @@ Q9K_SysFUnLink:
         tst.l   d0
         beq     Q9K_SysFUnLink_Ok
         move.l  (sp)+,d7                     * eigenes Scratch wiederherstellen (Fehlerpfad)
-        ori.w   #1,4(sp)                       * Carry im geretteten SR setzen -- Fehlschlag
+        ori     #1,ccr                       * Carry im CCR setzen -- Fehlschlag
         move.w  #$00dd,d1                        * d1.w = E_MNF
         rts
 Q9K_SysFUnLink_Ok:
         move.l  (sp)+,d7                            * eigenes Scratch wiederherstellen (Erfolgspfad)
-        andi.w  #$fffe,4(sp)                          * Carry im geretteten SR loeschen -- Erfolg
+        andi    #$fe,ccr                          * Carry im CCR loeschen -- Erfolg
         rts
 
 *******************************************************************************
@@ -1156,12 +1187,12 @@ Q9K_SysFFork:
 Q9K_SysFFork_SkipName:
         tst.b   (a0)+                             * (a0) hinter den Namen aktualisieren (bis zum NUL-Byte)
         bne     Q9K_SysFFork_SkipName
-        andi.w  #$fffe,4(sp)                        * Carry im geretteten SR loeschen -- Erfolg
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg
         rts
 
 Q9K_SysFFork_Fail:
         move.w  Q9K_ForkScratch_ErrorCode,d1
-        ori.w   #1,4(sp)                              * Carry im geretteten SR setzen -- Fehlschlag
+        ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
         rts
 
 *******************************************************************************
@@ -1207,6 +1238,22 @@ Q9K_SysFWait:
         addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
         movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des blockierenden Aufrufers sichern
 
+* NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor"): der gesicherte
+* Hardware-Frame direkt hinter dem Registersatz (60 Byte = D0-D7/A0-A6)
+* traegt noch das SR-Wort vom URSPRUENGLICHEN TRAP-#0-Zeitpunkt --
+* dessen Carry-Bit ist HIER bedeutungslos (kein "Erfolg/Fehlschlag"
+* wurde je synchron per CCR signalisiert, s. Kopfkommentar
+* Q9K_TrapDispatch-Epilog), aber wuerde beim spaeteren Aufwachen (per
+* "movem.l (sp)+,.../rte", NIE ueber ein rts wie bei den schnellen
+* Faellen) UNVERAENDERT an den Aufrufer weitergegeben -- ein zufaellig
+* gesetztes Carry-Bit von VOR dem TRAP #0 wuerde den reaktivierten
+* Elternprozess faelschlich einen F$Wait-Fehlschlag glauben lassen,
+* obwohl echte PID/Status geliefert wurden (bisher NUR durch Zufall
+* nie aufgefallen). Deshalb hier EXPLIZIT geloescht -- F$Wait schlaegt
+* in diesem Kernel nach dem Blockieren nie fehl (kein Fehlerpfad fuer
+* den bereits-blockierten Fall vorgesehen).
+        andi.w  #$fffe,60(sp)             * Carry im gesicherten SR-Wort explizit loeschen (60 = Registersatzgroesse, s. o.)
+
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
         move.b  #'w',Q9K_PROCDESC_STATE_OFF(a0)    * State='w' (wartend), s. q9kernel_firstproc.c
@@ -1234,12 +1281,12 @@ Q9K_SysFWait_SwitchTo:
 Q9K_SysFWait_Reaped:
         move.w  Q9K_WaitScratch_ChildPID,d0
         move.w  Q9K_WaitScratch_ExitStatus,d1
-        andi.w  #$fffe,4(sp)                        * Carry im geretteten SR loeschen -- Erfolg
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg
         rts
 
 Q9K_SysFWait_NoChld:
         move.w  Q9K_WaitScratch_ErrorCode,d1
-        ori.w   #1,4(sp)                              * Carry im geretteten SR setzen -- Fehlschlag
+        ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
         rts
 
 *******************************************************************************
@@ -1304,6 +1351,13 @@ Q9K_SysFSleep:
         addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
         movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des schlafenden Aufrufers sichern
 
+* NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor") -- gleicher Fix/gleiche
+* Begruendung wie bei Q9K_SysFWaits Blockierpfad oben: das Carry-Bit im
+* gesicherten SR-Wort stammt noch vom URSPRUENGLICHEN TRAP-#0-Zeitpunkt
+* und wuerde beim Aufwachen unveraendert weitergegeben. F$Sleep schlaegt
+* in diesem Kernel nie fehl -- explizit geloescht.
+        andi.w  #$fffe,60(sp)             * Carry im gesicherten SR-Wort explizit loeschen
+
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
 
@@ -1348,12 +1402,12 @@ Q9K_SysFSRqMem:
 
         move.l  Q9K_SRqMemScratch_SizeOut,d0
         movea.l Q9K_SRqMemScratch_Addr,a2
-        andi.w  #$fffe,4(sp)                        * Carry im geretteten SR loeschen -- Erfolg
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg
         rts
 
 Q9K_SysFSRqMem_Fail:
         move.w  Q9K_SRqMemScratch_Error,d1
-        ori.w   #1,4(sp)                              * Carry im geretteten SR setzen -- Fehlschlag
+        ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
         rts
 
 *******************************************************************************
@@ -1370,7 +1424,7 @@ Q9K_SysFSRtMem:
         move.l  d0,Q9K_SRtMemScratch_SizeIn
         bsr     Q9K_SysSRtMemImpl
 
-        andi.w  #$fffe,4(sp)                        * Carry im geretteten SR loeschen -- immer "Erfolg"
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
         rts
 
 *******************************************************************************
