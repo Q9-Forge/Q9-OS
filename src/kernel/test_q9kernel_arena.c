@@ -120,6 +120,69 @@ int main(void)
      * Fehlschlag darf die Freiliste nicht beschaedigt haben. */
     checkBool("Normale Allokation nach Fehlschlag funktioniert noch", Q9K_AllocMem(16) != 0, 1);
 
+    /* Fall 8 (NACHTRAG 2026-08-30, Abschnitt "F$SRqMem/F$SRtMem"):
+     * Q9K_AllocLargest -- frische Arena mit zwei unterschiedlich grossen
+     * Freibloecken (per zwei Allokationen + gezieltem Freigeben
+     * praepariert), muss den GROESSEREN finden und komplett
+     * herausgeben. */
+    {
+        Q9_u32 outSize = 0xDEADBEEF;
+        Q9_u32 x, y, z, largest;
+
+        g_fakeArenaHead = 0;
+        g_fakeArenaTail = 0;
+        memset(pool, 0xCC, sizeof(pool));
+        Q9K_ArenaInit(poolBase, sizeof(pool));
+
+        /* Arena (1024 Byte) EXAKT in drei Teile zerlegen (32+800+192=1024,
+         * kein Rest -- sonst bliebe ein drittes, moeglicherweise groesseres
+         * Fragment frei und wuerde den Test verfaelschen). Beide ersten
+         * Bloecke wieder freigeben -- x als kleinen, y als grossen
+         * separaten Freiblock (kein Koaleszieren, s. Kopfkommentar
+         * Q9K_FreeMem -- bleiben deshalb GETRENNTE Freiblock-Eintraege,
+         * genau das, was dieser Test braucht). z bleibt belegt. */
+        x = Q9K_AllocMem(32);
+        y = Q9K_AllocMem(800);
+        z = Q9K_AllocMem(192);
+        checkBool("F8-Vorbereitung: alle drei Allokationen erfolgreich",
+                  (x != 0 && y != 0 && z != 0), 1);
+        Q9K_FreeMem(x, 32);
+        Q9K_FreeMem(y, 800);
+        /* z bleibt absichtlich belegt -- verhindert Koaleszieren-
+         * unabhaengige Verwechslung, ist aber ohnehin nicht Teil der
+         * Freiliste. */
+
+        largest = Q9K_AllocLargest(&outSize);
+        checkU32("Q9K_AllocLargest findet den GROESSEREN Freiblock (y, 800 Byte)", largest, y);
+        checkU32("Q9K_AllocLargest liefert die echte (ungerundete) Blockgroesse", outSize, 800);
+
+        /* Nach der Entnahme muss NUR noch der kleine Block (x, 32 Byte)
+         * uebrig sein -- eine weitere Q9K_AllocLargest-Anfrage darf NICHT
+         * mehr den grossen liefern (der ist ja bereits vergeben). */
+        {
+            Q9_u32 outSize2 = 0xDEADBEEF;
+            Q9_u32 second = Q9K_AllocLargest(&outSize2);
+            checkU32("Nach Entnahme: Q9K_AllocLargest findet nur noch den kleinen Block (x)", second, x);
+            checkU32("... mit dessen echter Groesse (32 Byte)", outSize2, 32);
+        }
+    }
+
+    /* Fall 9: Q9K_AllocLargest bei komplett leerer Arena -- liefert 0,
+     * *outSize wird auf 0 gesetzt (kein Fake-Erfolg). */
+    {
+        Q9_u32 outSize = 0xDEADBEEF;
+        Q9_u32 result;
+
+        g_fakeArenaHead = 0;
+        g_fakeArenaTail = 0;
+        /* Q9K_ArenaInit NICHT aufgerufen -- Arena bleibt im leeren
+         * Anfangszustand (Kopf=0). */
+
+        result = Q9K_AllocLargest(&outSize);
+        checkU32("Q9K_AllocLargest bei leerer Arena -> 0", result, 0);
+        checkU32("... *outSize wird auf 0 gesetzt", outSize, 0);
+    }
+
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;
 }
