@@ -89,6 +89,7 @@ extern void   Q9K_SysFSRqMem(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F
 extern void   Q9K_SysFSRtMem(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$SRtMem (Callcode 0x29) */
 extern void   Q9K_SysFSSvc(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$SSvc (Callcode 0x32) */
 extern void   Q9K_SysFPanic(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Panic (Callcode 0x5e) */
+extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
 extern void   Q9K_TestFChainProbe(void); /* NUR TEMPORAER (2026-08-31) -- s. Kopfkommentar in q9kernel_entry.a. Verdachtspruefung "erreicht IOMan Callcode 0x05 (F$Chain)?", kein echtes F$Chain. Nach Verifikation wieder entfernen. */
 
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
@@ -161,6 +162,14 @@ extern void Q9K_Diag6(void);
 static void Q9K_PutU32(Q9_u32 addr, Q9_u32 value)
 {
     *(volatile Q9_u32 *)addr = value;
+}
+
+/* Gegenstueck zu Q9K_PutU32 -- fuer die Q9K_SysUnimplemented-
+ * Fallback-Schleife gebraucht (pruefen, ob ein Slot noch 0/unregistriert
+ * ist), s. dort. */
+static Q9_u32 Q9K_GetU32(Q9_u32 addr)
+{
+    return *(volatile Q9_u32 *)addr;
 }
 
 /* Wie Q9K_PutU32, aber fuer 1-/2-Byte-Felder -- WICHTIG, nicht einfach
@@ -348,6 +357,30 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x32UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSSvc);
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(sysdisBase + 0x05UL * 4UL, (Q9_u32)(unsigned long)Q9K_TestFChainProbe); /* NUR TEMPORAER, s.o. */
+
+                    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per
+                     * Root-Cause-Suche eines echten IOMan-Stack-Crashs):
+                     * alle NOCH NICHT registrierten Slots (Wert 0) mit
+                     * Q9K_SysUnimplemented befuellen, statt sie auf 0 zu
+                     * lassen -- der reale, ECHTE Microware-Kernel macht
+                     * das ebenfalls (gemeinsamer Fehler-Stub, s.
+                     * REVERSE_ENGINEERING.md). Grund: der PEA+RTS-
+                     * Trampolin-Mechanismus (den externe Module wie
+                     * IOMan fuer performancekritische Primitive DIREKT
+                     * nutzen, s. modules/ioman/docs/REVERSE_ENGINEERING.md
+                     * "Runde 2") liest den Primaerarray-Wert und macht ein
+                     * "rts" DAHIN -- bei 0 waere das ein Sprung zu
+                     * physischer Adresse 0, mitten in die eigenen Kernel-
+                     * Global-DATEN. */
+                    {
+                        Q9_u32 slot;
+                        for (slot = 0; slot < 256UL; slot++) {
+                            if (Q9K_GetU32(usrdisBase + slot * 4UL) == 0)
+                                Q9K_PutU32(usrdisBase + slot * 4UL, (Q9_u32)(unsigned long)Q9K_SysUnimplemented);
+                            if (Q9K_GetU32(sysdisBase + slot * 4UL) == 0)
+                                Q9K_PutU32(sysdisBase + slot * 4UL, (Q9_u32)(unsigned long)Q9K_SysUnimplemented);
+                        }
+                    }
                 }
             }
             /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/

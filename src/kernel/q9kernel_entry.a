@@ -806,10 +806,19 @@ Q9K_TestProcA:
 * bevor zu IOMan gesprungen wird -- das Ziel ist NICHT, IOMans Init
 * erfolgreich abzuschliessen, sondern seinen Fehlerpfad ueberlebensfaehig
 * zu machen UND die tatsaechliche Fehlermeldung sichtbar zu machen.
-        lea     Q9K_IOManPutChar(pc),a0
-        lea     Q9K_IOManOutVtable(pc),a1
-        move.l  a0,8(a1)                        * echte, per PC-relativem lea berechnete Adresse eintragen
-        move.l  a1,($64).w
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, "!"-Raetsel geloest): a1
+* enthaelt zu diesem Zeitpunkt bereits die ECHTE, per F$Link ermittelte
+* IOMan-Einsprungadresse -- die naechsten zwei Zeilen ueberschrieben es
+* faelschlich als Arbeitsregister fuer die Vtable-Berechnung, BEVOR der
+* "jsr (a1)" weiter unten sie brauchte. Der Sprung landete dadurch nicht
+* in IOMan, sondern in der eigenen Vtable-Datenstruktur (als Code
+* fehlinterpretiert) -- absolut reiner Zufall, dass dabei irgendwann
+* ueberhaupt wieder ein "rts" erreicht wurde. Fix: a3/a4 statt a0/a1 als
+* Arbeitsregister, a1 bleibt bis zum jsr unangetastet.
+        lea     Q9K_IOManPutChar(pc),a3
+        lea     Q9K_IOManOutVtable(pc),a4
+        move.l  a3,8(a4)                        * echte, per PC-relativem lea berechnete Adresse eintragen
+        move.l  a4,($64).w
 * Zwei zusaetzliche Vtable-Felder (Offset 0/4) NICHT bekannt/genutzt --
 * IOMan liest laut Disassemblierung nur Offset 8, s. o. -- bleiben 0.
 
@@ -1149,6 +1158,37 @@ Q9K_TrapUnknown:
         rte
 
 *******************************************************************************
+* Q9K_SysUnimplemented -- ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per
+* Root-Cause-Suche eines echten IOMan-Stack-Crashs): generischer
+* Fehler-Stub fuer JEDEN in D_SysDis/D_UsrDis NICHT explizit
+* registrierten Syscall-Slot (bisher blieben unregistrierte Slots auf
+* 0 -- anders als der ECHTE Microware-Kernel, der laut REVERSE_
+* ENGINEERING.md fuer genau diesen Zweck einen "gemeinsamen Fehler-Stub"
+* im Modul bei Offset 0x1380 vorbelegt). Der PEA+RTS-Trampolin-
+* Mechanismus, ueber den externe Module wie IOMan performancekritische
+* Primitive DIREKT ansprechen (ohne TRAP #0, s. modules/ioman/docs/
+* REVERSE_ENGINEERING.md "Runde 2"), liest den Primaerarray-Wert des
+* Slots und macht ein "rts" DAHIN -- bei einem unregistrierten Slot
+* (Wert 0) waere das ein Sprung zu physischer Adresse 0, mitten in die
+* eigenen Kernel-Global-DATEN (keine gueltigen Instruktionen), die dann
+* zufaellig als Code ausgefuehrt werden, bis irgendwann zufaellig ein
+* C-Aufruf mit falschem A6 getroffen wird -- passt exakt zum reproduzier-
+* ten Symptom (a6=0 in _stkhandler, obwohl ALLE bekannten TRAP-#0-Pfade
+* bereits A6-geschuetzt sind). Dieser Handler endet bewusst mit "rts"
+* (nicht "rte" wie Q9K_TrapUnknown) -- funktioniert dadurch fuer BEIDE
+* Aufrufwege (TRAP #0 UND direkter Trampolin-Sprung) korrekt: ueber
+* TRAP #0 erreicht (a4=diese Adresse), gibt "jsr (a4)" in
+* Q9K_TrapDispatch dem "rts" hier eine echte Ruecksprungadresse; ueber
+* den Trampolin erreicht, ist "rts" hier ohnehin der Trampolin-eigene
+* Sprungmechanismus. Reiner Assembler, kein C-Aufruf -- sicher fuer
+* JEDES eingehende A6, egal ob 0 (IOMans externer Kontext) oder
+* Q9K_CRuntimeData.
+Q9K_SysUnimplemented:
+        move.w  #$00d0,d1                        * d1.w = E_UNKSVC (gleicher Wert wie Q9K_TrapUnknown)
+        ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
+        rts
+
+*******************************************************************************
 * Q9K_SysFLink -- TRAP-#0-Handler fuer den echten F$Link-Callcode (0x00,
 * s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention (68k_tech.pdf
 * S. 461): IN d0.w=Typ/Sprache-Filter (0=beliebig), (a0)=Namenszeiger.
@@ -1171,15 +1211,35 @@ Q9K_SysFLink:
 * NICHT die Ursache des unten dokumentierten Bugs -- aber ein sauberer
 * Wert schadet nicht und ist fuer echte, externe Aufrufer ohnehin
 * korrekter als sich auf geraeumte obere Bits zu verlassen).
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per Root-Cause-Suche eines
+* echten IOMan-Stack-Crashs -- diesmal kein Diagnose-Fehler, sondern
+* ein realer Absturz): Q9K_ModDirLinkByName ist C-Code, dessen
+* compilergenerierter Stack-Ueberlauf-Check "sub.l #N,_stklimit(a6)"
+* A6=Q9K_CRuntimeData voraussetzt -- galt bisher stillschweigend immer,
+* WEIL dieser Handler nur ueber TRAP #0 aus dem EIGENEN Testcode heraus
+* aufgerufen wurde (dort ist A6 laut Kopfkommentar bei Q9K_TrapDispatch
+* fest richtig gesetzt). Laut modules/ioman/docs/REVERSE_ENGINEERING.md
+* ruft IOMan F$Link aber NICHT nur ueber TRAP #0, sondern auch DIREKT
+* ueber dasselbe PEA+RTS-Trampolin, das intern performancekritische
+* Primitive anspringt -- IOMan laeuft dabei mit A6=0 (sein eigener,
+* externer Kontext). A6=0 fuehrt den Compiler-Stack-Check dann auf
+* Datenmuell nahe Adresse 0 aus, _stkhandler wird ausgeloest (per Live-
+* Diagnose verifiziert: a6 in _stkhandler war tatsaechlich 0). Fix:
+* gleicher A6-Sicherungsmechanismus wie bei Q9K_SysFSSvc/Q9K_SysFSRqMem
+* -- eingehendes A6 sichern, fuer den C-Aufruf umschalten, auf JEDEM
+* Rueckkehrpfad (Erfolg UND Fehler) wiederherstellen.
         and.l   #$0000ffff,d0
         move.l  d7,-(sp)              * eigenes Scratch sichern
         move.l  a0,-(sp)              * urspruenglichen Namenszeiger separat merken (C-Aufruf braucht a0->d1)
+        move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
+        lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
 
 * d1 = Namenszeiger (2. C-Parameter, s. q9kernel_moddir.c) -- d0
 * (Typ/Sprache-Filter) ist bereits der 1. C-Parameter, unveraendert
 * aus dem Aufrufer.
         move.l  a0,d1
         bsr     Q9K_ModDirLinkByName     * -> d0 = Headerzeiger oder 0 (Ein-Ausgabe-Konvention wie __multiply)
+        movea.l (sp)+,a6              * eingehendes a6 SOFORT wiederherstellen (auf beiden Pfaden gebraucht)
 
         move.l  d0,d7                     * d7 = Headerzeiger (0 = kein Treffer), zwischengesichert
         tst.l   d7
@@ -1240,9 +1300,18 @@ Q9K_SysFUnLink:
 * ohne dazwischenliegende CCR-aendernde Instruktion), deshalb funktionierte
 * F$Link bereits korrekt. Fix: Verzweigung DIREKT nach "tst.l d0", d7 auf
 * JEDEM der beiden Pfade separat wiederherstellen.
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, gleiches Muster wie bei
+* Q9K_SysFLink oben): Q9K_ModDirUnlinkByHeader ist C-Code, der ueber A6
+* seinen Stack-Ueberlauf-Check macht -- auch F$UnLink ist (analog zu
+* F$Link) potenziell ueber das externe PEA+RTS-Trampolin mit A6=0
+* erreichbar. Gleicher Schutz: eingehendes A6 sichern/umschalten/
+* sofort nach dem C-Aufruf wiederherstellen.
         move.l  d7,-(sp)               * eigenes Scratch sichern
+        move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
+        lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  a2,d0                    * d0 = 1. C-Parameter (Modulkopfadresse)
         bsr     Q9K_ModDirUnlinkByHeader   * -> d0 = 0 (Erfolg) / 1 (nicht gefunden)
+        movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         tst.l   d0
         beq     Q9K_SysFUnLink_Ok
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, gleiches Muster wie bei
@@ -1296,8 +1365,13 @@ Q9K_SysFFork:
         move.l  a0,Q9K_ForkScratch_NamePtr
         move.l  a1,Q9K_ForkScratch_ParamPtr
 
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, gleiches Muster wie bei
+* Q9K_SysFLink/SysFUnLink oben): A6-Schutz fuer den C-Aufruf, s. dort.
         move.l  d1,-(sp)              * echten Aufrufer-d1 sichern (s. Kopfkommentar)
+        move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
+        lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         bsr     Q9K_SysForkImpl
+        movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         move.l  (sp)+,d1              * echten Aufrufer-d1 zurueckholen
 
         tst.w   Q9K_ForkScratch_Success
@@ -1333,7 +1407,14 @@ Q9K_SysFFork_Fail:
 * liest den Aufrufer direkt aus Q9_D_Proc, gleiches parameterloses
 * Bruecken-Muster wie Q9K_SysForkImpl (s. dortigen Kopfkommentar).
 Q9K_SysFWait:
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, gleiches Muster wie bei
+* Q9K_SysFLink/SysFUnLink/SysFFork oben): A6-Schutz NUR um diesen einen
+* C-Aufruf herum -- alles danach (Verzweigung/Blockierlogik) ist reiner
+* Assembler, braucht kein korrektes A6.
+        move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
+        lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         bsr     Q9K_SysWaitImpl
+        movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
 
         move.w  Q9K_WaitScratch_Outcome,d7
         cmp.w   #1,d7
@@ -1560,9 +1641,15 @@ Q9K_SysFSRqMem_Fail:
 * bei einem echten Fehlaufruf ohnehin nur die Freiliste korrumpiert --
 * ein Carry-Check haette hier keinen echten Schutz geboten.
 Q9K_SysFSRtMem:
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, gleiches Muster wie bei
+* Q9K_SysFLink/SysFUnLink/SysFFork/SysFWait oben): A6-Schutz fuer den
+* C-Aufruf.
+        move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
+        lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  a2,Q9K_SRtMemScratch_AddrIn
         move.l  d0,Q9K_SRtMemScratch_SizeIn
         bsr     Q9K_SysSRtMemImpl
+        movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
 
         andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
         rts
