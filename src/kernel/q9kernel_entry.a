@@ -157,6 +157,20 @@ Q9_D_USRDIS     equ     $3a8
 * fehleranfaellige Stack-Offset-Rechnerei). Nicht reentrant-sicher
 * (kein SMP/verschachtelte Traps vorgesehen).
 Q9K_TrapHandlerScratch equ $1230
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per Root-Cause-Suche eines
+* False-Positive-F$Link-Befunds, s. Session-Notizen): jede MOVE-
+* Instruktion (ausser MOVEA) loescht laut 68k-ISA IMMER die C/V-Flags
+* im CCR, unabhaengig vom bewegten Wert -- der urspruengliche
+* Q9K_TrapDispatch-Epilog (CCR-Refactor, s. u.) sicherte d0 per "move.l
+* d0,Q9K_TrapHandlerScratch" ALS ERSTE Instruktion nach dem
+* Handler-jsr, BEVOR das damit gerade zerstoerte CCR gelesen wurde --
+* jeder Handler-Fehlschlag (Carry per "ori #1,ccr" gesetzt) ging dadurch
+* sofort wieder verloren, jeder Syscall meldete unabhaengig vom echten
+* Ergebnis IMMER Erfolg. Eigener Scratch-Slot, damit das echte CCR
+* SOFORT (als allererste Instruktion, ohne Register-Umweg, direkt nach
+* Speicher) gesichert werden kann, bevor irgendetwas anderes es
+* veraendern kann.
+Q9K_TrapCCRScratch     equ $1364
 
 * Abschnitt "F$Fork" (2026-08-21) -- eigene Kernel-Global-Erweiterungen
 * fuer die ASM<->C-Uebergabe von Q9K_SysFFork (s. dortigen Kopfkommentar
@@ -219,6 +233,13 @@ Q9K_SRqMemScratch_Error   equ $133C      * Q9_u16, d1.w AUS (Fehlschlag)
 Q9K_SRqMemScratch_Success equ $1340      * Q9_u16, 0=Fehlschlag/1=Erfolg
 Q9K_SRtMemScratch_AddrIn  equ $1344      * Q9_u32, (a2) EIN (F$SRtMem)
 Q9K_SRtMemScratch_SizeIn  equ $1348      * Q9_u32, d0.l EIN
+
+* Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
+* Q9K_SysFSSvc (Abschnitt "IOMan-Einbindung", 2026-08-31 -- IOMans
+* allererster Aufruf beim Booten). Direkt hinter den SRtMem-Scratch-
+* Feldern ($1348+4, q9kernel_sysmem.c) -- naechste freie Adresse $134C.
+Q9K_SSvcScratch_TablePtr equ $134C      * Q9_u32, (a1) EIN
+Q9K_SSvcScratch_DataPtr  equ $1350      * Q9_u32, (a3) EIN
 
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
@@ -760,6 +781,31 @@ Q9K_TestProcA:
         bcs     Q9K_TestWaitFail
         moveq   #'W',d7                    * DIAGNOSE: F$Wait erfolgreich (Kind wirklich beendet+abgeholt)
         bsr     Q9K_DiagWriteD7
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
+* Einbindung" -- ZWEITER Versuch, jetzt mit echtem F$SSvc-Support UND
+* dem am selben Tag gefundenen+gefixten CCR-Fehlersignalisierungs-Bug,
+* s. Q9K_SysFLink_Fail/Q9K_SysFUnLink_Fail).
+        move.w  #$0c01,d0
+        lea     Q9K_TestIOManName(pc),a0
+        trap    #0
+        dc.w    0                          * Funktionscode 0 = F$Link
+        bcs     Q9K_TestIOManLinkFail
+        moveq   #'Q',d7                     * DIAGNOSE: F$Link("ioman") erfolgreich
+        bsr     Q9K_DiagWriteD7
+
+        movea.l a6,a5                        * eigenes a6 sichern
+        movea.l #0,a6                          * reale Kernel-Global-Basis fuer IOMans eigenen Code
+        jsr     (a1)                             * IOMan-Einsprungpunkt (a1 = M$Exec, reale F$Link-Ausgabe)
+        movea.l a5,a6                              * eigenes a6 unbedingt wiederherstellen
+
+        moveq   #'R',d7                     * DIAGNOSE: aus IOMans Einsprungpunkt zurueckgekehrt
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+
+Q9K_TestIOManLinkFail:
+        moveq   #'q',d7                     * DIAGNOSE: F$Link("ioman") fehlgeschlagen
+        bsr     Q9K_DiagWriteD7
         bra     Q9K_TestProcA_Loop
 
 Q9K_TestWaitFail:
@@ -816,6 +862,9 @@ Q9K_TestLinkName:
 * ungerade).
 Q9K_TestForkName:
         dc.b    "forkchild",0
+
+Q9K_TestIOManName:
+        dc.b    "ioman",0
 
 * Q9K_SchedRun -- startet die ALLERERSTE Prozessausfuehrung (Abschnitt
 * "Scheduler", 2026-08-21, ersetzt das fruehere Q9K_JumpToFirstProc).
@@ -1019,8 +1068,17 @@ Q9K_TrapDispatch:
 * Q9K_TrapHandlerScratch gesichert/wiederhergestellt (derselbe, bereits
 * etablierte Scratch-Slot wie oben -- seine fruehere Nutzung dort ist
 * laengst konsumiert).
-        move.l  d0,Q9K_TrapHandlerScratch
-        move.w  ccr,d0                    * d0.w = $00xx, xx = aktuelles CCR (oberes Byte per Definition genullt)
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31): das echte CCR MUSS die
+* ALLERERSTE Instruktion nach dem jsr sein -- "move.w ccr,MEM" direkt
+* (kein Register als Ziel) veraendert selbst zwar auch wieder C/V, aber
+* NACHDEM der echte Wert bereits gesichert ist; jede vorherige Fassung
+* dieses Epilogs sicherte stattdessen zuerst d0 per MOVE (loescht C/V
+* als Nebeneffekt IMMER) und las danach ein bereits zerstoertes CCR --
+* jeder Handler-Fehlschlag ging dadurch verloren, jeder Syscall meldete
+* unabhaengig vom echten Ergebnis IMMER Erfolg.
+        move.w  ccr,Q9K_TrapCCRScratch    * echtes CCR SOFORT sichern, bevor irgendwas es veraendern kann
+        move.l  d0,Q9K_TrapHandlerScratch   * jetzt erst d0 sichern (Nebeneffekt auf C/V ist ab hier irrelevant)
+        move.w  Q9K_TrapCCRScratch,d0        * d0.w = $00xx, xx = das ECHTE, geretteten CCR
         andi.w  #$ff00,(sp)                 * unteres Byte des geretteten SR (=CCR-Position) loeschen, oberes (Systemflags) unangetastet
         or.w    d0,(sp)                       * echtes, aktuelles CCR einsetzen
         move.l  Q9K_TrapHandlerScratch,d0       * d0 wiederherstellen
@@ -1096,10 +1154,17 @@ Q9K_SysFLink_SkipName:
         rts
 
 Q9K_SysFLink_Fail:
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per Root-Cause-Suche eines
+* False-Positive-F$Link-Befunds): "move.w #$00dd,d1" NACH "ori #1,ccr"
+* loeschte das gerade gesetzte Carry-Bit sofort wieder (jede MOVE-
+* Instruktion ausser MOVEA loescht C/V immer) -- F$Link meldete dadurch
+* IMMER Erfolg, selbst im eigentlich fehlgeschlagenen Fall. Fix:
+* Fehlercode ZUERST setzen, "ori #1,ccr" als letzte Instruktion vor rts
+* (gleiche, bereits korrekte Reihenfolge wie bei F$Fork/F$Wait/F$SRqMem).
         addq.l  #4,sp                    * gemerkten Namenszeiger verwerfen (auf Fehlerpfad nicht gebraucht)
         move.l  (sp)+,d7                   * eigenes Scratch wiederherstellen
-        ori     #1,ccr                     * Carry im CCR setzen -- Fehlschlag
         move.w  #$00dd,d1                     * d1.w = E_MNF (Module Not Found)
+        ori     #1,ccr                     * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
 
 *******************************************************************************
@@ -1128,9 +1193,13 @@ Q9K_SysFUnLink:
         bsr     Q9K_ModDirUnlinkByHeader   * -> d0 = 0 (Erfolg) / 1 (nicht gefunden)
         tst.l   d0
         beq     Q9K_SysFUnLink_Ok
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, gleiches Muster wie bei
+* Q9K_SysFLink_Fail oben): Fehlercode ZUERST, "ori #1,ccr" als letzte
+* Instruktion -- sonst loescht die nachfolgende MOVE-Instruktion das
+* gerade gesetzte Carry-Bit sofort wieder.
         move.l  (sp)+,d7                     * eigenes Scratch wiederherstellen (Fehlerpfad)
-        ori     #1,ccr                       * Carry im CCR setzen -- Fehlschlag
         move.w  #$00dd,d1                        * d1.w = E_MNF
+        ori     #1,ccr                       * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
 Q9K_SysFUnLink_Ok:
         move.l  (sp)+,d7                            * eigenes Scratch wiederherstellen (Erfolgspfad)
@@ -1444,6 +1513,47 @@ Q9K_SysFSRtMem:
         bsr     Q9K_SysSRtMemImpl
 
         andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
+        rts
+
+*******************************************************************************
+* Q9K_SysFSSvc -- TRAP-#0-Handler fuer den echten F$SSvc-Callcode (0x32,
+* s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention (68k_tech.pdf S.
+* 508-510, echt per Read gelesen): IN (a1)=Zeiger auf eine Service-
+* Request-Initialisierungstabelle, (a3)="user defined" globaler
+* Datenzeiger. OUT: keine. Kein dokumentierter Fehlerpfad in dieser
+* Implementierung (s. q9kernel_ssvc.c Kopfkommentar -- kein verstecktes
+* Validierungs-Framework, gleiche Begruendung wie bei F$SRtMem).
+*
+* IOMans ALLERERSTER Aufruf beim Booten (echtes TRAP #0, direkt am
+* Modul-Einsprungpunkt, s. modules/ioman/docs/REVERSE_ENGINEERING.md/
+* real per Byte-Disassemblierung gefunden) -- deshalb GENAU WIE
+* Q9K_SysFSRqMem: eingehendes a6 kann 0 sein (IOMan laeuft zu diesem
+* Zeitpunkt bereits mit a6=0, s. Kopfkommentar dort), muss fuer den
+* C-Aufruf gesichert/umgeschaltet/wiederhergestellt werden.
+Q9K_SysFSSvc:
+        move.l  a6,-(sp)                    * eingehendes a6 sichern
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
+        move.l  a1,Q9K_SSvcScratch_TablePtr
+        move.l  a3,Q9K_SSvcScratch_DataPtr
+        bsr     Q9K_SysSSvcImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
+        rts
+
+*******************************************************************************
+* Q9K_TestFChainProbe -- NUR TEMPORAER (2026-08-31, Verdachtspruefung
+* "erreicht IOMan bei diesem Boot-Test wirklich F$Chain, Callcode 0x05,
+* noch nicht real implementiert?"). KEIN echtes F$Chain -- druckt nur
+* 'C' auf die Konsole und kehrt sofort mit Erfolg zurueck (Carry
+* geloescht), OHNE die reale F$Chain-Semantik (Programmwechsel)
+* umzusetzen. Nach der Verifikation wieder entfernen.
+Q9K_TestFChainProbe:
+        move.l  d7,-(sp)
+        moveq   #'C',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  (sp)+,d7
+        andi    #$fe,ccr
         rts
 
 *******************************************************************************
