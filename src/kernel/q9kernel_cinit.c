@@ -147,16 +147,34 @@ extern void Q9K_Diag6(void);
  * F$Sleep NICHT mehr gelesen/geschrieben. */
 #define Q9K_SLEEPQ_SENTINEL_ADDR 0x12F0UL
 
-/* Freispeicher-Basis fuer die Arena (Abschnitt 2, Punkt 3) -- 2026-08-18
- * mit Andreas abgestimmt: fester Offset, VORLAEUFIG, unter der Annahme,
- * dass der Boot-ROM das Kernel-Abbild selbst oberhalb dieser Adresse
- * laedt (noch NICHT am echten/emulierten Boot-Pfad verifiziert -- der
- * neue Kernel wird testweise parallel zum echten dker030s ladbar
- * gemacht, s. build.sh/vendor, dort dann pruefen). Liegt bewusst deutlich
- * oberhalb von Q9K_CpuCount ($1200), damit spaeter noch Platz fuer
- * weitere eigene Kernel-Global-Erweiterungen bleibt, ohne die Arena-
- * Basis wieder verschieben zu muessen. */
-#define Q9K_FREEMEM_BASE    0x2000UL
+/* Freispeicher-Basis fuer die Arena (Abschnitt 2, Punkt 3).
+ *
+ * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-01, Stack-Corruption-Suche nach
+ * Q9K_PROCDESC_SIZE 128->512): der urspruengliche Wert $2000 war NIE
+ * gegen den tatsaechlichen Kernel-Stack geprueft worden (s. alter
+ * Kommentar unten, "VORLAEUFIG ... noch NICHT verifiziert" -- die
+ * Annahme stimmte nicht). Der eigene Boot-/Supervisor-Stack
+ * (Q9K_StackTop, q9kernel_entry.a) liegt bei
+ * Q9K_GlobBase($0)+Q9K_GlobSize($8000)+Q9K_StackSize($4000) = $C000 --
+ * der Stack belegt also $8000..$C000 (waechst abwaerts). Die Arena
+ * wuchs von $2000 aufwaerts OHNE Ruecksicht auf diesen Bereich: bei der
+ * fruehen, kleineren Q9K_PROCDESC_SIZE(128) blieb die Arena zufaellig
+ * unter $8000 (nie kollidiert), aber mit der jetzt noetigen Groesse
+ * (512, s. q9kernel_tables.c) wuchs sie bis $BC00 -- MITTEN in den
+ * Stack hinein. Die ProcPool-Nullungsschleife ueberschrieb dabei den
+ * eigenen Aufruf-Stack waehrend sie noch lief; der naechste
+ * verschachtelte Funktionsaufruf (Q9K_BuildFreeList) las danach eine
+ * bereits zerstoerte Ruecksprungadresse -> Sprung in zufaelligen
+ * Speicher ("random code execution", per Q9_BOARD_DEBUG-PC-Trace
+ * verifiziert). Per Bisektion mit Kanarien-Werten exakt auf diesen
+ * Speicherbereichs-Ueberlapp zurueckgefuehrt (Details: Memory-Notiz
+ * q9-os-eigener-kernel-c).
+ *
+ * Fix: Arena-Basis auf $10000 (64K) verschoben -- deutlich oberhalb von
+ * Q9K_StackTop ($C000), mit Sicherheitsmarge fuer kuenftiges
+ * Stack-Wachstum (Q9K_StackSize koennte spaeter erhoeht werden, ohne
+ * dass die Arena-Basis wieder verschoben werden muss). */
+#define Q9K_FREEMEM_BASE    0x10000UL
 
 /* Schreibt einen 32-Bit-Wert an eine absolute Adresse (=Kernel-Global-
  * Offset, da Kernel-Globals-Basis bei diesem Kernel $000000 ist) */
