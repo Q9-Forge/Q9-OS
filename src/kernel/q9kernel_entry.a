@@ -561,7 +561,7 @@ Q9K_ZeroDone:
 * Semantik (folgt sie der tatsaechlichen SP-Tiefe, oder ist es nur ein
 * grober Gesamtaufruf-Zaehler unabhaengig vom echten Stack?) noch nicht
 * abschliessend geklaert ist -- TODO, sobald mehr bekannt ist.
-        move.l  #$00100000,_stklimit(a6)
+        move.l  #$7FFFFFFF,_stklimit(a6)
         moveq   #'Y',d7                * DIAGNOSE TEMP: _stklimit gesetzt
         bsr     Q9K_DiagWriteD7
         bsr     Q9K_CInit

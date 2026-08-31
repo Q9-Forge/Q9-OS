@@ -18,15 +18,19 @@
  * Werte (docs/REVERSE_ENGINEERING.md, "Fund: Q9_disp_488" bzw. Thema 01
  * Modulverzeichnis-Nachtrag) -- keine Q9-Erfindung.
  *
- * Prozess-/Pfad-DESKRIPTOR-Groesse (Q9K_PROCDESC_SIZE/PATHDESC_SIZE)
- * dagegen IST eine eigene, bewusst vorlaeufige Q9-Festlegung: das echte
- * Deskriptor-Byte-Layout ist noch nicht reverse-engineert
- * (Q9_D_PROCSZ in q9sysglob.h ist selbst [PLATZHALTER]), und ein
- * Deskriptor-Layout ist ohnehin KEIN Kompat-Erfordernis (nur der externe
- * Modul-Header/Dreiklang ist es) -- deshalb hier bewusst ein einfacher,
- * generischer Slot-Pool mit Freiliste statt eines vorgetaeuschten
- * "echten" Layouts. Wird ueberarbeitet, sobald ein echtes Deskriptor-
- * Layout (Punkt 7, erster Ausfuehrungskontext) entworfen ist.
+ * Prozess-/Pfad-DESKRIPTOR-Groesse (Q9K_PROCDESC_SIZE/PATHDESC_SIZE):
+ * urspruenglich als reiner Platzhalter (128 Byte) angelegt, in der
+ * Annahme, das Deskriptor-Layout sei kein Kompat-Erfordernis. **Diese
+ * Annahme wurde 2026-09-01 widerlegt:** IOMan (externes, reales Modul)
+ * schreibt bei I$Dup unbedingt auf D_SysPrc+0x168 -- das ist exakt
+ * P$Path[0] im echten Microware-Layout (P$DIO@0x148, DefIOSiz=32,
+ * P$Path direkt danach@0x168, NumPaths(32)*2=64 Byte bis 0x1A8; per
+ * process.a gegengeprueft, nicht kopiert). Q9K_PROCDESC_SIZE ist daher
+ * jetzt bewusst auf 0x200 (512) vergroessert -- deckt P$Path (bis 0x1A8)
+ * plus Sicherheitsmarge fuer weitere, noch nicht benoetigte P$-Felder.
+ * Der Rest des Deskriptors bleibt unser eigener, generischer Slot-Pool
+ * mit Freiliste; nur der P$DIO/P$Path-Bereich ist jetzt layoutkompatibel
+ * reserviert (noch nicht inhaltlich befuellt -- s. q9kernel_iopath.c).
  *
  * Aufteilungsreihenfolge des EINEN grossen Arena-Blocks (SYSDIS ->
  * USRDIS -> Modulverzeichnis -> Prozess-Pool -> Pfad-Pool) folgt der
@@ -70,7 +74,7 @@ extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
 #define Q9K_INIT_OFF_PATHS    0x3AUL   /* M$Paths,  68k_tech.pdf Table 2-4 */
 #define Q9K_INIT_OFF_MDIRSZ   0x62UL   /* M$MDirSz, 68k_tech.pdf Table 2-4 */
 
-#define Q9K_PROCDESC_SIZE     128UL    /* PLATZHALTER, s. Kopfkommentar */
+#define Q9K_PROCDESC_SIZE     0x200UL  /* deckt P$Path bis 0x1A8, s. Kopfkommentar */
 #define Q9K_PATHDESC_SIZE     32UL     /* PLATZHALTER, s. Kopfkommentar */
 
 /* eigene Kernel-Global-Erweiterungen, direkt hinter Q9K_CpuCount

@@ -118,7 +118,7 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr); /* q9kernel_moddir.c */
 #define Q9K_PROCDESC_STATE_WAITING 'w'
 
 #ifndef Q9K_PROCDESC_SIZE
-#define Q9K_PROCDESC_SIZE 128UL
+#define Q9K_PROCDESC_SIZE 0x200UL  /* deckt P$Path bis 0x1A8, s. q9kernel_tables.c */
 #endif
 #ifndef Q9K_PROCPOOL_BASE_ADDR
 #define Q9K_PROCPOOL_BASE_ADDR 0x1204UL
