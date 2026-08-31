@@ -794,6 +794,25 @@ Q9K_TestProcA:
         moveq   #'Q',d7                     * DIAGNOSE: F$Link("ioman") erfolgreich
         bsr     Q9K_DiagWriteD7
 
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
+* Einbindung", DRITTER Versuch): (0x64,A6) -- laut modules/ioman/docs/
+* REVERSE_ENGINEERING.md ein "Ausgabe-Vtable-Zeiger", den IOMan sowohl
+* im Erfolgs- als auch im Fehlerpfad seiner Init-Diagnose benutzt (Funkt.
+* FUN_00000296/29c dort: Vtable+8 = PutChar-Funktionszeiger, Aufruf
+* "jsr $8(a1)" mit Zeichen in D0.B) -- bei uns bisher nie initialisiert,
+* deshalb stuerzte selbst IOMans eigener, "sauber gedachter" Fehlerpfad
+* (z. B. bei fehlgeschlagenem I$Open) ab, statt nur eine Meldung
+* auszugeben. Eigene, minimale Vtable + PutChar-Routine bereitstellen,
+* bevor zu IOMan gesprungen wird -- das Ziel ist NICHT, IOMans Init
+* erfolgreich abzuschliessen, sondern seinen Fehlerpfad ueberlebensfaehig
+* zu machen UND die tatsaechliche Fehlermeldung sichtbar zu machen.
+        lea     Q9K_IOManPutChar(pc),a0
+        lea     Q9K_IOManOutVtable(pc),a1
+        move.l  a0,8(a1)                        * echte, per PC-relativem lea berechnete Adresse eintragen
+        move.l  a1,($64).w
+* Zwei zusaetzliche Vtable-Felder (Offset 0/4) NICHT bekannt/genutzt --
+* IOMan liest laut Disassemblierung nur Offset 8, s. o. -- bleiben 0.
+
         movea.l a6,a5                        * eigenes a6 sichern
         movea.l #0,a6                          * reale Kernel-Global-Basis fuer IOMans eigenen Code
         jsr     (a1)                             * IOMan-Einsprungpunkt (a1 = M$Exec, reale F$Link-Ausgabe)
@@ -865,6 +884,39 @@ Q9K_TestForkName:
 
 Q9K_TestIOManName:
         dc.b    "ioman",0
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
+* Einbindung", DRITTER Versuch) -- Minimale "Ausgabe-Vtable" fuer IOMans
+* eigene Diagnose-Ausgabe-Infrastruktur (s. Kopfkommentar beim
+* Aufrufer). IOMan liest laut Disassemblierung NUR Offset +8 (Zeiger auf
+* eine PutChar-Routine); die Felder bei +0/+4 bleiben ungenutzt/0 --
+* trotzdem als vollstaendige 12-Byte-Struktur angelegt (statt nur ein
+* einzelnes Datum), falls ein spaeterer Aufrufpfad doch mehr liest.
+* "jsr $8(a1)" ist ECHTE indirekte Adressierung (a1+8 enthaelt die
+* absolute Zieladresse, kein PC-relativer Trick moeglich) -- der
+* Assembler kennt die tatsaechliche Ladeadresse eines REENT-Moduls
+* nicht, deshalb hier nur 0 reserviert, vom Aufrufer zur Laufzeit per
+* PC-relativem lea befuellt (s. dort).
+Q9K_IOManOutVtable:
+        dc.l    0                          * +0x0, ungenutzt (laut bisheriger Disassemblierung)
+        dc.l    0                          * +0x4, ungenutzt (laut bisheriger Disassemblierung)
+        dc.l    0                          * +0x8, PutChar-Funktionszeiger (zur Laufzeit befuellt)
+Q9K_IOManPutChar:
+* Aufruf-Konvention (per Disassemblierung von ioman_DEV verifiziert):
+* IN d0.b = auszugebendes Zeichen. Aufrufer (FUN_0000029c in IOMan)
+* erwartet a0 (String-Iterator) und a1 (Vtable-Basis selbst) UNVERAENDERT
+* zurueck (wird direkt nach dem "jsr" weiterverwendet) -- deshalb hier
+* alle potenziell beruehrten Register sichern/wiederherstellen, gleiches
+* Vorsichtsprinzip wie bei Q9K_DiagWriteD7 (s. dortigen Bugfix-Kommentar).
+        movem.l a0/a1/d6,-(sp)
+        movea.l #Q9_IO_DUART_SRA,a1
+Q9K_IOManPutCharWait:
+        move.b  (a1),d6
+        btst    #2,d6
+        beq     Q9K_IOManPutCharWait
+        move.b  d0,Q9_IO_DUART_THRA
+        movem.l (sp)+,a0/a1/d6
+        rts
 
 * Q9K_SchedRun -- startet die ALLERERSTE Prozessausfuehrung (Abschnitt
 * "Scheduler", 2026-08-21, ersetzt das fruehere Q9K_JumpToFirstProc).
