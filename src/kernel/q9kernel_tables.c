@@ -146,19 +146,37 @@ static void Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = v
  * Freiliste (erster Q9_u32 jedes Slots = Zeiger auf naechsten freien
  * Slot, 0 = Ende) und schreibt den Listenkopf nach freeHeadAddr. Eigene
  * Erfindung (kein Kompat-Bezug), gleiches Prinzip wie das Arena-
- * Freiblock-Format (q9kernel_arena.c). */
+ * Freiblock-Format (q9kernel_arena.c).
+ *
+ * NACHTRAG 2026-09-01 (Stack-Corruption-Suche nach Q9K_PROCDESC_SIZE
+ * 128->512): urspruenglich stand hier "i * slotSize" -- slotSize ist ein
+ * FUNKTIONSPARAMETER (zur Compile-Zeit unbekannt), der 68000 hat keine
+ * MULU.L, also ruft der Compiler dafuer das von Hand geschriebene
+ * __multiply-Laufzeitsymbol (q9kernel_entry.a) mit einer "empirisch
+ * ermittelten", nie mit echten Boot-Registerzustaenden getesteten
+ * Aufrufkonvention auf -- per Bisektion (Kanarien-Werte, s. Memory-Notiz
+ * q9-os-eigener-kernel-c) exakt AN DIESEM Aufruf lokalisiert: der Boot
+ * kommt bis unmittelbar davor, danach nie wieder. Fix: "i * slotSize"
+ * durch einen mitlaufenden Offset-Akkumulator ersetzt -- KEINE
+ * Multiplikation mehr, kein __multiply-Aufruf mehr noetig, fuer JEDEN
+ * Aufrufer (MODDIR/ProcPool/PathPool), unabhaengig vom Wert von
+ * slotSize. Funktional identisch, nur ohne den Verdaechtigen. */
 static void Q9K_BuildFreeList(Q9_u32 base, Q9_u32 slotSize, Q9_u32 count, Q9_u32 freeHeadAddr)
 {
     Q9_u32 i;
+    Q9_u32 offset;
 
     if (count == 0) {
         Q9K_SetU32(freeHeadAddr, 0);
         return;
     }
 
-    for (i = 0; i < count - 1; i++)
-        Q9K_SetU32(base + i * slotSize, base + (i + 1) * slotSize);
-    Q9K_SetU32(base + (count - 1) * slotSize, 0);
+    offset = 0;
+    for (i = 0; i < count - 1; i++) {
+        Q9K_SetU32(base + offset, base + offset + slotSize);
+        offset += slotSize;
+    }
+    Q9K_SetU32(base + offset, 0);
 
     Q9K_SetU32(freeHeadAddr, base);
 }
