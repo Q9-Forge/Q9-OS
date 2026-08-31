@@ -167,7 +167,7 @@ static void FakeEntryB(void) { /* nie aufgerufen, nur Adresse gebraucht */ }
 
 int main(void)
 {
-    static unsigned char procPool[4 * 128]; /* 4 Slots a 128 Byte, wie Q9K_PROCDESC_SIZE */
+    static unsigned char procPool[4 * Q9K_PROCDESC_SIZE]; /* 4 Slots, echte Q9K_PROCDESC_SIZE */
     Q9_u32 poolBase = (Q9_u32)(unsigned long)procPool;
     Q9_u32 entryA = (Q9_u32)(unsigned long)FakeEntryA;
     Q9_u32 desc1, desc2;
@@ -181,7 +181,7 @@ int main(void)
     Q9K_SetU32(Q9_D_ACTIVQ + Q9K_READYQ_NEXT_OFF, Q9_D_ACTIVQ);
     Q9K_SetU32(Q9_D_ACTIVQ + Q9K_READYQ_PREV_OFF, Q9_D_ACTIVQ);
 
-    buildFreeList(poolBase, 128, 4, Q9K_PROCPOOL_FREE_ADDR);
+    buildFreeList(poolBase, Q9K_PROCDESC_SIZE, 4, Q9K_PROCPOOL_FREE_ADDR);
 
     /* Fall 1: Erfolgsfall -- Deskriptor + Stack alloziert, Ready-Queue
      * korrekt verkettet (via Q9K_SchedInsert-Stub), Fake-Rahmen plausibel
@@ -266,7 +266,7 @@ int main(void)
      * erschoepft) -- eigene Freiliste, eigenes Fake-Modulverzeichnis
      * (per g_stubModDirHdr gesteuert). */
     {
-        static unsigned char forkPool[2 * 128];       /* nur 2 Slots -- absichtlich knapp fuer Fall F5 */
+        static unsigned char forkPool[2 * Q9K_PROCDESC_SIZE]; /* nur 2 Slots -- absichtlich knapp fuer Fall F5 */
         Q9_u32 forkPoolBase = (Q9_u32)(unsigned long)forkPool;
         static unsigned char fakeHdr[0x40];           /* echter, byte-genauer Fake-Modulkopf */
         static unsigned char fakeParam[4] = { 0x11, 0x22, 0x33, 0x44 };
@@ -275,7 +275,7 @@ int main(void)
         Q9_u32 desc;
 
         memset(forkPool, 0, sizeof(forkPool));
-        buildFreeList(forkPoolBase, 128, 2, Q9K_PROCPOOL_FREE_ADDR);
+        buildFreeList(forkPoolBase, Q9K_PROCDESC_SIZE, 2, Q9K_PROCPOOL_FREE_ADDR);
         Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, forkPoolBase);
         Q9K_SetU32(Q9_D_PROC, 0);
 
@@ -391,9 +391,9 @@ int main(void)
             checkU32("Q9K_ProcFork() F2: liefert eine Prozess-ID != 0", (Q9_u32)(pid2 != 0), 1);
             checkU32("F2: PID == 2 (zweiter Slot, 1-basierte PID)", pid2, 2);
             checkU32("F2: Prioritaet vom Aufrufer geerbt (42)",
-                     (Q9_u32)*(Q9_u8 *)(forkPoolBase + 128 + Q9K_PROCDESC_PRIORITY_OFF), 42);
+                     (Q9_u32)*(Q9_u8 *)(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PRIORITY_OFF), 42);
             checkU32("F2: Deskriptor-ParentDesc == fakeCaller",
-                     Q9K_GetU32(forkPoolBase + 128 + Q9K_PROCDESC_PARENT_OFF),
+                     Q9K_GetU32(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PARENT_OFF),
                      (Q9_u32)(unsigned long)fakeCaller);
 
             Q9K_SetU32(Q9_D_PROC, 0); /* fuer die naechsten Faelle zuruecksetzen */
