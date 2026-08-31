@@ -241,6 +241,16 @@ Q9K_SRtMemScratch_SizeIn  equ $1348      * Q9_u32, d0.l EIN
 Q9K_SSvcScratch_TablePtr equ $134C      * Q9_u32, (a1) EIN
 Q9K_SSvcScratch_DataPtr  equ $1350      * Q9_u32, (a3) EIN
 
+* Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
+* Q9K_SysFIOpen (Abschnitt "IOMan-Einbindung", 2026-09-01, s. dortigen
+* Kopfkommentar). Direkt hinter den SSvc-Scratch-Feldern ($1350+4) --
+* naechste freie Adresse $1360 (fruehere temporaere Debug-Adressen der
+* "!"-Raetsel-Sitzung sind inzwischen wieder frei, s. Session-Notizen).
+Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
+Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
+Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
+Q9K_IOpenScratch_PathNum  equ $136C      * Q9_u32, d0.w AUS (0 = Fehlschlag)
+
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
 * gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
@@ -649,6 +659,7 @@ _stklimit:
 Q9K_CRuntimeData:
         dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 _stkhandler:
+        move.l  a6,($1374).w              * NUR TEMPORAER (2026-09-01, I$Open-Folgeschritt-Suche)
         moveq   #'S',d7                      * DIAGNOSE: Stack-Ueberlauf-Handler wurde aufgerufen
         bsr     Q9K_DiagWriteD7
 Q9K_StkHandlerSpin:
@@ -1082,6 +1093,9 @@ Q9K_TrapDispatch:
         movem.l d2-d7/a3-a5,-(sp)
         movea.l 38(sp),a4                 * a4 = geretteter PC (Frame jetzt bei sp+36; PC-Feld bei +2 davon)
         move.w  (a4),d7                    * d7 = Funktionscode (0-255), direkt aus dem Code-Strom
+* NUR TEMPORAER (2026-09-01, I$Open-Folgeschritt-Suche): letzten
+* Funktionscode an feste Debug-Adresse schreiben.
+        move.w  d7,($1370).w
         addq.l  #2,38(sp)                   * geretteten PC im Frame um 2 erhoehen (hinter das Funktionscode-Wort)
         cmp.w   #256,d7
         bcc     Q9K_TrapUnknown
@@ -1511,8 +1525,24 @@ Q9K_SysFWait_NoChld:
 * der Wechsel-Pfad von Q9K_TimerIRQHandler (derselbe "movem.l
 * (sp)+,d0-d7/a0-a6 / rte"-Wiederaufnahme-Mechanismus).
 Q9K_SysFExit:
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-01, gleiches Muster wie bei
+* Q9K_SysFLink/SysFUnLink/SysFFork/SysFWait/SysFSRtMem): A6-Schutz fuer
+* den C-Aufruf fehlte hier komplett -- eine fruehere Pruefung hatte das
+* faelschlich als "bereits geschuetzt" gewertet, weil ihr Suchmuster
+* (Text bis zum naechsten "rts") diese Funktion (endet mit "rte"/"bra",
+* nicht "rts") ueberlas und dabei zufaellig weiter unten liegenden,
+* tatsaechlich geschuetzten Code miterfasste. IOMan ruft F$Exit direkt
+* nach seiner (jetzt erfolgreichen) I$Open/I$Dup/I$MakDir-Sequenz auf,
+* mit A6=0 -- exakt der naechste Punkt, an dem der reale Absturz
+* auftrat (per Live-Diagnose verifiziert: a6=0 in _stkhandler, letzter
+* TRAP-#0-Funktionscode = 0x06). Kein A6-Wiederherstellen noetig, wenn
+* der Prozess wechselt (Q9K_SysFExit_SwitchTo laedt ohnehin einen
+* KOMPLETTEN neuen Registersatz inkl. A6 vom naechsten Prozess).
+        move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
+        lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.w  d1,Q9K_ExitScratch_Status
         bsr     Q9K_SysExitImpl
+        movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         move.l  Q9K_ExitScratch_Next,d0
 
         tst.l   d0
@@ -1678,6 +1708,57 @@ Q9K_SysFSSvc:
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
+        rts
+
+*******************************************************************************
+* Q9K_SysFIOpen -- TRAP-#0-Handler fuer den echten I$Open-Callcode (0x84,
+* s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention (68k_tech.pdf S.
+* 568-570, echt per Read gelesen): IN d0.b=Zugriffsmodus, (a0)=Pfadname-
+* Zeiger. OUT (Erfolg): d0.w=Pfadnummer, (a0)=hinter den Namen
+* aktualisiert, Carry im geretteten SR geloescht. OUT (Fehlschlag):
+* Carry gesetzt, d1.w=Fehlercode. Gleicher A6-Schutz wie bei den anderen
+* C-Code-aufrufenden Handlern (dieser hier ist der urspruengliche
+* Ausloeser des ganzen A6-Schutz-Fundes -- IOMan ruft ihn direkt nach
+* F$SSvc per echtem TRAP #0 auf, mit A6=0, s. Session-Notizen
+* 2026-08-31/09-01).
+Q9K_SysFIOpen:
+        move.l  a6,-(sp)                    * eingehendes a6 sichern
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
+        clr.l   Q9K_IOpenScratch_Mode           * oberes 3 Byte definiert nullen (nur d0.b ist echte Eingabe)
+        move.b  d0,Q9K_IOpenScratch_Mode+3    * unteres Byte (d0.b)
+        move.l  a0,Q9K_IOpenScratch_NamePtr
+        bsr     Q9K_SysIOpenImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+
+        move.l  Q9K_IOpenScratch_PathNum,d0
+        tst.l   d0
+        beq.w   Q9K_SysFIOpen_Fail
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-01): Q9_D_SysPrc ($50, echtes
+* System-Global-Feld, s. q9sysglob.h) blieb bisher 0/ungesetzt. IOMan
+* liest es GLEICH NACH einem erfolgreichen I$Open bei seiner I$Dup-
+* Sequenz und schreibt DIREKT dorthin+0x168 (ioman_entry_98: "movea.l
+* $50(a6),a1 / lea.l $168(a1),a1 / move.w d0,(a1)") -- bei uns bisher
+* physisch Adresse 0x168, mitten in unseren eigenen Kernel-Global-
+* Daten, was Speicher korrumpierte. Mangels eigenem "System-Prozess"-
+* Konzept den aktuellen (aufrufenden) Prozess als Ersatz eintragen --
+* zeigt zumindest auf einen echten, gueltigen Deskriptor statt auf
+* Adresse 0. HIER (statt im Testcode selbst) gesetzt, weil eine
+* Aenderung DORT wiederholt zu einem sofortigen Boot-Haenger fuehrte
+* (vermutlich Short-Branch-Reichweite eines benachbarten Sprungs,
+* separates, ungeklaertes Thema) -- dieselbe Wirkung, aber an einer
+* im Modul-Layout offenbar unkritischeren Stelle.
+        move.l  Q9_D_Proc,($50).w
+        movea.l Q9K_IOpenScratch_PastName,a0
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg
+        rts
+
+* (a0) laut Manual nur im Erfolgsfall garantiert, schadet aber nicht --
+* s. Kopfkommentar q9kernel_iopath.c. d1.w=E_PTHFUL (Path Table full,
+* MWOS/SRC/DEFS/errno.h) -- einziger bisher moeglicher Fehlerfall.
+Q9K_SysFIOpen_Fail:
+        movea.l Q9K_IOpenScratch_PastName,a0
+        move.w  #$00c8,d1                        * d1.w = E_PTHFUL
+        ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
 
 *******************************************************************************
