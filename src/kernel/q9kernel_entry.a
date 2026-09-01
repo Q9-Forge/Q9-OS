@@ -861,9 +861,20 @@ Q9K_TestProcA:
 * fehlinterpretiert) -- absolut reiner Zufall, dass dabei irgendwann
 * ueberhaupt wieder ein "rts" erreicht wurde. Fix: a3/a4 statt a0/a1 als
 * Arbeitsregister, a1 bleibt bis zum jsr unangetastet.
-        lea     Q9K_IOManPutChar(pc),a3
+* NACHTRAG 2026-09-01, ECHTER BUG GEFUNDEN + GEFIXT: das Laufzeit-Eintragen
+* der PutChar-ADRESSE bei +8 war falsch und ist entfallen. "jsr $8(a1)" ist
+* auf 68k KEIN indirekter Sprung ueber einen Zeiger, sondern springt auf die
+* effektive Adresse a1+8 SELBST -- dort muss also CODE stehen, kein Zeiger
+* (s. Q9K_IOManOutVtable unten). Vorher fuehrte die CPU die dort abgelegte
+* dc.l als Instruktion aus: die Adresse $00007460 sind die Bytes
+* "00 00 74 60" = "ori.b #$60,d0", und danach fiel die Ausfuehrung
+* zufaellig in die richtige Routine bei $7460. Wirkung war ein systematisch
+* verfaelschtes d0 -- real gemessen kamen IOMans Meldungen mit jedem Zeichen
+* or-verknuepft mit $60 heraus (aus dem Doppelpunkt wurde z, aus dem
+* Leerzeichen ein Backtick, aus Error wurde error), waehrend alles andere
+* funktionierte. Genau dieselbe Fehlklasse wie der Vtable-Fund vom
+* 2026-08-31 daneben: dass es ueberhaupt lief, war Zufall.
         lea     Q9K_IOManOutVtable(pc),a4
-        move.l  a3,8(a4)                        * echte, per PC-relativem lea berechnete Adresse eintragen
         move.l  a4,($64).w
 * Zwei zusaetzliche Vtable-Felder (Offset 0/4) NICHT bekannt/genutzt --
 * IOMan liest laut Disassemblierung nur Offset 8, s. o. -- bleiben 0.
@@ -960,7 +971,12 @@ Q9K_TestIOManName:
 Q9K_IOManOutVtable:
         dc.l    0                          * +0x0, ungenutzt (laut bisheriger Disassemblierung)
         dc.l    0                          * +0x4, ungenutzt (laut bisheriger Disassemblierung)
-        dc.l    0                          * +0x8, PutChar-Funktionszeiger (zur Laufzeit befuellt)
+* +0x8 ist ein CODE-EINSPRUNG, kein Funktionszeiger: IOMan macht
+* "jsr $8(a1)", und das springt auf die effektive Adresse a1+8, ohne zu
+* dereferenzieren (s. Bugfix-Kommentar an der Aufrufstelle oben). Deshalb
+* hier ein echter PC-relativer Sprung -- REENT-tauglich und ohne jede
+* Laufzeit-Reparatur.
+        bra.w   Q9K_IOManPutChar           * +0x8
 Q9K_IOManPutChar:
 * Aufruf-Konvention (per Disassemblierung von ioman_DEV verifiziert):
 * IN d0.b = auszugebendes Zeichen. Aufrufer (FUN_0000029c in IOMan)
@@ -1693,12 +1709,57 @@ Q9K_SysFSRqMem:
 
         move.l  Q9K_SRqMemScratch_SizeOut,d0
         movea.l Q9K_SRqMemScratch_Addr,a2
-        andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-01, gemessen im Emulator, s. u.):
+* beim DIREKTAUFRUF ueber IOMans SYSDIS-Trampolin genuegt es NICHT, die
+* Ergebnisse in den lebenden Registern zu liefern -- der Aufrufer erwartet
+* sie ZUSAETZLICH im OS-9-Registerabbild, auf das (a5) zeigt. IOMans
+* FUN_000015ca (modules/ioman/disasm/round4_all_functions.txt) legt dafuer
+* einen 0x2c-Byte-Rahmen an, setzt "movea.l SP,A5", springt hierher und
+* laedt danach mit
+*     1602: move.l  0(sp),d0        * R$d0
+*     1606: movea.l $28(sp),a2      * R$a2
+* seine Rueckgabewerte AUS DIESEM RAHMEN neu -- nicht aus den Registern.
+* Die Offsets stehen so im offiziellen SDK (MWOS/OS9/SRC/DEFS/MACHINE/reg.h,
+* "REGISTERS { u_int32 d[8]; void *a[8]; ... }" -> R$d0=$00, R$d1=$04,
+* R$a2=$28); IOMans Rahmengroesse 0x2c reicht genau bis einschliesslich a2,
+* was die Zuordnung bestaetigt.
+*
+* Ohne diesen Schreibzugriff bekam IOMan Kernel-STACKRESTE zurueck: real
+* gemessen a2=$751e -- das ist die Ruecksprungadresse von Q9K_TrapDispatchs
+* eigenem "jsr (a4)", die auf demselben Stack genau in R$a2 liegt -- und
+* d0=$9d6a. Damit setzte IOMan D_PthDBT ($48) auf $751e und baute eine
+* 5036-Eintrags-Tabelle ab $c3d3 auf, die SYSDIS ($10000) und USRDIS
+* ($10800) vollstaendig ueberschrieb. Der anschliessende I$Open landete
+* deshalb ueber einen zerstoerten Tabelleneintrag im Nirgendwo.
+*
+* UNTERSCHEIDUNG DER AUFRUFWEGE, bewusst dokumentiert: geschrieben wird nur
+* beim externen Direktaufruf, erkennbar am EINGEHENDEN a6=0 (bei unserem
+* eigenen Q9K_TrapDispatch ist a6 immer schon Q9K_CRuntimeData, s.
+* Kopfkommentar oben). Bei einem Trap ueber Q9K_TrapDispatch gibt es gar
+* kein Registerabbild, dort waere (a5) ein beliebiger Aufruferwert und der
+* Schreibzugriff wuerde fremden Speicher zerstoeren.
+* DIESE UNTERSCHEIDUNG IST EIN INTERIMSMITTEL: sauber waere, dass
+* Q9K_TrapDispatch ebenfalls ein echtes Registerabbild aufbaut und (a5)
+* setzt, dann koennte der Schreibzugriff unbedingt erfolgen. Das ist eine
+* Architekturentscheidung und bewusst nicht hier mitentschieden.
+* NOCH OFFEN: dieselbe Behandlung brauchen die anderen ueber das Trampolin
+* erreichbaren Handler -- IOMan nutzt es laut Disassemblierung auch fuer die
+* Callcodes $00 (F$Link), $08, $31, $37 und $58.
+        cmpa.w  #0,a6                           * a6=0 -> externer Direktaufruf mit Registerabbild bei (a5)
+        bne     Q9K_SysFSRqMem_OkDone
+        move.l  d0,$00(a5)                      * R$d0 = gewaehrte Byte-Anzahl
+        move.l  a2,$28(a5)                      * R$a2 = Blockadresse
+Q9K_SysFSRqMem_OkDone:
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg (ALS LETZTES)
         rts
 
 Q9K_SysFSRqMem_Fail:
         move.w  Q9K_SRqMemScratch_Error,d1
-        ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
+        cmpa.w  #0,a6                           * s. o. -- nur beim externen Direktaufruf
+        bne     Q9K_SysFSRqMem_FailDone
+        move.w  d1,$06(a5)                      * unteres Wort von R$d1 ($04) = Fehlercode
+Q9K_SysFSRqMem_FailDone:
+        ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag (ALS LETZTES)
         rts
 
 *******************************************************************************
