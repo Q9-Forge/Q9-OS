@@ -175,7 +175,13 @@ extern void Q9K_Diag6(void);
  * Q9K_StackTop ($C000), mit Sicherheitsmarge fuer kuenftiges
  * Stack-Wachstum (Q9K_StackSize koennte spaeter erhoeht werden, ohne
  * dass die Arena-Basis wieder verschoben werden muss). */
-#define Q9K_FREEMEM_BASE    0x10000UL
+/* NACHTRAG 2026-09-01 (BUGFIX "IOMan-Modul wird zur Laufzeit zerschossen",
+ * s. ausfuehrlichen Kommentar bei Q9K_StackBase in q9kernel_entry.a): Der
+ * Boot-Stack musste ueber die Bootkette ($7100..~$C400) hinaus verschoben
+ * werden und belegt jetzt $10000..$18000 -- also genau die bisherige
+ * Arena-Basis. Arena entsprechend mitgezogen, damit die Reihenfolge
+ * Globals / Bootkette / Stack / Arena ueberlappungsfrei bleibt. */
+#define Q9K_FREEMEM_BASE    0x18000UL
 
 /* Schreibt einen 32-Bit-Wert an eine absolute Adresse (=Kernel-Global-
  * Offset, da Kernel-Globals-Basis bei diesem Kernel $000000 ist) */

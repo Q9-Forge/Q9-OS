@@ -88,7 +88,7 @@ Q9_MA_SUPER     equ     $20                     * System-State [Q9_MA_SUPER]
 Q9K_Edition     equ     1
 
 Q9K_GlobBase    equ     $000000                 * Basis Kernel-Global-Bereich
-Q9K_GlobSize    equ     $00B000                 * 44K, s. OWN_KERNEL_INIT_PLAN.md Abschnitt 5.3
+Q9K_GlobSize    equ     $007000                 * 28K, endet VOR der Bootkette -- s. NACHTRAG 2026-09-01 unten
 * 32K -> 44K (2026-09-01, BUGFIX "kein A"): Das Kernelmodul selbst ist
 * durch q9kernel_procapi.c/AllocBase-Erweiterungen auf 0x28ce (10446)
 * Byte gewachsen. Bei Ladeadresse 0x7100 (per M$Name-Offset+0x0C und
@@ -110,8 +110,44 @@ Q9K_GlobSize    equ     $00B000                 * 44K, s. OWN_KERNEL_INIT_PLAN.m
 * verifiziert per grep, keine weitere Kollision. 8K -> 16K Stack-Groesse
 * (2026-08-18, DIAGNOSE-EXPERIMENT) bleibt unveraendert bestehen, siehe
 * Historie unten.
-Q9K_StackSize   equ     $004000                 * 16K Boot-/Supervisor-Stack, direkt hinter den Globals
-Q9K_StackTop    equ     Q9K_GlobBase+Q9K_GlobSize+Q9K_StackSize
+* NACHTRAG 2026-09-01 (BUGFIX "IOMan-Modul wird zur Laufzeit zerschossen"):
+* Der Boot-/Supervisor-Stack lag bisher DIREKT hinter den Globals
+* (Q9K_GlobBase+Q9K_GlobSize+Q9K_StackSize) -- bei GlobSize $B000 also
+* $B000..$F000. Genau dort liegt aber die zweite Haelfte der vom
+* CF-Bootloader als EIN zusammenhaengender Block geladenen Bootkette:
+* Basis $7100, Ende $C3BC (kernel/init/forkchild/ioman/scf/sc68681/term,
+* per Q9K_BootList-Dump verifiziert). Der abwaerts wachsende Stack hat
+* damit ioman, scf, sc68681 und term Stueck fuer Stueck ueberschrieben.
+* Empirisch nachgewiesen per byteweisem Vergleich des RAM ab $7100 gegen
+* die Original-Bootdatei: 372 abweichende Bereiche, beginnend bei $AF00
+* -- also sogar UNTER der damaligen Stackuntergrenze $B000, der Stack war
+* zusaetzlich um rund 600 Byte uebergelaufen. Sichtbare Folge: IOMans per
+* F$Link ermitteltes Modul war beim Aufruf bereits beschaedigt, seine
+* Init-Fehlermeldung kam zeichenweise verfaelscht heraus (feste
+* ODER-Maske $4A) und der Modulname in der Moduldirectory las sich als
+* Datenmuell. Der Meldungstext selbst (Modul-Offset $3F7 = $A04D) lag
+* zufaellig noch unterhalb $AF00 und war deshalb im RAM-Dump intakt --
+* was die Suche lange in die falsche Richtung gelenkt hat.
+*
+* Fix, gleiches Muster wie der Arena-Fix von 2026-08-18 (s.
+* Q9K_FREEMEM_BASE-Kommentar in q9kernel_cinit.c): Die drei Zonen werden
+* entkoppelt und in dieser Reihenfolge, ueberlappungsfrei, angeordnet --
+*
+*   Globals/Nullung   $000000..$007000   (28K, endet VOR der Bootkette)
+*   Bootkette         $007100..~$00C400  (vom Bootloader geladen, TABU)
+*   Boot-Stack        $010000..$018000   (32K, waechst abwaerts ab StackTop)
+*   Arena (FREEMEM)   ab $018000         (q9kernel_cinit.c, mitgezogen)
+*
+* Q9K_StackTop haengt deshalb NICHT mehr an Q9K_GlobSize, sondern an der
+* eigenen Konstante Q9K_StackBase -- sonst haette das Verkleinern von
+* Q9K_GlobSize den Stack direkt IN die Bootkette geschoben (auf $7000..
+* $B000), also genau das Gegenteil bewirkt. 28K Globals sind reichlich:
+* die hoechste bekannte Global-Adresse ist Q9K_SRqMemFrameScratch ($13A4).
+* Die Bootkette darf jetzt bis $10000 wachsen (rund 16K Luft ueber dem
+* heutigen Ende $C3BC), bevor die naechste Zone anzupassen ist.
+Q9K_StackBase   equ     $010000                 * Untergrenze Boot-/Supervisor-Stack, ueber der Bootkette
+Q9K_StackSize   equ     $008000                 * 32K (16K -> 32K: der alte Wert lief nachweislich ueber)
+Q9K_StackTop    equ     Q9K_StackBase+Q9K_StackSize
 
 * Eigene Ablage fuer die vom Boot-ROM per sp uebergebene Speicherregion-
 * Liste (s. Thema 01, "Neuer Fund" zu sp/D6) -- KEIN Feld aus dem echten
