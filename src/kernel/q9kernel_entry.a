@@ -1797,6 +1797,14 @@ Q9K_SysFSRqMem:
 * NOCH OFFEN: dieselbe Behandlung brauchen die anderen ueber das Trampolin
 * erreichbaren Handler -- IOMan nutzt es laut Disassemblierung auch fuer die
 * Callcodes $00 (F$Link), $08, $31, $37 und $58.
+* NACHTRAG 2026-09-01, am ORIGINALKERNEL GEGENGEPRUEFT (s. Fehlerpfad unten):
+* das Original schreibt diese beiden Felder BEDINGUNGSLOS, ohne jede
+* Aufrufweg-Erkennung. Es kann das, weil dort (a5) IMMER ein gueltiges
+* Registerabbild ist -- der echte Kernel baut fuer JEDEN Systemaufruf eines
+* auf. Solange unser Q9K_TrapDispatch das nicht tut, brauchen wir die
+* Unterscheidung hier; sie faellt weg, sobald er es tut. Die Eingabe holt das
+* Original uebrigens aus dem REGISTER d0, nicht aus dem Abbild -- das machen
+* wir oben schon genauso.
         cmpa.w  #0,a6                           * a6=0 -> externer Direktaufruf mit Registerabbild bei (a5)
         bne     Q9K_SysFSRqMem_OkDone
         move.l  d0,$00(a5)                      * R$d0 = gewaehrte Byte-Anzahl
@@ -1807,10 +1815,16 @@ Q9K_SysFSRqMem_OkDone:
 
 Q9K_SysFSRqMem_Fail:
         move.w  Q9K_SRqMemScratch_Error,d1
-        cmpa.w  #0,a6                           * s. o. -- nur beim externen Direktaufruf
-        bne     Q9K_SysFSRqMem_FailDone
-        move.w  d1,$06(a5)                      * unteres Wort von R$d1 ($04) = Fehlercode
-Q9K_SysFSRqMem_FailDone:
+* NACHTRAG 2026-09-01: der Fehlerpfad fasst das Registerabbild bewusst NICHT
+* an -- so macht es das Original auch. Im echten Microware-Kernel (im
+* Emulator gebootet, Handleradresse zur Laufzeit aus D_SysDis-Slot $28
+* geholt = $83a6, Bytes ausgelesen und dekodiert):
+*     83a6  bsr.s   ->$83b4        * eigentlicher Allokator
+*     83a8  bcs.b   ->$83b2        * Fehler: Abbild NICHT anfassen
+*     83aa  move.l  d0,$00(a5)     * R$d0 = gewaehrte Groesse
+*     83ae  move.l  a2,$28(a5)     * R$a2 = Blockadresse
+*     83b2  rts
+* Der Fehler wird also ausschliesslich ueber Carry + d1 signalisiert.
         ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag (ALS LETZTES)
         rts
 
