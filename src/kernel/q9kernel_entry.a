@@ -87,13 +87,29 @@ Q9_MA_REENT     equ     $80                     * Reentrant [Q9_MA_REENT]
 Q9_MA_SUPER     equ     $20                     * System-State [Q9_MA_SUPER]
 Q9K_Edition     equ     1
 
-Q9K_GlobBase    equ     $000000                 * Basis Kernel-Global-Bereich (32K)
-Q9K_GlobSize    equ     $008000                 * 32K, s. OWN_KERNEL_INIT_PLAN.md Abschnitt 5.3
-* 8K -> 16K (2026-08-18, DIAGNOSE-EXPERIMENT): echter Q9-Flux-Boot-Test
-* zeigt, dass _stkhandler beim Aufruf von Q9K_CInit mit 8K wirklich
-* auslöst (echter Stack-Ueberlauf, kein Diagnose-Artefakt -- verifiziert
-* NACH dem jsr->bsr-Fix unten). Vorlaeufige Verdopplung zum Testen, ob
-* das reicht; endgueltige Groesse noch offen (TODO).
+Q9K_GlobBase    equ     $000000                 * Basis Kernel-Global-Bereich
+Q9K_GlobSize    equ     $00B000                 * 44K, s. OWN_KERNEL_INIT_PLAN.md Abschnitt 5.3
+* 32K -> 44K (2026-09-01, BUGFIX "kein A"): Das Kernelmodul selbst ist
+* durch q9kernel_procapi.c/AllocBase-Erweiterungen auf 0x28ce (10446)
+* Byte gewachsen. Bei Ladeadresse 0x7100 (per M$Name-Offset+0x0C und
+* per forkchild-Kreuzcheck ZWEIFACH verifiziert) reicht das Modul bis
+* 0x99ce -- ueber das alte Q9K_GlobSize (0x8000) hinaus, also GENAU in
+* den Boot-/Supervisor-Stack-Bereich (0x8000-0xC000) hinein. Der fruehe
+* Boot-Stack (vor dem ersten Prozessstart, laeuft noch auf DIESEM Stack
+* waehrend Q9K_CInit) hat damit den hinteren Teil des eigenen Moduls
+* ueberschrieben -- daraus resultierten die als Nullen gelesenen
+* USRDIS/SYSDIS-Handlerdaten und der Effekt, dass Prozess A nach dem
+* echten IOMan-Trap nie wieder auftauchte. Die vorhandene Ueberlapp-
+* Aussparungslogik unten (Q9K_ModuleStart/M$Size-Berechnung) schuetzt
+* NUR den Nullungsbereich [0,Q9K_GlobSize) vor Selbstueberschreibung,
+* nicht den STACK-Bereich dahinter -- deshalb Q9K_GlobSize erhoeht statt
+* die Aussparungslogik zu erweitern (einfacherer, robusterer Fix: schiebt
+* den ganzen Stack- UND Arena-Bereich weiter nach oben). 44K = Modulende
+* (0x99ce) + rund 5,5K Puffer, und der neue Q9K_StackTop (0xF000) bleibt
+* mit 4K Puffer klar unter Q9K_FREEMEM_BASE (0x10000, Arena-Basis) --
+* verifiziert per grep, keine weitere Kollision. 8K -> 16K Stack-Groesse
+* (2026-08-18, DIAGNOSE-EXPERIMENT) bleibt unveraendert bestehen, siehe
+* Historie unten.
 Q9K_StackSize   equ     $004000                 * 16K Boot-/Supervisor-Stack, direkt hinter den Globals
 Q9K_StackTop    equ     Q9K_GlobBase+Q9K_GlobSize+Q9K_StackSize
 
@@ -283,6 +299,17 @@ Q9K_IDScratch_Success     equ $13A0      * 0/1
 * NIEDRIGEREN Laufzeitadresse liegt) weiterhin ungeschuetzt -- die
 * Nullungsschleife zerstoerte sich dadurch trotzdem selbst (per Q9-Flux-
 * Emulator-Instrumentierung real nachgewiesen, 2026-08-18).
+*
+* NACHTRAG 2026-09-01: Q9K_ModuleStart markiert NICHT Offset 0 des
+* gelinkten Moduls, sondern das Ende des vom Linker automatisch VOR dem
+* ersten psect-Byte eingefuegten Modulkopfs -- der generierte Kopf ist
+* laut l68 -s=<map>.txt-Symboltabelle $3C (60) Byte gross (Q9K_ModuleStart
+* dort bei PSECT-Offset $3C). Jeder Code, der den WAHREN Modulanfang
+* braucht (z.B. um M$Size aus dem echten Kopf zu lesen, s. Q9K_Entry
+* weiter unten), MUSS "Q9K_ModuleStart(pc)" um Q9K_ModuleHeaderSize nach
+* VORNE korrigieren -- s. Bugfix "kein A" 2026-09-01 dort fuer Details
+* zur Herleitung.
+Q9K_ModuleHeaderSize equ $3C            * generierte Modulkopfgroesse, per l68-Map verifiziert
 Q9K_ModuleStart:
 
 * ===== Assembler-Einstieg =====
@@ -473,6 +500,30 @@ Q9K_BootListDone:
 * werden; d0 hier als Rechen-Schrott zu verwenden haette den echten
 * RAM-Groessenwert VOR dessen Sicherung stillschweigend ueberschrieben).
 *
+* NACHTRAG 2026-09-01 (BUGFIX "kein A", dritter echter Bug in derselben
+* Stelle): "+4 ab Q9K_ModuleStart" oben war FALSCH -- Q9K_ModuleStart
+* markiert NICHT Offset 0 des gelinkten Moduls, sondern das Ende des vom
+* Linker automatisch VOR dem psect-Code eingefuegten Modulkopfs. Per
+* l68 -s=<map>.txt empirisch verifiziert: Q9K_ModuleStart liegt bei
+* PSECT-Offset $3C (60 Byte), nicht bei 0. "4(a2)" las damit NICHT
+* M$Size, sondern Datenmuell aus dem eigentlichen Code (relativer
+* Offset $40 ab wahrem Modulanfang) -- ergab eine viel zu kleine
+* "wahre Modulendadresse", worauf der dritte Q9K_ZeroRange-Aufruf
+* [falsches Modulende, Q9K_GlobSize) einen Grossteil des eigenen Moduls
+* nullte. Bei kleineren, frueheren Kernel-Builds blieb das folgenlos
+* (die falsche Modulendadresse lag zufaellig trotzdem nah genug am
+* korrekten Bereich bzw. Q9K_ZeroDone griff fruehzeitig); erst mit dem
+* durch q9kernel_procapi.c/AllocBase gewachsenen Modul wurde der Fehler
+* an der M$Name-Aufloesung sichtbar (USRDIS/SYSDIS-Handler zeigten auf
+* genullten Speicher, Prozess A verschwand nach dem ersten IOMan-Trap).
+* Fix: a2 direkt nach dem lea um Q9K_ModuleHeaderSize korrigieren, sodass
+* ALLE nachfolgenden Berechnungen (GlobSize-Vergleich, ZeroRange-Grenzen,
+* M$Size-Lesung) konsistent vom WAHREN Modulanfang ausgehen. $3C bewusst
+* als benannte, per l68-Map verifizierte Konstante (nicht "Magic Number
+* inline") -- falls sich die psect-Kopfgroesse durch kuenftige Header-
+* Parameteraenderungen verschiebt, muss dieser Wert per l68 -s=<map>.txt
+* (Q9K_ModuleStart-Offset ablesen) neu verifiziert werden.
+*
 * Q9K_BootList liegt bei einer FESTEN, sehr niedrigen Adresse ($1000)
 * und das Modul lud in jedem bisherigen Test deutlich hoeher (~$71xx) --
 * bewusst NICHT der allgemeine Fall (beide Zonen in beliebiger
@@ -484,7 +535,8 @@ Q9K_BootListDone:
         move.l  #Q9K_BootList,d4         * nullt [0, Q9K_BootList) -- unterhalb jeder Zone
         bsr     Q9K_ZeroRange
 
-        lea     Q9K_ModuleStart(pc),a2   * a2 = eigene Modul-Startadresse (Laufzeit, nicht Assemblierzeit!)
+        lea     Q9K_ModuleStart(pc),a2   * a2 = Q9K_ModuleStart -- NICHT der wahre Modulanfang!
+        suba.l  #Q9K_ModuleHeaderSize,a2 * a2 auf wahren Modulanfang korrigieren (s. NACHTRAG unten)
         move.l  a2,d4
         cmp.l   #Q9K_GlobSize,d4
         bcc     Q9K_ZeroNoOverlap        * Modul liegt komplett ausserhalb -- haeufigster/einfachster Fall
