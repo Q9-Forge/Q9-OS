@@ -548,15 +548,25 @@ Q9K_BootListDone:
         sub.l   #Q9K_BootListEnd,d4      * d4 = Modulanfang - Q9K_BootListEnd
         bsr     Q9K_ZeroRange
 
-        move.l  4(a2),d2                 * d2 = M$Size aus dem eigenen (echten) Modulkopf -- NICHT d0!
-        add.l   a2,d2                    * d2 = Modulstart + Groesse = WAHRE Modulendadresse
-        movea.l d2,a0                    * a0 = wahres Modulende (nicht Q9K_ModuleEnd-Label!)
-        move.l  a0,d4
-        move.l  #Q9K_GlobSize,d6
-        sub.l   d4,d6                    * d6 = Q9K_GlobSize - Modulende (als vorzeichenbehaftete Byte-Anzahl)
-        bcs     Q9K_ZeroDone             * Modul reicht bis/ueber das Bereichsende -- nichts mehr zu nullen
-        move.l  d6,d4
-        bsr     Q9K_ZeroRange
+* NACHTRAG 2026-09-01 (im selben Zug wie der Q9K_ModuleHeaderSize-Fix
+* oben behoben): der urspruengliche dritte Schritt hier nullte
+* [wahres Modulende, Q9K_GlobSize) -- das setzte voraus, dass NACH dem
+* eigenen Kernel-Modul bis Q9K_GlobSize nur freier/belangloser Speicher
+* liegt. Das stimmt hier NICHT: der CF-Bootloader laedt die GESAMTE
+* Bootkette (Kernel+init+forkchild+ioman) als EINEN zusammenhaengenden
+* Block, und die nachfolgenden Module beginnen DIREKT am Modulende --
+* liegen also, sobald Q9K_GlobSize grosszuegig genug fuer den Stack-
+* Sicherheitsabstand gewaehlt ist (s. Q9K_GlobSize-Kommentar oben),
+* fast zwangslaeufig noch INNERHALB von [Modulende, Q9K_GlobSize).
+* Per RAM-Dump empirisch nachgewiesen: F$Link("init") schlug nach dem
+* ModuleHeaderSize-Fix ploetzlich fehl, weil dieser dritte Schritt das
+* init-Modul (beginnt exakt bei Q9K_ModuleEnd) mitgenullt hatte.
+* Der Bereich VOR dem eigenen Modul (die eigentlichen Kernel-Globals,
+* per erstem ZeroRange-Aufruf oben behandelt) bleibt unveraendert
+* gesaeubert -- dieser dritte Schritt hatte dagegen nie eine zwingende
+* Funktion (keine bekannten Kernel-Globals liegen NACH dem Modul),
+* daher komplett entfernt statt eingeschraenkt: zur Boot-Zeit ist
+* grundsaetzlich nicht bekannt, was/ob dort noch folgt.
         bra     Q9K_ZeroDone
 
 Q9K_ZeroNoOverlap:
