@@ -251,6 +251,19 @@ Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
 Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
 Q9K_IOpenScratch_PathNum  equ $136C      * Q9_u32, d0.w AUS (0 = Fehlschlag)
 
+* Eigene Kernel-Global-Erweiterungen fuer F$GProcP/F$ID (Abschnitt
+* "Prozess-API", 2026-09-01). Direkt hinter I$Open; $1370/$1374 bleiben
+* temporaere Diagnosefelder, deshalb fester Beginn erst bei $1380.
+Q9K_GProcPScratch_PID     equ $1380      * d0.w EIN
+Q9K_GProcPScratch_Desc    equ $1384      * (a1) AUS
+Q9K_GProcPScratch_Error   equ $1388      * d1.w AUS bei Fehler
+Q9K_GProcPScratch_Success equ $138C      * 0/1
+Q9K_IDScratch_PID         equ $1390      * d0.w AUS
+Q9K_IDScratch_GroupUser   equ $1394      * d1.l AUS
+Q9K_IDScratch_Priority    equ $1398      * d2.w AUS
+Q9K_IDScratch_Error       equ $139C      * d1.w AUS bei Fehler
+Q9K_IDScratch_Success     equ $13A0      * 0/1
+
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
 * gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
@@ -793,6 +806,28 @@ Q9K_TestProcA:
         moveq   #'W',d7                    * DIAGNOSE: F$Wait erfolgreich (Kind wirklich beendet+abgeholt)
         bsr     Q9K_DiagWriteD7
 
+* Prozess-API-Meilenstein (2026-09-01): beide Calls als echte TRAP-#0-
+* Aufrufe pruefen. F$ID liefert die Daten von Prozess A (PID 1,
+* Gruppe/Benutzer 0, Prioritaet 5); seine PID wird unmittelbar an
+* F$GProcP weitergereicht. Nur wenn dessen Rueckgabe exakt Q9_D_Proc
+* ist, erscheinen die Marker 'I' und 'G'.
+        trap    #0
+        dc.w    $000c                     * F$ID
+        bcs     Q9K_TestProcApiFail
+        tst.l   d1
+        bne     Q9K_TestProcApiFail
+        cmpi.w  #5,d2
+        bne     Q9K_TestProcApiFail
+        moveq   #'I',d7
+        bsr     Q9K_DiagWriteD7
+        trap    #0
+        dc.w    $0037                     * F$GProcP, d0.w noch aus F$ID
+        bcs     Q9K_TestProcApiFail
+        cmpa.l  ($4c).w,a1                * Q9_D_Proc
+        bne     Q9K_TestProcApiFail
+        moveq   #'G',d7
+        bsr     Q9K_DiagWriteD7
+
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
 * Einbindung" -- ZWEITER Versuch, jetzt mit echtem F$SSvc-Support UND
 * dem am selben Tag gefundenen+gefixten CCR-Fehlersignalisierungs-Bug,
@@ -844,6 +879,11 @@ Q9K_TestProcA:
 
 Q9K_TestIOManLinkFail:
         moveq   #'q',d7                     * DIAGNOSE: F$Link("ioman") fehlgeschlagen
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+
+Q9K_TestProcApiFail:
+        moveq   #'p',d7                  * F$ID/F$GProcP-Regression fehlgeschlagen
         bsr     Q9K_DiagWriteD7
         bra     Q9K_TestProcA_Loop
 
@@ -1762,18 +1802,48 @@ Q9K_SysFIOpen_Fail:
         rts
 
 *******************************************************************************
-* Q9K_TestFChainProbe -- NUR TEMPORAER (2026-08-31, Verdachtspruefung
-* "erreicht IOMan bei diesem Boot-Test wirklich F$Chain, Callcode 0x05,
-* noch nicht real implementiert?"). KEIN echtes F$Chain -- druckt nur
-* 'C' auf die Konsole und kehrt sofort mit Erfolg zurueck (Carry
-* geloescht), OHNE die reale F$Chain-Semantik (Programmwechsel)
-* umzusetzen. Nach der Verifikation wieder entfernen.
-Q9K_TestFChainProbe:
-        move.l  d7,-(sp)
-        moveq   #'C',d7
-        bsr     Q9K_DiagWriteD7
-        move.l  (sp)+,d7
+* Q9K_SysFID -- F$ID (Callcode $0c). Reale ABI, 68k_bls.pdf S.451:
+* d0.w=aktuelle PID, d1.l=Gruppe/Benutzer, d2.w=Prioritaet. Der Prozess-
+* API-Kern arbeitet absichtlich ueber Scratch + C, damit dieselbe
+* ID/Pool-Validierung auch isoliert mit Host-gcc regressionsgetestet wird.
+* Eingehendes A6 kann bei direkten Systemmodul-Aufrufen ungueltig sein,
+* daher dieselbe A6-Sicherung wie F$Link/F$SSvc/I$Open.
+Q9K_SysFID:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SysIDImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_IDScratch_Success
+        beq     Q9K_SysFID_Fail
+        move.w  Q9K_IDScratch_PID,d0
+        move.l  Q9K_IDScratch_GroupUser,d1
+        move.w  Q9K_IDScratch_Priority,d2
         andi    #$fe,ccr
+        rts
+Q9K_SysFID_Fail:
+        move.w  Q9K_IDScratch_Error,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFGProcP -- F$GProcP (Callcode $37). Reale ABI, 68k_bls.pdf
+* S.443: d0.w=angeforderte PID, (a1)=Deskriptor; E$PrcID ($e0) bei
+* ungueltiger/freier PID. Siehe q9kernel_procapi.c fuer die testbare
+* Slot-/Statusvalidierung.
+Q9K_SysFGProcP:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.w  d0,Q9K_GProcPScratch_PID
+        bsr     Q9K_SysGProcPImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_GProcPScratch_Success
+        beq     Q9K_SysFGProcP_Fail
+        movea.l Q9K_GProcPScratch_Desc,a1
+        andi    #$fe,ccr
+        rts
+Q9K_SysFGProcP_Fail:
+        move.w  Q9K_GProcPScratch_Error,d1
+        ori     #1,ccr
         rts
 
 *******************************************************************************
