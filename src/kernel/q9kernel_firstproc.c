@@ -192,7 +192,16 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
  * K F F F W" je genau einmal im Diagnose-Strom, kein 'k'/'w'/'H'/'S'),
  * danach 41101x 'A' und 41884x 'B' durchgehend fehlerfreies Round-Robin
  * ueber die volle Laufzeit -- kein Haenger, keine Korruption. */
-#define Q9K_PROC_STACK_SIZE 8192UL
+/* NACHTRAG 2026-09-01 (IOMan-Integration): von 8192 auf 32768 erhoeht,
+ * als Sicherheitsmarge fuer den seit Kurzem viel tieferen Aufrufpfad in
+ * Q9K_TestProcA (jsr in IOMans echten Einsprungpunkt, s. dort -- IOMan
+ * selbst ist eine reale, komplexe Fremdkomponente mit unbekanntem
+ * eigenen Stack-Bedarf). Getestet: behebt NICHT den aktuell offenen
+ * "kein A"-Befund (der hat eine andere, geklaerte Ursache -- s.
+ * Memory-Notiz q9-os-eigener-kernel-c, IOMan leitet I$Open an einen
+ * fehlenden Treiber weiter), bleibt aber als generelle Absicherung
+ * bestehen (Host-Test bestaetigt funktionale Korrektheit). */
+#define Q9K_PROC_STACK_SIZE 32768UL
 
 /* Fake-Rahmen-Geometrie, s. Kopfkommentar -- muss exakt zu "movem.l
  * (sp)+,d0-d7/a0-a6 / rte" passen. */

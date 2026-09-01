@@ -21,7 +21,7 @@
 #include <string.h>
 
 static unsigned char g_fakeGlobals[0x2000];
-static unsigned char g_fakePool[1 << 16];
+static unsigned char g_fakePool[1 << 20]; /* 2026-09-01 von 64K auf 1M erhoeht -- Q9K_PROC_STACK_SIZE ist jetzt 32K statt 8K, der alte Pool reichte nicht mehr fuer mehrere Testprozesse */
 static unsigned long g_fakePoolNext;
 
 /* Grosszuegige, getrennte Testadressen -- gleiche Begruendung wie in
