@@ -264,6 +264,16 @@ Q9K_IDScratch_Priority    equ $1398      * d2.w AUS
 Q9K_IDScratch_Error       equ $139C      * d1.w AUS bei Fehler
 Q9K_IDScratch_Success     equ $13A0      * 0/1
 
+* Q9K_TrapCallerA4 (2026-09-01): Q9K_TrapDispatch setzt a4 jetzt auf den
+* aktuellen Prozessdeskriptor, weil das die reale OS-9-Konvention ist (s.
+* dort). Der Aufrufer-eigene a4 wird hier zwischengelagert und im Epilog
+* zurueckgeschrieben, damit der bisherige Kernel-interne Vertrag
+* (Handler lassen d2-d7/a3-a5 unangetastet) unveraendert gilt.
+* Erste freie Adresse hinter $13A0. NICHT reentrant -- gleiche
+* Einschraenkung wie beim bereits vorhandenen Q9K_TrapHandlerScratch,
+* verschachtelte TRAP #0 gibt es in diesem Kernel nicht.
+Q9K_TrapCallerA4          equ $13A4      * Q9_u32, a4 des Aufrufers
+
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
 * gegenprobiert): eine literale "0" an dieser Stelle laesst l68 den Wert
@@ -1165,14 +1175,42 @@ Q9K_TrapDispatch:
 * ECHTEN Registersatz des Aufrufers zurueckholen (a4 dabei ueberschrieben
 * -- Handler-Adresse liegt sicher im Speicher, s. o.).
         movem.l (sp),d2-d7/a3-a5
-        movea.l Q9K_TrapHandlerScratch,a4           * Handler-Adresse zurueckholen
+        move.l  a4,Q9K_TrapCallerA4                  * Aufrufer-a4 merken (s. u., Epilog schreibt zurueck)
 * gesicherte Registerkopie verwerfen -- sp zeigt jetzt wieder GENAU auf
 * den echten Hardware-Frame.
         lea     36(sp),sp
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-01, gemessen): a4 MUSS beim
+* Handler-Aufruf der aktuelle PROZESSDESKRIPTOR sein. Reale Konvention,
+* woertlich aus den Original-Treiberquellen des SDK
+* (MWOS/OS9/SRC/IO/SCF/DRVR/sc68681.a:495, gleichlautend in sc68901.a und
+* oxc16954.a):
+*     Passed:  (a1) = device descriptor address
+*              (a2) = static storage address
+*              (a4) = process descriptor ptr
+*              (a6) = system global data ptr
+*     Destroys: (may destroy d0-d7, a0-a5)
+* a4 ist also EINGABE des Kernels an den Handler und darf vom Handler
+* zerstoert werden. Bisher stand in a4 beim Aufruf die HANDLER-ADRESSE
+* selbst (sie war hier das Arbeitsregister fuer den Tabellenzugriff).
+* IOMans I$Open macht als erstes "lea $168(a4),a0" -- das ist P$Path im
+* Prozessdeskriptor (P$DIO@$148 + DefIOSiz 32 -> P$Path@$168, offiziell
+* MWOS/OS9/SRC/DEFS/process.a:151 "P$Path: do.w NumPaths") -- und
+* durchsuchte damit 32 Worte von IOMans EIGENEM CODE nach einem freien
+* Pfadslot. Real gemessen: a4=$ae06 (IOMans I$Open-Einsprung selbst),
+* Scan von $af6e bis $afae, kein Nulleintrag gefunden, Rueckgabe
+* d1=$00C8 = E_PTHFUL. Deshalb hier a4 aus Q9_D_Proc setzen.
+* Aufruf per PEA+RTS statt jsr, weil a4 danach nicht mehr die
+* Handler-Adresse traegt -- dasselbe Trampolin-Muster, das IOMan selbst
+* fuer seine Direktaufrufe benutzt. Der Handler findet die
+* Ruecksprungadresse an derselben Stelle wie bei einem jsr.
+        movea.l ($4c).w,a4                           * a4 = Q9_D_Proc, aktueller Prozessdeskriptor
+        pea     Q9K_TrapAfterCall(pc)                * Ruecksprungadresse fuer den Handler
+        move.l  Q9K_TrapHandlerScratch,-(sp)         * Handler-Adresse obendrauf
 * echter Syscall-Aufruf -- Handler bekommt/aendert a0/a1/a2/d0/d1 frei
 * (reale F$-Konvention), MUSS d2-d7/a3-a5 unangetastet lassen (gleiche
 * Disziplin wie schon bei den Diagnose-Routinen gefunden+gefixt).
-        jsr     (a4)
+        rts                                          * "jsr" auf den Handler (s. o.)
+Q9K_TrapAfterCall:
 * NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor"): ECHTE Konvention per
 * Read direkt im Kernel-Fund gelesen (docs/REVERSE_ENGINEERING.md, Fund
 * "Syscall-Tabellen sind KEIN statisches Zeiger-Array" -- der dort
@@ -1208,6 +1246,7 @@ Q9K_TrapDispatch:
 * jeder Handler-Fehlschlag ging dadurch verloren, jeder Syscall meldete
 * unabhaengig vom echten Ergebnis IMMER Erfolg.
         move.w  ccr,Q9K_TrapCCRScratch    * echtes CCR SOFORT sichern, bevor irgendwas es veraendern kann
+        movea.l Q9K_TrapCallerA4,a4         * Aufrufer-a4 zurueck (movea aendert kein CCR, und das echte ist oben schon gesichert)
         move.l  d0,Q9K_TrapHandlerScratch   * jetzt erst d0 sichern (Nebeneffekt auf C/V ist ab hier irrelevant)
         move.w  Q9K_TrapCCRScratch,d0        * d0.w = $00xx, xx = das ECHTE, geretteten CCR
         andi.w  #$ff00,(sp)                 * unteres Byte des geretteten SR (=CCR-Position) loeschen, oberes (Systemflags) unangetastet
