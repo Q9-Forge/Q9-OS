@@ -51,6 +51,8 @@ static unsigned long g_fakePoolNext;
 #define Q9K_PROCDESC_PARENT_OFF     0x38UL
 #define Q9K_PROCDESC_MODHDR_OFF     0x48UL
 #define Q9K_PROCDESC_EXITSTATUS_OFF 0x50UL
+#define Q9K_PROCDESC_ALLOCBASE_OFF  0x60UL
+#define Q9K_PROCDESC_ALLOCSIZE_OFF  0x68UL
 
 /* Minimaler Stub fuer das echte Q9K_GetA6 (q9kernel_entry.a) -- liefert
  * hier einen erfundenen, aber erkennbaren "a6-waere-hier"-Kanarienwert
@@ -68,6 +70,16 @@ unsigned long Q9K_AllocMem(unsigned long requestedSize)
     addr = (unsigned long)(g_fakePool + g_fakePoolNext);
     g_fakePoolNext += requestedSize;
     return addr;
+}
+
+static int g_freeMemCalls;
+static unsigned long g_freeMemLastAddr;
+static unsigned long g_freeMemLastSize;
+void Q9K_FreeMem(unsigned long addr, unsigned long size)
+{
+    g_freeMemCalls++;
+    g_freeMemLastAddr = addr;
+    g_freeMemLastSize = size;
 }
 
 /* Minimaler Stub fuer das echte Q9K_SchedInsert (q9kernel_sched.c) --
@@ -208,6 +220,11 @@ int main(void)
              (Q9_u32)(*(Q9_u8 *)(desc1 + Q9K_PROCDESC_PRIORITY_OFF)), 7);
     checkU32("Deskriptor.EntryPC == entryA",
              Q9K_GetU32(desc1 + Q9K_PROCDESC_ENTRYPC_OFF), entryA);
+    checkU32("Deskriptor.AllocBase ist der eigene Stackblock",
+             Q9K_GetU32(desc1 + Q9K_PROCDESC_ALLOCBASE_OFF),
+             (Q9_u32)(unsigned long)g_fakePool);
+    checkU32("Deskriptor.AllocSize ist die Prozess-Stackgroesse",
+             Q9K_GetU32(desc1 + Q9K_PROCDESC_ALLOCSIZE_OFF), Q9K_PROC_STACK_SIZE);
 
     {
         Q9_u32 sp = Q9K_GetU32(desc1 + Q9K_PROCDESC_SAVEDSP_OFF);
@@ -261,6 +278,20 @@ int main(void)
     checkU32("Fuenfter Aufruf nach Pool-Erschoepfung schlaegt sauber fehl (0)",
              Q9K_ProcCreate(entryA, 1), 0);
 
+    /* Fall 4: Fehlschlag NACH dem Pool-Pop darf den Slot nicht verlieren. */
+    {
+        static unsigned char failedCreatePool[Q9K_PROCDESC_SIZE];
+        Q9_u32 failedDesc = (Q9_u32)(unsigned long)failedCreatePool;
+
+        memset(failedCreatePool, 0, sizeof(failedCreatePool));
+        Q9K_SetU32(Q9K_PROCPOOL_FREE_ADDR, failedDesc);
+        g_fakePoolNext = sizeof(g_fakePool); /* der naechste Stack-Alloc muss fehlschlagen */
+        checkU32("ProcCreate bei Arena-Erschoepfung liefert 0", Q9K_ProcCreate(entryA, 1), 0);
+        checkU32("ProcCreate bei Arena-Erschoepfung gibt den gepoppten Slot zurueck",
+                 Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR), failedDesc);
+        g_fakePoolNext = 0; /* die folgenden Fork-Faelle bekommen wieder Testarena */
+    }
+
     /* ==== Abschnitt "F$Fork" -- Q9K_ProcFork, eigener, frischer Pool ====
      * Unabhaengig vom obigen Q9K_ProcCreate-Pool (der ist jetzt sowieso
      * erschoepft) -- eigene Freiliste, eigenes Fake-Modulverzeichnis
@@ -310,6 +341,10 @@ int main(void)
          * Host-Zeiger, NICHT auf "unsigned int" gekappt. */
         checkU32("F1: Deskriptor-ModuleHdr == fakeHdr",
                  Q9K_GetU32(desc + Q9K_PROCDESC_MODHDR_OFF), (Q9_u32)(unsigned long)fakeHdr);
+        checkU32("F1: Deskriptor.AllocBase ist gesetzt",
+                 (Q9_u32)(Q9K_GetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF) != 0), 1);
+        checkU32("F1: Deskriptor.AllocSize == Gesamtgroesse",
+                 Q9K_GetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF), 16 + 256 + sizeof(fakeParam));
 
         {
             Q9_u32 sp = Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF);
@@ -420,12 +455,17 @@ int main(void)
          * Kopfkommentar Q9K_ProcFork). */
         {
             int unlinkCallsBefore = g_stubModDirUnlinkCalls;
+            int freeCallsBefore = g_freeMemCalls;
 
             checkU32("Q9K_ProcFork() F4: liefert 0 bei erschoepftem Pool",
                      Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 1, &error), 0);
             checkU32("F4: Fehlercode == E_PRCFUL ($E5)", (Q9_u32)error, 0x00E5UL);
             checkU32("F4: Q9K_ModDirUnlinkByHeader wurde aufgerufen (Link-Zaehler zurueckgenommen)",
                      (Q9_u32)(g_stubModDirUnlinkCalls > unlinkCallsBefore), 1);
+            checkU32("F4: der bereits reservierte Prozessblock wird zurueckgegeben",
+                     (Q9_u32)(g_freeMemCalls == freeCallsBefore + 1), 1);
+            checkU32("F4: Rueckgabe verwendet die exakte Fork-Gesamtgroesse",
+                     g_freeMemLastSize, 16 + 256);
         }
     }
 
