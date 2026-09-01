@@ -186,7 +186,16 @@ Q9K_TrapHandlerScratch equ $1230
 * SOFORT (als allererste Instruktion, ohne Register-Umweg, direkt nach
 * Speicher) gesichert werden kann, bevor irgendetwas anderes es
 * veraendern kann.
-Q9K_TrapCCRScratch     equ $1364
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-02): lag bis dahin auf $1364 -- exakt
+* derselben Adresse wie Q9K_IOpenScratch_NamePtr (s. I$Open-Scratch-Block
+* weiter unten). Bisher folgenlos, weil der "move.w ccr" hier erst NACH dem
+* Handler-Ruecksprung laeuft, also erst NACHDEM der NamePtr von der C-Seite
+* konsumiert wurde -- aber eine Zeitbombe: ein verschachtelter Syscall
+* WAEHREND eines laufenden I$Open haette den Pfadnamen mitten im Ablauf
+* zerstoert (die oberen 2 Byte). Auf die naechste eindeutig freie Adresse
+* verschoben ($1354 ist in q9kernel_iopath.c noch dem SSvc-Block zugerechnet,
+* deshalb $1358).
+Q9K_TrapCCRScratch     equ $1358
 
 * Abschnitt "F$Fork" (2026-08-21) -- eigene Kernel-Global-Erweiterungen
 * fuer die ASM<->C-Uebergabe von Q9K_SysFFork (s. dortigen Kopfkommentar
@@ -279,6 +288,15 @@ Q9K_IDScratch_GroupUser   equ $1394      * d1.l AUS
 Q9K_IDScratch_Priority    equ $1398      * d2.w AUS
 Q9K_IDScratch_Error       equ $139C      * d1.w AUS bei Fehler
 Q9K_IDScratch_Success     equ $13A0      * 0/1
+
+* Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
+* Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
+* die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
+* Erfolgspfad die Rueckgabewerte NICHT nur in die Live-Register, sondern auch
+* in den Rahmen schreiben kann (d0-Slot +$00, a2-Slot +$28) -- s. ausfuehrliche
+* Herleitung bei Q9K_SysFSRqMem. 0 = kein Rahmen (normaler TRAP-#0-Weg).
+* Naechste freie Adresse nach $13A0.
+Q9K_SRqMemFrameScratch    equ $13A4      * Q9_u32, Rahmenbasis oder 0
 
 * WICHTIG: 7. Parameter (Trap-Label/M$Excpt) bewusst WEGGELASSEN statt
 * literaler "0" -- empirisch getestet (2026-08-18, drei psect-Varianten
@@ -1744,6 +1762,41 @@ Q9K_SysFSleep_SwitchTo:
 * (der Aufrufer -- egal ob unser Q9K_TrapDispatch oder IOMans eigener
 * Code -- erwartet sein EIGENES a6 danach unveraendert vorzufinden).
 Q9K_SysFSRqMem:
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-02, Root Cause des "A kehrt nach dem
+* IOMan-Aufruf nie zurueck"-Folgeproblems): reale Module rufen F$SRqMem NICHT
+* nur ueber TRAP #0, sondern auch ueber das kernel-eigene PEA+RTS-Trampolin
+* (Q9_D_SYSDIS-Slot direkt angesprungen, s. Kopfkommentar unten). Auf DIESEM
+* Weg legt der AUFRUFER vorher einen 44-Byte-Registerrettungsrahmen auf seinem
+* Stack an (Layout exakt "movem.l d0-d7/a0-a2": d0-Slot bei +$00, a2-Slot bei
+* +$28) und setzt a5 darauf -- byte-genau verifiziert an IOMans eigener
+* Wrapper-Subroutine (ioman_DEV $15ca-$1610: "lea -$2c(a7),a7 / movea.l a7,a5"
+* vor dem Sprung, danach "move.l $0(a7),d0 / movea.l $28(a7),a2" zum
+* Zurueckholen). Der Aufrufer ueberschreibt d0/a2 zwischendurch selbst (IOMan
+* nullt den frisch geholten Block mit "(a2)+" als Laufzeiger) und HOLT SIE
+* DANACH AUS DEM RAHMEN ZURUECK -- wer nur die Live-Register setzt, dessen
+* Rueckgabewerte sind an dieser Stelle laengst weg. Genau das passierte hier:
+* IOMans Hauptcode bekam statt der Blockadresse uninitialisierten Stackmuell
+* (real gemessen: $754e statt $2a000) und lief damit ins Leere.
+* Fix: Rueckgabewerte ZUSAETZLICH in den Rahmen schreiben -- aber NUR, wenn der
+* Aufrufweg wirklich der Trampolin-Pfad ist. Erkennungsmerkmal: a5 == sp+8
+* (Rahmenbasis liegt genau 8 Byte ueber dem Stackzeiger beim Handler-Eintritt,
+* weil der Aufrufer nach dem Rahmen noch Ruecksprungadresse + Trampolinziel
+* gepusht hat, wovon das Trampolinziel beim Sprung schon konsumiert wurde).
+* Beim normalen TRAP-#0-Weg ist a5 dagegen ein beliebiges Aufruferregister --
+* dort DARF nicht in den Rahmen geschrieben werden, sonst wird fremder Speicher
+* zerstoert. Die Erkennung wird beim Eintritt einmal ausgewertet und in
+* Q9K_SRqMemFrameScratch abgelegt (0 = kein Rahmen).
+        movem.l d0/a0,-(sp)                 * Arbeitsregister sichern (Konvention: nur d0/d1/a0/a1/a2 frei)
+        movea.l sp,a0
+        adda.l  #16,a0                        * a0 = sp VOR diesem movem (2 Register x 4 Byte = 8) + 8
+        cmpa.l  a0,a5
+        bne     Q9K_SysFSRqMem_NoFrame
+        move.l  a5,Q9K_SRqMemFrameScratch      * Trampolin-Pfad: Rahmenbasis merken
+        bra     Q9K_SysFSRqMem_FrameDone
+Q9K_SysFSRqMem_NoFrame:
+        clr.l   Q9K_SRqMemFrameScratch          * TRAP-Pfad: kein Rahmen, nichts hineinschreiben
+Q9K_SysFSRqMem_FrameDone:
+        movem.l (sp)+,d0/a0
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf, sonst Q9K_CRuntimeData)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  d0,Q9K_SRqMemScratch_SizeIn
@@ -1755,6 +1808,18 @@ Q9K_SysFSRqMem:
 
         move.l  Q9K_SRqMemScratch_SizeOut,d0
         movea.l Q9K_SRqMemScratch_Addr,a2
+* Registerrahmen des Aufrufers mitversorgen, falls ueber das Trampolin gerufen
+* (s. ausfuehrliche Herleitung am Routinenanfang). Reihenfolge/Offsets exakt
+* nach "movem.l d0-d7/a0-a2"-Layout: d0 bei +$00, a2 bei +$28. Ohne Rahmen
+* (normaler TRAP-#0-Weg) ist der Scratch 0 und es wird NICHTS geschrieben.
+        movem.l d1/a1,-(sp)
+        move.l  Q9K_SRqMemFrameScratch,d1
+        beq     Q9K_SysFSRqMem_NoFrameOut
+        movea.l d1,a1
+        move.l  d0,(a1)                          * d0-Slot des Rahmens
+        move.l  a2,$28(a1)                        * a2-Slot des Rahmens
+Q9K_SysFSRqMem_NoFrameOut:
+        movem.l (sp)+,d1/a1
         andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg
         rts
 
