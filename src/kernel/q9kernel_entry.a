@@ -170,7 +170,20 @@ Q9K_TrapHandlerScratch equ $1230
 * SOFORT (als allererste Instruktion, ohne Register-Umweg, direkt nach
 * Speicher) gesichert werden kann, bevor irgendetwas anderes es
 * veraendern kann.
-Q9K_TrapCCRScratch     equ $1364
+* ADRESSKOLLISION BEHOBEN (2026-09-01): dieser Slot lag bis eben auf
+* $1364 -- genau dort, wo auch Q9K_IOpenScratch_NamePtr liegt (weiter
+* unten, und identisch nochmal in q9kernel_iopath.c). Der Epilog schreibt
+* hier ein WORT, ueberschrieb also die obere Haelfte des NamePtr-Langworts.
+* Real ist bisher nichts passiert, weil die Reihenfolge zufaellig
+* aufgeht: Q9K_SysFIOpen legt den NamePtr beim Eintritt ab, der C-Teil
+* verbraucht ihn, und erst DANACH laeuft dieser Epilog. Verlassen kann man
+* sich darauf nicht -- jede Umstellung, die den NamePtr ueber den
+* Handler-Rueckweg hinaus braucht (oder ein zweiter Nutzer des Slots),
+* haette es still kaputtgemacht. Deshalb auf die naechste freie Adresse
+* hinter $13A4 verschoben. Dieser Slot hat nur diesen einen Nutzer
+* (Q9K_TrapDispatch-Epilog), die IOpen-Seite dagegen auch einen in C --
+* deshalb wandert diese Seite und nicht jene.
+Q9K_TrapCCRScratch     equ $13A8
 
 * Abschnitt "F$Fork" (2026-08-21) -- eigene Kernel-Global-Erweiterungen
 * fuer die ASM<->C-Uebergabe von Q9K_SysFFork (s. dortigen Kopfkommentar
