@@ -307,6 +307,8 @@ Q9K_SSvcScratch_DataPtr  equ $1350      * Q9_u32, (a3) EIN
 * Kopfkommentar). Direkt hinter den SSvc-Scratch-Feldern ($1350+4) --
 * naechste freie Adresse $1360 (fruehere temporaere Debug-Adressen der
 * "!"-Raetsel-Sitzung sind inzwischen wieder frei, s. Session-Notizen).
+Q9K_TrapA4Save            equ $13A8      * A4-Zwischenablage im Trap-Dispatcher
+Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
 Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
@@ -1281,14 +1283,49 @@ Q9K_TrapDispatch:
 * ECHTEN Registersatz des Aufrufers zurueckholen (a4 dabei ueberschrieben
 * -- Handler-Adresse liegt sicher im Speicher, s. o.).
         movem.l (sp),d2-d7/a3-a5
-        movea.l Q9K_TrapHandlerScratch,a4           * Handler-Adresse zurueckholen
 * gesicherte Registerkopie verwerfen -- sp zeigt jetzt wieder GENAU auf
 * den echten Hardware-Frame.
         lea     36(sp),sp
 * echter Syscall-Aufruf -- Handler bekommt/aendert a0/a1/a2/d0/d1 frei
 * (reale F$-Konvention), MUSS d2-d7/a3-a5 unangetastet lassen (gleiche
 * Disziplin wie schon bei den Diagnose-Routinen gefunden+gefixt).
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-02): Handler wurden bisher
+* ausnahmslos per "jsr (a4)" gerufen -- A4 enthielt dabei die
+* HANDLER-ADRESSE. Extern per F$SSvc registrierte Handler setzen aber die
+* OS-9-Konvention "A4 = aktueller Prozessdeskriptor" voraus: IOMans
+* eigener I$Open (Modul-Offset $1228) sucht als ALLERERSTES einen freien
+* Pfadtabellen-Slot ueber "lea $168(a4),a0 / moveq #$1f,d0 / tst.w (a0)+
+* / dbeq d0,..." -- 32 Worte ab P$Path (Deskriptor-Offset $168). Mit der
+* Handler-Adresse in A4 zeigte das mitten in unseren eigenen Kernelcode,
+* wo unter 32 Worten nie eine 0 steht; IOMan meldete daraufhin E$PthFul
+* ($C8) und gab "can't open console device: Error $00C8" aus -- die
+* Fehlernummer aus der Live-Meldung passt exakt.
+*
+* Umgestellt wird NUR der externe Pfad: unsere EIGENEN Handler behalten
+* "jsr (a4)" unveraendert, sie brauchen die Konvention nicht. Welche
+* Callcodes extern sind, vermerkt Q9K_ProcSSvc (q9kernel_ssvc.c) in
+* Q9K_SSvcExternalBase. Der externe Aufruf laeuft ueber bsr+Stub statt
+* "jsr (a4)", damit A4 frei bleibt -- "pea Label(pc)" ist hier NICHT
+* verwendbar, r68 uebersetzt es nicht PC-relativ (real getestet: der
+* Sprung landete im Nirwana). "movea.l" veraendert das CCR nicht, der
+* "bne" wertet also noch das Ergebnis des "tst.b" aus.
+        move.l  a4,Q9K_TrapA4Save                   * A4 des Aufrufers zwischenlegen
+        movea.l #Q9K_SSvcExternalBase,a4
+        adda.w  ($1370).w,a4                          * + Callcode (dort vom Dispatcher abgelegt)
+        tst.b   (a4)
+        movea.l Q9K_TrapA4Save,a4                       * A4 unveraendert zurueck
+        bne     Q9K_TrapCallExternal
+        movea.l Q9K_TrapHandlerScratch,a4                 * eigener Handler: unveraendertes Verhalten
         jsr     (a4)
+        bra     Q9K_TrapAfterCall
+Q9K_TrapCallExternal:
+        bsr     Q9K_TrapExtInvoke                           * legt die Ruecksprungadresse ab
+        bra     Q9K_TrapAfterCall
+Q9K_TrapExtInvoke:
+        move.l  Q9K_TrapHandlerScratch,-(sp)                  * Handler-Adresse darueber
+        movea.l Q9_D_Proc,a4                                   * A4 = aktueller Prozessdeskriptor
+        rts                                                     * springt in den Handler
+Q9K_TrapAfterCall:
 * NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor"): ECHTE Konvention per
 * Read direkt im Kernel-Fund gelesen (docs/REVERSE_ENGINEERING.md, Fund
 * "Syscall-Tabellen sind KEIN statisches Zeiger-Array" -- der dort
