@@ -308,6 +308,12 @@ Q9K_SSvcScratch_DataPtr  equ $1350      * Q9_u32, (a3) EIN
 * naechste freie Adresse $1360 (fruehere temporaere Debug-Adressen der
 * "!"-Raetsel-Sitzung sind inzwischen wieder frei, s. Session-Notizen).
 Q9K_TrapA4Save            equ $13A8      * A4-Zwischenablage im Trap-Dispatcher
+Q9K_AllPDScratch_DbtIn    equ $13AC      * Q9_u32, (a0) EIN  = DBT-Basis (F$AllPD)
+Q9K_AllPDScratch_Desc     equ $13B0      * Q9_u32, (a1) AUS = Deskriptorzeiger
+Q9K_AllPDScratch_Num      equ $13B4      * Q9_u32, d0.w AUS = Deskriptornummer
+Q9K_AllPDScratch_Error    equ $13B8      * Q9_u32, d1.w AUS bei Fehler
+Q9K_AllPDScratch_Success  equ $13BC      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+Q9K_AllPDFrameScratch     equ $13C0      * Rahmenbasis des Trampolin-Aufrufers (0 = kein Rahmen)
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -1850,6 +1856,58 @@ Q9K_SysFSleep_SwitchTo:
 * und VOR dem eigenen RTS wieder auf den EINGEHENDEN Wert zuruecksetzen
 * (der Aufrufer -- egal ob unser Q9K_TrapDispatch oder IOMans eigener
 * Code -- erwartet sein EIGENES a6 danach unveraendert vorzufinden).
+* Q9K_SysFAllPD -- F$AllPD (Callcode $30, "Allocate Process/Path
+* Descriptor"; in OS-9/6809 hiess derselbe Dienst F$All64, 1985 umbenannt,
+* s. MWOS/OS9/SRC/DEFS/funcs.a Zeile 35). Konvention aus IOMans
+* Disassemblierung abgelesen (Modul-Offset $135e ff.): IN a0 = Basis der
+* Deskriptor-Blocktabelle (DBT, von IOMan selbst angelegt und in D_PthDBT
+* $48 abgelegt). OUT a1 = neuer Deskriptor, d0.w = dessen Nummer, Carry
+* bei Fehler.
+* WICHTIG: IOMan liest a1 NICHT aus dem Register, sondern aus dem
+* 44-Byte-Registerrahmen des Trampolin-Aufrufers ("movea.l $24(a7),a1"
+* bei $1386) -- exakt dieselbe Konstruktion wie bei F$SRqMem, deshalb
+* hier dieselbe Rahmenerkennung und -versorgung. Slots im Rahmen:
+* d0 = +$00, a1 = +$24 (movem.l d0-d7/a0-a2-Reihenfolge).
+Q9K_SysFAllPD:
+        movem.l d0/a0,-(sp)                 * Arbeitsregister sichern
+        movea.l sp,a0
+        adda.l  #16,a0                        * a0 = sp VOR diesem movem (8) + 8
+        cmpa.l  a0,a5
+        bne     Q9K_SysFAllPD_NoFrame
+        move.l  a5,Q9K_AllPDFrameScratch       * Trampolin-Pfad: Rahmenbasis merken
+        bra     Q9K_SysFAllPD_FrameDone
+Q9K_SysFAllPD_NoFrame:
+        clr.l   Q9K_AllPDFrameScratch           * TRAP-Pfad: kein Rahmen
+Q9K_SysFAllPD_FrameDone:
+        movem.l (sp)+,d0/a0
+        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
+        move.l  a0,Q9K_AllPDScratch_DbtIn
+        bsr     Q9K_SysAllPDImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+
+        tst.w   Q9K_AllPDScratch_Success+2
+        beq     Q9K_SysFAllPD_Fail
+
+        move.l  Q9K_AllPDScratch_Num,d0          * d0.w = Deskriptornummer
+        movea.l Q9K_AllPDScratch_Desc,a1          * a1 = Deskriptorzeiger
+        move.l  d1,-(sp)
+        move.l  Q9K_AllPDFrameScratch,d1
+        beq     Q9K_SysFAllPD_NoFrameOut
+        exg     d1,a0                              * a0 als Rahmenzeiger benutzen, d1 rettet a0
+        move.l  d0,(a0)                             * d0-Slot des Rahmens
+        move.l  a1,$24(a0)                           * a1-Slot des Rahmens
+        exg     d1,a0                                 * a0 unveraendert zurueck
+Q9K_SysFAllPD_NoFrameOut:
+        move.l  (sp)+,d1
+        andi    #$fe,ccr                        * Carry loeschen -- Erfolg
+        rts
+
+Q9K_SysFAllPD_Fail:
+        move.w  Q9K_AllPDScratch_Error+2,d1
+        ori     #1,ccr                              * Carry setzen -- Fehlschlag
+        rts
+
 Q9K_SysFSRqMem:
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-02, Root Cause des "A kehrt nach dem
 * IOMan-Aufruf nie zurueck"-Folgeproblems): reale Module rufen F$SRqMem NICHT
