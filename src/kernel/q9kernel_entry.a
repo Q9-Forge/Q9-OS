@@ -315,6 +315,22 @@ Q9K_AllPDScratch_Error    equ $13B8      * Q9_u32, d1.w AUS bei Fehler
 Q9K_AllPDScratch_Success  equ $13BC      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 Q9K_AllPDFrameScratch     equ $13C0      * Rahmenbasis des Trampolin-Aufrufers (0 = kein Rahmen)
 Q9K_LinkFrameScratch      equ $13C4      * dito fuer F$Link
+Q9K_IRQScratch_Vector     equ $13C8      * Q9_u32, d0.b EIN  = Vektornummer (F$IRQ)
+Q9K_IRQScratch_Prio       equ $13CC      * Q9_u32, d1.b EIN  = Prioritaet
+Q9K_IRQScratch_Isr        equ $13D0      * Q9_u32, (a0) EIN  = Service-Routine (0 = entfernen)
+Q9K_IRQScratch_Static     equ $13D4      * Q9_u32, (a2) EIN  = statischer Treiberspeicher
+Q9K_IRQScratch_Port       equ $13D8      * Q9_u32, (a3) EIN  = Geraete-Portadresse
+Q9K_IRQScratch_Error      equ $13DC      * Q9_u32, d1.w AUS bei Fehler
+Q9K_IRQScratch_Success    equ $13E0      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
+* Ablage von Q9K_ExcTrap -- bewusst NICHT im genullten Global-Bereich,
+* sondern weit darueber: eine Exception soll auch dann noch lesbar sein,
+* wenn der Kernel seine Globals schon ueberschrieben hat.
+Q9K_ExcInfo_SR            equ $144020    * Wort, geretteter SR
+Q9K_ExcInfo_PC            equ $144024    * Langwort, geretteter PC
+Q9K_ExcInfo_Fmt           equ $144028    * Wort, Format/Vektor (Vektornr. = (Wort & $0FFF)/4)
+Q9K_ExcInfo_A6            equ $14402C    * Langwort, A6 des unterbrochenen Kontexts
+Q9K_ExcInfo_SP            equ $144030    * Langwort, SP beim Eintritt
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -796,8 +812,28 @@ _stklimit:
 * Inhalt, deshalb hier 16 explizite Nullen statt einer Reservierung.
 Q9K_CRuntimeData:
         dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+* Q9K_ExcTrap -- generischer Exception-Einstieg (2026-09-02).
+* Ersetzt den bisherigen Default Q9K_ExcDefault aus q9kernel_exctable.c.
+* Grund: jener ist eine C-Funktion, und der Compiler stellt ihr einen
+* Stack-Check-Prolog voran ("subq.l #8,$4(a6)"). Tritt eine Exception im
+* Kontext eines externen Moduls auf (IOMan/Treiber laufen mit A6=0),
+* rechnet dieser Prolog auf Adresse 4 und loest _stkhandler aus -- die
+* ECHTE Exception wird dadurch vollstaendig verdeckt. Ein reiner
+* Assembler-Handler haelt stattdessen fest, WAS passiert ist.
+* 68030-Exception-Frame: 0(sp)=SR, 2(sp)=PC, 6(sp)=Format/Vektor-Wort
+* (Vektornummer = (Wort & $0FFF) / 4).
+Q9K_ExcTrap:
+        move.w  (sp),Q9K_ExcInfo_SR
+        move.l  2(sp),Q9K_ExcInfo_PC
+        move.w  6(sp),Q9K_ExcInfo_Fmt
+        move.l  a6,Q9K_ExcInfo_A6
+        move.l  sp,Q9K_ExcInfo_SP
+        moveq   #'E',d7
+        bsr     Q9K_DiagWriteD7
+Q9K_ExcTrapSpin:
+        bra     Q9K_ExcTrapSpin                    * anhalten, wie bisher Q9K_ExcDefault
+
 _stkhandler:
-        move.l  a6,($1374).w              * NUR TEMPORAER (2026-09-01, I$Open-Folgeschritt-Suche)
         moveq   #'S',d7                      * DIAGNOSE: Stack-Ueberlauf-Handler wurde aufgerufen
         bsr     Q9K_DiagWriteD7
 Q9K_StkHandlerSpin:
@@ -1289,6 +1325,9 @@ Q9K_TrapDispatch:
         move.l  a4,Q9K_TrapHandlerScratch        * Handler-Adresse zwischenspeichern (s. Kopfkommentar)
 * ECHTEN Registersatz des Aufrufers zurueckholen (a4 dabei ueberschrieben
 * -- Handler-Adresse liegt sicher im Speicher, s. o.).
+* Pfadkennzeichnung fuer Handler, die einen Exception-Frame voraussetzen
+* (F$Sleep/F$Wait/F$Exit wechseln den Prozess und brauchen ihn zwingend).
+        move.w  #1,Q9K_InTrapPath
         movem.l (sp),d2-d7/a3-a5
 * gesicherte Registerkopie verwerfen -- sp zeigt jetzt wieder GENAU auf
 * den echten Hardware-Frame.
@@ -1326,32 +1365,35 @@ Q9K_TrapDispatch:
         jsr     (a4)
         bra     Q9K_TrapAfterCall
 Q9K_TrapCallExternal:
-* ZWEITE OS-9-Konvention fuer externe Handler (2026-09-02): A5 muss auf
-* den geretteten Registersatz des Aufrufers zeigen -- den 44-Byte-
-* "Registerrahmen" in der Reihenfolge d0-d7/a0-a2 (d0 = +$00 ... d7 =
-* +$1C, a0 = +$20, a1 = +$24, a2 = +$28). Belegt quer durch IOMans Code:
-* sein I$Open liest den Zugriffsmodus als "move.b $3(a5),d1" (unteres
-* Byte von d0) und den Pfadnamen als "movea.l $20(a5),a0" (a0-Slot,
-* Modul-Offset $13a6). Ohne gefuellten Rahmen las IOMan dort Datenmuell,
-* fand kein fuehrendes '/' und meldete E_BPNAM ($D7) -- obwohl der
-* gesuchte Name "/term" korrekt uebergeben war.
-* Der Rahmen wird hier auf dem Stack angelegt, mit den ECHTEN
-* Aufreferregistern gefuellt und nach dem Handler zurueckgeschrieben --
-* Handler duerfen ihre Ausgaben also wahlweise ins Register ODER in den
-* Rahmen legen (F$AllPD/F$SRqMem tun Letzteres, s. dort).
-        movem.l d0-d7/a0-a2,-(sp)                       * 44-Byte-Rahmen, OS-9-Reihenfolge
-        movea.l sp,a5                                     * A5 = Rahmenbasis
-        bsr     Q9K_TrapExtInvoke                           * legt die Ruecksprungadresse ab
-* Rahmen NUR verwerfen, NICHT in die Register zurueckschreiben: externe
-* Handler geben ihr Ergebnis im REGISTER zurueck (IOMans I$Open setzt den
-* Fehlercode per "move.w #$d7,d1"). Ein "movem.l (sp)+,d0-d7/a0-a2" wuerde
-* genau das ueberbuegeln -- real aufgefallen: d1 kam als $0210
-* (Rahmen-Restwert) statt als echter Fehlercode zurueck. Der Rahmen ist
-* fuer den Handler eine EINGABE (Zugriffsmodus, Pfadname); Handler, die
-* umgekehrt in den Rahmen IHRES Aufrufers schreiben (F$SRqMem, F$AllPD),
-* betrifft das nicht -- das ist ein anderer, vom Aufrufer selbst
-* angelegter Rahmen.
-        lea     44(sp),sp                                          * Rahmen verwerfen
+* Registerrahmen im ECHTEN OS-9-Layout anlegen (72 Byte). Maszgeblich ist
+* MWOS/OS9/SRC/DEFS/process.a, "User Register Stack Image":
+*   R$d0=$00 ... R$d7=$1C, R$a0=$20 ... R$a6=$38, R$a7=$3C (Stackzeiger
+*   des Aufrufers), R$sr=$40 (Wort), R$pc=$42, R$fmt=$46, R$Size=$48.
+* Vorher wurden nur 44 Byte (d0-d7/a0-a2) abgelegt -- ab A3 war das
+* Layout falsch und ab $3C fehlte alles. Real aufgefallen: der
+* File-Manager scf liest den Callcode aus $3c(a5), indiziert damit seine
+* Wort-Sprungtabelle bei M$Exec ("subi.w #$83,d1 / asl.w #1,d1 /
+* adda.w (a0,d1.w),a0", IOMan-Offset $152c) und sprang mit dem Muellwert
+* mitten in die Tabelle statt in Code -- Illegal Instruction bei scf+$8c.
+* Der Rahmen bleibt reine EINGABE (s. u.): Handler geben im Register
+* zurueck, deshalb wird er hinterher nur verworfen.
+* "movem" kann A7 nicht mitschreiben, der Slot wird separat gesetzt;
+* ebenso SR/PC/Format, die aus dem Hardware-Exception-Frame stammen
+* (SP zeigt beim Eintritt hierher genau darauf).
+        lea     -72(sp),sp                      * Platz fuer den R$-Rahmen
+        movem.l d0-d7/a0-a6,(sp)                 * R$d0..R$a6 (60 Byte, aufsteigend)
+        move.l  sp,$3c(sp)
+        addi.l  #72,$3c(sp)                       * R$a7 = Stackzeiger des Aufrufers
+* TEST: Callcode als Wort bei $3c ablegen. scf liest ihn dort
+* ("move.w $3c(a5),d1 / subi.w #$83,d1"), obwohl $3c im dokumentierten
+* R$-Layout R$a7 waere -- empirisch pruefen, welche Deutung stimmt.
+        move.w  ($1370).w,$3c(sp)
+        move.w  72(sp),$40(sp)                     * R$sr  aus dem Exception-Frame
+        move.l  74(sp),$42(sp)                      * R$pc
+        move.w  78(sp),$46(sp)                       * R$fmt (Format/Vektor)
+        movea.l sp,a5                                 * A5 = Rahmenbasis
+        bsr     Q9K_TrapExtInvoke                       * legt die Ruecksprungadresse ab
+        lea     72(sp),sp                                * Rahmen verwerfen
         bra     Q9K_TrapAfterCall
 Q9K_TrapExtInvoke:
         move.l  Q9K_TrapHandlerScratch,-(sp)                  * Handler-Adresse darueber
@@ -1393,6 +1435,7 @@ Q9K_TrapAfterCall:
 * jeder Handler-Fehlschlag ging dadurch verloren, jeder Syscall meldete
 * unabhaengig vom echten Ergebnis IMMER Erfolg.
         move.w  ccr,Q9K_TrapCCRScratch    * echtes CCR SOFORT sichern, bevor irgendwas es veraendern kann
+        clr.w   Q9K_InTrapPath
         move.l  d0,Q9K_TrapHandlerScratch   * jetzt erst d0 sichern (Nebeneffekt auf C/V ist ab hier irrelevant)
         move.w  Q9K_TrapCCRScratch,d0        * d0.w = $00xx, xx = das ECHTE, geretteten CCR
         andi.w  #$ff00,(sp)                 * unteres Byte des geretteten SR (=CCR-Position) loeschen, oberes (Systemflags) unangetastet
@@ -1868,6 +1911,25 @@ Q9K_SysFExit_SwitchTo:
 * gesicherten/spaeter zurueckgeholten Rahmens, nicht mehr direkt
 * lesbar).
 Q9K_SysFSleep:
+* WICHTIG (2026-09-02): dieser Handler setzt einen Exception-Frame voraus
+* -- er verwirft die jsr-Ruecksprungadresse, legt den Registersatz auf den
+* Stack des Aufrufers und wechselt den Prozess. Das geht NUR ueber
+* Q9K_TrapDispatch. Der Treiber sc68681 ruft F$Sleep aber direkt ueber das
+* PEA+RTS-Trampolin (kein Exception-Frame!); dabei wurde seine
+* Ruecksprungadresse verworfen und "60(sp)" zeigte in fremden Speicher --
+* der Treiber verschwand, kurz darauf schlug der Stack-Ueberlauf-Handler
+* zu (per Diagnose belegt: a6=0, sp=$2d354, also ein Prozessstack).
+* Auf dem Trampolin-Pfad deshalb sofort und ohne Prozesswechsel
+* zurueckkehren -- das entspricht "F$Sleep mit 0 Ticks" (CPU abgeben,
+* sofort weiterlaufen) und ist eine bewusste UEBERGANGSLOESUNG: der
+* Treiber pollt dann, statt auf seinen Interrupt zu warten. Sobald die
+* IRQ-Zustellung steht (s. Q9K_ProcIRQ in q9kernel_exctable.c), gehoert
+* hier ein echter System-State-Schlafpfad hin.
+        tst.w   Q9K_InTrapPath
+        bne     Q9K_SysFSleep_TrapPath
+        andi    #$fe,ccr                 * Carry loeschen -- Erfolg, kein Prozesswechsel
+        rts
+Q9K_SysFSleep_TrapPath:
         move.l  d0,Q9K_SleepScratch_TicksIn
         addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
         movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des schlafenden Aufrufers sichern
@@ -1898,6 +1960,39 @@ Q9K_SysFSleep_SwitchTo:
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         movem.l (sp)+,d0-d7/a0-a6
         rte
+
+* Q9K_SysFIRQ -- F$IRQ (Callcode $2A, "Enter IRQ Polling Table").
+* Konvention aus dem realen Treiber sc68681 abgelesen (Modul-Offset $00ec
+* ff.): d0.b = Vektornummer, d1.b = Prioritaet, a0 = Service-Routine
+* (0 = Eintrag entfernen); dazu die OS-9-ueblichen a2 = statischer
+* Treiberspeicher und a3 = Portadresse. Fuehrt bisher nur die Tabelle,
+* stellt noch keine Interrupts zu -- s. Kopfkommentar in
+* q9kernel_exctable.c.
+Q9K_SysFIRQ:
+        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
+        andi.l  #$000000ff,d0                  * nur d0.b ist echte Eingabe
+        move.l  d0,Q9K_IRQScratch_Vector
+        move.l  d1,-(sp)
+        andi.l  #$000000ff,d1
+        move.l  d1,Q9K_IRQScratch_Prio
+        move.l  (sp)+,d1
+        move.l  a0,Q9K_IRQScratch_Isr
+        move.l  a2,Q9K_IRQScratch_Static
+        move.l  a3,Q9K_IRQScratch_Port
+        bsr     Q9K_SysIRQImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+
+        tst.w   Q9K_IRQScratch_Success+2
+        beq     Q9K_SysFIRQ_Fail
+        andi    #$fe,ccr                        * Carry loeschen -- Erfolg
+        rts
+
+Q9K_SysFIRQ_Fail:
+        move.w  Q9K_IRQScratch_Error+2,d1
+        ori     #1,ccr                              * Carry setzen -- Fehlschlag
+        rts
+
 
 *******************************************************************************
 * Q9K_SysFSRqMem -- TRAP-#0-Handler fuer den echten F$SRqMem-Callcode
