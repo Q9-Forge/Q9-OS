@@ -155,6 +155,51 @@ int main(void)
         checkU32("F$AllPD erschoepfter Pool meldet E_PTHFUL", (Q9_u32)err, 0x00C8);
     }
 
+    /* --- F$PrsNam (Callcode $10), 2026-09-02 -------------------------
+     * Konvention aus dem File-Manager scf abgelesen, s. Kopfkommentar
+     * von Q9K_ProcPrsNam. Geprueft: fuehrende '/' werden uebersprungen,
+     * a1/a0/Laenge/Trennzeichen stimmen, mehrteilige Pfade liefern das
+     * ERSTE Element, und die Fehlerfaelle melden E_BPNAM. */
+    {
+        static const char p1[] = "/term";
+        static const char p2[] = "/dd/SYS/motd";
+        static const char p3[] = "term ";
+        static const char p4[] = "///";
+        static const char p5[] = "";
+        Q9_u32 nameStart = 0, past = 0;
+        Q9_u16 len = 0, delim = 0, err = 0;
+        int ok;
+
+        printf("\n--- F$PrsNam ---\n");
+
+        ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p1, &nameStart, &past, &len, &delim, &err);
+        checkU32("F$PrsNam \"/term\" Erfolg", (Q9_u32)ok, 1);
+        checkU32("F$PrsNam \"/term\" Name beginnt bei 't'", nameStart, (Q9_u32)(unsigned long)(p1 + 1));
+        checkU32("F$PrsNam \"/term\" Laenge 4", (Q9_u32)len, 4);
+        checkU32("F$PrsNam \"/term\" Trennzeichen 0", (Q9_u32)delim, 0);
+        checkU32("F$PrsNam \"/term\" a0 hinter dem Namen", past, (Q9_u32)(unsigned long)(p1 + 5));
+
+        ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p2, &nameStart, &past, &len, &delim, &err);
+        checkU32("F$PrsNam \"/dd/SYS/motd\" liefert erstes Element", (Q9_u32)len, 2);
+        checkU32("F$PrsNam \"/dd/...\" Trennzeichen '/'", (Q9_u32)delim, '/');
+        checkU32("F$PrsNam \"/dd/...\" a0 auf dem '/'", past, (Q9_u32)(unsigned long)(p2 + 3));
+
+        ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p3, &nameStart, &past, &len, &delim, &err);
+        checkU32("F$PrsNam ohne fuehrenden '/' Erfolg", (Q9_u32)ok, 1);
+        checkU32("F$PrsNam \"term \" Trennzeichen Leerzeichen", (Q9_u32)delim, ' ');
+
+        ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p4, &nameStart, &past, &len, &delim, &err);
+        checkU32("F$PrsNam nur Trenner meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$PrsNam nur Trenner meldet E_BPNAM", (Q9_u32)err, 0x00D7);
+
+        ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p5, &nameStart, &past, &len, &delim, &err);
+        checkU32("F$PrsNam leerer Pfad meldet Fehlschlag", (Q9_u32)ok, 0);
+
+        ok = Q9K_ProcPrsNam(0, &nameStart, &past, &len, &delim, &err);
+        checkU32("F$PrsNam Nullzeiger meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$PrsNam Nullzeiger meldet E_BPNAM", (Q9_u32)err, 0x00D7);
+    }
+
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;
 }
