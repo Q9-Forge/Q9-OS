@@ -18,6 +18,12 @@ static unsigned char g_fakeGlobals[0x40];   /* nur Q9_D_SYSDIS/USRDIS-Zeigerfeld
 static unsigned char g_sysdis[0x800];       /* je 0x800 Byte, wie real */
 static unsigned char g_usrdis[0x800];
 
+/* Markierungstabelle "extern per F$SSvc registriert" (2026-09-02): im
+ * echten Kernel eine feste Global-Adresse, im Test ein normaler Puffer --
+ * gleiches Umlenkungsmuster wie bei Q9_D_SYSDIS/Q9_D_USRDIS. */
+static unsigned char g_ssvcExternal[256];
+#define Q9K_SSVC_EXTERNAL_BASE ((unsigned long)g_ssvcExternal)
+
 #define Q9_D_SYSDIS ((unsigned long)(g_fakeGlobals + 0x000))
 #define Q9_D_USRDIS ((unsigned long)(g_fakeGlobals + 0x008))
 
