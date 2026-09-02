@@ -192,6 +192,80 @@ int Q9K_ProcAllPD(Q9_u32 dbtAddr, Q9_u32 *outDesc, Q9_u16 *outNum, Q9_u16 *outEr
     return 1;
 }
 
+/* ---------------------------------------------------------------------
+ * F$PrsNam (Callcode $10, "Parse Pathlist Name")
+ *
+ * Zerlegt EIN Element eines Pfadnamens. Konvention aus dem realen
+ * File-Manager scf abgelesen (Modul-Offset $00be ff.), nicht geraten:
+ *
+ *     movea.l $20(a5),a0    a0 = Pfadname (aus dem Registerrahmen)
+ *     trap    #0 / $0010
+ *     bcs.w   ...           Carry = Fehler
+ *     tst.b   d0            d0.b = Trennzeichen HINTER dem Namen
+ *     cmpi.b  #$d,d0        scf akzeptiert 0, CR und Leerzeichen
+ *     cmpi.b  #$20,d0
+ *     movea.l a1,a0         a1 = Zeiger auf den Namensanfang
+ *
+ * Vollstaendige Ausgabe (klassische OS-9-Konvention):
+ *   a1    = erstes Zeichen des Namens
+ *   a0    = hinter dem Namen (auf das Trennzeichen)
+ *   d0.b  = das Trennzeichen selbst
+ *   d1.w  = Namenslaenge
+ *   Carry gesetzt + d1.w = E_BPNAM ($D7), wenn kein gueltiger Name folgt.
+ *
+ * Fuehrende '/' werden uebersprungen -- fuer "/term" liefert das den
+ * Namen "term" (Laenge 4) mit Trennzeichen 0, genau was scf erwartet.
+ * Gueltige Namenszeichen sind Buchstaben, Ziffern sowie '_', '.' und '$'
+ * (OS-9-Konvention); das Trennzeichen ist alles andere.
+ * --------------------------------------------------------------------- */
+static int Q9K_PrsNamIsNameChar(unsigned char c)
+{
+    if (c >= 'A' && c <= 'Z') return 1;
+    if (c >= 'a' && c <= 'z') return 1;
+    if (c >= '0' && c <= '9') return 1;
+    return (c == '_' || c == '.' || c == '$');
+}
+
+/* Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcPrsNam(Q9_u32 pathPtr, Q9_u32 *outNameStart, Q9_u32 *outPastName,
+                   Q9_u16 *outLen, Q9_u16 *outDelim, Q9_u16 *outError)
+{
+    const volatile unsigned char *p;
+    Q9_u32 i = 0;
+    Q9_u32 start;
+
+    *outNameStart = 0;
+    *outPastName  = pathPtr;
+    *outLen       = 0;
+    *outDelim     = 0;
+    *outError     = 0;
+
+    if (pathPtr == 0) {
+        *outError = 0x00D7U;            /* E_BPNAM, Bad Path Name */
+        return 0;
+    }
+
+    p = (const volatile unsigned char *)pathPtr;
+
+    while (p[i] == '/')                  /* fuehrende Trenner ueberspringen */
+        i++;
+
+    start = i;
+    while (Q9K_PrsNamIsNameChar(p[i]))
+        i++;
+
+    if (i == start) {                    /* leerer Name */
+        *outError = 0x00D7U;
+        return 0;
+    }
+
+    *outNameStart = pathPtr + start;
+    *outPastName  = pathPtr + i;
+    *outLen       = (Q9_u16)(i - start);
+    *outDelim     = (Q9_u16)p[i];
+    return 1;
+}
+
 /* Q9K_ProcIOpen -- echte I$Open-Kernlogik (s. Kopfkommentar).
  * IN: mode (nur fuer eine spaetere, echte Zugriffspruefung reserviert,
  *     bisher ungenutzt), pathnamePtr (Zeiger auf den NUL-terminierten
@@ -287,6 +361,35 @@ void Q9K_SysAllPDImpl(void)
     } else {
         Q9K_SetU32(Q9K_ALLPD_SCRATCH_ERROR, (Q9_u32)err);
         Q9K_SetU32(Q9K_ALLPD_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
+/* Scratch-Bruecke fuer F$PrsNam, gleiches Muster wie ueberall. */
+#ifndef Q9K_PRSNAM_SCRATCH_PATH
+#define Q9K_PRSNAM_SCRATCH_PATH   0x13ECUL   /* Q9_u32, (a0) EIN  = Pfadname */
+#define Q9K_PRSNAM_SCRATCH_NAME   0x13F0UL   /* Q9_u32, (a1) AUS = Namensanfang */
+#define Q9K_PRSNAM_SCRATCH_PAST   0x13F4UL   /* Q9_u32, (a0) AUS = hinter dem Namen */
+#define Q9K_PRSNAM_SCRATCH_LEN    0x13F8UL   /* Q9_u32, d1.w AUS = Laenge */
+#define Q9K_PRSNAM_SCRATCH_DELIM  0x13FCUL   /* Q9_u32, d0.b AUS = Trennzeichen */
+#define Q9K_PRSNAM_SCRATCH_ERROR  0x1600UL   /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_PRSNAM_SCRATCH_OK     0x1604UL   /* Q9_u32, 0 = Fehlschlag / 1 = Erfolg */
+#endif
+
+void Q9K_SysPrsNamImpl(void)
+{
+    Q9_u32 nameStart = 0, pastName = 0;
+    Q9_u16 len = 0, delim = 0, err = 0;
+
+    if (Q9K_ProcPrsNam(Q9K_GetU32(Q9K_PRSNAM_SCRATCH_PATH),
+                       &nameStart, &pastName, &len, &delim, &err)) {
+        Q9K_SetU32(Q9K_PRSNAM_SCRATCH_NAME, nameStart);
+        Q9K_SetU32(Q9K_PRSNAM_SCRATCH_PAST, pastName);
+        Q9K_SetU32(Q9K_PRSNAM_SCRATCH_LEN, (Q9_u32)len);
+        Q9K_SetU32(Q9K_PRSNAM_SCRATCH_DELIM, (Q9_u32)delim);
+        Q9K_SetU32(Q9K_PRSNAM_SCRATCH_OK, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_PRSNAM_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_PRSNAM_SCRATCH_OK, 0UL);
     }
 }
 
