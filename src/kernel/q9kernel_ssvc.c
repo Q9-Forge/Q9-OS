@@ -102,6 +102,14 @@ static Q9_u16 Q9K_ReadHdrU16BE(Q9_u32 addr)
  * durch die Tabelle bei tablePtr bis zum Endmarker (Codewort $ffff = -1
  * als Q9_u16), registriert jeden Eintrag in Q9_D_SYSDIS (immer) und
  * Q9_D_USRDIS (nur ohne SysTrap-Bit). */
+/* Markierungstabelle "dieser Callcode wurde per F$SSvc EXTERN registriert",
+ * ein Byte je Callcode (256 Byte, im genullten Global-Bereich). Externe
+ * Module wie IOMan setzen die OS-9-Konvention "A4 = aktueller
+ * Prozessdeskriptor" beim Handler-Eintritt voraus; unsere eigenen Handler
+ * nicht. Q9K_TrapDispatch (q9kernel_entry.a) liest diese Tabelle, um A4
+ * gezielt nur fuer die externen Handler umzusetzen. */
+#define Q9K_SSVC_EXTERNAL_BASE 0x1400UL
+
 void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
 {
     Q9_u32 sysdisBase = Q9K_GetU32(Q9_D_SYSDIS);
@@ -129,6 +137,8 @@ void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
         sysTrapOnly = (codeword & 0x8000U) != 0;
 
         routineAddr = entryAddr + signExtOffset + 4UL;
+
+        *(volatile unsigned char *)(Q9K_SSVC_EXTERNAL_BASE + realCode) = 1U;
 
         Q9K_SetU32(sysdisBase + realCode * 4UL, routineAddr);
         Q9K_SetU32(sysdisBase + 0x400UL + realCode * 4UL, dataPtr);
