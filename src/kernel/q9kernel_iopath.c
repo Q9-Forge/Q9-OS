@@ -85,6 +85,113 @@ static Q9_u32 Q9K_PathPoolAlloc(void)
     return head;
 }
 
+/* Byteweises Big-Endian-Lesen/Schreiben von 16-Bit-Feldern in der
+ * Pfad-Deskriptor-Blocktabelle (DBT). Byteweise aus demselben Grund wie
+ * ueberall in diesem Kernel: der Hosttest laeuft little-endian, das Ziel
+ * big-endian (vgl. Q9K_ReadU32BE in q9kernel_moddir.c). */
+static Q9_u16 Q9K_ReadU16BE(Q9_u32 addr)
+{
+    const volatile unsigned char *p = (const volatile unsigned char *)addr;
+    return (Q9_u16)(((Q9_u16)p[0] << 8) | (Q9_u16)p[1]);
+}
+
+static void Q9K_WriteU16BE(Q9_u32 addr, Q9_u16 value)
+{
+    volatile unsigned char *p = (volatile unsigned char *)addr;
+    p[0] = (unsigned char)((value >> 8) & 0xFFU);
+    p[1] = (unsigned char)(value & 0xFFU);
+}
+
+/* Die DBT-Zeigerslots sind EXAKT 4 Byte breit (fremde, von IOMan
+ * angelegte Struktur) -- deshalb byteweise und NICHT ueber Q9K_SetU32:
+ * Q9_u32 ist "unsigned long", auf dem 64-Bit-Hosttest also 8 Byte breit,
+ * und wuerde den Nachbarslot mit ueberschreiben (im Test real
+ * aufgefallen; auf dem 68k-Ziel waere es zufaellig gutgegangen). Gleiche
+ * Begruendung wie beim vorhandenen Hinweis in test_q9kernel_ssvc.c. */
+static Q9_u32 Q9K_ReadU32BE_At(Q9_u32 addr)
+{
+    const volatile unsigned char *p = (const volatile unsigned char *)addr;
+    return ((Q9_u32)p[0] << 24) | ((Q9_u32)p[1] << 16)
+         | ((Q9_u32)p[2] << 8)  | (Q9_u32)p[3];
+}
+
+static void Q9K_WriteU32BE_At(Q9_u32 addr, Q9_u32 value)
+{
+    volatile unsigned char *p = (volatile unsigned char *)addr;
+    p[0] = (unsigned char)((value >> 24) & 0xFFU);
+    p[1] = (unsigned char)((value >> 16) & 0xFFU);
+    p[2] = (unsigned char)((value >> 8)  & 0xFFU);
+    p[3] = (unsigned char)(value & 0xFFU);
+}
+
+/* Q9K_ProcAllPD -- echte F$AllPD-Kernlogik (Callcode $30, "Allocate
+ * Process/Path Descriptor"; in OS-9/6809 hiess derselbe Dienst F$All64,
+ * 1985 umbenannt, s. MWOS/OS9/SRC/DEFS/funcs.a Zeile 35).
+ *
+ * Aufrufkonvention aus der IOMan-Disassemblierung abgelesen (Modul-Offset
+ * $135e ff.): IN a0 = Basis der Deskriptor-Blocktabelle (DBT), die IOMan
+ * beim Init selbst anlegt und in D_PthDBT ($48) ablegt. OUT a1 = Zeiger
+ * auf den neuen Deskriptor, d0.w = dessen Nummer, Carry bei Fehler.
+ * IOMan holt a1 dabei NICHT aus dem Register, sondern aus dem
+ * 44-Byte-Registerrahmen des Trampolin-Aufrufers (Slot +$24) -- genau wie
+ * bei F$SRqMem, s. Q9K_SysFSRqMem in q9kernel_entry.a.
+ *
+ * DBT-Aufbau, ebenfalls aus IOMans Code belegt ($14d4 ff.):
+ *   +0x00 (2) hoechster gueltiger Index
+ *   +0x02 (2) von IOMan mit $0100 vorbelegt (Bedeutung noch offen)
+ *   +idx*4    Zeiger auf den Deskriptor mit dieser Nummer (0 = frei)
+ * Index 0 ist ungueltig -- IOman verwirft ihn ausdruecklich ("asl.w #2,d0
+ * / beq" bei $14dc), weil Offset 0 der Kopf selbst ist. Der Deskriptor
+ * traegt seine eigene Nummer an Offset 0; IOMan prueft das gegen den
+ * Index ("cmp.w (a1),d0" bei $14ea), deshalb wird sie hier gesetzt.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt).
+ */
+int Q9K_ProcAllPD(Q9_u32 dbtAddr, Q9_u32 *outDesc, Q9_u16 *outNum, Q9_u16 *outError)
+{
+    Q9_u16 maxIndex;
+    Q9_u32 idx;
+    Q9_u32 desc;
+    Q9_u32 i;
+
+    *outDesc  = 0;
+    *outNum   = 0;
+    *outError = 0;
+
+    if (dbtAddr == 0) {
+        *outError = 0x00D2U;            /* E_BPADDR, Bad Page Address */
+        return 0;
+    }
+
+    maxIndex = Q9K_ReadU16BE(dbtAddr);
+
+    for (idx = 1; idx <= (Q9_u32)maxIndex; idx++) {
+        if (Q9K_ReadU32BE_At(dbtAddr + idx * 4UL) == 0)
+            break;
+    }
+
+    if (idx > (Q9_u32)maxIndex) {
+        *outError = 0x00C8U;            /* E_PTHFUL, Path Table full */
+        return 0;
+    }
+
+    desc = Q9K_PathPoolAlloc();
+    if (desc == 0) {
+        *outError = 0x00C8U;            /* Pool erschoepft -- fuer den Aufrufer derselbe Fall */
+        return 0;
+    }
+
+    for (i = 0; i < Q9K_PATHDESC_SIZE; i++)
+        *(volatile unsigned char *)(desc + i) = 0;
+
+    Q9K_WriteU16BE(desc, (Q9_u16)idx);
+    Q9K_WriteU32BE_At(dbtAddr + idx * 4UL, desc);
+
+    *outDesc = desc;
+    *outNum  = (Q9_u16)idx;
+    return 1;
+}
+
 /* Q9K_ProcIOpen -- echte I$Open-Kernlogik (s. Kopfkommentar).
  * IN: mode (nur fuer eine spaetere, echte Zugriffspruefung reserviert,
  *     bisher ungenutzt), pathnamePtr (Zeiger auf den NUL-terminierten
@@ -128,6 +235,26 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
  * ($134C-$1354, q9kernel_entry.a/ssvc.c) -- naechste freie Adresse
  * $1360 (die davor genutzten temporaeren Debug-Adressen der
  * "!"-Raetsel-Sitzung sind inzwischen wieder frei). */
+/* F$AllPD-Scratch (2026-09-02), direkt hinter Q9K_TrapA4Save ($13A8) und
+ * vor der F$SSvc-Markierungstabelle ($1400) -- s. Belegungsuebersicht in
+ * q9kernel_entry.a. Wie alle anderen per #define ueberschreibbar, damit
+ * der Hosttest auf echte Puffer umlenken kann. */
+#ifndef Q9K_ALLPD_SCRATCH_DBTIN
+#define Q9K_ALLPD_SCRATCH_DBTIN   0x13ACUL   /* Q9_u32, (a0) EIN  = DBT-Basis */
+#endif
+#ifndef Q9K_ALLPD_SCRATCH_DESC
+#define Q9K_ALLPD_SCRATCH_DESC    0x13B0UL   /* Q9_u32, (a1) AUS = Deskriptorzeiger */
+#endif
+#ifndef Q9K_ALLPD_SCRATCH_NUM
+#define Q9K_ALLPD_SCRATCH_NUM     0x13B4UL   /* Q9_u32, d0.w AUS = Deskriptornummer */
+#endif
+#ifndef Q9K_ALLPD_SCRATCH_ERROR
+#define Q9K_ALLPD_SCRATCH_ERROR   0x13B8UL   /* Q9_u32, d1.w AUS bei Fehler */
+#endif
+#ifndef Q9K_ALLPD_SCRATCH_SUCCESS
+#define Q9K_ALLPD_SCRATCH_SUCCESS 0x13BCUL   /* Q9_u32, 0 = Fehlschlag / 1 = Erfolg */
+#endif
+
 #ifndef Q9K_IOpenScratch_Mode
 #define Q9K_IOpenScratch_Mode     0x1360UL   /* Q9_u32, d0.b EIN (nur unteres Byte real genutzt) */
 #endif
@@ -144,6 +271,25 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
 /* Q9K_SysIOpenImpl -- duenne, PARAMETERLOSE Bruecke zwischen dem
  * Assembler-Trampolin und Q9K_ProcIOpen -- gleiches Muster wie ueberall
  * (Q9K_SysForkImpl usw.). */
+/* Q9K_SysAllPDImpl -- duenne, PARAMETERLOSE Bruecke fuer F$AllPD,
+ * gleiches Muster wie Q9K_SysIOpenImpl. */
+void Q9K_SysAllPDImpl(void)
+{
+    Q9_u32 dbt  = Q9K_GetU32(Q9K_ALLPD_SCRATCH_DBTIN);
+    Q9_u32 desc = 0;
+    Q9_u16 num  = 0;
+    Q9_u16 err  = 0;
+
+    if (Q9K_ProcAllPD(dbt, &desc, &num, &err)) {
+        Q9K_SetU32(Q9K_ALLPD_SCRATCH_DESC, desc);
+        Q9K_SetU32(Q9K_ALLPD_SCRATCH_NUM, (Q9_u32)num);
+        Q9K_SetU32(Q9K_ALLPD_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_ALLPD_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_ALLPD_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
 void Q9K_SysIOpenImpl(void)
 {
     Q9_u32 mode     = Q9K_GetU32(Q9K_IOpenScratch_Mode);
