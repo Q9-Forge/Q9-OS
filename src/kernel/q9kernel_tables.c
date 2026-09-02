@@ -75,7 +75,17 @@ extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
 #define Q9K_INIT_OFF_MDIRSZ   0x62UL   /* M$MDirSz, 68k_tech.pdf Table 2-4 */
 
 #define Q9K_PROCDESC_SIZE     0x200UL  /* deckt P$Path bis 0x1A8, s. Kopfkommentar */
-#define Q9K_PATHDESC_SIZE     32UL     /* PLATZHALTER, s. Kopfkommentar */
+/* 32 -> 256 (2026-09-02): dieselbe Lektion wie oben beim Prozess-
+ * deskriptor, jetzt fuer den PFAD-Deskriptor belegt. IOMans I$Open
+ * kopiert den Geraete-Descriptor unbedingt nach Deskriptor+$80
+ * ("lea $80(a1),a2 / move.b (a0)+,(a2)+", Modul-Offset $143e) und liest
+ * anschliessend den Treibernamen von dort. Mit 32 Byte Slotgroesse lag
+ * das komplett ausserhalb des Deskriptors -- IOMan suchte daraufhin
+ * einen Treiber namens "!i" (Datenmuell) statt "sc68681" und meldete
+ * E_MNF ($DD). Zusaetzlich zerstoerte die Kopie die Nachbarslots des
+ * Pools. 256 Byte deckt die Kopie (bis zu $80 Byte ab Offset $80,
+ * s. "cmpi.w #$80,d1 / moveq #$7f,d1" dort) vollstaendig ab. */
+#define Q9K_PATHDESC_SIZE     256UL
 
 /* eigene Kernel-Global-Erweiterungen, direkt hinter Q9K_CpuCount
  * ($1200, s. q9kernel_cinit.c) -- kein Feld aus dem echten Kernel-

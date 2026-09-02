@@ -314,6 +314,7 @@ Q9K_AllPDScratch_Num      equ $13B4      * Q9_u32, d0.w AUS = Deskriptornummer
 Q9K_AllPDScratch_Error    equ $13B8      * Q9_u32, d1.w AUS bei Fehler
 Q9K_AllPDScratch_Success  equ $13BC      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 Q9K_AllPDFrameScratch     equ $13C0      * Rahmenbasis des Trampolin-Aufrufers (0 = kein Rahmen)
+Q9K_LinkFrameScratch      equ $13C4      * dito fuer F$Link
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -1341,7 +1342,16 @@ Q9K_TrapCallExternal:
         movem.l d0-d7/a0-a2,-(sp)                       * 44-Byte-Rahmen, OS-9-Reihenfolge
         movea.l sp,a5                                     * A5 = Rahmenbasis
         bsr     Q9K_TrapExtInvoke                           * legt die Ruecksprungadresse ab
-        movem.l (sp)+,d0-d7/a0-a2                             * Rahmen zurueck in die Register
+* Rahmen NUR verwerfen, NICHT in die Register zurueckschreiben: externe
+* Handler geben ihr Ergebnis im REGISTER zurueck (IOMans I$Open setzt den
+* Fehlercode per "move.w #$d7,d1"). Ein "movem.l (sp)+,d0-d7/a0-a2" wuerde
+* genau das ueberbuegeln -- real aufgefallen: d1 kam als $0210
+* (Rahmen-Restwert) statt als echter Fehlercode zurueck. Der Rahmen ist
+* fuer den Handler eine EINGABE (Zugriffsmodus, Pfadname); Handler, die
+* umgekehrt in den Rahmen IHRES Aufrufers schreiben (F$SRqMem, F$AllPD),
+* betrifft das nicht -- das ist ein anderer, vom Aufrufer selbst
+* angelegter Rahmen.
+        lea     44(sp),sp                                          * Rahmen verwerfen
         bra     Q9K_TrapAfterCall
 Q9K_TrapExtInvoke:
         move.l  Q9K_TrapHandlerScratch,-(sp)                  * Handler-Adresse darueber
@@ -1473,6 +1483,39 @@ Q9K_SysFLink:
 * gleicher A6-Sicherungsmechanismus wie bei Q9K_SysFSSvc/Q9K_SysFSRqMem
 * -- eingehendes A6 sichern, fuer den C-Aufruf umschalten, auf JEDEM
 * Rueckkehrpfad (Erfolg UND Fehler) wiederherstellen.
+* Trampolin-Registerrahmen erkennen (gleiche Konstruktion wie bei
+* Q9K_SysFSRqMem/Q9K_SysFAllPD, s. dort): externe Aufrufer wie IOMan
+* legen VOR dem Sprung einen 44-Byte-Rahmen an (a5 = Rahmenbasis) und
+* holen die Rueckgabewerte DARAUS zurueck, nicht aus den Registern.
+* Ohne Versorgung las IOMans I$Open dort Datenmuell und meldete E_MNF
+* ($DD, "Module Not Found") -- obwohl "term" laengst in der
+* Moduldirectory stand und F$Link es korrekt gefunden hatte.
+* WICHTIG: hier NICHT die Signatur "a5 == sp+8" wie bei F$SRqMem/F$AllPD
+* verwenden. Deren Trampolin-Wrapper legen den Rahmen unmittelbar vor dem
+* Sprung an; IOMans F$Link-Wrapper (Modul-Offset $d56) tut das NICHT --
+* er sichert nur a3, holt den SysDis-Slot und springt. A5 zeigt dort auf
+* einen Rahmen, den IOMan viel frueher angelegt und bereits befuellt hat
+* (bei $0bac schreibt es den Treibernamen nach $20(a5), bei $0bc0 liest
+* es den Modulkopf aus $28(a5) zurueck). Mit der engen Signaturpruefung
+* blieb $28(a5) leer -- IOMan suchte daraufhin einen Treiber unter einer
+* Muelladresse und meldete E_MNF ($DD).
+* Stattdessen: A5 als Rahmen akzeptieren, wenn er ueberhaupt plausibel
+* ist -- gerade Adresse, innerhalb des RAM, oberhalb der Vektortabelle.
+        movem.l d0/a0,-(sp)
+        move.l  a5,d0
+        beq     Q9K_SysFLink_NoFrame
+        btst    #0,d0                   * ungerade Adresse -> kein Rahmen
+        bne     Q9K_SysFLink_NoFrame
+        cmpi.l  #$400,d0
+        bcs     Q9K_SysFLink_NoFrame
+        cmpi.l  #$1000000,d0
+        bcc     Q9K_SysFLink_NoFrame
+        move.l  a5,Q9K_LinkFrameScratch
+        bra     Q9K_SysFLink_FrameDone
+Q9K_SysFLink_NoFrame:
+        clr.l   Q9K_LinkFrameScratch
+Q9K_SysFLink_FrameDone:
+        movem.l (sp)+,d0/a0
         and.l   #$0000ffff,d0
         move.l  d7,-(sp)              * eigenes Scratch sichern
         move.l  a0,-(sp)              * urspruenglichen Namenszeiger separat merken (C-Aufruf braucht a0->d1)
@@ -1505,6 +1548,21 @@ Q9K_SysFLink:
 Q9K_SysFLink_SkipName:
         tst.b   (a0)+                             * (a0) hinter den Namen aktualisieren (bis zum NUL-Byte)
         bne     Q9K_SysFLink_SkipName
+* Rahmen des Trampolin-Aufrufers versorgen: d0 = Typ/Sprache (+$00),
+* d1 = Attribut/Revision (+$04), a0 = hinter dem Namen (+$20),
+* a1 = Einsprungadresse (+$24), a2 = Modulkopf (+$28).
+        move.l  d7,-(sp)
+        move.l  Q9K_LinkFrameScratch,d7
+        beq     Q9K_SysFLink_NoFrameOut
+        exg     d7,a3                             * a3 als Rahmenzeiger, d7 rettet a3
+        move.l  d0,(a3)
+        move.l  d1,4(a3)
+        move.l  a0,$20(a3)
+        move.l  a1,$24(a3)
+        move.l  a2,$28(a3)
+        exg     d7,a3                              * a3 unveraendert zurueck
+Q9K_SysFLink_NoFrameOut:
+        move.l  (sp)+,d7
 
         move.l  (sp)+,d7                            * eigenes Scratch wiederherstellen
         andi    #$fe,ccr                          * Carry im CCR loeschen -- Erfolg
