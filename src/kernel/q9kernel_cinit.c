@@ -90,7 +90,8 @@ extern void   Q9K_SysFSRtMem(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F
 extern void   Q9K_SysFSSvc(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$SSvc (Callcode 0x32) */
 extern void   Q9K_SysFGProcP(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$GProcP (Callcode 0x37) */
 extern void   Q9K_SysFIOpen(void);
-extern void   Q9K_SysFAllPD(void);   /* q9kernel_entry.a, F$AllPD (Callcode 0x30) */   /* q9kernel_entry.a, TRAP-#0-Handler fuer I$Open (Callcode 0x84) */
+extern void   Q9K_SysFAllPD(void);   /* q9kernel_entry.a, F$AllPD (Callcode 0x30) */
+extern void   Q9K_SysFIRQ(void);     /* q9kernel_entry.a, F$IRQ  (Callcode 0x2a) */   /* q9kernel_entry.a, TRAP-#0-Handler fuer I$Open (Callcode 0x84) */
 extern void   Q9K_SysFID(void);      /* q9kernel_entry.a, TRAP-#0-Handler fuer F$ID (Callcode 0x0c) */
 extern void   Q9K_SysFPanic(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Panic (Callcode 0x5e) */
 extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
@@ -374,6 +375,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x37UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGProcP);
                     Q9K_PutU32(usrdisBase + 0x84UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIOpen);
                     Q9K_PutU32(usrdisBase + 0x30UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllPD);
+                    Q9K_PutU32(usrdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
 
                     Q9K_PutU32(sysdisBase + 0x00UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFLink);
@@ -389,6 +391,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x37UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGProcP);
                     Q9K_PutU32(sysdisBase + 0x84UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIOpen);
                     Q9K_PutU32(sysdisBase + 0x30UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllPD);
+                    Q9K_PutU32(sysdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
 
                     /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per
