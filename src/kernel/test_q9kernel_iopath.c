@@ -90,6 +90,71 @@ int main(void)
     num5 = Q9K_ProcIOpen(0, name1Addr, &past);
     checkU32("F5: Pool erschoepft -- Rueckgabe 0", num5, 0);
 
+    /* --- F$AllPD (Callcode $30), 2026-09-02 -------------------------
+     * Konvention und DBT-Aufbau sind aus IOMans Disassemblierung
+     * abgelesen, s. Kopfkommentar von Q9K_ProcAllPD. Geprueft werden:
+     * Index 0 wird uebersprungen, der Deskriptor traegt seine eigene
+     * Nummer big-endian an Offset 0 (IOMan vergleicht das), der Zeiger
+     * landet im richtigen DBT-Slot, belegte Slots werden uebersprungen,
+     * und die beiden Fehlerfaelle liefern die richtigen Codes. */
+    {
+        static unsigned char dbt[4 + 8 * 4];
+        Q9_u32 dbtAddr = (Q9_u32)(unsigned long)dbt;
+        Q9_u32 desc = 0;
+        Q9_u16 num = 0, err = 0;
+        int ok;
+
+        printf("\n--- F$AllPD ---\n");
+
+        memset(dbt, 0, sizeof dbt);
+        dbt[0] = 0; dbt[1] = 8;                 /* hoechster Index = 8, big-endian */
+        buildFreeList(poolBase, 32, 4, Q9K_PATHPOOL_FREE_ADDR);
+
+        ok = Q9K_ProcAllPD(dbtAddr, &desc, &num, &err);
+        checkU32("F$AllPD Erfolg", (Q9_u32)ok, 1);
+        checkU32("F$AllPD erste Nummer ist 1 (Index 0 uebersprungen)", (Q9_u32)num, 1);
+        checkU32("F$AllPD Deskriptor = erster Pool-Slot", desc, poolBase);
+        checkU32("F$AllPD Nummer big-endian im Deskriptor", (Q9_u32)Q9K_ReadU16BE(desc), 1);
+        /* Nur die unteren 32 Bit vergleichen: die DBT-Slots sind 4 Byte breit
+         * (68k-Zeigerbreite), auf dem 64-Bit-Hosttest passt ein echter
+         * Zeiger dort nicht vollstaendig hinein. */
+        checkU32("F$AllPD DBT-Slot 1 zeigt auf den Deskriptor", Q9K_ReadU32BE_At(dbtAddr + 4), desc & 0xFFFFFFFFUL);
+
+        ok = Q9K_ProcAllPD(dbtAddr, &desc, &num, &err);
+        checkU32("F$AllPD zweite Nummer ist 2", (Q9_u32)num, 2);
+        checkU32("F$AllPD DBT-Slot 2 zeigt auf den Deskriptor", Q9K_ReadU32BE_At(dbtAddr + 8), desc & 0xFFFFFFFFUL);
+
+        /* belegter Slot wird uebersprungen */
+        memset(dbt, 0, sizeof dbt);
+        dbt[0] = 0; dbt[1] = 8;
+        Q9K_WriteU32BE_At(dbtAddr + 4, 0xDEADBEEFUL);   /* Slot 1 belegt */
+        buildFreeList(poolBase, 32, 4, Q9K_PATHPOOL_FREE_ADDR);
+        ok = Q9K_ProcAllPD(dbtAddr, &desc, &num, &err);
+        checkU32("F$AllPD ueberspringt belegten Slot 1", (Q9_u32)num, 2);
+
+        /* DBT voll */
+        memset(dbt, 0, sizeof dbt);
+        dbt[0] = 0; dbt[1] = 2;
+        Q9K_WriteU32BE_At(dbtAddr + 4, 0x11111111UL);
+        Q9K_WriteU32BE_At(dbtAddr + 8, 0x22222222UL);
+        ok = Q9K_ProcAllPD(dbtAddr, &desc, &num, &err);
+        checkU32("F$AllPD volle DBT meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$AllPD volle DBT meldet E_PTHFUL", (Q9_u32)err, 0x00C8);
+
+        /* DBT-Zeiger 0 */
+        ok = Q9K_ProcAllPD(0, &desc, &num, &err);
+        checkU32("F$AllPD DBT-Zeiger 0 meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$AllPD DBT-Zeiger 0 meldet E_BPADDR", (Q9_u32)err, 0x00D2);
+
+        /* Pool erschoepft */
+        memset(dbt, 0, sizeof dbt);
+        dbt[0] = 0; dbt[1] = 8;
+        Q9K_SetU32(Q9K_PATHPOOL_FREE_ADDR, 0);
+        ok = Q9K_ProcAllPD(dbtAddr, &desc, &num, &err);
+        checkU32("F$AllPD erschoepfter Pool meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$AllPD erschoepfter Pool meldet E_PTHFUL", (Q9_u32)err, 0x00C8);
+    }
+
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;
 }
