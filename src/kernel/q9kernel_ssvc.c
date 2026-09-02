@@ -108,7 +108,12 @@ static Q9_u16 Q9K_ReadHdrU16BE(Q9_u32 addr)
  * Prozessdeskriptor" beim Handler-Eintritt voraus; unsere eigenen Handler
  * nicht. Q9K_TrapDispatch (q9kernel_entry.a) liest diese Tabelle, um A4
  * gezielt nur fuer die externen Handler umzusetzen. */
+/* Wie Q9_D_SYSDIS/Q9_D_USRDIS per #define VOR dem #include auf einen
+ * echten Testpuffer umlenkbar -- sonst wuerde der Hosttest auf die feste
+ * Zieladresse schreiben und abstuerzen. */
+#ifndef Q9K_SSVC_EXTERNAL_BASE
 #define Q9K_SSVC_EXTERNAL_BASE 0x1400UL
+#endif
 
 void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
 {
