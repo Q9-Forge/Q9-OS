@@ -25,6 +25,25 @@ static unsigned long g_fakeExcJmpPtr;                /* simuliert Q9_D_EXCJMP-In
 static unsigned char  g_fakeVectorTable[256 * 16];   /* simuliert den Boot-ROM-Block */
 
 #define Q9_D_EXCJMP ((unsigned long)&g_fakeExcJmpPtr)
+
+/* F$IRQ-Polling-Tabelle und ihr Scratch (2026-09-02): im echten Kernel
+ * feste Global-Adressen, im Test normale Puffer -- gleiches
+ * Umlenkungsmuster wie bei Q9_D_EXCJMP oben. */
+static unsigned char g_irqTable[16 * 20];
+static unsigned char g_irqScratch[32];
+#define Q9K_IRQTAB_BASE         ((unsigned long)g_irqTable)
+#define Q9K_IRQ_SCRATCH_VECTOR  ((unsigned long)(g_irqScratch +  0))
+#define Q9K_IRQ_SCRATCH_PRIO    ((unsigned long)(g_irqScratch +  4))
+#define Q9K_IRQ_SCRATCH_ISR     ((unsigned long)(g_irqScratch +  8))
+#define Q9K_IRQ_SCRATCH_STATIC  ((unsigned long)(g_irqScratch + 12))
+#define Q9K_IRQ_SCRATCH_PORT    ((unsigned long)(g_irqScratch + 16))
+#define Q9K_IRQ_SCRATCH_ERROR   ((unsigned long)(g_irqScratch + 20))
+#define Q9K_IRQ_SCRATCH_SUCCESS ((unsigned long)(g_irqScratch + 24))
+
+/* Q9K_ExcTrap liegt im Assembler-Teil (q9kernel_entry.a) und wird hier
+ * nur als Adresse gebraucht -- Platzhalter, damit der Test eigenstaendig
+ * bleibt (gleiche Begruendung wie bei Q9K_TrapDispatch/Q9K_SetVBR). */
+void Q9K_ExcTrap(void) { }
 #include "q9kernel_exctable.c"
 
 /* Minimale Stubs fuer die drei echten q9kernel_entry.a-Symbole, deren
@@ -83,19 +102,21 @@ int main(void)
     }
 
     /* Fall 4: Vektor 2 (erster Eintrag der Quelltabelle) muss auf
-     * Q9K_ExcDefault zeigen. Abstand sizeof(Q9K_ExcHandler), NICHT "*4"
+     * Q9K_ExcTrap zeigen (seit 2026-09-02 der Default statt der
+     * C-Funktion Q9K_ExcDefault, s. dortigen Kommentar).
+     * Abstand sizeof(Q9K_ExcHandler), NICHT "*4"
      * -- muss zu dem passen, was Q9K_BuildExcTable tatsaechlich schreibt
      * (s. Kommentar in q9kernel_exctable.c). */
     {
         Q9K_ExcHandler *slot2 = (Q9K_ExcHandler *)((Q9_u32)(unsigned long)g_fakeVectorTable + 2 * sizeof(Q9K_ExcHandler));
-        checkU32("Vektor 2 zeigt auf Q9K_ExcDefault", (Q9_u32)(*slot2 == Q9K_ExcDefault), 1);
+        checkU32("Vektor 2 zeigt auf Q9K_ExcTrap", (Q9_u32)(*slot2 == (Q9K_ExcHandler)Q9K_ExcTrap), 1);
     }
 
     /* Fall 5: Vektor 255 (letzter Eintrag) muss ebenfalls gesetzt sein
      * (voller Durchlauf bis zum Ende, kein vorzeitiger Abbruch). */
     {
         Q9K_ExcHandler *slot255 = (Q9K_ExcHandler *)((Q9_u32)(unsigned long)g_fakeVectorTable + 255 * sizeof(Q9K_ExcHandler));
-        checkU32("Vektor 255 zeigt auf Q9K_ExcDefault", (Q9_u32)(*slot255 == Q9K_ExcDefault), 1);
+        checkU32("Vektor 255 zeigt auf Q9K_ExcTrap", (Q9_u32)(*slot255 == (Q9K_ExcHandler)Q9K_ExcTrap), 1);
     }
 
     /* Fall 6: kaputte Quelltabelle (zu viele Eintraege) muss sauber
