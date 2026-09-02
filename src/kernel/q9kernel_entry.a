@@ -323,6 +323,13 @@ Q9K_IRQScratch_Port       equ $13D8      * Q9_u32, (a3) EIN  = Geraete-Portadres
 Q9K_IRQScratch_Error      equ $13DC      * Q9_u32, d1.w AUS bei Fehler
 Q9K_IRQScratch_Success    equ $13E0      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
+Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
+Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
+Q9K_PrsNamScratch_Past    equ $13F4      * Q9_u32, (a0) AUS = hinter dem Namen
+Q9K_PrsNamScratch_Len     equ $13F8      * Q9_u32, d1.w AUS = Namenslaenge
+Q9K_PrsNamScratch_Delim   equ $13FC      * Q9_u32, d0.b AUS = Trennzeichen
+Q9K_PrsNamScratch_Error   equ $1600      * Q9_u32, d1.w AUS bei Fehler
+Q9K_PrsNamScratch_Ok      equ $1604      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 * Ablage von Q9K_ExcTrap -- bewusst NICHT im genullten Global-Bereich,
 * sondern weit darueber: eine Exception soll auch dann noch lesbar sein,
 * wenn der Kernel seine Globals schon ueberschrieben hat.
@@ -1960,6 +1967,34 @@ Q9K_SysFSleep_SwitchTo:
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         movem.l (sp)+,d0-d7/a0-a6
         rte
+
+* Q9K_SysFPrsNam -- F$PrsNam (Callcode $10, "Parse Pathlist Name").
+* Konvention aus dem realen File-Manager scf abgelesen (Modul-Offset
+* $00be ff.): IN a0 = Pfadname. OUT a1 = Namensanfang, a0 = hinter dem
+* Namen, d0.b = Trennzeichen, d1.w = Namenslaenge; Carry + d1.w = E_BPNAM
+* bei Fehler. Details s. Q9K_ProcPrsNam in q9kernel_iopath.c.
+Q9K_SysFPrsNam:
+        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
+        move.l  a0,Q9K_PrsNamScratch_Path
+        bsr     Q9K_SysPrsNamImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+
+        tst.w   Q9K_PrsNamScratch_Ok+2
+        beq     Q9K_SysFPrsNam_Fail
+
+        movea.l Q9K_PrsNamScratch_Name,a1         * a1 = Namensanfang
+        movea.l Q9K_PrsNamScratch_Past,a0          * a0 = hinter dem Namen
+        move.l  Q9K_PrsNamScratch_Delim,d0          * d0.b = Trennzeichen
+        move.l  Q9K_PrsNamScratch_Len,d1             * d1.w = Namenslaenge
+        andi    #$fe,ccr                              * Carry loeschen -- Erfolg
+        rts
+
+Q9K_SysFPrsNam_Fail:
+        move.w  Q9K_PrsNamScratch_Error+2,d1
+        ori     #1,ccr                                  * Carry setzen -- Fehlschlag
+        rts
+
 
 * Q9K_SysFIRQ -- F$IRQ (Callcode $2A, "Enter IRQ Polling Table").
 * Konvention aus dem realen Treiber sc68681 abgelesen (Modul-Offset $00ec
