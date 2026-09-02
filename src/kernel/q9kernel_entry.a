@@ -1244,6 +1244,22 @@ Q9K_TimerIRQ_Resume:
 * dokumentiert ohnehin keine A6-Aenderung) -- kein Bug, sondern
 * Konsequenz der schon bestehenden Laufzeit-Konvention.
 Q9K_TrapDispatch:
+* TEST 2026-09-02: Interrupts fuer die Dauer des Syscalls sperren.
+* Hintergrund: alle Handler benutzen FESTE, globale Scratch-Adressen
+* (Q9K_ForkScratch_*, Q9K_WaitScratch_* usw.). Schlaegt der Timer-IRQ
+* mitten im Handler ein und der Scheduler wechselt den Prozess, benutzt
+* der naechste Prozess dieselben Felder. Das erklaert, warum 14 Byte
+* zusaetzlicher Code im Trap-Pfad (reine NOPs) den Kernel zerlegen,
+* dieselben 14 Byte als TOTER Code dagegen folgenlos bleiben: es
+* verschiebt nur den Zeitpunkt, zu dem der IRQ einschlaegt. Das gerettete
+* SR im Exception-Frame bleibt unangetastet -- die Sperre endet also
+* automatisch mit dem RTE.
+* Nachgewiesen per Bisektion: 14 Byte reine NOPs im Trap-Pfad zerlegten
+* den Kernel reproduzierbar (Prozess A verschwand), DIESELBEN 14 Byte als
+* toter, nie ausgefuehrter Code blieben dagegen folgenlos -- es war also
+* nie das Layout, sondern ausschliesslich der Zeitpunkt des IRQ. Mit
+* dieser Sperre sind die 14 NOPs im Trap-Pfad ebenfalls folgenlos.
+        ori.w   #$0700,sr
 * 36 Byte: kompletter "durch Syscalls unantastbarer" Registersatz sichern
 * (A6 bewusst NICHT dabei, s. Kopfkommentar oben).
         movem.l d2-d7/a3-a5,-(sp)
