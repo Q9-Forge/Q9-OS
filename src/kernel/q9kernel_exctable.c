@@ -244,6 +244,28 @@ int Q9K_ProcIRQ(Q9_u32 vector, Q9_u32 prio, Q9_u32 isr,
             Q9K_ExcHandler *slotPtr =
                 (Q9K_ExcHandler *)(tableBase + vector * sizeof(Q9K_ExcHandler));
             *slotPtr = Q9K_IRQDispatch;
+
+            /* Zusaetzlich die Autovektoren auf den Dispatcher legen (Vektor
+             * 25-31 = Level 1-7). Grund: der Interrupt eines Geraets kommt
+             * nicht zwingend unter seinem per IVR gesetzten Vektor an -- beim
+             * DUART liefert das Interrupt-Acknowledge real einen Autovektor
+             * (27 = Level 3). Der Dispatcher erkennt diesen Fall und fragt
+             * dann die gesamte Tabelle ab, statt nach Vektornummer zu filtern.
+             * Vektor 30 bleibt ausgespart: dort haengt der Board-Timer mit
+             * eigenem Handler (s. Q9K_TimerIRQHandler weiter unten). */
+            {
+                Q9_u32 av;
+
+                for (av = 25; av <= 31; av++) {
+                    Q9K_ExcHandler *avSlot;
+
+                    if (av == 30) {
+                        continue;
+                    }
+                    avSlot = (Q9K_ExcHandler *)(tableBase + av * sizeof(Q9K_ExcHandler));
+                    *avSlot = Q9K_IRQDispatch;
+                }
+            }
         }
     }
     return 1;
