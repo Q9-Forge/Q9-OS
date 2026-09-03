@@ -106,6 +106,7 @@ extern void Q9K_SetVBR(Q9_u32 tableBase);
  * KEIN normaler C-aufrufbarer Handler (RTE statt RTS, eigene
  * Registerkonvention). */
 extern void Q9K_TimerIRQHandler(void);
+extern void Q9K_IRQDispatch(void);      /* q9kernel_entry.a -- Zustellung fuer F$IRQ-Eintraege */
 
 /* NUR Integer-Zaehler, KEINE Zeiger -- s. Kopfkommentar (echter l68-
  * Linker-Fund: Zeiger als const-Daten sind in Systm-Modulen verboten).
@@ -226,6 +227,25 @@ int Q9K_ProcIRQ(Q9_u32 vector, Q9_u32 prio, Q9_u32 isr,
     Q9K_IRQSet(freeSlot + Q9K_IRQ_OFF_STATIC, statics);
     Q9K_IRQSet(freeSlot + Q9K_IRQ_OFF_PORT, port);
     Q9K_IRQSet(freeSlot + Q9K_IRQ_OFF_VECTOR, vector);   /* zuletzt: macht den Slot gueltig */
+
+    /* NEU 2026-09-03: Zustellung einschalten. Bisher wurde die Tabelle nur
+     * gefuehrt -- ein eintreffender Geraete-Interrupt lief in den
+     * generischen Halt-Handler, der Treiber bekam nie sein TxRDY/RxRDY.
+     * Der Vektorslot wird erst HIER umgebogen (nicht pauschal beim Boot):
+     * so bleiben alle Vektoren, fuer die sich kein Treiber registriert hat,
+     * weiterhin auf dem Halt-Handler und melden einen echten Fehler, statt
+     * still ins Leere zu laufen.
+     * Ein einziger Dispatcher bedient alle Vektoren -- er liest seine
+     * Vektornummer aus dem Exception-Frame (s. Q9K_IRQDispatch). */
+    if (vector < Q9K_EXCTABLE_TOTAL) {
+        Q9_u32 tableBase = *(volatile Q9_u32 *)Q9_D_EXCJMP;
+
+        if (tableBase != 0) {
+            Q9K_ExcHandler *slotPtr =
+                (Q9K_ExcHandler *)(tableBase + vector * sizeof(Q9K_ExcHandler));
+            *slotPtr = Q9K_IRQDispatch;
+        }
+    }
     return 1;
 }
 

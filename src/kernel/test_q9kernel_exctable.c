@@ -58,6 +58,7 @@ void Q9K_ExcTrap(void) { }
 void Q9K_SetVBR(Q9_u32 tableBase) { (void)tableBase; }
 void Q9K_TrapDispatch(void) { }
 void Q9K_TimerIRQHandler(void) { }
+void Q9K_IRQDispatch(void) { }      /* seit 2026-09-03: F$IRQ traegt ihn in die Vektortabelle ein */
 
 static int failures = 0;
 
