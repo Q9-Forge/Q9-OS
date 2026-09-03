@@ -2107,6 +2107,59 @@ Q9K_SysFPrsNam_Fail:
         rts
 
 
+* Q9K_IRQDispatch -- Zustellung fuer per F$IRQ registrierte Interrupts
+* (2026-09-03). Bisher fuehrte F$IRQ nur die Polling-Tabelle; ein
+* eintreffender Geraete-Interrupt landete beim generischen Halt-Handler,
+* der Treiber bekam also nie sein TxRDY/RxRDY.
+*
+* EIN Handler bedient ALLE registrierten Vektoren -- er ermittelt seine
+* eigene Vektornummer aus dem Exception-Frame. Beim 68030-Kurzformat
+* (Format $0) steht bei 6(sp) das Format-/Vektor-Wort, die Vektornummer
+* ist (Wort & $0FFF) / 4. Deshalb kein Handler-pro-Vektor noetig, und die
+* Tabelle bleibt die einzige Wahrheit darueber, wer was bedient.
+*
+* Reale ISR-Konvention (OS-9, aus sc68681 abgelesen -- s. Q9K_SysFIRQ
+* unten): a2 = statischer Treiberspeicher, a3 = Geraete-Portadresse.
+* Rueckgabe ueber das CCR: Carry GELOESCHT = "war meiner, erledigt",
+* Carry GESETZT = "nicht meiner, weitersuchen". Mehrere Geraete duerfen
+* sich einen Vektor teilen, deshalb wird erst bei Carry-klar abgebrochen.
+*
+* A6 wird auf 0 gesetzt: Treibercode adressiert die Systemglobals
+* A6-relativ, und die liegen real ab Adresse 0 -- gleiche Notwendigkeit
+* wie beim IOMan-Einsprung (s. Q9K_TestProcA). Der vollstaendige
+* Registersatz wird gesichert: eine fremde ISR haelt sich nicht
+* zwingend an unsere Aufrufkonventionen, und ein Interrupt darf den
+* unterbrochenen Prozess unter keinen Umstaenden veraendern.
+Q9K_IRQTabBase   equ $1500          * 16 Eintraege a 20 Byte, s. q9kernel_exctable.c
+Q9K_IRQTabSlots  equ 16
+Q9K_IRQTabEntSz  equ 20
+Q9K_IRQDispatch:
+        movem.l d0-d7/a0-a6,-(sp)             * 60 Byte -- Frame liegt danach bei 60(sp)
+        move.w  66(sp),d0                      * Format-/Vektor-Wort (60 + 6)
+        andi.l  #$00000fff,d0
+        lsr.l   #2,d0                            * d0 = eigene Vektornummer
+        movea.l #Q9K_IRQTabBase,a0
+        moveq   #Q9K_IRQTabSlots-1,d2
+Q9K_IRQDispatchLoop:
+        move.l  (a0),d1                            * Vektor dieses Slots (0 = frei)
+        beq     Q9K_IRQDispatchNext
+        cmp.l   d0,d1
+        bne     Q9K_IRQDispatchNext
+        movea.l 8(a0),a1                            * ISR-Adresse
+        move.l  a1,d1
+        beq     Q9K_IRQDispatchNext                  * Slot ohne ISR ueberspringen
+        movea.l 12(a0),a2                             * a2 = statischer Treiberspeicher
+        movea.l 16(a0),a3                              * a3 = Geraete-Portadresse
+        suba.l  a6,a6                                   * a6 = 0, reale Systemglobal-Basis
+        jsr     (a1)
+        bcc     Q9K_IRQDispatchDone                       * Carry klar = behandelt, fertig
+Q9K_IRQDispatchNext:
+        lea     Q9K_IRQTabEntSz(a0),a0
+        dbra    d2,Q9K_IRQDispatchLoop
+Q9K_IRQDispatchDone:
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+
 * Q9K_SysFIRQ -- F$IRQ (Callcode $2A, "Enter IRQ Polling Table").
 * Konvention aus dem realen Treiber sc68681 abgelesen (Modul-Offset $00ec
 * ff.): d0.b = Vektornummer, d1.b = Prioritaet, a0 = Service-Routine
