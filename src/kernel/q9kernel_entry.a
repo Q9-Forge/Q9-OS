@@ -1057,6 +1057,39 @@ Q9K_TestProcA:
 * Zwei zusaetzliche Vtable-Felder (Offset 0/4) NICHT bekannt/genutzt --
 * IOMan liest laut Disassemblierung nur Offset 8, s. o. -- bleiben 0.
 
+* WIEDERHERGESTELLT 2026-09-03, mit jetzt BELEGTER Begruendung. Die hier
+* zuvor entfernte Ausgabe-Vtable war an der RICHTIGEN Adresse; die
+* Entfernung stuetzte sich auf die Annahme "$64 ist Q9_D_DevTbl" -- die
+* ist falsch. src/q9sysglob.a sagt woertlich:
+*   Q9_D_SysRom: do.l 1  Einsprungpunkt des Boot-ROMs
+*     [VERIFIZIERT -- (0x64,A6), Konsolen-Ausgabe ueber den
+*      (0x8,A1)-Funktionszeiger]
+* Q9_D_DevTbl liegt deutlich weiter hinten (hinter Q9_D_BlkSiz), wird von
+* dieser Zuweisung also gar nicht beruehrt.
+*
+* Unabhaengig davon per Disassemblierung von ioman_DEV bestaetigt -- das
+* Modul enthaelt GENAU EINEN "jsr d16(a1)", und das ist seine
+* Zeichenausgabe:
+*   $0296: movea.l $64(a6),a1
+*   $029a: bra.b   $2a6
+*   $02a2: jsr     $8(a1)
+*   $02a6: move.b  (a0)+,d0     (Rohbytes 10 18 -- Zeichen kommt in d0.b)
+*   $02a8: bne.b   $2a2
+*   $02c8: jmp     $8(a1)       (zweiter Einsprung, Hex-Ziffernpfad)
+*
+* Ohne gesetzten Vektor stand bei $64 ein Restwert ($13D0); IOMan sprang
+* nach $13D8 -- mitten in die Kernel-Globals, kein Code -- und loeste eine
+* F-Line-Exception (Vektor 11) aus. Sichtbar wurde das erst, seit Fehler
+* dank des CCR-Fixes oben ueberhaupt bei IOMan ankommen.
+        lea     Q9K_IOManPutChar(pc),a0
+        lea     Q9K_IOManOutVtable(pc),a1
+        move.l  a0,8(a1)                       * PutChar-Zeiger an den von IOMan gelesenen Offset +8
+        move.l  a1,($64).w                       * Q9_D_SysRom = unsere Ausgabe-Struktur
+        lea     Q9K_TestIOManName(pc),a0
+        move.w  #$0c01,d0
+        trap    #0
+        dc.w    0                                  * F$Link erneut -- a1 wurde eben ueberschrieben
+        bcs     Q9K_TestIOManLinkFail
         movea.l a6,a5                        * eigenes a6 sichern
         movea.l #0,a6                          * reale Kernel-Global-Basis fuer IOMans eigenen Code
         jsr     (a1)                             * IOMan-Einsprungpunkt (a1 = M$Exec, reale F$Link-Ausgabe)
@@ -1152,20 +1185,50 @@ Q9K_IOManOutVtable:
         dc.l    0                          * +0x8, PutChar-Funktionszeiger (zur Laufzeit befuellt)
 Q9K_IOManPutChar:
 * Aufruf-Konvention (per Disassemblierung von ioman_DEV verifiziert):
-* IN d0.b = auszugebendes Zeichen. Aufrufer (FUN_0000029c in IOMan)
+* IN d0.b = auszugebendes Zeichen. Aufrufer (IOMan-Offset $2a2/$2c8)
 * erwartet a0 (String-Iterator) und a1 (Vtable-Basis selbst) UNVERAENDERT
-* zurueck (wird direkt nach dem "jsr" weiterverwendet) -- deshalb hier
-* alle potenziell beruehrten Register sichern/wiederherstellen, gleiches
-* Vorsichtsprinzip wie bei Q9K_DiagWriteD7 (s. dortigen Bugfix-Kommentar).
-        movem.l a0/a1/d6,-(sp)
-        movea.l #Q9_IO_DUART_SRA,a1
-Q9K_IOManPutCharWait:
-        move.b  (a1),d6
-        btst    #2,d6
-        beq     Q9K_IOManPutCharWait
-        move.b  d0,Q9_IO_DUART_THRA
-        movem.l (sp)+,a0/a1/d6
+* zurueck -- deshalb alle beruehrten Register sichern.
+*
+* Ausgegeben wird ueber Q9K_DiagWriteD7 statt ueber eine zweite eigene
+* Poll-Schleife -- eine eigene Schleife bringt hier nichts, s. u.
+*
+* OFFENER PUNKT (2026-09-03), bewusst hier dokumentiert statt kaschiert:
+* IOMans Meldung kommt in DIESEM Stand verstuemmelt an -- jedes Byte als
+* "Zeichen ODER $CA" ($EB $EF $EF $EB ... statt "ioman: ..."). Der
+* auszugebende Text ist dabei nachweislich KORREKT: beim ersten Aufruf
+* gemessen a0 = $BC51 (gueltiger Textzeiger) und d0 = $69 = 'i'. In einer
+* Zwischenfassung mit zusaetzlichem Diagnosecode kam dieselbe Meldung
+* zweimal hintereinander vollstaendig lesbar an:
+*     ioman: can't chgdir to system device: Error $00DD
+* Der Effekt haengt also an Codegroesse/Timing, nicht am Ausgabeweg --
+* dasselbe fragile Muster, das in diesem Kernel schon einmal auftrat
+* (14 Byte zusaetzlicher Code im Trap-Pfad, s. Q9K_TrapDispatch: nicht
+* das Layout war die Ursache, sondern der Zeitpunkt des IRQ).
+*
+* Ausgeschlossen wurde: falscher Zeiger, falsches Zeichen (beide oben
+* gemessen), obere Bits von d0 (Maskierung aendert nichts), reine Zeit
+* (Zaehlschleife von $200 Durchlaeufen aendert nichts), ein RAM-Zugriff
+* zwischen den Zeichen, die Wahl der Ausgaberoutine (eigene Schleife wie
+* Q9K_DiagWriteD7 zeigen dasselbe Bild, nur mit anderem ODER-Muster),
+* der Statusbit-Handshake (TxRDY wie TxEMT sind in der Emulation
+* praktisch immer gesetzt, s. Q9-Flux src/hal/posix/hal_posix.c -- die
+* Warteschleife laeuft faktisch nie) und ein zweiter schreibender
+* Prozess (mit abgeschaltetem Q9K_TestProcB unveraendert).
+*
+* Der naechste Schritt gehoert damit nach Q9-Flux (DUART-/Bus-Emulation
+* bzw. IRQ-Zustellung waehrend I/O), nicht in diesen Kernel. Wichtig
+* fuer die Bewertung: der Aufrufweg selbst ist vollstaendig in Ordnung --
+* ein fest verdrahtetes Immediate statt d0 erzeugt saubere Zeichen, und
+* die Aufrufzahl stimmt exakt mit der Meldungslaenge ueberein.
+        movem.l d6/d7/a0/a1,-(sp)
+        addq.l  #1,Q9K_IOManPutCharCount    * ausgegebene Zeichen zaehlen
+        move.b  d0,d7
+        bsr     Q9K_DiagWriteD7
+        movem.l (sp)+,d6/d7/a0/a1
         rts
+
+Q9K_IOManPutCharCount:
+        dc.l    0
 
 * Q9K_SchedRun -- startet die ALLERERSTE Prozessausfuehrung (Abschnitt
 * "Scheduler", 2026-08-21, ersetzt das fruehere Q9K_JumpToFirstProc).
@@ -1437,10 +1500,30 @@ Q9K_TrapCallExternal:
 * zurueckgeben (IOMans I$Open: "move.w #$d7,d1"). Wuerde d1 aus dem
 * Rahmen ueberschrieben, kaeme statt des Fehlercodes ein Restwert
 * zurueck -- real beobachtet als d1=$0210 statt $DD.
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-03): das CCR des externen
+* Handlers -- und damit SEINE Erfolgs-/Fehlermeldung -- ueberlebte diesen
+* Block nicht. Q9K_TrapAfterCall sichert das CCR zwar "sofort", das gilt
+* aber nur fuer den eigenen "jsr (a4)"-Pfad; hier laufen davor noch zwei
+* "move.l", und move.l LOESCHT das Carry-Flag. Folge: JEDER Fehler eines
+* extern per F$SSvc registrierten Handlers kam beim Aufrufer als ERFOLG
+* an -- Fehlercodes wurden als gueltige Rueckgabewerte missdeutet (real
+* gemessen: IOMans I$Write lieferte d1=$D0/E$UnkSvc bei geloeschtem
+* Carry, was der Aufrufer als "Zahl geschriebener Bytes" las).
+* Das verdeckte zugleich, dass IOMan seinen eigenen Fehlerpfad nie
+* erreichte -- erst mit korrektem Carry gibt er seine Meldungen aus.
+*
+* Gesichert wird auf dem EIGENEN STACK, nicht in einer globalen
+* Scratch-Adresse: externe Handler setzen ihrerseits Syscalls ab, und ein
+* verschachtelter Aufruf wuerde eine globale Ablage ueberschreiben --
+* beim Ruecksprung kaeme dann ein fremdes CCR heraus. Offsets beachten:
+* das SR-Wort liegt unter dem geretteten d1, der Rahmen beginnt deshalb
+* bei 6(sp) statt bei 4(sp).
+        move.w  sr,-(sp)                                           * Handler-CCR retten, VOR jedem move.l
         move.l  d1,-(sp)                                           * d1 retten
-        movem.l 4(sp),d0-d7/a0-a6                                   * Rahmen -> Register
+        movem.l 6(sp),d0-d7/a0-a6                                   * Rahmen -> Register (+2 wegen des SR-Worts)
         move.l  (sp)+,d1                                             * d1 zurueck
-        lea     72(sp),sp                                             * Rahmen verwerfen
+        move.w  (sp)+,ccr                                             * Handler-CCR zurueck (Carry = Fehlersignal)
+        lea     72(sp),sp                                              * Rahmen verwerfen (lea laesst CCR unberuehrt)
         bra     Q9K_TrapAfterCall
 Q9K_TrapExtInvoke:
         move.l  Q9K_TrapHandlerScratch,-(sp)                  * Handler-Adresse darueber
