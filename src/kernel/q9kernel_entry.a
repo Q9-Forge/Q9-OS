@@ -338,6 +338,11 @@ Q9K_ExcInfo_PC            equ $144024    * Langwort, geretteter PC
 Q9K_ExcInfo_Fmt           equ $144028    * Wort, Format/Vektor (Vektornr. = (Wort & $0FFF)/4)
 Q9K_ExcInfo_A6            equ $14402C    * Langwort, A6 des unterbrochenen Kontexts
 Q9K_ExcInfo_SP            equ $144030    * Langwort, SP beim Eintritt
+Q9K_ExcInfo_Ret0          equ $144034    * Langwort, Stack unter dem Frame (oft die Ruecksprungadresse)
+Q9K_ExcInfo_Ret1          equ $144038    * Langwort, ein Wort tiefer
+Q9K_ExcInfo_Ret2          equ $14403C    * Langwort, noch ein Wort tiefer
+Q9K_ExcInfo_A0            equ $144040    * Langwort, A0 beim Eintritt
+Q9K_ExcInfo_A1            equ $144044    * Langwort, A1 beim Eintritt
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -835,6 +840,16 @@ Q9K_ExcTrap:
         move.w  6(sp),Q9K_ExcInfo_Fmt
         move.l  a6,Q9K_ExcInfo_A6
         move.l  sp,Q9K_ExcInfo_SP
+* Zusaetzlich der Stack UNTER dem 8-Byte-Exception-Frame: bei einem
+* fehlgeschlagenen jsr steht dort die Ruecksprungadresse, also der
+* Verursacher des Sprungs -- genau damit liess sich "PC=$6C" auf
+* scf+$352 zurueckfuehren. Dazu a0/a1, weil Sprungziele in diesem
+* Kernel fast immer aus einem von beiden stammen.
+        move.l  8(sp),Q9K_ExcInfo_Ret0
+        move.l  12(sp),Q9K_ExcInfo_Ret1
+        move.l  16(sp),Q9K_ExcInfo_Ret2
+        move.l  a0,Q9K_ExcInfo_A0
+        move.l  a1,Q9K_ExcInfo_A1
         moveq   #'E',d7
         bsr     Q9K_DiagWriteD7
 Q9K_ExcTrapSpin:
