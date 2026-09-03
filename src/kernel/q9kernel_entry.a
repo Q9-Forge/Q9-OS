@@ -2304,7 +2304,23 @@ Q9K_IRQDispatchTry:
         movea.l 12(a0),a2                             * a2 = statischer Treiberspeicher
         movea.l 16(a0),a3                              * a3 = Geraete-Portadresse
         suba.l  a6,a6                                   * a6 = 0, reale Systemglobal-Basis
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04): der Schleifenzustand muss den
+* ISR-Aufruf ueberleben. Einer ISR sind nur a2/a3 zugesagt -- d0-d1/a0-a3
+* darf sie nach OS-9-Konvention frei benutzen. Diese Schleife fuehrte den
+* Tabellenzeiger aber in a0 und den Zaehler in d2: nach dem ersten ISR-
+* Aufruf lief sie mit dem von der ISR hinterlassenen a0 weiter, las Muell
+* als Tabelleneintraege, hielt Zufallswerte fuer gueltige ISR-Adressen und
+* rief sie auf -- am Ende stimmte der Stack nicht mehr und das abschliessende
+* "rte" sprang nach 0.
+* Sichtbar wurde das erst mit dem Autovektor-Zweig: NUR dort laeuft die
+* Schleife nach einem ISR-Aufruf ueberhaupt weiter (Carry gesetzt = "nicht
+* meiner"); im gefilterten Fall wird beim ersten Treffer verlassen, der
+* zerstoerte a0 fiel also nie auf.
+* "movem" veraendert das CCR nicht -- das Carry der ISR bleibt fuer den
+* folgenden "bcc" erhalten.
+        movem.l d0/d2/d3/a0,-(sp)                       * Schleifenzustand retten
         jsr     (a1)
+        movem.l (sp)+,d0/d2/d3/a0                        * ... und unveraendert zurueckholen
         bcc     Q9K_IRQDispatchDone                       * Carry klar = behandelt, fertig
 Q9K_IRQDispatchNext:
         lea     Q9K_IRQTabEntSz(a0),a0
