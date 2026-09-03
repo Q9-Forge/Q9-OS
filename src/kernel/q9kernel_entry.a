@@ -1421,7 +1421,26 @@ Q9K_TrapCallExternal:
         move.w  78(sp),$46(sp)                       * R$fmt (Format/Vektor)
         movea.l sp,a5                                 * A5 = Rahmenbasis
         bsr     Q9K_TrapExtInvoke                       * legt die Ruecksprungadresse ab
-        lea     72(sp),sp                                * Rahmen verwerfen
+* Rahmen in die Register ZURUECKSCHREIBEN -- mit einer Ausnahme: d1
+* bleibt der Registerwert des Handlers.
+* Hintergrund: der Rahmen ist nicht nur Eingabe, sondern die eigentliche
+* Wahrheit ueber den Registersatz. Externe Handler legen ihre Ergebnisse
+* dort ab und erwarten, dass der Kernel sie beim Ruecksprung uebernimmt.
+* Wird der Rahmen stattdessen nur verworfen, sieht der Aufrufer veraltete
+* Register -- real beobachtet: scf ruft bei Modul-Offset $172 selbst
+* I$Attach ("trap #0 / $0080") und legt das Ergebnis direkt danach mit
+* "move.l a2,$2a(a1)" im Pfaddeskriptor ab; ohne Rueckschreiben stimmte
+* a1 dort nicht mehr (Portadresse statt Pfaddeskriptor), und der spaetere
+* "jsr (a0,d1.w)" bei scf+$352 sprang mit a0=0 nach $6C -- Illegal
+* Instruction.
+* d1 ist ausgenommen, weil Handler den FEHLERCODE dort im Register
+* zurueckgeben (IOMans I$Open: "move.w #$d7,d1"). Wuerde d1 aus dem
+* Rahmen ueberschrieben, kaeme statt des Fehlercodes ein Restwert
+* zurueck -- real beobachtet als d1=$0210 statt $DD.
+        move.l  d1,-(sp)                                           * d1 retten
+        movem.l 4(sp),d0-d7/a0-a6                                   * Rahmen -> Register
+        move.l  (sp)+,d1                                             * d1 zurueck
+        lea     72(sp),sp                                             * Rahmen verwerfen
         bra     Q9K_TrapAfterCall
 Q9K_TrapExtInvoke:
         move.l  Q9K_TrapHandlerScratch,-(sp)                  * Handler-Adresse darueber
