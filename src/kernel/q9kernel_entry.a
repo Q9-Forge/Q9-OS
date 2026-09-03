@@ -1081,9 +1081,7 @@ Q9K_TestProcA:
 * nach $13D8 -- mitten in die Kernel-Globals, kein Code -- und loeste eine
 * F-Line-Exception (Vektor 11) aus. Sichtbar wurde das erst, seit Fehler
 * dank des CCR-Fixes oben ueberhaupt bei IOMan ankommen.
-        lea     Q9K_IOManPutChar(pc),a0
         lea     Q9K_IOManOutVtable(pc),a1
-        move.l  a0,8(a1)                       * PutChar-Zeiger an den von IOMan gelesenen Offset +8
         move.l  a1,($64).w                       * Q9_D_SysRom = unsere Ausgabe-Struktur
         lea     Q9K_TestIOManName(pc),a0
         move.w  #$0c01,d0
@@ -1180,9 +1178,23 @@ Q9K_TestIOManName:
 * nicht, deshalb hier nur 0 reserviert, vom Aufrufer zur Laufzeit per
 * PC-relativem lea befuellt (s. dort).
 Q9K_IOManOutVtable:
-        dc.l    0                          * +0x0, ungenutzt (laut bisheriger Disassemblierung)
-        dc.l    0                          * +0x4, ungenutzt (laut bisheriger Disassemblierung)
-        dc.l    0                          * +0x8, PutChar-Funktionszeiger (zur Laufzeit befuellt)
+        dc.l    0                          * +0x0, ungenutzt (laut Disassemblierung)
+        dc.l    0                          * +0x4, ungenutzt (laut Disassemblierung)
+* +0x8 ist KEIN Funktionszeiger, sondern ein CODE-Einsprungpunkt.
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-03): hier stand ein "dc.l 0", in das
+* der Aufrufer zur Laufzeit die Adresse von Q9K_IOManPutChar schrieb. IOMan
+* springt aber mit "jsr $8(a1)" -- Adressregister-indirekt MIT DISTANZ, also
+* ZUR Adresse a1+8, NICHT zu deren Inhalt (dafuer braeuchte es die
+* Memory-Indirect-Form "jsr ([8,a1])"). Die CPU fuehrte den eingetragenen
+* Zeiger daher als Befehl aus: die Bytes $00 $00 $74 $CA sind
+* "ori.b #$CA,d0" -- und $CA war schlicht das unterste Byte der
+* Routinenadresse. Jedes ausgegebene Zeichen kam so als "Zeichen ODER $CA"
+* heraus, danach lief die CPU in die echte Routine weiter (deshalb erschien
+* ueberhaupt etwas). Das erklaert auch, warum sich das Muster mit der
+* Kernelgroesse aenderte ($DA statt $CA bei anderer Ladeadresse) und warum
+* es nach Diagnose-Aenderungen zeitweise "verschwand".
+* Konsequenz: die Routine SELBST muss bei +0x8 liegen -- die Vtable ist
+* deshalb nur noch 8 Byte lang, und der Aufrufer traegt nichts mehr ein.
 Q9K_IOManPutChar:
 * Aufruf-Konvention (per Disassemblierung von ioman_DEV verifiziert):
 * IN d0.b = auszugebendes Zeichen. Aufrufer (IOMan-Offset $2a2/$2c8)
@@ -1190,36 +1202,12 @@ Q9K_IOManPutChar:
 * zurueck -- deshalb alle beruehrten Register sichern.
 *
 * Ausgegeben wird ueber Q9K_DiagWriteD7 statt ueber eine zweite eigene
-* Poll-Schleife -- eine eigene Schleife bringt hier nichts, s. u.
+* Poll-Schleife -- dieselbe Routine, die auch die Kernel-Diagnose nutzt.
 *
-* OFFENER PUNKT (2026-09-03), bewusst hier dokumentiert statt kaschiert:
-* IOMans Meldung kommt in DIESEM Stand verstuemmelt an -- jedes Byte als
-* "Zeichen ODER $CA" ($EB $EF $EF $EB ... statt "ioman: ..."). Der
-* auszugebende Text ist dabei nachweislich KORREKT: beim ersten Aufruf
-* gemessen a0 = $BC51 (gueltiger Textzeiger) und d0 = $69 = 'i'. In einer
-* Zwischenfassung mit zusaetzlichem Diagnosecode kam dieselbe Meldung
-* zweimal hintereinander vollstaendig lesbar an:
-*     ioman: can't chgdir to system device: Error $00DD
-* Der Effekt haengt also an Codegroesse/Timing, nicht am Ausgabeweg --
-* dasselbe fragile Muster, das in diesem Kernel schon einmal auftrat
-* (14 Byte zusaetzlicher Code im Trap-Pfad, s. Q9K_TrapDispatch: nicht
-* das Layout war die Ursache, sondern der Zeitpunkt des IRQ).
-*
-* Ausgeschlossen wurde: falscher Zeiger, falsches Zeichen (beide oben
-* gemessen), obere Bits von d0 (Maskierung aendert nichts), reine Zeit
-* (Zaehlschleife von $200 Durchlaeufen aendert nichts), ein RAM-Zugriff
-* zwischen den Zeichen, die Wahl der Ausgaberoutine (eigene Schleife wie
-* Q9K_DiagWriteD7 zeigen dasselbe Bild, nur mit anderem ODER-Muster),
-* der Statusbit-Handshake (TxRDY wie TxEMT sind in der Emulation
-* praktisch immer gesetzt, s. Q9-Flux src/hal/posix/hal_posix.c -- die
-* Warteschleife laeuft faktisch nie) und ein zweiter schreibender
-* Prozess (mit abgeschaltetem Q9K_TestProcB unveraendert).
-*
-* Der naechste Schritt gehoert damit nach Q9-Flux (DUART-/Bus-Emulation
-* bzw. IRQ-Zustellung waehrend I/O), nicht in diesen Kernel. Wichtig
-* fuer die Bewertung: der Aufrufweg selbst ist vollstaendig in Ordnung --
-* ein fest verdrahtetes Immediate statt d0 erzeugt saubere Zeichen, und
-* die Aufrufzahl stimmt exakt mit der Meldungslaenge ueberein.
+* Gefunden wurde der Vtable-Bug oben mit einem Instruktions-Ringpuffer im
+* Emulator (Freeze beim ersten Nicht-ASCII-Byte auf THRA, s. Q9-Flux
+* src/kernel/m68krt.c). Die Spur zeigte lueckenlos, dass IOMans
+* "move.b (a0)+,d0" noch das korrekte $69 laedt und d0 erst BEI UNS kippt.
         movem.l d6/d7/a0/a1,-(sp)
         addq.l  #1,Q9K_IOManPutCharCount    * ausgegebene Zeichen zaehlen
         move.b  d0,d7
