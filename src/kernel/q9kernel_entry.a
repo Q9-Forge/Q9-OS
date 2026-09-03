@@ -1022,32 +1022,20 @@ Q9K_TestProcA:
         bcs     Q9K_TestIOManLinkFail
         moveq   #'Q',d7                     * DIAGNOSE: F$Link("ioman") erfolgreich
         bsr     Q9K_DiagWriteD7
-
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
-* Einbindung", DRITTER Versuch): (0x64,A6) -- laut modules/ioman/docs/
-* REVERSE_ENGINEERING.md ein "Ausgabe-Vtable-Zeiger", den IOMan sowohl
-* im Erfolgs- als auch im Fehlerpfad seiner Init-Diagnose benutzt (Funkt.
-* FUN_00000296/29c dort: Vtable+8 = PutChar-Funktionszeiger, Aufruf
-* "jsr $8(a1)" mit Zeichen in D0.B) -- bei uns bisher nie initialisiert,
-* deshalb stuerzte selbst IOMans eigener, "sauber gedachter" Fehlerpfad
-* (z. B. bei fehlgeschlagenem I$Open) ab, statt nur eine Meldung
-* auszugeben. Eigene, minimale Vtable + PutChar-Routine bereitstellen,
-* bevor zu IOMan gesprungen wird -- das Ziel ist NICHT, IOMans Init
-* erfolgreich abzuschliessen, sondern seinen Fehlerpfad ueberlebensfaehig
-* zu machen UND die tatsaechliche Fehlermeldung sichtbar zu machen.
-* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, "!"-Raetsel geloest): a1
-* enthaelt zu diesem Zeitpunkt bereits die ECHTE, per F$Link ermittelte
-* IOMan-Einsprungadresse -- die naechsten zwei Zeilen ueberschrieben es
-* faelschlich als Arbeitsregister fuer die Vtable-Berechnung, BEVOR der
-* "jsr (a1)" weiter unten sie brauchte. Der Sprung landete dadurch nicht
-* in IOMan, sondern in der eigenen Vtable-Datenstruktur (als Code
-* fehlinterpretiert) -- absolut reiner Zufall, dass dabei irgendwann
-* ueberhaupt wieder ein "rts" erreicht wurde. Fix: a3/a4 statt a0/a1 als
-* Arbeitsregister, a1 bleibt bis zum jsr unangetastet.
-        lea     Q9K_IOManPutChar(pc),a3
-        lea     Q9K_IOManOutVtable(pc),a4
-        move.l  a3,8(a4)                        * echte, per PC-relativem lea berechnete Adresse eintragen
-        move.l  a4,($64).w
+* ENTFERNT 2026-09-03: Hier wurde bis eben eine selbstgebaute
+* "Ausgabe-Vtable" nach ($64).w geschrieben, um IOMans Init-Meldungen
+* sichtbar zu machen. Das war von Anfang an falsch adressiert:
+* **$64 ist Q9_D_DevTbl, die I/O-Geraetetabelle** (s. src/q9sysglob.a) --
+* nicht irgendein freier Ausgabe-Vektor. Die Konstruktion hat also genau
+* die Tabelle ueberschrieben, die IOMans I$Attach fuellt und die der
+* File-Manager scf braucht: scf holt bei Modul-Offset $0336
+* "movea.l $4(a1),a0 / movea.l $0(a0),a0" den Treiber-Modulzeiger aus
+* dem Geraetetabellen-Eintrag, bekam 0 und sprang mit "jsr (a0,d1.w)"
+* (d1=6) nach $6C -- Illegal Instruction, per Q9K_ExcTrap nachgewiesen.
+* Das erklaert rueckwirkend auch die nie geklaerte Bitmaske auf dem
+* Diagnose-Ausgabepfad: was wir fuer eine Vtable hielten, war nie eine.
+* Ersatzlos gestrichen -- fuer Diagnose sind der Syscall-Ringpuffer und
+* Q9K_ExcTrap ohnehin die besseren Werkzeuge.
 * Zwei zusaetzliche Vtable-Felder (Offset 0/4) NICHT bekannt/genutzt --
 * IOMan liest laut Disassemblierung nur Offset 8, s. o. -- bleiben 0.
 
