@@ -343,6 +343,9 @@ Q9K_ExcInfo_Ret1          equ $144038    * Langwort, ein Wort tiefer
 Q9K_ExcInfo_Ret2          equ $14403C    * Langwort, noch ein Wort tiefer
 Q9K_ExcInfo_A0            equ $144040    * Langwort, A0 beim Eintritt
 Q9K_ExcInfo_A1            equ $144044    * Langwort, A1 beim Eintritt
+Q9K_ExcInfo_A2            equ $144048    * a2/a3/a4 (12 Byte)
+Q9K_ExcInfo_D0            equ $144054    * d0-d7 (32 Byte)
+Q9K_ExcInfo_Stack         equ $144080    * 64 Byte Stackinhalt ab SP
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -850,6 +853,21 @@ Q9K_ExcTrap:
         move.l  16(sp),Q9K_ExcInfo_Ret2
         move.l  a0,Q9K_ExcInfo_A0
         move.l  a1,Q9K_ExcInfo_A1
+* Zusaetzlich 64 Byte Stack ab SP sowie a2-a4 und d0-d7 sichern. Die
+* Ruecksprungadressen im Stack ergeben einen Backtrace -- damit liess
+* sich der Aufrufpfad des fehlgeschlagenen Sprungs in einem einzigen Lauf
+* rekonstruieren (ioman+$1560 -> scf+$190 -> scf+$1f4 -> scf+$352),
+* nachdem statische Disassemblierung daran gescheitert war.
+        movem.l a2/a3/a4,Q9K_ExcInfo_A2
+        movem.l d0-d7,Q9K_ExcInfo_D0
+        move.l  sp,-(sp)
+        movea.l (sp),a0                  * a0 = SP VOR diesem push (zeigt auf den Exception-Frame)
+        lea     Q9K_ExcInfo_Stack,a1
+        moveq   #15,d0
+Q9K_ExcTrapStackCopy:
+        move.l  (a0)+,(a1)+
+        dbra    d0,Q9K_ExcTrapStackCopy
+        addq.l  #4,sp
         moveq   #'E',d7
         bsr     Q9K_DiagWriteD7
 Q9K_ExcTrapSpin:
