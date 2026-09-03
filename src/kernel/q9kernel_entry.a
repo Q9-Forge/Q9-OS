@@ -1095,6 +1095,94 @@ Q9K_TestProcA:
 
         moveq   #'R',d7                     * DIAGNOSE: aus IOMans Einsprungpunkt zurueckgekehrt
         bsr     Q9K_DiagWriteD7
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-03, Abschnitt "erste echte
+* Programmausgabe"): IOMans I$Open ist erfolgreich, die IRQ-Zustellung
+* steht -- damit muss ein Schreibversuch auf den geoeffneten Pfad
+* moeglich sein. Callcode $8a (I$Write) ist real belegt: IOMans
+* F$SSvc-Servicetabelle registriert ihn (wie auch $8c/I$WritLn) auf die
+* Routine bei Modul-Offset $1316, und der Slot war nach dem Init
+* nachweislich gefuellt.
+*
+* Zwei Schritte, die Diagnose bewusst ZUERST -- so ist ihr Ergebnis auch
+* dann sichtbar, wenn der Schreibversuch selbst haengt:
+*
+* 1. P$Path-Scan: welche Pfadnummern hat IOMans Init im Deskriptor DIESES
+*    Prozesses belegt? IOMans I$Open sucht das erste Null-Wort in den 32
+*    Worten ab P$Path (Deskriptor-Offset $168); der Index IST die
+*    Pfadnummer. Ausgegeben wird 'P' und je eine Ziffer pro belegtem Slot,
+*    benutzt wird der erste gefundene.
+* 2. I$Write darauf. Reale Konvention: d0.w = Pfadnummer, d1.l = Bytezahl,
+*    (a0) = Puffer; zurueck d1.l = geschriebene Bytes, im Fehlerfall Carry
+*    und d1.w = Fehlercode.
+*
+* A6 = 0 vor dem Aufruf, wie beim IOMan-Einsprung oben: IOMans Code
+* adressiert die Systemglobals A6-relativ, und Q9K_TrapDispatch schaltet
+* A6 bewusst nicht um. "movea.l" laesst das CCR unberuehrt, das Carry aus
+* dem Syscall bleibt also auswertbar.
+        movea.l Q9_D_Proc,a4                  * a4 = eigener Prozessdeskriptor
+        lea     $168(a4),a3                     * a3 = P$Path, 32 Wort-Eintraege
+        moveq   #'P',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #-1,d3                            * d3 = erste belegte Pfadnummer (-1 = keine)
+        moveq   #0,d4
+Q9K_TestPathScanLoop:
+        move.w  (a3)+,d6
+        beq     Q9K_TestPathScanNext
+        tst.l   d3
+        bpl     Q9K_TestPathScanShow
+        move.l  d4,d3
+Q9K_TestPathScanShow:
+        move.b  d4,d7
+        addi.b  #'0',d7
+        bsr     Q9K_DiagWriteD7
+Q9K_TestPathScanNext:
+        addq.l  #1,d4
+        cmpi.l  #32,d4
+        blt     Q9K_TestPathScanLoop
+
+        tst.l   d3
+        bmi     Q9K_TestWriteNoPath
+        move.l  a6,-(sp)
+        movea.l #0,a6                              * reale Systemglobal-Basis fuer IOMans Handler
+        move.w  d3,d0                               * d0.w = Pfadnummer
+        move.l  #Q9K_TestWriteLen,d1                 * d1.l = Bytezahl
+        lea     Q9K_TestWriteText(pc),a0              * (a0) = Puffer
+        trap    #0
+        dc.w    $008a                                  * Funktionscode $8a = I$Write
+        movea.l (sp)+,a6                                * CCR bleibt unberuehrt
+        bcs     Q9K_TestWriteFail
+* ERREICHT 2026-09-04: hier steht "Hallo von Q9-OS!" bereits auf der
+* Konsole -- geschrieben ueber den vollstaendigen Weg Testprozess ->
+* TRAP #0 -> IOMan -> scf -> sc68681 -> DUART, und d1 meldet exakt die
+* 17 uebergebenen Bytes zurueck.
+*
+* BEKANNTER FOLGEFEHLER, bewusst hier vermerkt statt kaschiert: kurz nach
+* diesem Punkt loest der DUART-Interrupt eine Exception aus (Vektor 4,
+* Illegal Instruction, PC=$6C) -- dasselbe Muster, das in diesem Projekt
+* schon einmal auftrat: ein "jsr (a0,d1.w)" mit a0=0, also ein
+* Sprungziel aus einer nicht gefuellten Tabelle (Verdacht: Q9_D_DevTbl,
+* das IOMans I$Attach fuellt). Ob er auftritt, haengt an der Modulgroesse
+* und damit am Zeitpunkt des Interrupts -- er ist also ein Race, kein
+* deterministischer Pfadfehler. Naechster Arbeitspunkt; die Ausgabe
+* selbst ist davon unberuehrt.
+        moveq   #'O',d7                     * DIAGNOSE: I$Write ohne Fehler zurueck
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5                         * d1.l = geschriebene Bytes
+        bsr     Q9K_DiagWriteHex32
+        bra     Q9K_TestProcA_Loop
+
+Q9K_TestWriteNoPath:
+        moveq   #'n',d7                     * DIAGNOSE: kein belegter P$Path-Slot
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+
+Q9K_TestWriteFail:
+        moveq   #'o',d7                     * DIAGNOSE: I$Write fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+        bra     Q9K_TestProcA_Loop
         bra     Q9K_TestProcA_Loop
 
 Q9K_TestIOManLinkFail:
@@ -1164,6 +1252,14 @@ Q9K_TestForkName:
 
 Q9K_TestIOManName:
         dc.b    "ioman",0
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-03) -- Nutzlast des
+* I$Write-Versuchs. 16 Zeichen + CR ($0d, OS-9-Zeilenende) = 17 Byte,
+* deshalb ein Fuellbyte fuer die Wortausrichtung des folgenden Codes.
+Q9K_TestWriteText:
+        dc.b    "Hallo von Q9-OS!",$0d
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+Q9K_TestWriteLen equ 17
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
 * Einbindung", DRITTER Versuch) -- Minimale "Ausgabe-Vtable" fuer IOMans
@@ -1599,7 +1695,44 @@ Q9K_TrapUnknown:
 * Sprungmechanismus. Reiner Assembler, kein C-Aufruf -- sicher fuer
 * JEDES eingehende A6, egal ob 0 (IOMans externer Kontext) oder
 * Q9K_CRuntimeData.
+* Q9K_SysFChkMem -- F$ChkMem (Callcode $58, "Check Memory"), 2026-09-03.
+*
+* Real per Live-Analyse gefunden, nicht geraten: IOMans I$Write ruft ihn
+* als ERSTES ueber den PEA+RTS-Trampolinweg auf (ioman_DEV Modul-Offset
+* $1316 ff.):
+*     movea.l a0,a2            a2 = Puffer des Aufrufers
+*     move.l  d1,d0            d0 = Anzahl Bytes
+*     moveq   #$1,d1           d1 = gewuenschte Zugriffsart
+*     movea.l $3a4(a6),a3      a3 = D_SysDis
+*     pea.l   $1330(pc)        Ruecksprungadresse
+*     move.l  $160(a3),-(a7)   Slot $160/4 = Callcode $58
+*     movea.l $560(a3),a3      zugehoeriger Datenzeiger ($400 + $160)
+*     rts
+* Ohne diesen Dienst lief der Aufruf in Q9K_SysUnimplemented, das
+* pflichtgemaess E_UNKSVC ($D0) meldete -- IOMan reichte den Fehler
+* unveraendert an den Aufrufer durch, was als "I$Write kann nicht" erschien.
+* Der Fehler lag also nie in I$Write selbst.
+*
+* Konvention (68k_tech, deckt sich mit dem Aufrufkontext oben):
+*   IN  d0.l = Groesse in Byte, d1.w = Zugriffsart, (a2) = Startadresse
+*   OUT Carry gesetzt bei unzulaessigem Bereich
+*
+* BEWUSSTE VEREINFACHUNG, klar benannt: dieser Kernel hat noch KEINEN
+* Speicherschutz -- keine MMU-Nutzung, keine Prozess-Adressraeume, jeder
+* Prozess sieht denselben physischen Speicher (s. die TODOs zur
+* User-/Supervisor-Trennung bei Q9K_TrapDispatch). Eine ehrliche Pruefung
+* haette hier gar keine Datenbasis. Der Dienst meldet deshalb IMMER Erfolg.
+* Das ist fuer den aktuellen Ein-Adressraum-Betrieb korrekt, muss aber
+* mitwandern, sobald es echte Adressraeume gibt -- sonst wird aus einer
+* Schutzpruefung stillschweigend eine Zusicherung ohne Deckung.
+Q9K_SysFChkMem:
+        andi    #$fe,ccr                         * Carry loeschen -- Bereich gilt als zulaessig
+        rts
+
 Q9K_SysUnimplemented:
+* NUR TEMPORAER (2026-09-03): festhalten, WELCHER Callcode hier landet und
+* wie oft. Beim Trampolinweg steht der Callcode nicht in $1370 (den setzt
+* nur Q9K_TrapDispatch), deshalb wird zusaetzlich gezaehlt.
         move.w  #$00d0,d1                        * d1.w = E_UNKSVC (gleicher Wert wie Q9K_TrapUnknown)
         ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
@@ -2138,13 +2271,33 @@ Q9K_IRQDispatch:
         move.w  66(sp),d0                      * Format-/Vektor-Wort (60 + 6)
         andi.l  #$00000fff,d0
         lsr.l   #2,d0                            * d0 = eigene Vektornummer
+* AUTOVEKTOR-SONDERFALL (2026-09-03): bei den Vektoren 25-31 (Autovektor
+* Level 1-7) sagt die Vektornummer NICHTS ueber die Quelle -- sie nennt nur
+* den Interruptpegel. Genau dafuer fuehrt OS-9 ueberhaupt eine Polling-
+* Tabelle (s. Q9_D_AutIrq2 in src/q9sysglob.a, "Polling-Tabellenkoepfe fuer
+* Autovektor-IRQs"): es wird der Reihe nach JEDE eingetragene ISR gefragt,
+* bis eine per Carry-klar "war meiner" meldet.
+* Real noetig geworden, nicht vorsorglich: sobald scf ueber I$Write wirklich
+* sendet, meldet der DUART auf Level 3 -- und der Emulator liefert beim
+* Interrupt-Acknowledge einen AUTOVEKTOR (27), nicht den per IVR gesetzten
+* Geraetevektor. Ohne diesen Zweig lief der Interrupt in den Halt-Handler.
+        moveq   #0,d3                              * 0 = nach Vektornummer filtern
+        cmpi.l  #25,d0
+        blt     Q9K_IRQDispatchPrep
+        cmpi.l  #31,d0
+        bgt     Q9K_IRQDispatchPrep
+        moveq   #1,d3                                * Autovektor: alle Eintraege fragen
+Q9K_IRQDispatchPrep:
         movea.l #Q9K_IRQTabBase,a0
         moveq   #Q9K_IRQTabSlots-1,d2
 Q9K_IRQDispatchLoop:
         move.l  (a0),d1                            * Vektor dieses Slots (0 = frei)
         beq     Q9K_IRQDispatchNext
+        tst.l   d3
+        bne     Q9K_IRQDispatchTry                   * Autovektor: nicht nach Vektor filtern
         cmp.l   d0,d1
         bne     Q9K_IRQDispatchNext
+Q9K_IRQDispatchTry:
         movea.l 8(a0),a1                            * ISR-Adresse
         move.l  a1,d1
         beq     Q9K_IRQDispatchNext                  * Slot ohne ISR ueberspringen
