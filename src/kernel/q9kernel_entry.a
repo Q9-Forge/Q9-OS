@@ -1603,6 +1603,17 @@ Q9K_TrapCallExternal:
 * das SR-Wort liegt unter dem geretteten d1, der Rahmen beginnt deshalb
 * bei 6(sp) statt bei 4(sp).
         move.w  sr,-(sp)                                           * Handler-CCR retten, VOR jedem move.l
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04): ab hier bis zum RTE darf nichts
+* mehr dazwischenkommen. Q9K_TrapDispatch sperrt die Interrupts zwar am
+* Anfang, ein externer Handler gibt sie aber wieder frei -- er MUSS das, sonst
+* koennte der Treiber nie senden. Der gesamte Rueckweg (Rahmen zurueckschreiben,
+* Epilog) lief dadurch mit offenen Interrupts, und eine ISR, die ihrerseits
+* einen Syscall absetzt, durchlaeuft denselben Code verschachtelt.
+* "ori.w #imm,sr" veraendert auch das CCR -- deshalb steht die Sperre
+* unmittelbar NACH dem Retten des Handler-CCR und vor allem Weiteren.
+* Die Sperre endet automatisch mit dem RTE: massgeblich ist danach das SR
+* im Exception-Frame, das hier unangetastet bleibt.
+        ori.w   #$0700,sr                                           * Rueckweg gegen Verschachtelung sperren
         move.l  d1,-(sp)                                           * d1 retten
         movem.l 6(sp),d0-d7/a0-a6                                   * Rahmen -> Register (+2 wegen des SR-Worts)
         move.l  (sp)+,d1                                             * d1 zurueck
@@ -1648,13 +1659,34 @@ Q9K_TrapAfterCall:
 * als Nebeneffekt IMMER) und las danach ein bereits zerstoertes CCR --
 * jeder Handler-Fehlschlag ging dadurch verloren, jeder Syscall meldete
 * unabhaengig vom echten Ergebnis IMMER Erfolg.
-        move.w  ccr,Q9K_TrapCCRScratch    * echtes CCR SOFORT sichern, bevor irgendwas es veraendern kann
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04): dieser Epilog war NICHT
+* reentrant. Er legte CCR und d0 in GLOBALEN Scratch-Adressen ab
+* (Q9K_TrapCCRScratch/Q9K_TrapHandlerScratch). Nach der Rueckkehr aus einem
+* externen Handler sind die Interrupts wieder offen -- der Treiber gibt sie
+* frei, sonst koennte er gar nicht senden. Trifft ein Geraete-Interrupt
+* dieses Fenster und setzt die ISR ihrerseits einen Syscall ab, laeuft
+* derselbe Epilog verschachtelt und ueberschreibt beide Ablagen; der
+* aeussere Durchlauf holt sich danach fremde Werte zurueck und kehrt mit
+* zerstoertem d0 und falschem CCR heim.
+*
+* Das erklaert die bis dahin unerklaerliche Timing-Abhaengigkeit: das
+* Fenster ist wenige Instruktionen breit, weshalb schon EINE zusaetzliche
+* Instruktion irgendwo im Kernel darueber entschied, ob der Fehler auftrat.
+* Es ist dieselbe Bug-Klasse wie beim CCR-Verlust im externen Handler-Pfad
+* (s. Q9K_TrapCallExternal) -- dort war die Lehre bereits, dass eine globale
+* Ablage nicht reicht, sobald verschachtelt aufgerufen werden kann.
+*
+* Jetzt liegt alles auf dem EIGENEN Stack. Offsets: nach dem CCR-Wort steht
+* der Frame bei 2(sp), nach dem zusaetzlichen d0 bei 6(sp).
+        move.w  ccr,-(sp)                 * echtes CCR SOFORT auf den eigenen Stack
         clr.w   Q9K_InTrapPath
-        move.l  d0,Q9K_TrapHandlerScratch   * jetzt erst d0 sichern (Nebeneffekt auf C/V ist ab hier irrelevant)
-        move.w  Q9K_TrapCCRScratch,d0        * d0.w = $00xx, xx = das ECHTE, geretteten CCR
-        andi.w  #$ff00,(sp)                 * unteres Byte des geretteten SR (=CCR-Position) loeschen, oberes (Systemflags) unangetastet
-        or.w    d0,(sp)                       * echtes, aktuelles CCR einsetzen
-        move.l  Q9K_TrapHandlerScratch,d0       * d0 wiederherstellen
+        move.l  d0,-(sp)                   * d0 retten (Frame jetzt bei 6(sp), CCR bei 4(sp))
+        move.w  4(sp),d0                    * d0.w = das ECHTE, gerettete CCR
+        andi.w  #$00ff,d0                    * nur die CCR-Bits
+        andi.w  #$ff00,6(sp)                  * unteres Byte des geretteten SR loeschen
+        or.w    d0,6(sp)                       * echtes CCR einsetzen
+        move.l  (sp)+,d0                        * d0 wiederherstellen
+        addq.l  #2,sp                            * CCR-Wort verwerfen -- sp zeigt auf den Frame
         rte
 
 Q9K_TrapUnknown:
