@@ -99,6 +99,10 @@ extern Q9_u32 Q9K_SchedFirstPick(void);        /* q9kernel_sched.c -- "naechsten
  * Konvention, kein gemeinsamer Header in diesem Kernel). */
 #define Q9K_SLEEP_INFINITE 0xFFFFFFFFUL
 
+/* S$Wake -- reales OS-9-Signal Nr. 1 ("wake up the process"), s.
+ * MWOS/OS9/SRC/DEFS/funcs.a. Weckt nur, wird nicht zugestellt. */
+#define Q9K_SIGNAL_WAKE 1U
+
 /* Fuer den Ticks-Umrechnungsfaktor -- s. Kopfkommentar */
 #define Q9K_TICKS_PER_SEC 100UL
 
@@ -258,8 +262,19 @@ int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError)
      * genau dafuer vorgesehen (Offset $26, s. MWOS/OS9/SRC/DEFS/process.a);
      * ein Empfaenger kann dort nachsehen, WARUM er geweckt wurde. Eine
      * ZUSTELLUNG im vollen Sinn ist das noch nicht -- dafuer fehlen
-     * Signalwarteschlange und Intercept-Vektor (P$SigVec, F$Icpt). */
-    Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, signal);
+     * Signalwarteschlange und Intercept-Vektor (P$SigVec, F$Icpt).
+     *
+     * AUSNAHME S$Wake (2026-09-04, per Boot-Test gefunden): das reine
+     * Wecksignal wird NICHT abgelegt. Es ist in OS-9 kein zuzustellendes
+     * Signal, sondern nur die Aufforderung "lauf weiter" -- genau dafuer
+     * benutzt es sc68681, um den auf ein Zeichen wartenden Leser zu wecken.
+     * Legten wir es doch ab, faende der aufwachende Systemcode ein
+     * anstehendes Signal vor und braeche den laufenden Aufruf ab: I$ReadLn
+     * kehrte mit Carry und "Fehlercode" $01 zurueck -- was gar kein
+     * Fehlercode war, sondern S$Wake selbst. */
+    if (signal != Q9K_SIGNAL_WAKE) {
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, signal);
+    }
     Q9K_SchedWake(desc);
     return 1;
 }
