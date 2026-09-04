@@ -948,87 +948,16 @@ __multiply:
 * TRAP-#0-Syscalls auch INNERHALB eines per Scheduler gestarteten
 * Prozesses funktionieren.
 Q9K_TestProcA:
-        clr.w   d0                    * d0.w = Typ/Sprache-Filter (0 = beliebig)
-        lea     Q9K_TestLinkName(pc),a0
-        trap    #0
-        dc.w    0                      * Funktionscode 0 = F$Link
-        bcs     Q9K_TestProcA_LinkFail
-        moveq   #'L',d7                 * DIAGNOSE: F$Link("init") erfolgreich
-        bsr     Q9K_DiagWriteD7
-        trap    #0
-        dc.w    2                        * Funktionscode 2 = F$UnLink
-        bcs     Q9K_TestProcA_UnlinkFail
-        moveq   #'U',d7                   * DIAGNOSE: F$UnLink erfolgreich
-        bsr     Q9K_DiagWriteD7
-
-* NOCH TEMPORAERER TEST (2026-08-21, Abschnitt "F$Fork"): echten
-* F$Fork-Aufruf ueber TRAP #0 ausloesen -- beweist den kompletten neuen
-* Pfad (Q9K_TrapDispatch -> Q9K_SysFFork -> Q9K_ProcFork ->
-* Q9K_ModDirLinkByName + echte Speicherallokation aus M$Mem/M$Stack +
-* echter Table-D-9-Registersatz-Aufbau) real im Emulator -- forkchild.a
-* (eigenstaendiges Modul, s. dortigen Kopfkommentar) wird dem Bootfile
-* als drittes Modul angehaengt und muss deshalb im Modulverzeichnis
-* auffindbar sein. d1-d4 bewusst genullt (keine zusaetzliche Speicher-/
-* Parametergroesse, keine Pfade, Prioritaet vom Aufrufer -- also von
-* Q9K_TestProcA selbst -- geerbt). Der frisch geforkte Prozess druckt ab
-* jetzt selbststaendig 'F' -- ein echtes DREIER-Interleaving A/B/F
-* beweist, dass F$Fork wirklich einen neuen, vom Scheduler verwalteten
-* Prozess gestartet hat, nicht nur einen Deskriptor angelegt hat. Vor
-* dem naechsten "echten" Meilenstein wieder entfernen, gleiche
-* Philosophie wie der F$Link/F$UnLink-Test oben.
-        clr.w   d0
-        clr.l   d1
-        clr.l   d2
-        clr.w   d3
-        clr.w   d4
-        lea     Q9K_TestForkName(pc),a0
-        trap    #0
-        dc.w    3                      * Funktionscode 3 = F$Fork
-        bcs     Q9K_TestForkFail
-        moveq   #'K',d7                 * DIAGNOSE: F$Fork erfolgreich (K wie "Kind")
-        bsr     Q9K_DiagWriteD7
-
-* NOCH TEMPORAERER TEST (2026-08-22, Abschnitt "F$Exit/F$Wait"): echten
-* F$Wait-Aufruf ausloesen -- blockiert Q9K_TestProcA (State='w', aus der
-* Ready-Queue entfernt), bis forkchild.a (s. dortigen Kopfkommentar)
-* seine drei 'F' gedruckt und sich per F$Exit(Status=42) beendet hat.
-* WAEHREND dieser Blockade laeuft NUR NOCH Q9K_TestProcB -- ein echtes,
-* im Konsolen-Ausgabestrom sichtbares Aussetzen von 'A' zwischen dem
-* letzten 'K' und dem folgenden 'W' beweist, dass F$Wait wirklich
-* blockiert (nicht nur einen Fake-Erfolg meldet). Nach dem 'W' laeuft
-* Q9K_TestProcA ganz normal in seiner Endlosschleife weiter (kein
-* zweiter Fork-Versuch -- forkchild ist bereits beendet und aus dem
-* Modulverzeichnis entlinkt, s. Q9K_ProcExit). Vor dem naechsten
-* "echten" Meilenstein wieder entfernen, gleiche Philosophie wie der
-* F$Link/F$UnLink/F$Fork-Test oben.
-        trap    #0
-        dc.w    4                        * Funktionscode 4 = F$Wait
-        bcs     Q9K_TestWaitFail
-        moveq   #'W',d7                    * DIAGNOSE: F$Wait erfolgreich (Kind wirklich beendet+abgeholt)
-        bsr     Q9K_DiagWriteD7
-
-* Prozess-API-Meilenstein (2026-09-01): beide Calls als echte TRAP-#0-
-* Aufrufe pruefen. F$ID liefert die Daten von Prozess A (PID 1,
-* Gruppe/Benutzer 0, Prioritaet 5); seine PID wird unmittelbar an
-* F$GProcP weitergereicht. Nur wenn dessen Rueckgabe exakt Q9_D_Proc
-* ist, erscheinen die Marker 'I' und 'G'.
-        trap    #0
-        dc.w    $000c                     * F$ID
-        bcs     Q9K_TestProcApiFail
-        tst.l   d1
-        bne     Q9K_TestProcApiFail
-        cmpi.w  #5,d2
-        bne     Q9K_TestProcApiFail
-        moveq   #'I',d7
-        bsr     Q9K_DiagWriteD7
-        trap    #0
-        dc.w    $0037                     * F$GProcP, d0.w noch aus F$ID
-        bcs     Q9K_TestProcApiFail
-        cmpa.l  ($4c).w,a1                * Q9_D_Proc
-        bne     Q9K_TestProcApiFail
-        moveq   #'G',d7
-        bsr     Q9K_DiagWriteD7
-
+* Die frueheren Testbloecke fuer F$Link/F$UnLink, F$Fork, F$Wait und
+* F$ID/F$GProcP standen hier bis 2026-09-04. Sie haben ihren Zweck erfuellt --
+* alle vier Aufrufwege sind seit Laengerem stabil, durch Host-Testsuiten
+* abgedeckt und in der Repo-Historie nachvollziehbar. Entfernt wie in ihren
+* eigenen Kommentaren angekuendigt ("vor dem naechsten echten Meilenstein"),
+* nachdem die erste echte Programmausgabe erreicht war.
+*
+* Was hier BLEIBT, ist kein Test mehr: der Einsprung in IOMan (unten) ist die
+* produktive Anbindung des I/O-Systems, und der I$Write-Block dahinter der
+* aktuelle Nachweis dafuer.
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
 * Einbindung" -- ZWEITER Versuch, jetzt mit echtem F$SSvc-Support UND
 * dem am selben Tag gefundenen+gefixten CCR-Fehlersignalisierungs-Bug,
@@ -1190,30 +1119,6 @@ Q9K_TestIOManLinkFail:
         bsr     Q9K_DiagWriteD7
         bra     Q9K_TestProcA_Loop
 
-Q9K_TestProcApiFail:
-        moveq   #'p',d7                  * F$ID/F$GProcP-Regression fehlgeschlagen
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestProcA_Loop
-
-Q9K_TestWaitFail:
-        moveq   #'w',d7                      * DIAGNOSE: F$Wait fehlgeschlagen
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestProcA_Loop
-
-Q9K_TestForkFail:
-        moveq   #'k',d7                  * DIAGNOSE: F$Fork fehlgeschlagen
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestProcA_Loop
-
-Q9K_TestProcA_UnlinkFail:
-        moveq   #'u',d7                    * DIAGNOSE: F$UnLink fehlgeschlagen
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestProcA_Loop
-
-Q9K_TestProcA_LinkFail:
-        moveq   #'l',d7                     * DIAGNOSE: F$Link("init") fehlgeschlagen
-        bsr     Q9K_DiagWriteD7
-
 Q9K_TestProcA_Loop:
         moveq   #'A',d7
         bsr     Q9K_DiagWriteD7
@@ -1238,17 +1143,6 @@ Q9K_TestProcB_Wait:
 * Zeitscheibe=2 Ticks) waehrend eines einzelnen Zeichens vergehen, kurz
 * genug fuer eine zumutbare Konsolenausgabe-Frequenz im Emulator.
 Q9K_TestProcDelay equ $4000
-
-Q9K_TestLinkName:
-        dc.b    "init",0
-        dc.b    0                      * Fuellbyte -- haelt das nachfolgende Codewort wortausgerichtet
-
-* Q9K_TestForkName -- Name des eigenstaendigen Testmoduls, s. forkchild.a
-* -- 9 Zeichen + NUL = 10 Byte, bereits geradzahlig, KEIN Fuellbyte
-* noetig (anders als bei Q9K_TestLinkName oben, "init"+NUL = 5 Byte,
-* ungerade).
-Q9K_TestForkName:
-        dc.b    "forkchild",0
 
 Q9K_TestIOManName:
         dc.b    "ioman",0
