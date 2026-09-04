@@ -48,134 +48,47 @@ Zweck, für den OS-9 sie führt.
 
 ## Offene Punkte
 
-### Exception nach dem ersten `I$Write` (nächster Arbeitspunkt)
-Der Text wird vollständig ausgegeben, `I$Write` meldet die korrekte
-Byte-Zahl zurück — kurz danach löst der DUART-Interrupt eine Exception aus
-(**Vektor 4, Illegal Instruction, PC=`$6C`**). Prozess A bleibt danach
-stehen, B läuft weiter.
+*(Der lange offene I/O-Fehler ist gelöst — s. u.)*
 
-**Was gemessen und damit ausgeschlossen ist:**
-- **Kein Interrupt-Sturm.** Vektor 80 kam genau **17 mal** — exakt die 17
-  gesendeten Bytes. Der Treiber sendet zeichenweise per Interrupt, das ist
-  korrektes Verhalten. (Die frühere Deutung „Sturm" war falsch.)
-- **Kein liegengebliebenes Empfangszeichen.** RX-FIFO leer
-  (`count=0`, kein Overflow), IMR=`$02`.
-- **`D_DevTbl` ist korrekt gefüllt** (Eintrag 0 verweist auf Treiber,
-  Deskriptor und File-Manager).
-- **Nicht das TxRDY-Zeitverhalten** der Emulation.
-- **Nicht Verschachtelung** — der Dispatcher sperrt seit `5467083` die
-  Interrupts für den Tabellendurchlauf; die Exception bleibt.
+### ~~Exception nach dem ersten `I$Write`~~ — GELÖST (2026-09-04, `12b1651`)
 
-**Ebenfalls ausgeschlossen** (Stand 2026-09-04, jeweils getestet):
-- **Nicht der Autovektor-Zweig.** Abgeschaltet — die Exception bleibt.
-- **Nicht die fehlende Reentranz des Trap-Rückwegs.** Zwei echte Lücken
-  dieser Art wurden dabei gefunden und behoben (`5f00f74`: Epilog auf den
-  Stack statt globaler Ablagen, Interruptsperre für den Rückweg) — die
-  Exception bleibt trotzdem.
+    vorher:  ...Hallo von Q9-OS! E            (Exception, Prozess A steht)
+    jetzt:   ...Hallo von Q9-OS! O00000011    (17 Bytes, A und B laufen weiter)
 
-**Zwei Beobachtungen, die den nächsten Ansatz bestimmen:**
+**Die Ursache war ein Zeichenzähler** in `Q9K_IOManPutChar`, als Diagnose
+eingebaut beim Wiederherstellen der Ausgabe-Vtable:
 
-1. **Der Erfolgsmarker `O` fehlt in der Ausgabe.** Die Exception schlägt
-   also bereits beim *Rücksprung* aus `I$Write` zu, nicht im Testcode
-   danach. Prozess B läuft weiter — es stirbt nur A, das in
-   `Q9K_ExcTrap` festhängt.
-2. **`PC=$6C` ist nur der Sterbeort, nicht die Ursache.** Ein Sprung nach 0
-   lässt die CPU durch die Systemglobals laufen (dort stehen Daten, kein
-   Code), bis sie bei `$6C` auf etwas Illegales trifft.
+    addq.l  #1,Q9K_IOManPutCharCount
 
-**Das Race ist extrem schmal:** Schon *eine einzelne* zusätzliche Instruktion
-irgendwo im Kernel entscheidet, ob der Fehler auftritt — mehrfach beobachtet.
-Deshalb ist die Instruktionsspur im Emulator (`Q9_TRACE_INSTR=1`) das einzige
-brauchbare Werkzeug; jede Diagnose im Kernel verschiebt das Fenster.
+Der Assembler übersetzt das in **absolute Adressierung mit dem
+MODUL-OFFSET** des Labels, nicht mit dessen Laufzeitadresse. Der Zähler lag
+bei Modul-Offset `$46C` — und `$46C` ist zugleich **Exception-Vektorslot 27**
+(`$400 + 27·4`), der Autovektor für Level 3, auf dem der DUART meldet.
 
-**Die Mechanik ist inzwischen lückenlos vermessen** (Instruktionsspur,
-24576 Einträge):
+Jedes ausgegebene Zeichen zählte damit den **Vektor** um eins hoch. Nach den
+17 Zeichen der Testausgabe plus IOMans eigener Meldung stand er bei `$798e`
+— mitten im IRQ-Dispatcher, hinter dessen einleitendem `movem`. Ein
+Autovektor-Interrupt sprang dorthin; der Durchlauf führte am Ende sein
+`movem.l (a7)+` ohne das zugehörige einleitende aus, landete 60 Byte zu
+hoch, las dort Nullen als Exception-Frame und sprang mit dem `rte` nach 0.
+Von dort lief die CPU durch die Systemglobals bis `$6C`.
 
-- **16 von 17 Dispatcher-Eintritten** erfolgen unmittelbar nach dem `rte`
-  des vorherigen Durchlaufs. Der DUART hält seinen Interrupt also
-  durchgehend: sobald die Sperre mit dem `rte` fällt, feuert er sofort
-  wieder. Der unterbrochene Code kommt während der ganzen Sendephase (17
-  Zeichen) nicht ein einziges Mal zum Zug.
-- Der `rte` landet dabei auf **`moveq #$f,d2`** — also *nach* der
-  `a0`-Initialisierung, aber *vor* dem Zähler. Die Schleife startet dadurch
-  mit frischem `d2=15`, aber altem, schon fortgeschrittenem `a0` und wandert
-  bei jeder Runde weiter aus der Tabelle heraus, bis Stack und Rahmen nicht
-  mehr stimmen und das `rte` nach 0 springt.
+**Das erklärt restlos, warum der Fehler so extrem timing- und
+größenabhängig wirkte:** Es war nie ein Race, sondern ein Zähler, dessen
+Endstand von der Zahl ausgegebener Zeichen abhing.
 
-Zwei Fixes sind daraus entstanden und bleiben (beide für sich richtig,
-keiner beseitigt das Symptom): der Dispatcher sperrt die Interrupts für den
-Tabellendurchlauf (`5467083`) und stellt diese Sperre nach dem ISR-Aufruf
-wieder her (`4740cce`) — die ISR senkt die Maske, weil sie es muss.
+**Die Lehre — und der teuerste Umweg dieser Suche:** Nacheinander wurden
+Interrupt-Sturm, Stack-Verschachtelung, Frame-Überschreiben, Scheduler und
+Reentranz-Lücken verdächtigt und einzeln widerlegt. Gefunden wurde die
+Ursache erst, als der *Schreibzugriff auf den Vektorslot selbst* beobachtet
+wurde, statt weiter nach dem Weg zu suchen, auf dem der Sprung entsteht.
+**Bei einem korrupten Sprungziel gehört die Frage „wer schreibt dorthin?"
+an den Anfang, nicht ans Ende.**
 
-**Neuer Befund (2026-09-04): keine Stack-Verschachtelung.** Der
-Stackpointer ist bei **allen 17 Dispatcher-Eintritten identisch**
-(`$2d3f4`). Jeder Interrupt beginnt also auf demselben Stack-Level — es
-stapeln sich keine Handler. Damit ist die naheliegende Deutung „ein
-Durchlauf unterbricht den anderen und der Stack läuft voll" **widerlegt**.
-
-Das schärft den Widerspruch: Der `rte` landet auf `$798e` (mitten im
-Dispatcher), aber der Stack zeigt keinen zweiten, dort wartenden Durchlauf.
-
-**Der Frame ist jetzt korrekt gelesen** (Q9-Flux `b7a398d`: Stackbereich im
-Hook sichern, nicht erst im Dump — dort ist der Speicher längst ein
-anderer). Er liegt direkt bei `sp`:
-
-    sp=0002d3f4: 2000 | 0000 748e | 0140
-                 SR     PC          Fmt/Vektor → Vektor 80
-
-Daraus zwei harte Befunde:
-
-1. **Alle 17 Interrupts unterbrechen denselben Punkt: `$748e`** — die
-   Rücksprungadresse des `trap #0 / dc.w $008a` (also von `I$Write`):
-
-        $00747e: move.w  d3,d0          Pfadnummer
-        $007480: move.l  #$11,d1        17 Bytes
-        $007486: lea     $753c(pc),a0   Puffer
-        $00748a: trap    #0
-        $00748c: dc.w    $008a
-        $00748e: ← hier wird unterbrochen
-
-   Und zwar mit **`SR=$2000`, also IPL 0** — der unterbrochene Code ist
-   demnach *kein* Handler, sondern der Testprozess nach der Syscall-Rückkehr.
-
-2. **`$748e` taucht in der gesamten Instruktionsspur kein einziges Mal auf.**
-   Der `rte` landet also nicht dort, wo sein eigener Frame hinzeigt.
-
-**Der Frame wird NICHT überschrieben** — geprüft, indem der Stack zusätzlich
-unmittelbar vor dem `rte` gesichert wird: bei allen 17 regulären Durchläufen
-ist er beim Eintritt und vor dem `rte` byte-identisch
-(`2000 / 0000 748e / 0140`).
-
-**Die unmittelbare Ursache ist damit gefunden — es ist eine Bilanzlücke:**
-
-| | Anzahl |
-|---|---|
-| Dispatcher-Eintritte (`$795c`) | **17** |
-| `rte`-Durchläufe (`$79de`) | **18** |
-
-Ein Durchlauf erreicht das abschließende `movem.l (a7)+ / rte`, **ohne das
-einleitende `movem` gemacht zu haben**. Sein Stackzeiger verrät es:
-
-    reguläre Durchläufe:  sp=$2D3F4   (Frame: 2000 0000 748e 0140)
-    der überzählige:      sp=$2D430   (Stack dort: lauter Nullen)
-
-`$2D430 − $2D3F4 = $3C` = **exakt 60 Byte**, die Größe des einleitenden
-`movem.l d0-d7/a0-a6,-(sp)`. Der `rte` liest dort Nullen als Exception-Frame,
-springt nach 0, und von dort läuft die CPU durch die Systemglobals bis `$6C`.
-
-**Was als Erklärung dafür ausscheidet:** das Fenster zwischen `movem` und
-Interruptsperre (die Sperre steht seit `e58a109` als *erste* Instruktion —
-Bilanz unverändert), Frame-Überschreiben (s. o.), Stack-Verschachtelung
-(`sp` bei allen Eintritten identisch).
-
-**Nächster Schritt:** Herausfinden, auf welchem Weg der überzählige
-Durchlauf in den Dispatcher gelangt. Der naheliegendste verbliebene
-Kandidat ist der **Scheduler**: Der Timer-Handler (Vektor 30) sichert bei
-einem Kontextwechsel den Zustand des laufenden Prozesses im
-Prozessdeskriptor und stellt ihn später wieder her. Wurde Prozess A je
-*innerhalb* des Dispatchers unterbrochen, wird genau dieser Zustand später
-wieder aufgesetzt — mit einem Stack, dessen einleitendes `movem` in einem
-anderen Zeitschnitt liegt.
+Die auf dem Weg entstandenen Härtungen bleiben, sie sind für sich richtig:
+Interruptsperre im Dispatcher (`5467083`, `e58a109`), Wiederherstellung nach
+dem ISR-Aufruf (`4740cce`), Rettung des Schleifenzustands (`0957b87`),
+reentranter Trap-Epilog (`5f00f74`).
 
 ### Bekannte Vereinfachungen
 - **`F$ChkMem` meldet immer Erfolg.** Der Kernel hat keinen Speicherschutz
