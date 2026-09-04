@@ -11,8 +11,7 @@
  *     OUT: Prozess ist beendet (kehrt NIE zurueck)
  *     Verhalten laut Manual (Aufzaehlung S. 424):
  *       - alle Pfade schliessen (kein Pfadsystem hier -- entfaellt)
- *       - Speicher an das System zurueckgeben (eigene Entscheidung:
- *         NICHT implementiert, s. u.)
+ *       - Speicher an das System zurueckgeben (Q9K_ProcReleaseMemory)
  *       - primaeres Modul und User-Trap-Handler entlinken (User-Trap-
  *         Handler-Konzept existiert hier nicht -- nur das primaere
  *         Modul, per Q9K_ModDirUnlinkByHeader)
@@ -46,12 +45,10 @@
  * EIGENE ENTSCHEIDUNGEN, Manual-Verhalten bewusst NICHT vollstaendig
  * nachgebildet (dokumentiert, nicht verschwiegen -- gleiche Vorgehensweise
  * wie ueberall in diesem Kernel):
- *   - KEIN echtes Speicher-Zurueckgeben (F$SRtMem/Arena-Freigabe existiert
- *     hier nicht, s. bereits bestehendes TODO bei Q9K_AllocMem) -- ein
- *     beendeter Prozess gibt NUR seinen Deskriptor-Pool-Slot frei
- *     (Q9K_ProcPoolFree unten), NICHT den per Q9K_AllocMem belegten
- *     Daten-/Stack-Speicherblock. Fuer die geplanten Boot-Tests
- *     unproblematisch (wenige, kurzlebige Testprozesse).
+ *   - Der automatisch freigegebene Block ist der bei Prozesserzeugung
+ *     registrierte Primaerblock. Explizit per F$SRqMem erworbene Bloecke
+ *     werden noch nicht pro Prozess verfolgt; das ist ein separater
+ *     Allokations-Tracking-Schritt.
  *   - "Falls der Elternprozess tot ist, Deskriptor sofort freigeben"
  *     NICHT implementiert -- der Elternprozess wird hier immer als lebend
  *     angenommen (State-Feld eines FREIEN Slots ist wegen der
@@ -92,6 +89,7 @@ extern Q9_u32 Q9K_SchedFirstPick(void);             /* q9kernel_sched.c -- "naec
                                                        * was F$Exits erzwungener Wechsel braucht */
 extern void   Q9K_WaitQRemove(Q9_u32 desc);         /* q9kernel_sched.c */
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr); /* q9kernel_moddir.c */
+extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size); /* q9kernel_arena.c */
 
 /* Deskriptor-Feldoffsets -- lokal dupliziert, gleiche schlanke Konvention
  * wie ueberall in diesem Kernel (s. q9kernel_firstproc.c Kopfkommentar
@@ -112,13 +110,19 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr); /* q9kernel_moddir.c */
 #ifndef Q9K_PROCDESC_SAVEDSP_OFF
 #define Q9K_PROCDESC_SAVEDSP_OFF    0x38UL
 #endif
+#ifndef Q9K_PROCDESC_ALLOCBASE_OFF
+#define Q9K_PROCDESC_ALLOCBASE_OFF  0x1B0UL
+#endif
+#ifndef Q9K_PROCDESC_ALLOCSIZE_OFF
+#define Q9K_PROCDESC_ALLOCSIZE_OFF  0x1B4UL
+#endif
 
 #define Q9K_PROCDESC_STATE_ACTIVE  'a'
 #define Q9K_PROCDESC_STATE_ZOMBIE  'z'
 #define Q9K_PROCDESC_STATE_WAITING 'w'
 
 #ifndef Q9K_PROCDESC_SIZE
-#define Q9K_PROCDESC_SIZE 128UL
+#define Q9K_PROCDESC_SIZE 0x200UL  /* deckt P$Path bis 0x1A8, s. q9kernel_tables.c */
 #endif
 #ifndef Q9K_PROCPOOL_BASE_ADDR
 #define Q9K_PROCPOOL_BASE_ADDR 0x1204UL
@@ -168,6 +172,22 @@ static void Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 regIndex, Q9_u32 value)
     Q9K_SetU8(addr + 3, (Q9_u8)value);
 }
 
+/* Gibt den zur Prozessentstehung gehoerenden Block exakt einmal zurueck.
+ * Die Felder werden VOR dem Arena-Aufruf geloescht: Q9K_ProcPoolFree darf
+ * diese Routine danach gefahrlos nochmals defensiv aufrufen, ohne dass ein
+ * Zombie-Reap oder das Freigeben toter Kindprozesse doppelt freigibt. */
+static void Q9K_ProcReleaseMemory(Q9_u32 desc)
+{
+    Q9_u32 base = Q9K_GetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF);
+    Q9_u32 size = Q9K_GetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF);
+
+    Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF, 0);
+
+    if (base != 0 && size != 0)
+        Q9K_FreeMem(base, size);
+}
+
 /* Gibt einen Deskriptor-Pool-Slot zurueck in die Freiliste (Gegenstueck
  * zu Q9K_ProcPoolAlloc, q9kernel_firstproc.c -- dort static, deshalb hier
  * eine eigene, aber identische Umkehr-Implementierung statt eines
@@ -178,6 +198,7 @@ static void Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 regIndex, Q9_u32 value)
  * ParentDesc==0"), auf der der Pool-Scan unten beruht. */
 static void Q9K_ProcPoolFree(Q9_u32 desc)
 {
+    Q9K_ProcReleaseMemory(desc);
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
     Q9K_SetU16(desc + Q9K_PROCDESC_EXITSTATUS_OFF, 0);
@@ -219,6 +240,12 @@ Q9_u32 Q9K_ProcExit(Q9_u32 callerDesc, Q9_u16 exitStatus)
         Q9K_ModDirUnlinkByHeader(modHdr);
         Q9K_SetU32(callerDesc + Q9K_PROCDESC_MODHDR_OFF, 0);
     }
+
+    /* Der aufrufende Prozess wird nach diesem Punkt nie mehr ueber seinen
+     * bisherigen Kontext fortgesetzt. Q9K_FreeMem beschreibt nur den
+     * Blockanfang; der laufende C-Stack liegt am oberen Blockende und es
+     * folgt vor dem erzwungenen Kontextwechsel keine weitere Allokation. */
+    Q9K_ProcReleaseMemory(callerDesc);
 
     Q9K_ProcExitFreeDeadChildren(callerDesc);
 
