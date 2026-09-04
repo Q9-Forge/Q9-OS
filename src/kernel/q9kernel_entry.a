@@ -1099,6 +1099,55 @@ Q9K_TestPathScanNext:
         bsr     Q9K_DiagWriteD7
         move.l  d1,d5                         * d1.l = geschriebene Bytes
         bsr     Q9K_DiagWriteHex32
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
+* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
+* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
+* Callcode ist also belegt, nicht geraten.
+*
+* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
+* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
+* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
+* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
+* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
+* ist die Kette in beide Richtungen offen.
+*
+* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
+* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
+* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
+* Vektorslot ueberschrieben).
+        moveq   #'<',d7                     * DIAGNOSE: warte jetzt auf Eingabe
+        bsr     Q9K_DiagWriteD7
+        move.l  a6,-(sp)
+        movea.l #0,a6                          * reale Systemglobal-Basis fuer IOMans Handler
+        move.w  d3,d0                           * dieselbe Pfadnummer wie beim Schreiben
+        move.l  #Q9K_TestReadMax,d1              * d1.l = Puffergroesse
+        lea     Q9K_TestReadBuf(pc),a0            * (a0) = Puffer
+        trap    #0
+        dc.w    $008b                              * Funktionscode $8b = I$ReadLn
+        movea.l (sp)+,a6                            * CCR bleibt unberuehrt
+        bcs     Q9K_TestReadFail
+        moveq   #'>',d7                     * DIAGNOSE: I$ReadLn ohne Fehler zurueck
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5                         * d1.l = gelesene Bytes
+        bsr     Q9K_DiagWriteHex32
+* Gelesenes zurueckschreiben -- der eigentliche Beweis, dass echte Daten
+* ankommen und nicht nur eine Laengenangabe.
+        move.l  d1,d4
+        lea     Q9K_TestReadBuf(pc),a3
+Q9K_TestReadEcho:
+        tst.l   d4
+        beq     Q9K_TestProcA_Loop
+        move.b  (a3)+,d7
+        bsr     Q9K_DiagWriteD7
+        subq.l  #1,d4
+        bra     Q9K_TestReadEcho
+
+Q9K_TestReadFail:
+        moveq   #'r',d7                     * DIAGNOSE: I$ReadLn fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
         bra     Q9K_TestProcA_Loop
 
 Q9K_TestWriteNoPath:
@@ -1154,6 +1203,14 @@ Q9K_TestWriteText:
         dc.b    "Hallo von Q9-OS!",$0d
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 Q9K_TestWriteLen equ 17
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04) -- Eingabepuffer fuer den
+* I$ReadLn-Versuch. 32 Byte, geradzahlig, wird zur Laufzeit von IOman/scf
+* beschrieben (Zeiger per "lea (pc)" uebergeben, s. Aufrufer).
+Q9K_TestReadBuf:
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Q9K_TestReadMax equ 32
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
 * Einbindung", DRITTER Versuch) -- Minimale "Ausgabe-Vtable" fuer IOMans
@@ -1667,9 +1724,6 @@ Q9K_SysFChkMem:
         rts
 
 Q9K_SysUnimplemented:
-* NUR TEMPORAER (2026-09-03): festhalten, WELCHER Callcode hier landet und
-* wie oft. Beim Trampolinweg steht der Callcode nicht in $1370 (den setzt
-* nur Q9K_TrapDispatch), deshalb wird zusaetzlich gezaehlt.
         move.w  #$00d0,d1                        * d1.w = E_UNKSVC (gleicher Wert wie Q9K_TrapUnknown)
         ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
