@@ -126,9 +126,21 @@ plausibilisiert — ungerade Adressen und alles unter `$1000` werden
 
 **Verbleibend, mit verändertem Bild nach der Layout-Angleichung:**
 
-1. Der Treiber trägt die Prozess-ID des wartenden Lesers **nicht ein** und
-   ruft `F$Send` daher gar nicht mehr. Vorher rief er es mit der Müll-ID
-   `$6105`. Zu klären ist, woher er die ID nimmt und was ihm dabei noch fehlt.
+1. **Die Prozess-ID des wartenden Lesers wird nie eingetragen** — deshalb
+   ruft der Treiber `F$Send` gar nicht mehr (vorher rief er es mit der
+   Müll-ID `$6105`). Zwei Messungen grenzen das ein:
+   - **Statisch:** `sc68681` schreibt das Feld `$8(a2)` *nie* — im ganzen
+     Modul steht nur `clr.w $8(a2)` (zweimal), kein einziger schreibender
+     Zugriff.
+   - **Zur Laufzeit** (Schreib-Watch auf `$35a18`): dorthin geht
+     ausschließlich **0** — einmal von scf (`$bd6c`), siebenmal vom Treiber
+     per `clr.w` (`$c610`).
+   - **Es fehlt kein Syscall:** Der Unimplemented-Stub meldete sich während
+     des ganzen Lesevorgangs kein einziges Mal.
+
+   Der Mechanismus, mit dem scf einen wartenden Leser registriert, läuft also
+   anders als angenommen — nicht über dieses Feld, oder über einen Pfad, den
+   wir noch nicht auslösen. Das ist der nächste Ansatzpunkt.
 2. **Pfad-Deadlock:** Blockiert der Erzeuger lesend auf einem Pfad, hängt ein
    schreibendes Kind darin fest.
 
