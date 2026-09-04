@@ -88,9 +88,30 @@ irgendwo im Kernel entscheidet, ob der Fehler auftritt — mehrfach beobachtet.
 Deshalb ist die Instruktionsspur im Emulator (`Q9_TRACE_INSTR=1`) das einzige
 brauchbare Werkzeug; jede Diagnose im Kernel verschiebt das Fenster.
 
-**Nächster Schritt:** Den Freeze der Instruktionsspur gezielt auf den
-Trap-Rückweg legen (statt auf `PC < $1000`), um den Moment der Zerstörung
-selbst zu sehen statt erst den Fehlsprung.
+**Die Mechanik ist inzwischen lückenlos vermessen** (Instruktionsspur,
+24576 Einträge):
+
+- **16 von 17 Dispatcher-Eintritten** erfolgen unmittelbar nach dem `rte`
+  des vorherigen Durchlaufs. Der DUART hält seinen Interrupt also
+  durchgehend: sobald die Sperre mit dem `rte` fällt, feuert er sofort
+  wieder. Der unterbrochene Code kommt während der ganzen Sendephase (17
+  Zeichen) nicht ein einziges Mal zum Zug.
+- Der `rte` landet dabei auf **`moveq #$f,d2`** — also *nach* der
+  `a0`-Initialisierung, aber *vor* dem Zähler. Die Schleife startet dadurch
+  mit frischem `d2=15`, aber altem, schon fortgeschrittenem `a0` und wandert
+  bei jeder Runde weiter aus der Tabelle heraus, bis Stack und Rahmen nicht
+  mehr stimmen und das `rte` nach 0 springt.
+
+Zwei Fixes sind daraus entstanden und bleiben (beide für sich richtig,
+keiner beseitigt das Symptom): der Dispatcher sperrt die Interrupts für den
+Tabellendurchlauf (`5467083`) und stellt diese Sperre nach dem ISR-Aufruf
+wieder her (`4740cce`) — die ISR senkt die Maske, weil sie es muss.
+
+**Nächster Schritt:** Den *geretteten PC im Exception-Frame* bei jedem
+Eintritt messen (Instruktionsspur um `a7` erweitern, dann im Dump den Frame
+bei `a7+2` lesen). Damit lässt sich klären, warum der Frame-PC `$798e`
+lautet, obwohl der äußere Durchlauf an dieser Stelle bereits gesperrt hat —
+das ist der letzte offene Widerspruch.
 
 ### Bekannte Vereinfachungen
 - **`F$ChkMem` meldet immer Erfolg.** Der Kernel hat keinen Speicherschutz
