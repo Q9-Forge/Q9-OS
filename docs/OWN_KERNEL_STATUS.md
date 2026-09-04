@@ -46,6 +46,110 @@ Zweck, für den OS-9 sie führt.
 
 ---
 
+## MEILENSTEIN: das erste echte Programm läuft
+
+    AAAA...Hallo aus einem echten Programm!\r\nBBBB...
+
+`hellosvc.a` ist ein eigenständiges OS-9-Programmmodul, das seine Ausgabe
+**ausschließlich über Syscalls** macht — `I$WritLn` auf Pfad 1, danach
+`F$Exit`. Darin liegt der Unterschied zu `forkchild`, dem bisherigen
+Fork-Testmodul: das schreibt direkt auf den DUART und kommt ohne
+Betriebssystem aus. `hellosvc` läuft über den vollständigen Weg
+**TRAP #0 → IOMan → scf → sc68681 → DUART**.
+
+Im Modul steht bewusst **kein** `movea.l #0,a6` und keine Pfadangabe — genau
+daran zeigt sich, ob der Kernel seine Aufgabe erfüllt. Zwei Dinge mussten
+dafür dazukommen:
+
+- **`Q9K_ProcFork` vererbt die Pfade** des Erzeugers (`P$Path`, Offset
+  `$168`). Ohne das hätte ein geforktes Kind eine leere Pfadtabelle. Das ist
+  der Grund, warum ein gewöhnliches Programm einfach auf Standard-Ein/Ausgabe
+  schreiben kann, ohne selbst etwas zu öffnen.
+  *Vereinfachung:* kopiert statt per `I$Dup` dupliziert — gleichwertig,
+  solange Pfade nie geschlossen werden; sobald es `I$Close` gibt, muss hier
+  `I$Dup` stehen.
+- **`Q9K_TrapExtInvoke` setzt `A6 = 0`** für externe Handler. Ein echtes
+  Programm hält in `A6` seinen *eigenen* statischen Datenbereich; das
+  Umschalten auf die Systemglobals kann ihm nur der Kernel abnehmen.
+
+**Nebenbefund, der die Kette bestätigt:** scf wandelt das mitgegebene CR in
+CR+LF — echtes Terminal-Verhalten, das wir nirgends selbst programmiert
+haben.
+
+**Offen:** Der `I$ReadLn`-Block im Testprozess ist vorübergehend
+übersprungen. Blockiert der Elternprozess lesend auf dem Pfad, hängt das
+schreibende Kind darin fest — ein Hinweis auf Pfad-Semantik, die wir noch
+nicht sauber abbilden.
+
+## WICHTIGER BEFUND: Prozessdeskriptor-Layout kollidiert mit OS-9
+
+`F$Send` kam mit der Prozess-ID **`$6105`** an — und diese Zahl verrät alles:
+`$61` ist `'a'` (unser `STATE_ACTIVE`), `$05` die Priorität des
+Testprozesses. Der Treiber liest `P$ID` also als **Wort bei Offset `$00`**
+und bekommt dort unsere State- und Prioritäts-Bytes.
+
+Das echte Layout (`MWOS/OS9/SRC/DEFS/process.a`):
+
+    P$ID     $00 (word)   P$PID $02   P$SID $04   P$CID $06
+    P$sp     $08 (long)   P$usp $0C   P$MemSiz $10
+    P$Prior  $18 (word)   P$Age $1A   P$State  $1C (word)
+    P$Signal $26 (word)   P$SigVec $28 (long)
+
+Unseres weicht durchgehend ab: State als *Byte* bei `$00`, Priorität bei
+`$01`, `SavedSP` bei `$38`. Bisher fiel das nicht auf, weil die fremden
+Module nur wenige Felder lasen — `P$Path` bei `$168` hatten wir aus einem
+genau solchen Fund bereits richtig. **Sobald ein Modul `P$ID` liest, bekommt
+es Müll.**
+
+Bemerkenswert auch `P$Signal` (`$26`): dort gehört der Signalcode hin, den
+`F$Send` heute verwirft. Das Feld ist im echten Layout vorgesehen.
+
+**Konsequenz:** Das Layout gehört an OS-9 angeglichen — mindestens für die
+Felder, die fremde Module lesen (`P$ID`, `P$Prior`, `P$State`, `P$Signal`,
+`P$Path`). Das ist ein eigener, substanzieller Umbau und die Voraussetzung
+dafür, dass der Lesepfad und weitere Treiberdienste sauber funktionieren.
+
+## In Arbeit: `I$ReadLn` — die Gegenrichtung
+
+Der Lesepfad **erreicht den Treiber**: Der Testprozess ruft `I$ReadLn`
+(`$8b`, in IOMans Servicetabelle real auf dieselbe Routine registriert wie
+`I$Read`), der Marker `<` erscheint, und der Prozess **blockiert korrekt** —
+die Warteschlangen-Mechanik trägt also.
+
+Eine echte Konsoleneingabe wird **empfangen und vom Treiber abgeholt**: der
+RX-FIFO zeigt danach `count=0` bei `head=tail=3`, also drei eingegangene und
+entnommene Zeichen. Und es fehlt **kein Syscall** — der Unimplemented-Stub
+meldete sich während des gesamten Lesevorgangs kein einziges Mal (beim
+`I$Write`-Problem war genau das der Schlüssel gewesen).
+
+**Der Weckweg ist gefunden und implementiert** (`f43b0dc`): Die ISR von
+sc68681 ruft `F$Send` (`$08`) über den PEA+RTS-Trampolinweg, sobald ein
+Zeichen empfangen ist — mit der Prozess-ID des wartenden Lesers in `d0.w`.
+Gemessen wurde beides: der Block wird 11× betreten, das Trampolin einmal
+genommen. Der Treiber hatte also eine gültige ID und hat wirklich gesendet;
+der Aufruf lief nur ins Leere, weil `F$Send` im Kernel fehlte.
+
+Umgesetzt ist die **Weckwirkung**, nicht die Signalzustellung — der Kernel
+hat noch keine Signalwarteschlange und keine Intercept-Routinen (`F$Icpt`),
+eine echte Zustellung hätte also keinen Ort. Neu ist dafür `Q9K_SchedWake`,
+das genau das Muster kapselt, mit dem `Q9K_SleepQDecrementAll` einen
+abgelaufenen Timeout behandelt.
+
+**Wirkung:** Der wartende Leser wird jetzt tatsächlich geweckt — Prozess A
+läuft nach der Eingabe weiter, statt für immer zu blockieren.
+
+**Die Exception nach dem Wecken ist behoben** (`45c262b`): Im Autovektor-Fall
+durchläuft der Dispatcher die Polling-Tabelle ungefiltert und rief dabei
+einen Eintrag mit der ISR-Adresse **1** auf. Eine ISR-Adresse muss plausibel
+sein, nicht bloß ungleich 0 — ungerade Adressen und alles unterhalb `$1000`
+werden jetzt übersprungen.
+
+**Offen bleiben zwei Dinge**, beide oben beschrieben: das
+Deskriptor-Layout (der Treiber weckt wegen `P$ID` die falsche ID) und die
+Pfad-Semantik (blockiert der Erzeuger lesend, hängt ein schreibendes Kind
+fest). Der `I$ReadLn`-Block ist deshalb vorübergehend übersprungen — er
+würde den Boot zum Stillstand bringen.
+
 ## Offene Punkte
 
 *(Der lange offene I/O-Fehler ist gelöst — s. u.)*

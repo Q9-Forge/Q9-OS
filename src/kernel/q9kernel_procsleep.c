@@ -71,6 +71,8 @@ typedef unsigned char  Q9_u8;
 
 extern void   Q9K_SchedInsert(Q9_u32 desc);    /* q9kernel_sched.c */
 extern void   Q9K_SleepQInsert(Q9_u32 desc);   /* q9kernel_sched.c */
+extern void   Q9K_SchedWake(Q9_u32 desc);      /* q9kernel_sched.c -- schlafenden Prozess wecken */
+extern Q9_u32 Q9K_ProcLookup(Q9_u16 pid);      /* q9kernel_procapi.c -- PID -> Deskriptor        */
 extern Q9_u32 Q9K_SchedFirstPick(void);        /* q9kernel_sched.c -- "naechsten Prozess waehlen,
                                                   * kein aktueller zum Wiedereinreihen", gleiche
                                                   * Wiederverwendung wie schon bei F$Exit/F$Wait */
@@ -194,4 +196,72 @@ void Q9K_SysSleepImpl(void)
     Q9_u32 next = Q9K_ProcSleep(callerDesc, ticksIn);
 
     Q9K_SetU32(Q9K_SLEEP_SCRATCH_NEXT, next);
+}
+
+/* ---------------------------------------------------------------------
+ * F$Send (Callcode $08, "Send Signal")
+ *
+ * Real per Live-Analyse gefunden, nicht geraten: die Interrupt-Service-
+ * Routine von sc68681 ruft ihn, sobald ein Zeichen empfangen ist, ueber den
+ * PEA+RTS-Trampolinweg (Treiber-Offset $654 ff.):
+ *
+ *     move.w  $8(a2),d0        Prozess-ID des wartenden Lesers
+ *     beq     ...              ist sie 0, wird niemand geweckt
+ *     moveq   #$1,d1           Signalcode
+ *     movea.l $3a4(a6),a3      D_SysDis
+ *     pea.l   <ruecksprung>
+ *     move.l  $20(a3),-(a7)    Slot $20/4 = Callcode $08
+ *     movea.l $420(a3),a3
+ *     rts
+ *
+ * Ohne diesen Dienst blieb ein Prozess, der ueber I$ReadLn auf Eingabe
+ * wartet, fuer immer liegen: der Treiber holt das Zeichen zwar ab, sein
+ * Weckruf lief aber ins Leere.
+ *
+ * Konvention (68k_tech): d0.w = Prozess-ID, d1.w = Signalcode.
+ * Fehler: E$PrcID ($E0), wenn es zu der ID keinen Prozess gibt.
+ *
+ * BEWUSSTE VEREINFACHUNG, klar benannt: dieser Kernel kennt noch keine
+ * Signal-ZUSTELLUNG -- es gibt keine Signalwarteschlange pro Prozess und
+ * keine Intercept-Routinen (F$Icpt). Umgesetzt ist deshalb nur die
+ * WECKWIRKUNG: ein schlafender Empfaenger wird aktiviert, der Signalcode
+ * selbst verworfen. Fuer den Anlass (Treiber weckt einen wartenden Leser)
+ * ist das vollstaendig; sobald echte Signale gebraucht werden -- etwa
+ * Ctrl-C/Ctrl-E oder F$Icpt -- muss der Code hier mitwachsen.
+ * --------------------------------------------------------------------- */
+#ifndef Q9K_SEND_SCRATCH_PID
+#define Q9K_SEND_SCRATCH_PID     0x1608UL   /* Q9_u32, d0.w EIN                */
+#define Q9K_SEND_SCRATCH_SIGNAL  0x160CUL   /* Q9_u32, d1.w EIN                */
+#define Q9K_SEND_SCRATCH_ERROR   0x1610UL   /* Q9_u32, d1.w AUS bei Fehler     */
+#define Q9K_SEND_SCRATCH_SUCCESS 0x1614UL   /* Q9_u32, 0 = Fehlschlag / 1 = ok */
+#endif
+
+/* Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError)
+{
+    Q9_u32 desc;
+
+    (void)signal;                 /* s. Kopfkommentar: keine Zustellung, nur Wecken */
+    *outError = 0;
+
+    desc = Q9K_ProcLookup(pid);
+    if (desc == 0) {
+        *outError = 0x00E0U;      /* E$PrcID -- keine solche Prozess-ID */
+        return 0;
+    }
+    Q9K_SchedWake(desc);
+    return 1;
+}
+
+/* Duenne, parameterlose Bruecke zum Assembler-Trampolin -- gleiches Muster
+ * wie bei allen anderen Syscalls dieser Datei. */
+void Q9K_SysSendImpl(void)
+{
+    Q9_u16 err = 0;
+    int ok = Q9K_ProcSend((Q9_u16)Q9K_GetU32(Q9K_SEND_SCRATCH_PID),
+                          (Q9_u16)Q9K_GetU32(Q9K_SEND_SCRATCH_SIGNAL),
+                          &err);
+
+    Q9K_SetU32(Q9K_SEND_SCRATCH_ERROR, (Q9_u32)err);
+    Q9K_SetU32(Q9K_SEND_SCRATCH_SUCCESS, ok ? 1UL : 0UL);
 }
