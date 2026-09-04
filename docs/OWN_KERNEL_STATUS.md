@@ -107,11 +107,23 @@ keiner beseitigt das Symptom): der Dispatcher sperrt die Interrupts für den
 Tabellendurchlauf (`5467083`) und stellt diese Sperre nach dem ISR-Aufruf
 wieder her (`4740cce`) — die ISR senkt die Maske, weil sie es muss.
 
-**Nächster Schritt:** Den *geretteten PC im Exception-Frame* bei jedem
-Eintritt messen (Instruktionsspur um `a7` erweitern, dann im Dump den Frame
-bei `a7+2` lesen). Damit lässt sich klären, warum der Frame-PC `$798e`
-lautet, obwohl der äußere Durchlauf an dieser Stelle bereits gesperrt hat —
-das ist der letzte offene Widerspruch.
+**Neuer Befund (2026-09-04): keine Stack-Verschachtelung.** Der
+Stackpointer ist bei **allen 17 Dispatcher-Eintritten identisch**
+(`$2d3f4`). Jeder Interrupt beginnt also auf demselben Stack-Level — es
+stapeln sich keine Handler. Damit ist die naheliegende Deutung „ein
+Durchlauf unterbricht den anderen und der Stack läuft voll" **widerlegt**.
+
+Das schärft den Widerspruch: Der `rte` landet auf `$798e` (mitten im
+Dispatcher), aber der Stack zeigt keinen zweiten, dort wartenden Durchlauf.
+
+**Nächster Schritt:** Den Exception-Frame korrekt lesen. Ein erster Versuch,
+ihn über `M68K_REG_SP`/`M68K_REG_ISP` aus der Instruktionsspur zu erreichen,
+lieferte an der erwarteten Stelle nur Nullen, während der Dispatcher selbst
+dort das korrekte Format-Wort (`$0140` → Vektor 80) findet — die
+Frame-Adressierung im *Diagnosecode* stimmt also noch nicht, der Kernel
+liest richtig. Sauberer Weg: im Dump den Stackbereich um den gemeldeten
+Zeiger herum roh ausgeben und die Lage des Frames daran ablesen, statt sie
+anzunehmen.
 
 ### Bekannte Vereinfachungen
 - **`F$ChkMem` meldet immer Erfolg.** Der Kernel hat keinen Speicherschutz
