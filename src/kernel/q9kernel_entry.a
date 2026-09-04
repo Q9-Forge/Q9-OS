@@ -1155,9 +1155,32 @@ Q9K_TestHelloDone:
 * laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
 * (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
 * Vektorslot ueberschrieben).
-* TEST 2026-09-04: I$ReadLn-Block voruebergehend uebersprungen -- er
-* blockiert den Elternprozess auf dem Pfad, waehrend das geforkte
-* Programm darauf schreiben will.
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
+* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
+* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
+* Callcode ist also belegt, nicht geraten.
+*
+* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
+* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
+* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
+* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
+* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
+* ist die Kette in beide Richtungen offen.
+*
+* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
+* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
+* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
+* Vektorslot ueberschrieben).
+* Der I$ReadLn-Block ist hier voruebergehend uebersprungen. Er ist nicht
+* defekt -- der Lesepfad erreicht den Treiber, das Zeichen wird empfangen
+* und abgeholt, und der Weckruf per F$Send kommt an. Er kann aber erst
+* wieder eingeschaltet werden, wenn zwei Dinge geklaert sind:
+*   - das Prozessdeskriptor-Layout (s. u.): der Treiber liest P$ID an
+*     Offset $00 und bekommt bei uns Muell, weckt also die falsche ID
+*   - die Pfad-Semantik: blockiert der Erzeuger lesend auf einem Pfad,
+*     haengt ein schreibendes Kind darin fest
+* Bis dahin wuerde er den Boot zum Stillstand bringen und jeden anderen
+* Test verdecken. Stand ausfuehrlich in docs/OWN_KERNEL_STATUS.md.
         bra     Q9K_TestProcA_Loop
 
 Q9K_TestWriteNoPath:
@@ -2367,6 +2390,23 @@ Q9K_IRQDispatchTry:
         movea.l 8(a0),a1                            * ISR-Adresse
         move.l  a1,d1
         beq     Q9K_IRQDispatchNext                  * Slot ohne ISR ueberspringen
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04): eine ISR-Adresse muss
+* PLAUSIBEL sein, nicht bloss ungleich 0. Real gemessen lag in der Tabelle
+* ein Eintrag mit Vektor 1 und einer ISR-Adresse von 1 -- im
+* Autovektor-Fall wird die Tabelle bewusst UNGEFILTERT durchlaufen (die
+* Vektornummer nennt dort nur den Pegel), also wurde dieser Schrott-Eintrag
+* aufgerufen und der Dispatcher sprang nach Adresse 1.
+* Zwei billige Kriterien schliessen das sicher aus:
+*   - ungerade Adresse: auf 68k kann dort kein Code stehen, ein Sprung
+*     dorthin ist immer ein Adressfehler
+*   - unterhalb $1000: dort liegen ausschliesslich Systemglobals
+* Das ist eine Absicherung, kein Ersatz fuer die Ursache -- woher der
+* Eintrag mit Vektor 1 stammt, ist separat zu klaeren (F$IRQ nimmt
+* Vektor 0 bereits nicht an, Vektor 1 aber schon).
+        btst    #0,d1
+        bne     Q9K_IRQDispatchNext                   * ungerade -> keine gueltige Codeadresse
+        cmpi.l  #$1000,d1
+        blt     Q9K_IRQDispatchNext                    * im Systemglobal-Bereich -> kein Code
         movea.l 12(a0),a2                             * a2 = statischer Treiberspeicher
         movea.l 16(a0),a3                              * a3 = Geraete-Portadresse
         suba.l  a6,a6                                   * a6 = 0, reale Systemglobal-Basis
