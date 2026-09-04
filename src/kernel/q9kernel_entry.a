@@ -1304,15 +1304,26 @@ Q9K_IOManPutChar:
 * Emulator (Freeze beim ersten Nicht-ASCII-Byte auf THRA, s. Q9-Flux
 * src/kernel/m68krt.c). Die Spur zeigte lueckenlos, dass IOMans
 * "move.b (a0)+,d0" noch das korrekte $69 laedt und d0 erst BEI UNS kippt.
+* ACHTUNG -- hier stand ein Zeichenzaehler. Er war die Ursache eines lange
+* gesuchten Fehlers und darf NICHT zurueckkehren:
+* "addq.l #1,<Label>" uebersetzt der Assembler in ABSOLUTE Adressierung mit
+* dem MODUL-OFFSET des Labels, nicht mit dessen Laufzeitadresse. Der Zaehler
+* lag bei Modul-Offset $46C -- und $46C ist zugleich Exception-Vektorslot 27
+* ($400 + 27*4), der Autovektor fuer Level 3, auf dem der DUART meldet.
+* Jedes ausgegebene Zeichen zaehlte damit den VEKTOR um eins hoch. Nach rund
+* 50 Zeichen zeigte er nicht mehr auf den Einstieg des IRQ-Dispatchers
+* ($795c), sondern mitten hinein ($798e) -- hinter dessen einleitendes
+* "movem". Der so eingetretene Durchlauf fuehrte am Ende sein
+* "movem.l (a7)+" ohne das zugehoerige einleitende aus, landete 60 Byte zu
+* hoch, las dort Nullen als Exception-Frame und sprang mit dem RTE nach 0.
+* Wer hier Zaehler oder Scratch-Felder braucht: die etablierten Adressen im
+* Global-Bereich verwenden (s. die "equ"-Liste am Dateianfang), NIE ein
+* Label im Modul.
         movem.l d6/d7/a0/a1,-(sp)
-        addq.l  #1,Q9K_IOManPutCharCount    * ausgegebene Zeichen zaehlen
         move.b  d0,d7
         bsr     Q9K_DiagWriteD7
         movem.l (sp)+,d6/d7/a0/a1
         rts
-
-Q9K_IOManPutCharCount:
-        dc.l    0
 
 * Q9K_SchedRun -- startet die ALLERERSTE Prozessausfuehrung (Abschnitt
 * "Scheduler", 2026-08-21, ersetzt das fruehere Q9K_JumpToFirstProc).
