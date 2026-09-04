@@ -46,6 +46,24 @@ Zweck, für den OS-9 sie führt.
 
 ---
 
+## In Arbeit: `I$ReadLn` — die Gegenrichtung
+
+Der Lesepfad **erreicht den Treiber**: Der Testprozess ruft `I$ReadLn`
+(`$8b`, in IOMans Servicetabelle real auf dieselbe Routine registriert wie
+`I$Read`), der Marker `<` erscheint, und der Prozess **blockiert korrekt** —
+die Warteschlangen-Mechanik trägt also.
+
+Eine echte Konsoleneingabe wird **empfangen und vom Treiber abgeholt**: der
+RX-FIFO zeigt danach `count=0` bei `head=tail=3`, also drei eingegangene und
+entnommene Zeichen. Und es fehlt **kein Syscall** — der Unimplemented-Stub
+meldete sich während des gesamten Lesevorgangs kein einziges Mal (beim
+`I$Write`-Problem war genau das der Schlüssel gewesen).
+
+**Offen:** Der wartende Prozess wird nicht geweckt. Die Instruktionsspur
+zeigt nach der Eingabe ausschließlich die Warteschleife von Prozess B; A
+bleibt in seinem Wartezustand. Zu klären ist, über welchen Weg scf/sc68681
+den Leser aufwecken will — und was davon in diesem Kernel noch fehlt.
+
 ## Offene Punkte
 
 *(Der lange offene I/O-Fehler ist gelöst — s. u.)*
