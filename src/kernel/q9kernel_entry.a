@@ -334,6 +334,7 @@ Q9K_SendScratch_Success   equ $1614      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 * Speicherzelle und kein Register: an dieser Stelle ist der Registersatz des
 * Aufrufers noch NICHT gesichert und muss unangetastet bleiben.
 Q9K_SleepScratch_RetPC    equ $1618      * Q9_u32, nur waehrend des Frame-Baus belegt
+
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
 Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
@@ -1188,6 +1189,11 @@ Q9K_TestReadDone:
 * Entscheidet die eigentliche Frage -- kommen die Zeichen an? Der Rueckgabe-
 * status allein sagt das nicht, und der Puffer liegt PC-relativ, laesst sich
 * also nicht von aussen an fester Adresse mitlesen.
+        moveq   #'@',d7                     * DIAGNOSE: Laufzeitadresse des Puffers, fuer den Schreib-Watch
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_TestReadBuf(pc),a1
+        move.l  a1,d5
+        bsr     Q9K_DiagWriteHex32
         moveq   #'[',d7
         bsr     Q9K_DiagWriteD7
         lea     Q9K_TestReadBuf(pc),a1
@@ -2316,23 +2322,39 @@ Q9K_SysFSleep:
         clr.w   -(sp)                           * Format/Vektor-Wort = 0
         move.l  Q9K_SleepScratch_RetPC,-(sp)     * PC -- dorthin kehrt er beim Aufwachen zurueck
         move.w  sr,-(sp)                          * SR (Supervisor/Maske des Aufrufers)
+        move.l  d0,Q9K_SleepScratch_TicksIn
+        movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des schlafenden Aufrufers sichern
+        andi.w  #$fffe,60(sp)             * Carry im gesicherten SR loeschen -- F$Sleep gelingt immer
+
+* HIER NICHT: Registerrettungsrahmen des Trampolin-Aufrufers versorgen.
+* Das wurde am 2026-09-04 versucht (analog Q9K_SysFSRqMem) und ist
+* NACHWEISLICH FALSCH -- der Versuch hat den Stack des Aufrufers zerstoert
+* und endete in einer Illegal Instruction mitten im Stackbereich.
+*
+* Grund: Den 44-Byte-Rahmen legt nur IOMans Wrapper-Subroutine an
+* (ioman+$15ca..$1610). Der F$Sleep-Aufruf kommt aber von woanders --
+* gemessene Ruecksprungadresse $b998, also ioman+$11f8, weit ausserhalb des
+* Wrappers. Es gibt hier folglich gar keinen Rahmen; a5 war nur ZUFAELLIG
+* sp+8, womit die von SRqMem uebernommene Erkennung fehlschlug. Genau davor
+* warnt deren Kopfkommentar ("dort DARF nicht in den Rahmen geschrieben
+* werden, sonst wird fremder Speicher zerstoert") -- die Erkennung allein
+* ist kein hinreichender Beweis, dass ein Rahmen vorliegt.
         bra     Q9K_SysFSleep_Block
 
 Q9K_SysFSleep_TrapPath:
-        addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
-
-* Ab hier ist der Stack in BEIDEN Faellen gleich: ganz oben ein gueltiger
-* 8-Byte-Exception-Frame, darunter der Stack des Aufrufers.
-Q9K_SysFSleep_Block:
         move.l  d0,Q9K_SleepScratch_TicksIn
+        addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
         movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des schlafenden Aufrufers sichern
+        andi.w  #$fffe,60(sp)             * Carry im gesicherten SR loeschen (s. u.)
 
-* NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor") -- gleicher Fix/gleiche
-* Begruendung wie bei Q9K_SysFWaits Blockierpfad oben: das Carry-Bit im
-* gesicherten SR-Wort stammt noch vom URSPRUENGLICHEN TRAP-#0-Zeitpunkt
-* und wuerde beim Aufwachen unveraendert weitergegeben. F$Sleep schlaegt
-* in diesem Kernel nie fehl -- explizit geloescht.
-        andi.w  #$fffe,60(sp)             * Carry im gesicherten SR-Wort explizit loeschen
+* Ab hier ist der Zustand in BEIDEN Faellen gleich: gueltiger Exception-Frame
+* mit geloeschtem Carry, darueber der gesicherte Registersatz.
+Q9K_SysFSleep_Block:
+
+* Das Carry im gesicherten SR-Wort stammt noch vom urspruenglichen
+* Aufrufzeitpunkt und wuerde beim Aufwachen unveraendert weitergegeben
+* (NACHTRAG 2026-08-31, "CCR-Refactor"). F$Sleep schlaegt in diesem Kernel nie
+* fehl -- deshalb steht das Loeschen oben in BEIDEN Zweigen.
 
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
