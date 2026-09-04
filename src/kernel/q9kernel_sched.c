@@ -138,6 +138,7 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PROCDESC_SLEEPTICKS_OFF 0x0EUL   /* s. q9kernel_firstproc.c Kopfkommentar */
 #endif
 #define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. q9kernel_firstproc.c Kopfkommentar */
+#define Q9K_PROCDESC_STATE_SLEEPING 's'  /* s. q9kernel_procsleep.c -- dort gesetzt */
 #define Q9K_SLEEP_INFINITE 0xFFFFFFFFUL   /* Sentinel fuer Sleep(0), s. q9kernel_procsleep.c */
 #ifndef Q9K_READYQ_NEXT_OFF
 #define Q9K_READYQ_NEXT_OFF 0x30UL
@@ -192,6 +193,31 @@ void Q9K_SchedInsert(Q9_u32 desc)
     Q9K_SetU16(desc + Q9K_PROCDESC_AGE_OFF, (Q9_u16)Q9K_GetU8(desc + Q9K_PROCDESC_PRIORITY_OFF));
     Q9K_ListAppend(Q9K_READYQ_SENTINEL_ADDR, desc);
 }
+
+/* Q9K_SchedWake -- einen schlafenden Prozess vorzeitig aktivieren
+ * (2026-09-04, fuer F$Send).
+ *
+ * Kapselt genau das Muster, das Q9K_SleepQDecrementAll beim Ablaufen eines
+ * Timeouts anwendet: aus der Schlafliste nehmen, Zustand auf ACTIVE, zurueck
+ * in die Ready-Queue. Als eigene Funktion, weil Q9K_ListUnlink hier `static`
+ * ist und ausserhalb dieser Datei nicht erreichbar sein soll.
+ *
+ * Ein Prozess, der NICHT schlaeft, bleibt unangetastet -- ein Signal an
+ * einen laufenden Prozess ist kein Fehler, es weckt nur nichts.
+ */
+void Q9K_SchedWake(Q9_u32 desc)
+{
+    if (desc == 0) {
+        return;
+    }
+    if (Q9K_GetU8(desc + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_SLEEPING) {
+        return;
+    }
+    Q9K_ListUnlink(desc);
+    Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    Q9K_SchedInsert(desc);
+}
+
 
 /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait") -- Q9K_ListAppend/
  * Q9K_ListUnlink sind generisch (funktionieren mit JEDER Next/Prev-Liste,
