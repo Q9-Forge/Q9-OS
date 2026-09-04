@@ -47,6 +47,12 @@ void Q9K_SleepQInsert(unsigned long desc)
 }
 
 static unsigned long g_schedFirstPickReturn = 0xDEADBEEFUL;
+/* Seit 2026-09-04 ruft diese Uebersetzungseinheit ausserdem F$Send-Bausteine
+   auf (Q9K_ProcSend -> Q9K_ProcLookup/Q9K_SchedWake). Beide sind hier reine
+   Stubs -- der Test deckt Q9K_ProcSleep ab, nicht die Weckwirkung. */
+unsigned long Q9K_ProcLookup(unsigned short pid) { (void)pid; return 0; }
+void Q9K_SchedWake(unsigned long desc) { (void)desc; }
+
 unsigned long Q9K_SchedFirstPick(void)
 {
     return g_schedFirstPickReturn;
