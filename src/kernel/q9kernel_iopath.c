@@ -67,6 +67,15 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PATHDESC_TYPE_OFF 0x00UL
 #define Q9K_PATHDESC_TYPE_CONSOLE 1UL
 
+/* Scratchzellen fuer F$RetPD -- gleiche Konvention wie ueberall in diesem
+ * Kernel (Assembler-Trampolin legt die Eingaben ab, holt die Ausgaben). */
+#ifndef Q9K_RETPD_SCRATCH_DBTIN
+#define Q9K_RETPD_SCRATCH_DBTIN   0x161CUL   /* Q9_u32, (a0) EIN = DBT-Basis   */
+#define Q9K_RETPD_SCRATCH_NUMIN   0x1620UL   /* Q9_u32, d0.w EIN = Nummer      */
+#define Q9K_RETPD_SCRATCH_ERROR   0x1624UL   /* Q9_u32, d1.w AUS bei Fehler    */
+#define Q9K_RETPD_SCRATCH_SUCCESS 0x1628UL   /* Q9_u32, 0 = Fehlschlag / 1 = ok */
+#endif
+
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 
@@ -83,6 +92,30 @@ static Q9_u32 Q9K_PathPoolAlloc(void)
 
     Q9K_SetU32(Q9K_PATHPOOL_FREE_ADDR, Q9K_GetU32(head));
     return head;
+}
+
+/* Gegenstueck zu Q9K_PathPoolAlloc: haengt den Deskriptor vorne in die
+ * Freiliste zurueck. Der Next-Zeiger liegt bei FREIEN Deskriptoren an
+ * Offset 0 (s. Layout oben) -- derselbe Platz, an dem ein ALLOZIERTER
+ * seine Nummer bzw. seinen Typ traegt. Das ist kein Konflikt: die Nummer
+ * wird beim Allozieren neu gesetzt, und ab hier gilt der Deskriptor als
+ * frei. */
+static void Q9K_PathPoolFree(Q9_u32 desc)
+{
+#ifdef Q9K_TEST_PATHPOOL_FREE_HOOK
+    /* NUR IM HOSTTEST: dort ist dieser Zeiger nicht dereferenzierbar. Er
+     * stammt aus einem DBT-Slot, und die sind echte 4 Byte breit
+     * (68k-Zeigerbreite) -- auf einem 64-Bit-Host liegen die Testpuffer
+     * oberhalb 4 GB, der zurueckgelesene Wert ist also abgeschnitten.
+     * Niedrigen Speicher zu mappen geht auf macOS nicht (__PAGEZERO belegt
+     * die unteren 4 GB). Der Hook protokolliert deshalb nur, WELCHER
+     * Deskriptor freigegeben wurde; die beiden Zeilen darunter sind
+     * strukturgleich zu Q9K_PathPoolAlloc und auf dem Ziel geprueft. */
+    Q9K_TEST_PATHPOOL_FREE_HOOK(desc);
+#else
+    Q9K_SetU32(desc, Q9K_GetU32(Q9K_PATHPOOL_FREE_ADDR));
+    Q9K_SetU32(Q9K_PATHPOOL_FREE_ADDR, desc);
+#endif
 }
 
 /* Byteweises Big-Endian-Lesen/Schreiben von 16-Bit-Feldern in der
@@ -189,6 +222,55 @@ int Q9K_ProcAllPD(Q9_u32 dbtAddr, Q9_u32 *outDesc, Q9_u16 *outNum, Q9_u16 *outEr
 
     *outDesc = desc;
     *outNum  = (Q9_u16)idx;
+    return 1;
+}
+
+/* Q9K_ProcRetPD -- echte F$RetPD-Kernlogik (Callcode $31, "Return
+ * Process/Path Descriptor"), exaktes Gegenstueck zu Q9K_ProcAllPD oben.
+ *
+ * Aufrufkonvention aus der IOMan-Disassemblierung abgelesen (2026-09-05,
+ * Aufrufstelle Modul-Offset $1206 ff.), NICHT geraten:
+ *     move.w  $0(a1),d0        * d0.w = Nummer, aus dem Deskriptor selbst
+ *     movea.l $48(a6),a0       * a0   = D_PthDBT, die Blocktabelle
+ *     ... Sprung in Dispatch-Slot $c4 = Callcode $31
+ * Der Deskriptor traegt seine eigene Nummer an Offset 0 -- genau die legt
+ * Q9K_ProcAllPD dort ab. OUT: nur Carry, kein Rueckgabewert.
+ *
+ * WARUM DAS HIER GEBRAUCHT WIRD: IOMan fordert diesen Dienst schon beim
+ * Start an, unmittelbar bevor es "can't chgdir to system device" meldet.
+ * Bis dahin lief der Aufruf in den Unimplemented-Stub und kam mit E_UNKSVC
+ * zurueck (gefunden 2026-09-05 per Marker-Stub, s. docs/OWN_KERNEL_STATUS.md).
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt).
+ */
+int Q9K_ProcRetPD(Q9_u32 dbtAddr, Q9_u16 num, Q9_u16 *outError)
+{
+    Q9_u16 maxIndex;
+    Q9_u32 desc;
+
+    *outError = 0;
+
+    if (dbtAddr == 0) {
+        *outError = 0x00D2U;            /* E_BPADDR, Bad Page Address */
+        return 0;
+    }
+
+    /* Index 0 ist ungueltig -- dort liegt der Tabellenkopf selbst, nicht
+     * ein Deskriptorzeiger (gleiche Begruendung wie in Q9K_ProcAllPD). */
+    maxIndex = Q9K_ReadU16BE(dbtAddr);
+    if (num == 0 || (Q9_u32)num > (Q9_u32)maxIndex) {
+        *outError = 0x00C9U;            /* E_BPNUM, Bad Path Number */
+        return 0;
+    }
+
+    desc = Q9K_ReadU32BE_At(dbtAddr + (Q9_u32)num * 4UL);
+    if (desc == 0) {
+        *outError = 0x00C9U;            /* schon frei -- fuer den Aufrufer derselbe Fall */
+        return 0;
+    }
+
+    Q9K_WriteU32BE_At(dbtAddr + (Q9_u32)num * 4UL, 0);
+    Q9K_PathPoolFree(desc);
     return 1;
 }
 
@@ -362,6 +444,22 @@ void Q9K_SysAllPDImpl(void)
         Q9K_SetU32(Q9K_ALLPD_SCRATCH_ERROR, (Q9_u32)err);
         Q9K_SetU32(Q9K_ALLPD_SCRATCH_SUCCESS, 0UL);
     }
+}
+
+/* Q9K_SysRetPDImpl -- duenne, PARAMETERLOSE Bruecke fuer F$RetPD,
+ * gleiches Muster wie Q9K_SysAllPDImpl daneben. */
+void Q9K_SysRetPDImpl(void)
+{
+    Q9_u16 err = 0;
+    Q9_u32 dbt = Q9K_GetU32(Q9K_RETPD_SCRATCH_DBTIN);
+    Q9_u16 num = (Q9_u16)Q9K_GetU32(Q9K_RETPD_SCRATCH_NUMIN);
+
+    if (Q9K_ProcRetPD(dbt, num, &err)) {
+        Q9K_SetU32(Q9K_RETPD_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_RETPD_SCRATCH_SUCCESS, 0UL);
+    }
+    Q9K_SetU32(Q9K_RETPD_SCRATCH_ERROR, (Q9_u32)err);
 }
 
 /* Scratch-Bruecke fuer F$PrsNam, gleiches Muster wie ueberall. */
