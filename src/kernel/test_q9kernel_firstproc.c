@@ -62,6 +62,11 @@ static unsigned long g_fakePoolNext;
 #define Q9K_FAKE_A6_CANARY 0xCAFEUL
 unsigned long Q9K_GetA6(void) { return Q9K_FAKE_A6_CANARY; }
 
+/* Seit 2026-09-04 fuehren Q9K_ProcCreate/Q9K_ProcFork die Prozess-ID im
+   Deskriptor mit (P$ID, Offset $00 -- fremde Module lesen sie dort). Die
+   Nummer stammt aus q9kernel_procapi.c; hier genuegt ein Stub. */
+unsigned short Q9K_ProcIdForDesc(unsigned long desc) { (void)desc; return 1; }
+
 unsigned long Q9K_AllocMem(unsigned long requestedSize)
 {
     unsigned long addr;

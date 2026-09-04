@@ -130,12 +130,12 @@ typedef unsigned char  Q9_u8;
 #define Q9K_SLEEPQ_SENTINEL_ADDR 0x12F0UL
 #endif
 
-#define Q9K_PROCDESC_STATE_OFF    0x00UL
-#define Q9K_PROCDESC_PRIORITY_OFF 0x01UL   /* eigene Erweiterung, 1 Byte (0-255) */
-#define Q9K_PROCDESC_AGE_OFF      0x02UL   /* eigene Erweiterung, 2 Byte -- "Ages never
+#define Q9K_PROCDESC_STATE_OFF    0x1DUL
+#define Q9K_PROCDESC_PRIORITY_OFF 0x19UL   /* eigene Erweiterung, 1 Byte (0-255) */
+#define Q9K_PROCDESC_AGE_OFF      0x1BUL   /* eigene Erweiterung, 2 Byte -- "Ages never
                                              * increment beyond $ffff" (Manual), passt exakt */
 #ifndef Q9K_PROCDESC_SLEEPTICKS_OFF
-#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x0EUL   /* s. q9kernel_firstproc.c Kopfkommentar */
+#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x1C4UL   /* s. q9kernel_firstproc.c Kopfkommentar */
 #endif
 #define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. q9kernel_firstproc.c Kopfkommentar */
 #define Q9K_PROCDESC_STATE_SLEEPING 's'  /* s. q9kernel_procsleep.c -- dort gesetzt */

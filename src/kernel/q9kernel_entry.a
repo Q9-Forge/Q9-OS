@@ -184,14 +184,14 @@ Q9_D_Proc       equ     $04c                    * Zeiger auf den aktuell laufend
 * Q9K_SchedRun liest den Zielkontext jetzt direkt ueber Q9_D_Proc +
 * diesen Offset, wie jeder spaetere Prozesswechsel auch (echter
 * Scheduler, kein Einzelfall-Sondermechanismus mehr).
-Q9K_PROCDESC_SAVEDSP_OFF equ $38
+Q9K_PROCDESC_SAVEDSP_OFF equ $08      * = P$sp im echten OS-9-Layout
 
 * Eigene Kernel-Global-Erweiterung (Abschnitt "F$Exit/F$Wait",
 * 2026-08-22) -- Offset des State-Byte im Prozessdeskriptor, gleicher
 * Wert wie Q9K_PROCDESC_STATE_OFF in q9kernel_firstproc.c/q9kernel_sched.c/
 * q9kernel_procend.c. Nur fuer Q9K_SysFWait gebraucht (setzt State='w'
 * auf dem blockierenden Aufrufer, s. dort).
-Q9K_PROCDESC_STATE_OFF equ $00
+Q9K_PROCDESC_STATE_OFF equ $1D      * unteres Byte von P$State ($1C)
 
 * Kernel-Global-Offset fuer die User-Service-Dispatch-Tabelle (s.
 * q9sysglob.h, Q9_D_USRDIS) -- lokal dupliziert wie die anderen oben.
@@ -328,6 +328,12 @@ Q9K_SendScratch_Pid       equ $1608      * Q9_u32, d0.w EIN
 Q9K_SendScratch_Signal    equ $160C      * Q9_u32, d1.w EIN
 Q9K_SendScratch_Error     equ $1610      * Q9_u32, d1.w AUS bei Fehler
 Q9K_SendScratch_Success   equ $1614      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+
+* Q9K_SleepScratch_RetPC -- Ruecksprungadresse eines Trampolin-Aufrufers,
+* waehrend F$Sleep daraus einen Exception-Frame baut (s. dort). Bewusst eine
+* Speicherzelle und kein Register: an dieser Stelle ist der Registersatz des
+* Aufrufers noch NICHT gesichert und muss unangetastet bleiben.
+Q9K_SleepScratch_RetPC    equ $1618      * Q9_u32, nur waehrend des Frame-Baus belegt
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
 Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
@@ -1155,33 +1161,47 @@ Q9K_TestHelloDone:
 * laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
 * (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
 * Vektorslot ueberschrieben).
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
-* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
-* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
-* Callcode ist also belegt, nicht geraten.
 *
-* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
-* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
-* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
-* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
-* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
-* ist die Kette in beide Richtungen offen.
-*
-* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
-* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
-* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
-* Vektorslot ueberschrieben).
-* Der I$ReadLn-Block ist hier voruebergehend uebersprungen. Er ist nicht
-* defekt -- der Lesepfad erreicht den Treiber, das Zeichen wird empfangen
-* und abgeholt, und der Weckruf per F$Send kommt an. Er kann aber erst
-* wieder eingeschaltet werden, wenn zwei Dinge geklaert sind:
-*   - das Prozessdeskriptor-Layout (s. u.): der Treiber liest P$ID an
-*     Offset $00 und bekommt bei uns Muell, weckt also die falsche ID
-*   - die Pfad-Semantik: blockiert der Erzeuger lesend auf einem Pfad,
-*     haengt ein schreibendes Kind darin fest
-* Bis dahin wuerde er den Boot zum Stillstand bringen und jeden anderen
-* Test verdecken. Stand ausfuehrlich in docs/OWN_KERNEL_STATUS.md.
-        bra     Q9K_TestProcA_Loop
+* Der Aufruf haelt den Boot an, solange der Weckweg nicht geschlossen ist
+* (Stand: docs/OWN_KERNEL_STATUS.md). Er steht hier trotzdem, weil nur er
+* den Lesepfad ueberhaupt bis in den Treiber bringt und damit die
+* Statikfelder V_BUSY/V_WAKE der Messung zugaenglich macht.
+        moveq   #'<',d7                     * DIAGNOSE: I$ReadLn wird versucht
+        bsr     Q9K_DiagWriteD7
+        clr.w   d0                          * Pfad 0 = Standardeingabe
+        moveq   #32,d1                      * Puffergroesse
+        lea     Q9K_TestReadBuf(pc),a0
+        trap    #0
+        dc.w    $008b                       * I$ReadLn
+        bcs     Q9K_TestReadFail
+        moveq   #'>',d7                     * DIAGNOSE: Zeile gelesen
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestReadDone
+
+Q9K_TestReadFail:
+        moveq   #'r',d7                     * DIAGNOSE: I$ReadLn fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+Q9K_TestReadDone:
+* DIAGNOSE 2026-09-04, wieder zu entfernen: die ersten 8 Pufferbytes zeigen.
+* Entscheidet die eigentliche Frage -- kommen die Zeichen an? Der Rueckgabe-
+* status allein sagt das nicht, und der Puffer liegt PC-relativ, laesst sich
+* also nicht von aussen an fester Adresse mitlesen.
+        moveq   #'[',d7
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_TestReadBuf(pc),a1
+        moveq   #7,d6
+Q9K_TestReadDump:
+        move.b  (a1)+,d7
+        cmpi.b  #$20,d7
+        bcc     Q9K_TestReadDumpChar
+        moveq   #'.',d7                     * Nichtdruckbares als Punkt
+Q9K_TestReadDumpChar:
+        bsr     Q9K_DiagWriteD7
+        dbra    d6,Q9K_TestReadDump
+        moveq   #']',d7
+        bsr     Q9K_DiagWriteD7
 
 Q9K_TestWriteNoPath:
         moveq   #'n',d7                     * DIAGNOSE: kein belegter P$Path-Slot
@@ -1566,6 +1586,15 @@ Q9K_TrapCallExternal:
         move.l  74(sp),$42(sp)                      * R$pc
         move.w  78(sp),$46(sp)                       * R$fmt (Format/Vektor)
         movea.l sp,a5                                 * A5 = Rahmenbasis
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04, beim ersten I$ReadLn): ab hier
+* laeuft FREMDER Code (ioman/scf/sc68681). Ruft der seinerseits einen Syscall
+* ueber das PEA+RTS-Trampolin, liegt auf dem Stack KEIN Exception-Frame --
+* Q9K_InTrapPath blieb aber von unserem eigenen TRAP #0 her auf 1 stehen.
+* F$Sleep nahm deshalb den Trap-Pfad, verwarf eine vermeintliche
+* Ruecksprungadresse und setzte den Prozess spaeter per RTE auf einem Stack
+* ohne Frame fort -> Format Error (Vektor 14). Das Flag gehoert deshalb fuer
+* die Dauer des Fremdaufrufs geloescht.
+        clr.w   Q9K_InTrapPath
         bsr     Q9K_TrapExtInvoke                       * legt die Ruecksprungadresse ab
 * Rahmen in die Register ZURUECKSCHREIBEN -- mit einer Ausnahme: d1
 * bleibt der Registerwert des Handlers.
@@ -1615,6 +1644,9 @@ Q9K_TrapCallExternal:
         ori.w   #$0700,sr                                           * Rueckweg gegen Verschachtelung sperren
         move.l  d1,-(sp)                                           * d1 retten
         movem.l 6(sp),d0-d7/a0-a6                                   * Rahmen -> Register (+2 wegen des SR-Worts)
+        move.w  #1,Q9K_InTrapPath                                    * wieder in UNSEREM Trap-Handler (s. clr oben);
+*                                                                      steht hier, weil ein move danach das Carry
+*                                                                      loeschen wuerde -- das ist das Fehlersignal
         move.l  (sp)+,d1                                             * d1 zurueck
         move.w  (sp)+,ccr                                             * Handler-CCR zurueck (Carry = Fehlersignal)
         lea     72(sp),sp                                              * Rahmen verwerfen (lea laesst CCR unberuehrt)
@@ -1784,17 +1816,27 @@ Q9K_SysFChkMem:
 *
 * Umgesetzt ist die WECKWIRKUNG, nicht die Signalzustellung -- Begruendung
 * s. Kopfkommentar in q9kernel_procsleep.c.
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04, beim ersten I$ReadLn): dieser
+* Handler sicherte nur a6. Der C-Aufruf darunter darf aber d0/d1/a0/a1 nach
+* Belieben ueberschreiben (Scratch-Register der Aufrufkonvention) -- und
+* F$Send wird als EINZIGER Syscall aus einer fremden Interruptroutine
+* heraus gerufen: sc68681 weckt damit den wartenden Leser. Die ISR lief
+* danach mit unseren Zwischenwerten in ihren Registern weiter und sprang in
+* Datenmuell; die CPU meldete "Illegal Instruction" mitten im
+* Prozessdeskriptor des Geweckten (a1 = Deskriptor-1, d1 = Deskriptor,
+* a0 = unsere eigene Scratchzelle -- alles Werte aus DIESEM Handler).
+* Deshalb: kompletter Registersatz um den C-Aufruf, nicht nur a6. Ausgaenge
+* sind allein Carry und d1.w (Fehlercode), beide werden erst NACH dem
+* Zurueckholen gesetzt.
 Q9K_SysFSend:
-        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
-        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
+        movem.l d0-d7/a0-a6,-(sp)             * 60 Byte -- ALLES retten, s. oben
+        lea     Q9K_CRuntimeData(pc),a6        * fuer den C-Aufruf umschalten
         andi.l  #$0000ffff,d0                  * nur d0.w ist echte Eingabe
         move.l  d0,Q9K_SendScratch_Pid
-        move.l  d1,-(sp)
-        andi.l  #$0000ffff,d1
+        andi.l  #$0000ffff,d1                  * dito d1.w
         move.l  d1,Q9K_SendScratch_Signal
-        move.l  (sp)+,d1
         bsr     Q9K_SysSendImpl
-        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+        movem.l (sp)+,d0-d7/a0-a6              * Aufrufer sieht seine Register unveraendert
 
         tst.w   Q9K_SendScratch_Success+2
         beq     Q9K_SysFSend_Fail
@@ -2244,19 +2286,45 @@ Q9K_SysFSleep:
 * Ruecksprungadresse verworfen und "60(sp)" zeigte in fremden Speicher --
 * der Treiber verschwand, kurz darauf schlug der Stack-Ueberlauf-Handler
 * zu (per Diagnose belegt: a6=0, sp=$2d354, also ein Prozessstack).
-* Auf dem Trampolin-Pfad deshalb sofort und ohne Prozesswechsel
-* zurueckkehren -- das entspricht "F$Sleep mit 0 Ticks" (CPU abgeben,
-* sofort weiterlaufen) und ist eine bewusste UEBERGANGSLOESUNG: der
-* Treiber pollt dann, statt auf seinen Interrupt zu warten. Sobald die
-* IRQ-Zustellung steht (s. Q9K_ProcIRQ in q9kernel_exctable.c), gehoert
-* hier ein echter System-State-Schlafpfad hin.
+* ERLEDIGT (2026-09-04): Hier stand bis dahin eine Uebergangsloesung -- auf
+* dem Trampolin-Pfad wurde ohne Prozesswechsel sofort zurueckgekehrt, der
+* Treiber pollte also. Inzwischen ist der Weckweg vollstaendig vermessen
+* (sc68681 traegt die Prozess-ID in V_WAKE ein, seine ISR weckt per F$Send),
+* und beide Pfade blockieren echt: der Trampolin-Pfad baut sich aus der
+* Ruecksprungadresse einen Exception-Frame, damit der gemeinsame
+* Fortsetzungsweg passt (s. unten).
         tst.w   Q9K_InTrapPath
         bne     Q9K_SysFSleep_TrapPath
-        andi    #$fe,ccr                 * Carry loeschen -- Erfolg, kein Prozesswechsel
-        rts
+
+* NACHTRAG 2026-09-04 (Abschnitt "Lesepfad"): der Trampolin-Pfad blockiert
+* jetzt ECHT, statt sofort zurueckzukehren. Die frueher hier stehende
+* Uebergangsloesung ("Treiber pollt") war noetig, solange kein Weckweg
+* existierte -- inzwischen ist er vollstaendig vermessen: sc68681 traegt die
+* Prozess-ID in V_WAKE ein, seine ISR weckt per F$Send.
+*
+* Der Aufrufer kam per PEA+RTS, auf dem Stack liegt also seine
+* Ruecksprungadresse statt eines Exception-Frames. Daraus wird hier ein
+* Format-0-Frame gebaut (SR / PC / Format-Vektor-Wort = 0), damit der
+* gemeinsame Fortsetzungsweg "movem.l (sp)+,d0-d7/a0-a6 + rte" unveraendert
+* passt -- exakt dasselbe Muster, mit dem Q9K_ProcCreate jeden neu erzeugten
+* Prozess aufsetzt (s. Q9K_SchedRun).
+*
+* Kein Datenregister wird angefasst: der Registersatz des Aufrufers ist noch
+* ungesichert und muss ihn beim Aufwachen unveraendert wiedersehen. Deshalb
+* die Ruecksprungadresse ueber eine Speicherzelle statt ueber ein Register.
+        move.l  (sp)+,Q9K_SleepScratch_RetPC   * Ruecksprungadresse des Trampolin-Aufrufers
+        clr.w   -(sp)                           * Format/Vektor-Wort = 0
+        move.l  Q9K_SleepScratch_RetPC,-(sp)     * PC -- dorthin kehrt er beim Aufwachen zurueck
+        move.w  sr,-(sp)                          * SR (Supervisor/Maske des Aufrufers)
+        bra     Q9K_SysFSleep_Block
+
 Q9K_SysFSleep_TrapPath:
-        move.l  d0,Q9K_SleepScratch_TicksIn
         addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
+
+* Ab hier ist der Stack in BEIDEN Faellen gleich: ganz oben ein gueltiger
+* 8-Byte-Exception-Frame, darunter der Stack des Aufrufers.
+Q9K_SysFSleep_Block:
+        move.l  d0,Q9K_SleepScratch_TicksIn
         movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des schlafenden Aufrufers sichern
 
 * NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor") -- gleicher Fix/gleiche
