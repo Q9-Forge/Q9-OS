@@ -137,34 +137,45 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 #ifndef Q9K_READYQ_PREV_OFF
 #define Q9K_READYQ_PREV_OFF      0x34UL
 #endif
-#define Q9K_PROCDESC_STATE_OFF   0x00UL
+#define Q9K_PROCDESC_STATE_OFF   0x1DUL
 #ifndef Q9K_PROCDESC_PRIORITY_OFF
-#define Q9K_PROCDESC_PRIORITY_OFF 0x01UL   /* s. q9kernel_sched.c */
+#define Q9K_PROCDESC_PRIORITY_OFF 0x19UL   /* s. q9kernel_sched.c */
 #endif
 #ifndef Q9K_PROCDESC_PARENT_OFF
-#define Q9K_PROCDESC_PARENT_OFF  0x04UL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
+#define Q9K_PROCDESC_PARENT_OFF  0x1B8UL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #endif
 #ifndef Q9K_PROCDESC_MODHDR_OFF
-#define Q9K_PROCDESC_MODHDR_OFF  0x08UL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
+#define Q9K_PROCDESC_MODHDR_OFF  0x38UL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #endif
 #ifndef Q9K_PROCDESC_EXITSTATUS_OFF
-#define Q9K_PROCDESC_EXITSTATUS_OFF 0x0CUL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
+#define Q9K_PROCDESC_EXITSTATUS_OFF 0x1C0UL   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #endif
 #ifndef Q9K_PROCDESC_SLEEPTICKS_OFF
-#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x0EUL   /* NACHTRAG 2026-08-30, s. Kopfkommentar */
+#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x1C4UL   /* NACHTRAG 2026-08-30, s. Kopfkommentar */
 #endif
 #ifndef Q9K_PROCDESC_SAVEDSP_OFF
-#define Q9K_PROCDESC_SAVEDSP_OFF 0x38UL
+#define Q9K_PROCDESC_SAVEDSP_OFF 0x08UL
 #endif
 #ifndef Q9K_PROCDESC_PATH_OFF
 /* P$Path -- 32 Pfadnummern a 2 Byte, s. q9kernel_tables.c Kopfkommentar
  * ("P$Path direkt danach@0x168, NumPaths(32)*2=64 Byte bis 0x1A8"). IOMans
  * I$Open sucht hier das erste freie Wort; der Index IST die Pfadnummer. */
+#endif
+#ifndef Q9K_PROCDESC_ID_OFF
+extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskriptor -> PID */
+
+/* P$ID -- Prozess-ID als WORT bei Offset $00, exakt wie im echten OS-9
+ * (MWOS/OS9/SRC/DEFS/process.a). Fremde Module lesen sie dort: die
+ * sc68681-ISR holt sich von hier die ID des wartenden Lesers, um ihn per
+ * F$Send zu wecken. Vor der Angleichung standen an dieser Stelle unsere
+ * State- und Prioritaets-Bytes, weshalb der Treiber die ID $6105 sah
+ * ('a' = STATE_ACTIVE, 5 = Prioritaet) und niemanden weckte. */
+#define Q9K_PROCDESC_ID_OFF      0x00UL
 #define Q9K_PROCDESC_PATH_OFF    0x168UL
 #define Q9K_PROCDESC_PATH_COUNT  32UL
 #endif
 #ifndef Q9K_PROCDESC_ENTRYPC_OFF
-#define Q9K_PROCDESC_ENTRYPC_OFF 0x3CUL
+#define Q9K_PROCDESC_ENTRYPC_OFF 0x1C8UL
 #endif
 #ifndef Q9K_PROCDESC_ALLOCBASE_OFF
 #define Q9K_PROCDESC_ALLOCBASE_OFF 0x1B0UL
@@ -413,6 +424,10 @@ Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority)
     Q9K_SetU16(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_FMTVEC_OFF, 0);
 
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    /* P$ID mitfuehren -- fremde Module lesen die Prozess-ID an Offset $00
+     * (s. Kommentar bei Q9K_PROCDESC_ID_OFF). Die Nummer selbst ergibt sich
+     * wie bisher aus der Lage des Deskriptors in der Tabelle. */
+    Q9K_SetU16(desc + Q9K_PROCDESC_ID_OFF, Q9K_ProcIdForDesc(desc));
     Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, priority);
     /* NACHTRAG 2026-08-22: kein Elternprozess/echtes Modul -- Q9K_ProcCreate
      * wird nur fuer die beiden fest verdrahteten Testprozesse (TestProcA/B,
@@ -594,6 +609,10 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetU16(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_FMTVEC_OFF, 0);
 
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    /* P$ID mitfuehren -- fremde Module lesen die Prozess-ID an Offset $00
+     * (s. Kommentar bei Q9K_PROCDESC_ID_OFF). Die Nummer selbst ergibt sich
+     * wie bisher aus der Lage des Deskriptors in der Tabelle. */
+    Q9K_SetU16(desc + Q9K_PROCDESC_ID_OFF, Q9K_ProcIdForDesc(desc));
     Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, (Q9_u8)priority);
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, parentDesc);   /* NACHTRAG 2026-08-22 */
 
