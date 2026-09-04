@@ -611,9 +611,11 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
      * Prozesses dem anderen den Pfad nicht unter den Fuessen wegzieht.
      * Solange Pfade in diesem Kernel nie geschlossen werden, ist die Kopie
      * gleichwertig -- sobald es I$Close gibt, MUSS hier I$Dup stehen. */
-    for (i = 0; i < Q9K_PROCDESC_PATH_COUNT; i++) {
-        Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL,
-                   Q9K_GetU16(parentDesc + Q9K_PROCDESC_PATH_OFF + i * 2UL));
+    if (parentDesc != 0) {          /* beim allerersten Prozess gibt es keinen Erzeuger */
+        for (i = 0; i < Q9K_PROCDESC_PATH_COUNT; i++) {
+            Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL,
+                       Q9K_GetU16(parentDesc + Q9K_PROCDESC_PATH_OFF + i * 2UL));
+        }
     }
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, hdrAddr);      /* NACHTRAG 2026-08-22 */
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, block);
