@@ -335,6 +335,13 @@ Q9K_SendScratch_Success   equ $1614      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 * Aufrufers noch NICHT gesichert und muss unangetastet bleiben.
 Q9K_SleepScratch_RetPC    equ $1618      * Q9_u32, nur waehrend des Frame-Baus belegt
 
+* F$RetPD (Callcode $31) -- Gegenstueck zu F$AllPD. Ausgaenge sind nur Carry
+* und d1.w, deshalb keine Rahmenversorgung (s. die Warnung bei F$Sleep).
+Q9K_RetPDScratch_DbtIn    equ $161C      * Q9_u32, (a0) EIN = DBT-Basis
+Q9K_RetPDScratch_NumIn    equ $1620      * Q9_u32, d0.w EIN = Deskriptornummer
+Q9K_RetPDScratch_Error    equ $1624      * Q9_u32, d1.w AUS bei Fehler
+Q9K_RetPDScratch_Success  equ $1628      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
 Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
@@ -1851,6 +1858,42 @@ Q9K_SysFSend:
 
 Q9K_SysFSend_Fail:
         move.w  Q9K_SendScratch_Error+2,d1
+        ori     #1,ccr                          * Carry setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
+* Q9K_SysFRetPD -- Handler fuer F$RetPD (Callcode $31, "Return Process/Path
+* Descriptor"), Gegenstueck zu Q9K_SysFAllPD.
+*
+* Konvention aus der IOMan-Disassemblierung ABGELESEN (2026-09-05,
+* Aufrufstelle ioman+$1206), nicht geraten:
+*   IN  d0.w = Deskriptornummer (IOMan holt sie per "move.w $0(a1),d0" aus
+*              dem Deskriptor selbst -- dort legt F$AllPD sie ab)
+*       a0   = Basis der Deskriptor-Blocktabelle, aus D_PthDBT ($48)
+*   OUT nichts ausser Carry; d1.w = Fehlercode im Fehlerfall.
+*
+* KEINE Rahmenversorgung: der Dienst gibt keine Register zurueck. Das ist
+* wichtig -- der blinde Nachbau der F$SRqMem-Rahmenerkennung hat bei F$Sleep
+* nachweislich fremden Speicher zerstoert (s. dortige Warnung).
+*******************************************************************************
+Q9K_SysFRetPD:
+        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
+        move.l  a0,Q9K_RetPDScratch_DbtIn
+        move.l  d0,-(sp)
+        andi.l  #$0000ffff,d0                  * nur d0.w ist echte Eingabe
+        move.l  d0,Q9K_RetPDScratch_NumIn
+        move.l  (sp)+,d0
+        bsr     Q9K_SysRetPDImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+
+        tst.w   Q9K_RetPDScratch_Success+2
+        beq     Q9K_SysFRetPD_Fail
+        andi    #$fe,ccr                        * Carry loeschen -- Erfolg
+        rts
+
+Q9K_SysFRetPD_Fail:
+        move.w  Q9K_RetPDScratch_Error+2,d1
         ori     #1,ccr                          * Carry setzen -- Fehlschlag
         rts
 
