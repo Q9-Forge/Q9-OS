@@ -116,14 +116,36 @@ Durchlauf unterbricht den anderen und der Stack läuft voll" **widerlegt**.
 Das schärft den Widerspruch: Der `rte` landet auf `$798e` (mitten im
 Dispatcher), aber der Stack zeigt keinen zweiten, dort wartenden Durchlauf.
 
-**Nächster Schritt:** Den Exception-Frame korrekt lesen. Ein erster Versuch,
-ihn über `M68K_REG_SP`/`M68K_REG_ISP` aus der Instruktionsspur zu erreichen,
-lieferte an der erwarteten Stelle nur Nullen, während der Dispatcher selbst
-dort das korrekte Format-Wort (`$0140` → Vektor 80) findet — die
-Frame-Adressierung im *Diagnosecode* stimmt also noch nicht, der Kernel
-liest richtig. Sauberer Weg: im Dump den Stackbereich um den gemeldeten
-Zeiger herum roh ausgeben und die Lage des Frames daran ablesen, statt sie
-anzunehmen.
+**Der Frame ist jetzt korrekt gelesen** (Q9-Flux `b7a398d`: Stackbereich im
+Hook sichern, nicht erst im Dump — dort ist der Speicher längst ein
+anderer). Er liegt direkt bei `sp`:
+
+    sp=0002d3f4: 2000 | 0000 748e | 0140
+                 SR     PC          Fmt/Vektor → Vektor 80
+
+Daraus zwei harte Befunde:
+
+1. **Alle 17 Interrupts unterbrechen denselben Punkt: `$748e`** — die
+   Rücksprungadresse des `trap #0 / dc.w $008a` (also von `I$Write`):
+
+        $00747e: move.w  d3,d0          Pfadnummer
+        $007480: move.l  #$11,d1        17 Bytes
+        $007486: lea     $753c(pc),a0   Puffer
+        $00748a: trap    #0
+        $00748c: dc.w    $008a
+        $00748e: ← hier wird unterbrochen
+
+   Und zwar mit **`SR=$2000`, also IPL 0** — der unterbrochene Code ist
+   demnach *kein* Handler, sondern der Testprozess nach der Syscall-Rückkehr.
+
+2. **`$748e` taucht in der gesamten Instruktionsspur kein einziges Mal auf.**
+   Der `rte` landet also nicht dort, wo sein eigener Frame hinzeigt.
+
+**Das ist der Widerspruch, an dem der nächste Anlauf ansetzt:** Frame-Inhalt
+und tatsächliches `rte`-Ziel stimmen nicht überein. Zu prüfen ist, ob der
+Frame zwischen Eintritt und `rte` überschrieben wird (der Dispatcher legt
+60 + 16 + 2 Byte *unterhalb* ab, dürfte ihn also nicht berühren — eine ISR
+mit unbalanciertem Stack aber sehr wohl).
 
 ### Bekannte Vereinfachungen
 - **`F$ChkMem` meldet immer Erfolg.** Der Kernel hat keinen Speicherschutz
