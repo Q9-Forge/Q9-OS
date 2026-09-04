@@ -81,6 +81,34 @@ haben.
 schreibende Kind darin fest — ein Hinweis auf Pfad-Semantik, die wir noch
 nicht sauber abbilden.
 
+## WICHTIGER BEFUND: Prozessdeskriptor-Layout kollidiert mit OS-9
+
+`F$Send` kam mit der Prozess-ID **`$6105`** an — und diese Zahl verrät alles:
+`$61` ist `'a'` (unser `STATE_ACTIVE`), `$05` die Priorität des
+Testprozesses. Der Treiber liest `P$ID` also als **Wort bei Offset `$00`**
+und bekommt dort unsere State- und Prioritäts-Bytes.
+
+Das echte Layout (`MWOS/OS9/SRC/DEFS/process.a`):
+
+    P$ID     $00 (word)   P$PID $02   P$SID $04   P$CID $06
+    P$sp     $08 (long)   P$usp $0C   P$MemSiz $10
+    P$Prior  $18 (word)   P$Age $1A   P$State  $1C (word)
+    P$Signal $26 (word)   P$SigVec $28 (long)
+
+Unseres weicht durchgehend ab: State als *Byte* bei `$00`, Priorität bei
+`$01`, `SavedSP` bei `$38`. Bisher fiel das nicht auf, weil die fremden
+Module nur wenige Felder lasen — `P$Path` bei `$168` hatten wir aus einem
+genau solchen Fund bereits richtig. **Sobald ein Modul `P$ID` liest, bekommt
+es Müll.**
+
+Bemerkenswert auch `P$Signal` (`$26`): dort gehört der Signalcode hin, den
+`F$Send` heute verwirft. Das Feld ist im echten Layout vorgesehen.
+
+**Konsequenz:** Das Layout gehört an OS-9 angeglichen — mindestens für die
+Felder, die fremde Module lesen (`P$ID`, `P$Prior`, `P$State`, `P$Signal`,
+`P$Path`). Das ist ein eigener, substanzieller Umbau und die Voraussetzung
+dafür, dass der Lesepfad und weitere Treiberdienste sauber funktionieren.
+
 ## In Arbeit: `I$ReadLn` — die Gegenrichtung
 
 Der Lesepfad **erreicht den Treiber**: Der Testprozess ruft `I$ReadLn`
@@ -110,11 +138,17 @@ abgelaufenen Timeout behandelt.
 **Wirkung:** Der wartende Leser wird jetzt tatsächlich geweckt — Prozess A
 läuft nach der Eingabe weiter, statt für immer zu blockieren.
 
-**Offen:** Unmittelbar danach kommt es zu einer Exception, und auf der
-Konsole erscheint erneut der *Schreib*-Text. Der geweckte Prozess nimmt
-seinen Lauf also nicht dort auf, wo er ihn verlassen hat. Zu klären ist,
-welchen Zustand scf beim Schlafenlegen erwartet und was davon beim Wecken
-wiederhergestellt werden muss.
+**Die Exception nach dem Wecken ist behoben** (`45c262b`): Im Autovektor-Fall
+durchläuft der Dispatcher die Polling-Tabelle ungefiltert und rief dabei
+einen Eintrag mit der ISR-Adresse **1** auf. Eine ISR-Adresse muss plausibel
+sein, nicht bloß ungleich 0 — ungerade Adressen und alles unterhalb `$1000`
+werden jetzt übersprungen.
+
+**Offen bleiben zwei Dinge**, beide oben beschrieben: das
+Deskriptor-Layout (der Treiber weckt wegen `P$ID` die falsche ID) und die
+Pfad-Semantik (blockiert der Erzeuger lesend, hängt ein schreibendes Kind
+fest). Der `I$ReadLn`-Block ist deshalb vorübergehend übersprungen — er
+würde den Boot zum Stillstand bringen.
 
 ## Offene Punkte
 
