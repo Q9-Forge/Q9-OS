@@ -66,17 +66,31 @@ stehen, B läuft weiter.
 - **Nicht Verschachtelung** — der Dispatcher sperrt seit `5467083` die
   Interrupts für den Tabellendurchlauf; die Exception bleibt.
 
-**Der offene Faden:** Auf Level 3 gab es **18** Interrupt-Acknowledges, aber
-nur **17** mit Vektor 80. Einer lief als **Autovektor** durch, weil beim
-Acknowledge kein Gerät mehr „pending" meldete — ein Spurious Interrupt.
-Da für Autovektoren die gesamte Polling-Tabelle abgefragt wird, ruft der
-Dispatcher dabei die sc68681-ISR für einen Interrupt auf, der nicht von ihr
-stammt. Das ist der nächste zu prüfende Kandidat.
+**Ebenfalls ausgeschlossen** (Stand 2026-09-04, jeweils getestet):
+- **Nicht der Autovektor-Zweig.** Abgeschaltet — die Exception bleibt.
+- **Nicht die fehlende Reentranz des Trap-Rückwegs.** Zwei echte Lücken
+  dieser Art wurden dabei gefunden und behoben (`5f00f74`: Epilog auf den
+  Stack statt globaler Ablagen, Interruptsperre für den Rückweg) — die
+  Exception bleibt trotzdem.
 
-In der Instruktionsspur läuft der Dispatcher an dieser Stelle mit
-Vektornummer **0** und einem `a0` weit außerhalb der Tabelle — und die
-`a0`-Werte sind nicht einmal kongruent zu `$1500 + n·20`, stammen also
-nicht aus einer normalen Iteration.
+**Zwei Beobachtungen, die den nächsten Ansatz bestimmen:**
+
+1. **Der Erfolgsmarker `O` fehlt in der Ausgabe.** Die Exception schlägt
+   also bereits beim *Rücksprung* aus `I$Write` zu, nicht im Testcode
+   danach. Prozess B läuft weiter — es stirbt nur A, das in
+   `Q9K_ExcTrap` festhängt.
+2. **`PC=$6C` ist nur der Sterbeort, nicht die Ursache.** Ein Sprung nach 0
+   lässt die CPU durch die Systemglobals laufen (dort stehen Daten, kein
+   Code), bis sie bei `$6C` auf etwas Illegales trifft.
+
+**Das Race ist extrem schmal:** Schon *eine einzelne* zusätzliche Instruktion
+irgendwo im Kernel entscheidet, ob der Fehler auftritt — mehrfach beobachtet.
+Deshalb ist die Instruktionsspur im Emulator (`Q9_TRACE_INSTR=1`) das einzige
+brauchbare Werkzeug; jede Diagnose im Kernel verschiebt das Fenster.
+
+**Nächster Schritt:** Den Freeze der Instruktionsspur gezielt auf den
+Trap-Rückweg legen (statt auf `PC < $1000`), um den Moment der Zerstörung
+selbst zu sehen statt erst den Fehlsprung.
 
 ### Bekannte Vereinfachungen
 - **`F$ChkMem` meldet immer Erfolg.** Der Kernel hat keinen Speicherschutz
