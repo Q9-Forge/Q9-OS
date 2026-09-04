@@ -1854,6 +1854,12 @@ Q9K_SysFSend_Fail:
         ori     #1,ccr                          * Carry setzen -- Fehlschlag
         rts
 
+* NACHSCHLAGEN, falls wieder gebraucht (2026-09-05): ein 'U' hier auszugeben
+* ("movem.l d0-d7/a0-a6,-(sp) / moveq #'U',d7 / bsr Q9K_DiagWriteD7 / movem.l
+* zurueck", VOR dem move.w unten) beantwortet die Frage, ob ueberhaupt ein
+* nicht belegter Dienst angefordert wird -- sonst kehrt der Stub
+* stillschweigend mit Carry zurueck und ist von einem echten Fehler des
+* Dienstes nicht zu unterscheiden. Damit wurde F$RetPD gefunden.
 Q9K_SysUnimplemented:
         move.w  #$00d0,d1                        * d1.w = E_UNKSVC (gleicher Wert wie Q9K_TrapUnknown)
         ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)

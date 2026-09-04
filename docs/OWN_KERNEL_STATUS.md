@@ -270,6 +270,61 @@ nachsehen, was IOMan dort vor und nach dem `F$Sleep` erwartet — insbesondere,
 welche Bedingung es prüft, bevor es den Lesevorgang mit Carry und `d1 = 0`
 abbricht.
 
+### IOMan-Analyse (2026-09-05)
+
+IOMan aus dem Bootfile extrahiert (Laufzeitbasis `$a7a0`, Größe `$161c`) und
+mit capstone disassembliert. Gesucht war, warum `I$ReadLn` mit Carry
+zurückkehrt, ohne den Puffer zu füllen.
+
+**Alle Syscall-Aufrufe von IOMan aufgelistet.** Das Trampolin-Muster ist im
+Code eindeutig erkennbar (`pea <ret>(pc)` / `move.l $XX(a3),-(a7)` /
+`movea.l $4XX(a3),a3` / `rts`), der Slot-Offset geteilt durch 4 ergibt den
+Callcode. IOMan fordert damit **vier bei uns nicht belegte Dienste** an —
+Namen per `MWOS/OS9/SRC/DEFS/funcs.a` ausgezählt:
+
+| Code | Dienst | Aufrufstellen |
+|---|---|---|
+| `$2e` | F$VModul | `$b054` |
+| `$31` | **F$RetPD** | `$b9b0`, `$bc16` |
+| `$38` | F$Move | `$b178`, `$b7b4` |
+| `$5c` | F$SRqCMem | `$bd7c` |
+
+**Korrektur einer naheliegenden Fehlannahme:** `$37` ist **F$GProcP** und bei
+uns korrekt belegt. F$IOQu ist `$2b` — IOMan ruft es über das Trampolin gar
+nicht.
+
+**Tatsächlich angefordert wird davon genau einer: `F$RetPD`.** Jeder der vier
+Slots bekam einen eigenen Marker-Stub; im Lauf erscheint nur `R`, und zwar
+unmittelbar vor der altbekannten Meldung `ioman: can't chgdir to system
+device: Error $00DD`. Wir haben `F$AllPD` (`$30`) implementiert, aber nie sein
+Gegenstück `F$RetPD` (`$31`) — „Return Process/Path Descriptor".
+
+**Im Lesepfad fehlt dagegen kein einziger Dienst.** Der gemeinsame
+Unimplemented-Stub wurde testweise gesprächig gemacht: Über den ganzen
+Lesevorgang meldet er sich **kein** Mal. Der leere Puffer ist also **nicht**
+auf einen fehlenden Kernel-Dienst zurückzuführen, sondern auf eine Bedingung
+in der IOMan/scf-Logik. Insbesondere ist auch `F$Move` widerlegt — der
+naheliegende Verdacht, IOMan kopiere damit in den Nutzerpuffer, wurde per
+Marker geprüft und trifft für diesen Pfad nicht zu.
+
+**Der Rückgabeweg ist gefunden** (`$b95e`–`$b9c6`). IOMan sichert dort
+`movem.l d0-d1,-(a7)` und überschreibt den d0-Slot mit `move.w sr,$0(a7)`;
+nach dem Aufruf holt es beides zurück:
+
+    00b9bc  move.l  $4(a7), d1        * Fehlercode aus dem Stack
+    00b9c0  move.w  $0(a7), ccr       * Carry aus dem Stack
+    00b9c4  addq.l  #8, a7
+
+Das Carry, mit dem `I$ReadLn` zurückkehrt, wird hier also nur **durchgereicht**
+— es entsteht weiter oben. Die Suche nach der Abbruchbedingung gehört damit
+in den Code *vor* dieser Stelle bzw. in scf.
+
+**Nächste Schritte, in dieser Reihenfolge:**
+1. `F$RetPD` (`$31`) implementieren — benannte Lücke, hängt direkt am ältesten
+   offenen Defekt („can't chgdir to system device").
+2. Danach erneut messen, ob der Lesepfad davon profitiert; falls nicht, die
+   Abbruchbedingung vor `$b95e` bzw. in scf verfolgen.
+
 ### Offen: Pfad-Deadlock
 
 Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind
