@@ -319,11 +319,56 @@ Das Carry, mit dem `I$ReadLn` zurückkehrt, wird hier also nur **durchgereicht**
 — es entsteht weiter oben. Die Suche nach der Abbruchbedingung gehört damit
 in den Code *vor* dieser Stelle bzw. in scf.
 
-**Nächste Schritte, in dieser Reihenfolge:**
-1. `F$RetPD` (`$31`) implementieren — benannte Lücke, hängt direkt am ältesten
-   offenen Defekt („can't chgdir to system device").
-2. Danach erneut messen, ob der Lesepfad davon profitiert; falls nicht, die
-   Abbruchbedingung vor `$b95e` bzw. in scf verfolgen.
+### F$RetPD implementiert (2026-09-05)
+
+Die gefundene Lücke ist geschlossen. Konvention aus IOMans Aufrufstelle
+(`ioman+$1206`) abgelesen, nicht geraten:
+
+    move.w  $0(a1),d0        * d0.w = Nummer, aus dem Deskriptor selbst
+    movea.l $48(a6),a0       * a0   = D_PthDBT, die Blocktabelle
+    ...                      * Sprung in Dispatch-Slot $c4 = Callcode $31
+
+`Q9K_ProcRetPD` ist das exakte Gegenstück zu `Q9K_ProcAllPD`: DBT-Slot räumen,
+Deskriptor in die Freiliste zurückhängen. Fehlerfälle `E$BPNum` (`$C9`) für
+Nummer 0, Nummer über dem Höchstindex und bereits freien Slot, `E$BPADDR`
+(`$D2`) für eine Null-DBT. Registriert in beiden Dispatch-Tabellen.
+
+**Keine Rahmenversorgung** — der Dienst gibt keine Register zurück. Das ist
+bewusst so und steht als Kommentar im Handler: der blinde Nachbau der
+`F$SRqMem`-Rahmenerkennung hat bei `F$Sleep` nachweislich fremden Speicher
+zerstört.
+
+12 neue Prüfungen im Host-Test. Weil `F$RetPD` den Deskriptorzeiger aus einem
+DBT-Slot **zurückliest** (echte 4 Byte, 68k-Zeigerbreite) und die Testpuffer
+auf 64-Bit-Hosts oberhalb 4 GB liegen, ist dieser Zeiger dort nicht
+dereferenzierbar; niedrigen Speicher zu mappen verhindert macOS
+(`__PAGEZERO`). Die Pool-Rückgabe wird im Test deshalb über einen Hook
+abgefangen und protokolliert.
+
+### Der `chgdir`-Fehler ist kein Kernel-Bug
+
+    ioman: can't chgdir to system device: Error $00DD
+
+`$DD` ist **`E$MNF`, „Module Not Found"** (ausgezählt aus
+`MWOS/OS9/SRC/DEFS/funcs.a` ab dem bekannten `E$PthFul = $C8`; dieselbe
+Zählung bestätigt nebenbei `$C9` E$BPNum, `$D0` E$UnkSvc, `$D2` E$BPAddr,
+`$D7` E$BPNam — alle wie im Code verwendet).
+
+IOMan sucht also ein System-Device, das es in unserem Bootfile gar nicht
+gibt: Es enthält weder RBF-Dateimanager noch Plattentreiber. Die Meldung ist
+damit die **erwartbare Folge des Bootfile-Inhalts** und verschwindet erst mit
+dem F$Load-Meilenstein. Sie gehört nicht mehr auf die Liste der vermuteten
+Kernel-Fehler.
+
+Auf den offenen Lesepfad hatte `F$RetPD` erwartungsgemäß keinen Einfluss —
+im Lesepfad wurde ja nachweislich kein fehlender Dienst angefordert.
+
+**Nächste Schritte:**
+1. Die Abbruchbedingung des Lesepfads verfolgen: Der Rückgabeweg
+   (`$b95e`–`$b9c6`) reicht Carry und `d1` nur durch, die Ursache liegt davor
+   bzw. in scf.
+2. Danach der F$Load-Meilenstein (RBF + Plattentreiber ins Bootfile) — der
+   räumt zugleich die `chgdir`-Meldung ab.
 
 ### Offen: Pfad-Deadlock
 
