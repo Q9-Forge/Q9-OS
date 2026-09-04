@@ -40,10 +40,10 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PROCDESC_SIZE 0x200UL
 #endif
 #ifndef Q9K_PROCDESC_STATE_OFF
-#define Q9K_PROCDESC_STATE_OFF 0x00UL
+#define Q9K_PROCDESC_STATE_OFF 0x1DUL
 #endif
 #ifndef Q9K_PROCDESC_PRIORITY_OFF
-#define Q9K_PROCDESC_PRIORITY_OFF 0x01UL
+#define Q9K_PROCDESC_PRIORITY_OFF 0x19UL
 #endif
 
 /* Direkt hinter den I$Open-Scratch-Feldern.  $1370/$1374 sind noch

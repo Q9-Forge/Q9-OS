@@ -81,74 +81,194 @@ haben.
 schreibende Kind darin fest — ein Hinweis auf Pfad-Semantik, die wir noch
 nicht sauber abbilden.
 
-## WICHTIGER BEFUND: Prozessdeskriptor-Layout kollidiert mit OS-9
+## Prozessdeskriptor: an das echte OS-9-Layout angeglichen
 
-`F$Send` kam mit der Prozess-ID **`$6105`** an — und diese Zahl verrät alles:
-`$61` ist `'a'` (unser `STATE_ACTIVE`), `$05` die Priorität des
-Testprozesses. Der Treiber liest `P$ID` also als **Wort bei Offset `$00`**
-und bekommt dort unsere State- und Prioritäts-Bytes.
+Anlass war ein Fund mit hohem Wiedererkennungswert: `F$Send` kam mit der
+Prozess-ID **`$6105`** an — `$61` ist `'a'` (unser `STATE_ACTIVE`), `$05` die
+Priorität des Testprozesses. Der Treiber liest `P$ID` als Wort bei Offset
+`$00` und bekam dort unsere State- und Prioritäts-Bytes.
 
-Das echte Layout (`MWOS/OS9/SRC/DEFS/process.a`):
+Maßgeblich ist `MWOS/OS9/SRC/DEFS/process.a`. Angeglichen wurde alles, was
+fremde Module lesen können:
 
-    P$ID     $00 (word)   P$PID $02   P$SID $04   P$CID $06
-    P$sp     $08 (long)   P$usp $0C   P$MemSiz $10
-    P$Prior  $18 (word)   P$Age $1A   P$State  $1C (word)
-    P$Signal $26 (word)   P$SigVec $28 (long)
+| Feld | Offset | vorher |
+|---|---|---|
+| `P$ID` | `$00` (word) | *fehlte* — wird jetzt mitgeführt |
+| `P$sp` | `$08` (long) | `$38` (SavedSP) |
+| `P$Prior` | `$18` (word) | `$01` |
+| `P$Age` | `$1A` (word) | `$02` |
+| `P$State` | `$1C` (word) | `$00` |
+| `P$Signal` | `$26` (word) | *fehlte* — `F$Send` legt den Code hier ab |
+| `P$QueueN/P` | `$30`/`$34` | lag bereits richtig |
+| `P$PModul` | `$38` (long) | `$08` (Modulkopf) |
+| `P$Path` | `$168` | lag bereits richtig |
 
-Unseres weicht durchgehend ab: State als *Byte* bei `$00`, Priorität bei
-`$01`, `SavedSP` bei `$38`. Bisher fiel das nicht auf, weil die fremden
-Module nur wenige Felder lasen — `P$Path` bei `$168` hatten wir aus einem
-genau solchen Fund bereits richtig. **Sobald ein Modul `P$ID` liest, bekommt
-es Müll.**
+Byte-Felder liegen im *unteren* Byte des jeweiligen OS-9-Wortes (`State $1D`,
+`Prior $19`, `Age $1B`), damit bestehende Byte-Zugriffe unverändert bleiben.
+Eigene Zusatzfelder ohne OS-9-Entsprechung sitzen hinter `P$Path` ab `$1B8`.
 
-Bemerkenswert auch `P$Signal` (`$26`): dort gehört der Signalcode hin, den
-`F$Send` heute verwirft. Das Feld ist im echten Layout vorgesehen.
+**Zwei Lehren daraus:**
 
-**Konsequenz:** Das Layout gehört an OS-9 angeglichen — mindestens für die
-Felder, die fremde Module lesen (`P$ID`, `P$Prior`, `P$State`, `P$Signal`,
-`P$Path`). Das ist ein eigener, substanzieller Umbau und die Voraussetzung
-dafür, dass der Lesepfad und weitere Treiberdienste sauber funktionieren.
+- `P$QueueN`/`P$QueueP` liegen bei `$30`/`$34` — genau dort, wo unsere
+  Queue-Felder schon lagen. Ein erster Versuch, sie nach hinten zu schieben,
+  brach den Boot sofort: Die Queue-Sentinels sind kleine Strukturen im
+  Kernel-Global-Bereich, ein Offset von `$1CC` sprengt sie.
+- Die Host-Suiten bilden das Layout verkürzt nach und setzen eigene Offsets.
+  Der Scheduler-Test legte `SLEEPTICKS` auf `$18`–`$1B` — genau dorthin
+  fallen jetzt `Prior`/`Age`/`State`.
 
-## In Arbeit: `I$ReadLn` — die Gegenrichtung
+## Offen: der Lesepfad
 
-Der Lesepfad **erreicht den Treiber**: Der Testprozess ruft `I$ReadLn`
-(`$8b`, in IOMans Servicetabelle real auf dieselbe Routine registriert wie
-`I$Read`), der Marker `<` erscheint, und der Prozess **blockiert korrekt** —
-die Warteschlangen-Mechanik trägt also.
+Der Lesepfad erreicht den Treiber, das Zeichen wird empfangen und abgeholt,
+und die Exception nach dem Wecken ist behoben (ISR-Adressen werden
+plausibilisiert — ungerade Adressen und alles unter `$1000` werden
+übersprungen).
 
-Eine echte Konsoleneingabe wird **empfangen und vom Treiber abgeholt**: der
-RX-FIFO zeigt danach `count=0` bei `head=tail=3`, also drei eingegangene und
-entnommene Zeichen. Und es fehlt **kein Syscall** — der Unimplemented-Stub
-meldete sich während des gesamten Lesevorgangs kein einziges Mal (beim
-`I$Write`-Problem war genau das der Schlüssel gewesen).
+**Der Weckweg ist vermessen (2026-09-04) — und ein echter Bug darin behoben.**
 
-**Der Weckweg ist gefunden und implementiert** (`f43b0dc`): Die ISR von
-sc68681 ruft `F$Send` (`$08`) über den PEA+RTS-Trampolinweg, sobald ein
-Zeichen empfangen ist — mit der Prozess-ID des wartenden Lesers in `d0.w`.
-Gemessen wurde beides: der Block wird 11× betreten, das Trampolin einmal
-genommen. Der Treiber hatte also eine gültige ID und hat wirklich gesendet;
-der Aufruf lief nur ins Leere, weil `F$Send` im Kernel fehlte.
+Die frühere Notiz „die Prozess-ID des wartenden Lesers wird nie eingetragen"
+war ein **Messfehler**: In jenen Läufen kam nie ein Zeichen an, also trat auch
+nie ein Weckfall ein. Der Treiber trägt `V_WAKE` sehr wohl ein. Mit echter
+Eingabe (`hallo\r` über eine Pipe auf stdin) sieht der Weg so aus — alle
+Werte per Schreib-Watch auf die Gerätestatik `$35a10` gemessen:
 
-Umgesetzt ist die **Weckwirkung**, nicht die Signalzustellung — der Kernel
-hat noch keine Signalwarteschlange und keine Intercept-Routinen (`F$Icpt`),
-eine echte Zustellung hätte also keinen Ort. Neu ist dafür `Q9K_SchedWake`,
-das genau das Muster kapselt, mit dem `Q9K_SleepQDecrementAll` einen
-abgelaufenen Timeout behandelt.
+| PC | Feld | Wert | Bedeutung |
+|---|---|---|---|
+| `$c454` | `V_BUSY` (`+$06`) | `1` | Treiber merkt sich den Leser |
+| `$c638` | `V_WAKE` (`+$08`) | `0` | Warteschleife, 16× |
+| `$c914` | `V_WAKE` | **`1`** | Treiber legt sich schlafen |
+| `$ccfe` | `V_WAKE` | `0` | ISR liest die ID und löscht das Feld |
 
-**Wirkung:** Der wartende Leser wird jetzt tatsächlich geweckt — Prozess A
-läuft nach der Eingabe weiter, statt für immer zu blockieren.
+Das Statiklayout stammt aus `MWOS/OS9/SRC/DEFS/iodev.a`: `V_PORT $00`,
+`V_LPRC $04`, `V_BUSY $06`, `V_WAKE $08`, `V_Paths $0a`.
 
-**Die Exception nach dem Wecken ist behoben** (`45c262b`): Im Autovektor-Fall
-durchläuft der Dispatcher die Polling-Tabelle ungefiltert und rief dabei
-einen Eintrag mit der ISR-Adresse **1** auf. Eine ISR-Adresse muss plausibel
-sein, nicht bloß ungleich 0 — ungerade Adressen und alles unterhalb `$1000`
-werden jetzt übersprungen.
+Danach kommt `F$Send` bei uns an und **gelingt** (Scratchzellen `$1608`ff:
+PID = 1, Signal = 1 = S$Wake, Fehler = 0, Erfolg = 1), und `Q9K_SchedWake`
+arbeitet korrekt: der Zustand des Geweckten geht von `'s'` auf `'a'`.
 
-**Offen bleiben zwei Dinge**, beide oben beschrieben: das
-Deskriptor-Layout (der Treiber weckt wegen `P$ID` die falsche ID) und die
-Pfad-Semantik (blockiert der Erzeuger lesend, hängt ein schreibendes Kind
-fest). Der `I$ReadLn`-Block ist deshalb vorübergehend übersprungen — er
-würde den Boot zum Stillstand bringen.
+### ECHTER BUG GEFUNDEN + GEFIXT: `F$Send` sicherte nur `a6`
+
+`Q9K_SysFSend` rettete vor dem C-Aufruf lediglich `a6`. Der C-Code darf aber
+`d0/d1/a0/a1` frei überschreiben — und **`F$Send` ist der einzige Syscall, den
+eine fremde Interruptroutine aufruft**: `sc68681` weckt damit den wartenden
+Leser. Die ISR lief anschließend mit unseren Zwischenwerten weiter und sprang
+in Datenmüll.
+
+Der Beweis stand vollständig in der Exception-Mitschrift — die Register beim
+Absturz waren *ausnahmslos* unsere eigenen:
+
+    Vektor=4 (Illegal Instruction)  PC=00019432   <- mitten im Prozessdeskriptor
+    A0=00001618   <- unsere Diagnose-Scratchzelle
+    A1=000193ff   <- Deskriptor minus 1
+    D1=00019400   <- der Deskriptor selbst
+
+Fix: kompletter Registersatz (`movem.l d0-d7/a0-a6`) um den C-Aufruf.
+Ausgänge sind allein Carry und `d1.w`, beide werden erst danach gesetzt.
+
+**Merksatz fürs nächste Mal:** Jeder Handler, den fremder Code aus einem
+Interrupt heraus aufrufen kann, muss den vollen Registersatz erhalten. Der
+Kandidatenkreis ist klein und sollte durchgesehen werden.
+
+### ~~Format Error beim Fortsetzen~~ — GELÖST (2026-09-04)
+
+Nach dem F$Send-Fix wurde der geweckte Prozess eingeplant und gestartet,
+scheiterte aber beim Fortsetzen an einem **Format Error (Vektor 14)**. Zwei
+zusammenhängende Ursachen, beide behoben:
+
+**1. `Q9K_InTrapPath` war global und blieb während Fremdaufrufen stehen.**
+
+Das Flag unterscheidet „Handler kam über `TRAP #0`" (Exception-Frame auf dem
+Stack) von „Handler kam über das PEA+RTS-Trampolin" (nur eine
+Rücksprungadresse). Es wurde beim TRAP-Eintritt gesetzt und erst im Epilog
+gelöscht — blieb also stehen, während unser Handler fremden Code aufrief.
+
+Ruft dieser fremde Code seinerseits einen Syscall über das Trampolin, sah
+`F$Sleep` fälschlich den TRAP-Pfad: es verwarf eine vermeintliche
+Rücksprungadresse und setzte den Prozess später per `RTE` auf einem Stack
+fort, auf dem gar kein Frame lag. Genau unser Fall — A ruft `I$ReadLn` per
+`TRAP #0`, und tief darin ruft `sc68681` das `F$Sleep` über das Trampolin.
+
+Fix: `Q9K_TrapCallExternal` löscht das Flag für die Dauer des Fremdaufrufs
+und setzt es danach zurück (vor dem `move.w (sp)+,ccr`, weil ein `move`
+sonst das Carry löschen würde — das ist das Fehlersignal).
+
+**2. Der Trampolin-Pfad konnte gar nicht blockieren.**
+
+Dort stand eine Übergangslösung: sofort zurückkehren, der Treiber pollt.
+Jetzt blockiert er echt. Aus der Rücksprungadresse des Aufrufers wird ein
+**Format-0-Frame** gebaut (SR / PC / Format-Vektor-Wort = 0), damit der
+gemeinsame Fortsetzungsweg `movem.l (sp)+,d0-d7/a0-a6` + `rte` unverändert
+passt — dasselbe Muster, mit dem `Q9K_ProcCreate` jeden neuen Prozess
+aufsetzt. Dabei wird **kein Datenregister angefasst**: der Registersatz des
+Aufrufers ist noch ungesichert und muss ihn beim Aufwachen unverändert
+wiedersehen; die Rücksprungadresse geht deshalb über eine Speicherzelle.
+
+### ~~S$Wake wurde als Signal zugestellt~~ — GELÖST (2026-09-04)
+
+Danach kehrte `I$ReadLn` mit Carry und „Fehlercode" `$01` zurück. Das war
+gar kein Fehlercode, sondern **S$Wake selbst**: `Q9K_ProcSend` legte jedes
+Signal in `P$Signal` ab, auch das reine Wecksignal. Der aufwachende
+Systemcode fand daraufhin ein anstehendes Signal vor und brach den laufenden
+Aufruf ab.
+
+S$Wake ist in OS-9 kein zuzustellendes Signal, sondern nur die Aufforderung
+„lauf weiter" — genau dafür benutzt es `sc68681`. Fix: bei `signal == 1`
+wird `P$Signal` nicht geschrieben. Der Wert ist per Microware-Quelle belegt
+(`MWOS/OS9/SRC/DEFS/funcs.a`, `org 0`: S$Kill 0, **S$Wake 1**, S$Abort 2).
+
+### Stand: der Weckweg trägt, die Nutzdaten fehlen noch
+
+    ...H<r00000000[........]nHallo aus einem echten Programm!
+
+Was jetzt nachweislich funktioniert:
+
+- Der Prozess blockiert im Treiber, wird durch den RX-Interrupt geweckt und
+  kehrt **ohne Absturz** aus `I$ReadLn` zurück.
+- **Keine Exception mehr**, die Sleep-Queue ist danach leer, A und B laufen
+  weiter — und `hellosvc` läuft wieder, der frühere Pfad-Deadlock ist damit
+  aufgelöst.
+- Der Treiber **holt die Zeichen ab**: RX-FIFO `head = tail = 6` für
+  `hallo\r`.
+
+Was fehlt: Die Zeichen erreichen den Puffer des Aufrufers nicht (`[........]`
+= 8 leere Bytes), und `I$ReadLn` liefert Carry **ohne** Fehlercode (`d1 = 0`).
+Nächster Ansatzpunkt ist damit der **Rückgabeweg**, nicht mehr der Weckweg:
+zu prüfen ist, ob `F$Sleep` beim Aufwachen den 44-Byte-Registerrahmen des
+Trampolin-Aufrufers versorgen muss (vgl. den Befund vom 2026-09-02: solche
+Aufrufer holen ihre Rückgabewerte aus diesem Rahmen, nicht aus den lebenden
+Registern).
+
+### Offen: Pfad-Deadlock
+
+Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind
+darin fest.
+
+### Wie man den Lesetest fährt
+
+Der `I$ReadLn`-Block in `Q9K_TestProcA` ist **aktiv**; er hält den Boot an,
+solange die Bruchstelle oben besteht. Zum Abschalten den Block bis
+`Q9K_TestReadDone` durch ein `bra Q9K_TestProcA_Loop` ersetzen.
+
+Eingabe schickt man über eine Pipe, sonst tritt nie ein Weckfall ein:
+
+```bash
+(python3 -u -c "
+import time,sys
+time.sleep(10); sys.stdout.write('hallo\r'); sys.stdout.flush()
+time.sleep(4);  sys.stdout.write('\x1e'); sys.stdout.flush()   # Ctrl-^ = Dump
+time.sleep(4)
+" | ./build/macos/q9.exe --rom <rom> --cf <image>)
+```
+
+Der Dump landet in `local_images/q9dbg_dump.txt` (nicht auf stdout!). Er zeigt
+seit heute zusätzlich: die drei Warteschlangen mit Zuständen, die
+Scratchzellen `$1600`–`$1620`, den vollen Registersatz der Exception und einen
+Schreib-Watch mit Sequenznummern (`Q9_WATCH_ADDR`/`Q9_WATCH_LEN`).
+
+**Die Sequenznummer hat den Fall entschieden:** Der Geweckte wurde stets
+*112 Schreibzugriffe* vor dem Dump eingereiht, egal ob ich 6 oder 15 Sekunden
+wartete. Genau daran war zu sehen, dass das System längst stand — und nicht
+etwa der Scheduler den Prozess übersah.
 
 ## Offene Punkte
 
