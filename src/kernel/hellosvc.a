@@ -1,0 +1,64 @@
+*******************************************************************************
+* hellosvc.a -- erstes echtes OS-9-Programm auf dem eigenen Q9-Kernel
+*               (2026-09-04, Abschnitt "echtes Programm laden").
+*
+* Der Unterschied zu forkchild.a, dem bisherigen F$Fork-Testmodul, ist der
+* entscheidende: forkchild schreibt DIREKT auf den DUART
+* ("move.b d7,$FFFFF006") und kommt damit ohne Betriebssystem aus. Dieses
+* Modul benutzt ausschliesslich SYSCALLS -- es schreibt mit I$WritLn auf
+* Pfad 1 und beendet sich mit F$Exit. Es verhaelt sich also wie ein
+* gewoehnliches OS-9-Programm und laeuft ueber den vollstaendigen Weg
+* TRAP #0 -> IOMan -> scf -> sc68681 -> DUART.
+*
+* Damit das ueberhaupt gehen kann, mussten zwei Dinge im Kernel dazukommen
+* (beide im selben Zug, s. dortige Kommentare):
+*   - Q9K_ProcFork vererbt jetzt die Pfade des Erzeugers. Ohne das haette
+*     dieses Modul gar keinen Pfad 1, auf den es schreiben koennte.
+*   - Q9K_TrapExtInvoke setzt A6 = 0 fuer externe Handler. Ein echtes
+*     Programm haelt in A6 seinen EIGENEN statischen Datenbereich; das
+*     Umschalten auf die Systemglobals kann ihm niemand abnehmen ausser dem
+*     Kernel.
+*
+* Es steht bewusst KEIN "movea.l #0,a6" in diesem Modul -- genau daran
+* zeigt sich, ob der Kernel seine Aufgabe erfuellt.
+*
+* psect-Format s. forkchild.a (dort ausfuehrlich hergeleitet).
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_HelloEdition        equ     1
+* 4 KByte Stack -- der Syscall-Pfad durch IOMan/scf braucht deutlich mehr
+* als forkchilds blosse Zaehlschleife.
+Q9K_HelloStackSize      equ     $1000
+
+        psect   hellosvc,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_HelloEdition,Q9K_HelloStackSize,Q9K_HelloStart
+
+        vsect
+Q9K_HelloData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_HelloStart:
+        moveq   #1,d0                           * d0.w = Pfadnummer 1 (Standardausgabe)
+        move.l  #Q9K_HelloLen,d1                 * d1.l = Bytezahl
+        lea     Q9K_HelloText(pc),a0              * (a0) = Text, PC-relativ (laufzeitrichtig)
+        trap    #0
+        dc.w    $008c                              * Funktionscode $8c = I$WritLn
+        bcs     Q9K_HelloFail
+* Sauber beenden -- F$Exit gibt den Speicher frei und meldet den Status an
+* einen wartenden Erzeuger.
+        moveq   #0,d1                           * Exit-Status 0 = fehlerfrei
+        trap    #0
+        dc.w    6                                * Funktionscode 6 = F$Exit
+
+* Wird nur erreicht, wenn I$WritLn scheitert: mit dem Fehlercode beenden,
+* damit der Erzeuger ihn per F$Wait sieht.
+Q9K_HelloFail:
+        trap    #0
+        dc.w    6                                * F$Exit, d1 = Fehlercode des Syscalls
+
+Q9K_HelloText:
+        dc.b    "Hallo aus einem echten Programm!",$0d
+Q9K_HelloLen            equ     33               * 32 Zeichen + CR
+
+        endsect

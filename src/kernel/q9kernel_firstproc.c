@@ -156,6 +156,13 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 #ifndef Q9K_PROCDESC_SAVEDSP_OFF
 #define Q9K_PROCDESC_SAVEDSP_OFF 0x38UL
 #endif
+#ifndef Q9K_PROCDESC_PATH_OFF
+/* P$Path -- 32 Pfadnummern a 2 Byte, s. q9kernel_tables.c Kopfkommentar
+ * ("P$Path direkt danach@0x168, NumPaths(32)*2=64 Byte bis 0x1A8"). IOMans
+ * I$Open sucht hier das erste freie Wort; der Index IST die Pfadnummer. */
+#define Q9K_PROCDESC_PATH_OFF    0x168UL
+#define Q9K_PROCDESC_PATH_COUNT  32UL
+#endif
 #ifndef Q9K_PROCDESC_ENTRYPC_OFF
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x3CUL
 #endif
@@ -589,6 +596,25 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
     Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, (Q9_u8)priority);
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, parentDesc);   /* NACHTRAG 2026-08-22 */
+
+    /* NACHTRAG 2026-09-04: Pfade vom Elternprozess erben.
+     *
+     * Ohne das kann ein geforktes Kind keine Ein-/Ausgabe machen: seine
+     * P$Path-Tabelle waere leer, und ein I$Write/I$ReadLn auf Pfad 0..2
+     * liefe ins Leere. In OS-9 erbt ein Kind die offenen Pfade des Erzeugers
+     * -- das ist der Grund, warum ein normales Programm einfach auf
+     * Standard-Ein/Ausgabe schreiben kann, ohne selbst etwas zu oeffnen.
+     *
+     * BEWUSSTE VEREINFACHUNG, klar benannt: die Eintraege werden KOPIERT,
+     * nicht per I$Dup dupliziert. Real erhoeht jeder geerbte Pfad den
+     * Referenzzaehler seines Pfaddeskriptors, damit ein I$Close des einen
+     * Prozesses dem anderen den Pfad nicht unter den Fuessen wegzieht.
+     * Solange Pfade in diesem Kernel nie geschlossen werden, ist die Kopie
+     * gleichwertig -- sobald es I$Close gibt, MUSS hier I$Dup stehen. */
+    for (i = 0; i < Q9K_PROCDESC_PATH_COUNT; i++) {
+        Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL,
+                   Q9K_GetU16(parentDesc + Q9K_PROCDESC_PATH_OFF + i * 2UL));
+    }
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, hdrAddr);      /* NACHTRAG 2026-08-22 */
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, block);
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF, totalSize);
