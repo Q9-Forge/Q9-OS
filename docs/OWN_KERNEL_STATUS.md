@@ -169,21 +169,74 @@ Ausgänge sind allein Carry und `d1.w`, beide werden erst danach gesetzt.
 Interrupt heraus aufrufen kann, muss den vollen Registersatz erhalten. Der
 Kandidatenkreis ist klein und sollte durchgesehen werden.
 
-### Stand danach: einen Schritt weiter, neue Bruchstelle
+### ~~Format Error beim Fortsetzen~~ — GELÖST (2026-09-04)
 
-Nach dem Fix wird der geweckte Prozess **tatsächlich eingeplant und
-gestartet** (die Ready-Queue enthält danach den anderen Prozess, nicht mehr
-den Geweckten). Das Fortsetzen selbst scheitert nun an anderer Stelle:
+Nach dem F$Send-Fix wurde der geweckte Prozess eingeplant und gestartet,
+scheiterte aber beim Fortsetzen an einem **Format Error (Vektor 14)**. Zwei
+zusammenhängende Ursachen, beide behoben:
 
-    Vektor=14 (Format Error)  PC=00007582 (Kernel-Offset $482, Trap-Pfad)
-    A4=00019400 (Deskriptor des Geweckten)  A0=0000c6a4 (sc68681)
+**1. `Q9K_InTrapPath` war global und blieb während Fremdaufrufen stehen.**
 
-`RTE` findet also einen Stackframe vor, dessen Formatwort nicht stimmt. Das
-passt zum bekannten Trampolin-Thema: Der Prozess hat `F$Sleep` **nicht** über
-`TRAP #0` betreten, sondern über den PEA+RTS-Trampolinweg in `D_SysDis`. Beim
-Blockieren wird ein Kontext gesichert, der beim Fortsetzen als
-Exception-Frame zurückgelesen wird — das kann so nicht aufgehen. **Das ist
-der nächste Arbeitspunkt.**
+Das Flag unterscheidet „Handler kam über `TRAP #0`" (Exception-Frame auf dem
+Stack) von „Handler kam über das PEA+RTS-Trampolin" (nur eine
+Rücksprungadresse). Es wurde beim TRAP-Eintritt gesetzt und erst im Epilog
+gelöscht — blieb also stehen, während unser Handler fremden Code aufrief.
+
+Ruft dieser fremde Code seinerseits einen Syscall über das Trampolin, sah
+`F$Sleep` fälschlich den TRAP-Pfad: es verwarf eine vermeintliche
+Rücksprungadresse und setzte den Prozess später per `RTE` auf einem Stack
+fort, auf dem gar kein Frame lag. Genau unser Fall — A ruft `I$ReadLn` per
+`TRAP #0`, und tief darin ruft `sc68681` das `F$Sleep` über das Trampolin.
+
+Fix: `Q9K_TrapCallExternal` löscht das Flag für die Dauer des Fremdaufrufs
+und setzt es danach zurück (vor dem `move.w (sp)+,ccr`, weil ein `move`
+sonst das Carry löschen würde — das ist das Fehlersignal).
+
+**2. Der Trampolin-Pfad konnte gar nicht blockieren.**
+
+Dort stand eine Übergangslösung: sofort zurückkehren, der Treiber pollt.
+Jetzt blockiert er echt. Aus der Rücksprungadresse des Aufrufers wird ein
+**Format-0-Frame** gebaut (SR / PC / Format-Vektor-Wort = 0), damit der
+gemeinsame Fortsetzungsweg `movem.l (sp)+,d0-d7/a0-a6` + `rte` unverändert
+passt — dasselbe Muster, mit dem `Q9K_ProcCreate` jeden neuen Prozess
+aufsetzt. Dabei wird **kein Datenregister angefasst**: der Registersatz des
+Aufrufers ist noch ungesichert und muss ihn beim Aufwachen unverändert
+wiedersehen; die Rücksprungadresse geht deshalb über eine Speicherzelle.
+
+### ~~S$Wake wurde als Signal zugestellt~~ — GELÖST (2026-09-04)
+
+Danach kehrte `I$ReadLn` mit Carry und „Fehlercode" `$01` zurück. Das war
+gar kein Fehlercode, sondern **S$Wake selbst**: `Q9K_ProcSend` legte jedes
+Signal in `P$Signal` ab, auch das reine Wecksignal. Der aufwachende
+Systemcode fand daraufhin ein anstehendes Signal vor und brach den laufenden
+Aufruf ab.
+
+S$Wake ist in OS-9 kein zuzustellendes Signal, sondern nur die Aufforderung
+„lauf weiter" — genau dafür benutzt es `sc68681`. Fix: bei `signal == 1`
+wird `P$Signal` nicht geschrieben. Der Wert ist per Microware-Quelle belegt
+(`MWOS/OS9/SRC/DEFS/funcs.a`, `org 0`: S$Kill 0, **S$Wake 1**, S$Abort 2).
+
+### Stand: der Weckweg trägt, die Nutzdaten fehlen noch
+
+    ...H<r00000000[........]nHallo aus einem echten Programm!
+
+Was jetzt nachweislich funktioniert:
+
+- Der Prozess blockiert im Treiber, wird durch den RX-Interrupt geweckt und
+  kehrt **ohne Absturz** aus `I$ReadLn` zurück.
+- **Keine Exception mehr**, die Sleep-Queue ist danach leer, A und B laufen
+  weiter — und `hellosvc` läuft wieder, der frühere Pfad-Deadlock ist damit
+  aufgelöst.
+- Der Treiber **holt die Zeichen ab**: RX-FIFO `head = tail = 6` für
+  `hallo\r`.
+
+Was fehlt: Die Zeichen erreichen den Puffer des Aufrufers nicht (`[........]`
+= 8 leere Bytes), und `I$ReadLn` liefert Carry **ohne** Fehlercode (`d1 = 0`).
+Nächster Ansatzpunkt ist damit der **Rückgabeweg**, nicht mehr der Weckweg:
+zu prüfen ist, ob `F$Sleep` beim Aufwachen den 44-Byte-Registerrahmen des
+Trampolin-Aufrufers versorgen muss (vgl. den Befund vom 2026-09-02: solche
+Aufrufer holen ihre Rückgabewerte aus diesem Rahmen, nicht aus den lebenden
+Registern).
 
 ### Offen: Pfad-Deadlock
 
