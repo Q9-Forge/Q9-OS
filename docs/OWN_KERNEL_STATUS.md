@@ -238,6 +238,38 @@ Trampolin-Aufrufers versorgen muss (vgl. den Befund vom 2026-09-02: solche
 Aufrufer holen ihre Rückgabewerte aus diesem Rahmen, nicht aus den lebenden
 Registern).
 
+### Rückgabeweg: zwei Messungen, ein ausgeschlossener Verdacht
+
+**Der Puffer wird nie beschrieben.** Ein Schreib-Watch auf die Laufzeitadresse
+des Testpuffers (`$0000751C`, vom Testcode selbst ausgegeben) zeigt genau 32
+Zugriffe — alle vom ROM beim Laden des Moduls (`pc=fe000d66`, lauter Nullen).
+Danach rührt ihn niemand mehr an. Der Lesevorgang bricht also ab, **bevor**
+kopiert wird; es ist kein Kopierfehler am Ende.
+
+**Nicht der Treiber blockiert, sondern IOMan.** Die beim Blockieren
+gemessene Rücksprungadresse ist `$b998` = **ioman+$11f8**. Bisher war die
+Annahme, `sc68681` lege sich selbst schlafen — der Treiber setzt zwar
+`V_WAKE`, der `F$Sleep`-Aufruf kommt aber aus IOMan.
+
+**Ausgeschlossen: die 44-Byte-Rahmenversorgung.** Naheliegender Verdacht war,
+`F$Sleep` müsse — wie `F$SRqMem` — den Registerrettungsrahmen des
+Trampolin-Aufrufers versorgen (`d0` bei `+$00`, `a2` bei `+$28`), weil der
+Aufrufer seine Rückgabewerte daraus zurückholt. **Falsch, und schädlich:**
+Den Rahmen legt nur IOMans Wrapper-Subroutine an (`ioman+$15ca..$1610`).
+`$11f8` liegt weit außerhalb — hier existiert gar kein Rahmen. `a5` war nur
+zufällig `sp+8`, sodass die von `F$SRqMem` übernommene Erkennung fehlschlug
+und der Versuch den Stack des Aufrufers zerstörte (Illegal Instruction mitten
+im Stackbereich, `PC=$36c70`, `A1` = die vermeintliche Rahmenbasis).
+
+Damit ist belegt: **Die Erkennung `a5 == sp+8` allein beweist keinen Rahmen.**
+Wer sie übernimmt, muss zusätzlich prüfen, ob der Aufruf überhaupt aus dem
+Wrapper kommt. Der Rückbau steht als Warnung im Code.
+
+**Nächster Ansatzpunkt:** `ioman+$11f8` disassemblieren (capstone) und
+nachsehen, was IOMan dort vor und nach dem `F$Sleep` erwartet — insbesondere,
+welche Bedingung es prüft, bevor es den Lesevorgang mit Carry und `d1 = 0`
+abbricht.
+
 ### Offen: Pfad-Deadlock
 
 Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind
