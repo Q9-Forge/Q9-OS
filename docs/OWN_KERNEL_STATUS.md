@@ -59,10 +59,27 @@ entnommene Zeichen. Und es fehlt **kein Syscall** — der Unimplemented-Stub
 meldete sich während des gesamten Lesevorgangs kein einziges Mal (beim
 `I$Write`-Problem war genau das der Schlüssel gewesen).
 
-**Offen:** Der wartende Prozess wird nicht geweckt. Die Instruktionsspur
-zeigt nach der Eingabe ausschließlich die Warteschleife von Prozess B; A
-bleibt in seinem Wartezustand. Zu klären ist, über welchen Weg scf/sc68681
-den Leser aufwecken will — und was davon in diesem Kernel noch fehlt.
+**Der Weckweg ist gefunden und implementiert** (`f43b0dc`): Die ISR von
+sc68681 ruft `F$Send` (`$08`) über den PEA+RTS-Trampolinweg, sobald ein
+Zeichen empfangen ist — mit der Prozess-ID des wartenden Lesers in `d0.w`.
+Gemessen wurde beides: der Block wird 11× betreten, das Trampolin einmal
+genommen. Der Treiber hatte also eine gültige ID und hat wirklich gesendet;
+der Aufruf lief nur ins Leere, weil `F$Send` im Kernel fehlte.
+
+Umgesetzt ist die **Weckwirkung**, nicht die Signalzustellung — der Kernel
+hat noch keine Signalwarteschlange und keine Intercept-Routinen (`F$Icpt`),
+eine echte Zustellung hätte also keinen Ort. Neu ist dafür `Q9K_SchedWake`,
+das genau das Muster kapselt, mit dem `Q9K_SleepQDecrementAll` einen
+abgelaufenen Timeout behandelt.
+
+**Wirkung:** Der wartende Leser wird jetzt tatsächlich geweckt — Prozess A
+läuft nach der Eingabe weiter, statt für immer zu blockieren.
+
+**Offen:** Unmittelbar danach kommt es zu einer Exception, und auf der
+Konsole erscheint erneut der *Schreib*-Text. Der geweckte Prozess nimmt
+seinen Lauf also nicht dort auf, wo er ihn verlassen hat. Zu klären ist,
+welchen Zustand scf beim Schlafenlegen erwartet und was davon beim Wecken
+wiederhergestellt werden muss.
 
 ## Offene Punkte
 
