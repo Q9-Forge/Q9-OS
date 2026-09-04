@@ -25,7 +25,12 @@ static unsigned char g_fakeGlobals[0x2000];
  * eigenen, von Q9K_READYQ_NEXT_OFF/PREV_OFF (0x40/0x48) weit entfernten
  * Testoffset gelegt, damit Q9K_SetU32 (8 Byte auf diesem Host) sie nicht
  * ueberlappt. */
-#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x18UL
+/* NACHTRAG 2026-09-04: von $18 nach $20 verschoben. Seit der Angleichung des
+   Deskriptor-Layouts an das echte OS-9 (P$Prior $18, P$Age $1A, P$State $1C)
+   liegen die Byte-Felder PRIORITY/AGE/STATE im Bereich $18..$1D -- der alte
+   Testwert haette sie ueberschrieben. Die Testpuffer bilden das Layout nur
+   verkuerzt nach, deshalb hier ein eigener, kollisionsfreier Wert. */
+#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x20UL
 
 /* Real nur 0x30/0x34 auseinander -- auf diesem 64-Bit-Testhost grosszuegig
  * auf 8-Byte-Schritte gelegt, gleiches Muster wie in den anderen Tests. */

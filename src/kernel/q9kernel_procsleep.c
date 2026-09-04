@@ -81,13 +81,13 @@ extern Q9_u32 Q9K_SchedFirstPick(void);        /* q9kernel_sched.c -- "naechsten
  * Konvention wie ueberall in diesem Kernel (s. q9kernel_firstproc.c
  * Kopfkommentar fuer das vollstaendige Layout). */
 #ifndef Q9K_PROCDESC_STATE_OFF
-#define Q9K_PROCDESC_STATE_OFF      0x00UL
+#define Q9K_PROCDESC_STATE_OFF      0x1DUL
 #endif
 #ifndef Q9K_PROCDESC_SLEEPTICKS_OFF
-#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x0EUL
+#define Q9K_PROCDESC_SLEEPTICKS_OFF 0x1C4UL
 #endif
 #ifndef Q9K_PROCDESC_SAVEDSP_OFF
-#define Q9K_PROCDESC_SAVEDSP_OFF    0x38UL
+#define Q9K_PROCDESC_SAVEDSP_OFF    0x08UL
 #endif
 
 #define Q9K_PROCDESC_STATE_SLEEPING 's'
@@ -106,6 +106,7 @@ static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 static Q9_u8  Q9K_GetU8(Q9_u32 addr)  { return *(volatile Q9_u8 *)addr; }
 static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value)  { *(volatile Q9_u8 *)addr = value; }
+static void   Q9K_SetU16(Q9_u32 addr, Q9_u16 value) { *(volatile Q9_u16 *)addr = value; }
 
 /* Schreibt value in Register regIndex des 60-Byte-Registersatz-Bereichs
  * ab frameBase -- LOKALE Kopie von Q9K_SetFrameReg (q9kernel_firstproc.c/
@@ -230,6 +231,11 @@ void Q9K_SysSleepImpl(void)
  * Ctrl-C/Ctrl-E oder F$Icpt -- muss der Code hier mitwachsen.
  * --------------------------------------------------------------------- */
 #ifndef Q9K_SEND_SCRATCH_PID
+#endif
+#ifndef Q9K_PROCDESC_SIGNAL_OFF
+#define Q9K_PROCDESC_SIGNAL_OFF  0x26UL     /* P$Signal, s. process.a */
+#endif
+#ifndef Q9K_SEND_SCRATCH_PID
 #define Q9K_SEND_SCRATCH_PID     0x1608UL   /* Q9_u32, d0.w EIN                */
 #define Q9K_SEND_SCRATCH_SIGNAL  0x160CUL   /* Q9_u32, d1.w EIN                */
 #define Q9K_SEND_SCRATCH_ERROR   0x1610UL   /* Q9_u32, d1.w AUS bei Fehler     */
@@ -241,7 +247,6 @@ int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError)
 {
     Q9_u32 desc;
 
-    (void)signal;                 /* s. Kopfkommentar: keine Zustellung, nur Wecken */
     *outError = 0;
 
     desc = Q9K_ProcLookup(pid);
@@ -249,6 +254,12 @@ int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError)
         *outError = 0x00E0U;      /* E$PrcID -- keine solche Prozess-ID */
         return 0;
     }
+    /* Signalcode in P$Signal ablegen. Das Feld ist im echten OS-9-Layout
+     * genau dafuer vorgesehen (Offset $26, s. MWOS/OS9/SRC/DEFS/process.a);
+     * ein Empfaenger kann dort nachsehen, WARUM er geweckt wurde. Eine
+     * ZUSTELLUNG im vollen Sinn ist das noch nicht -- dafuer fehlen
+     * Signalwarteschlange und Intercept-Vektor (P$SigVec, F$Icpt). */
+    Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, signal);
     Q9K_SchedWake(desc);
     return 1;
 }

@@ -184,14 +184,14 @@ Q9_D_Proc       equ     $04c                    * Zeiger auf den aktuell laufend
 * Q9K_SchedRun liest den Zielkontext jetzt direkt ueber Q9_D_Proc +
 * diesen Offset, wie jeder spaetere Prozesswechsel auch (echter
 * Scheduler, kein Einzelfall-Sondermechanismus mehr).
-Q9K_PROCDESC_SAVEDSP_OFF equ $38
+Q9K_PROCDESC_SAVEDSP_OFF equ $08      * = P$sp im echten OS-9-Layout
 
 * Eigene Kernel-Global-Erweiterung (Abschnitt "F$Exit/F$Wait",
 * 2026-08-22) -- Offset des State-Byte im Prozessdeskriptor, gleicher
 * Wert wie Q9K_PROCDESC_STATE_OFF in q9kernel_firstproc.c/q9kernel_sched.c/
 * q9kernel_procend.c. Nur fuer Q9K_SysFWait gebraucht (setzt State='w'
 * auf dem blockierenden Aufrufer, s. dort).
-Q9K_PROCDESC_STATE_OFF equ $00
+Q9K_PROCDESC_STATE_OFF equ $1D      * unteres Byte von P$State ($1C)
 
 * Kernel-Global-Offset fuer die User-Service-Dispatch-Tabelle (s.
 * q9sysglob.h, Q9_D_USRDIS) -- lokal dupliziert wie die anderen oben.
@@ -1171,16 +1171,47 @@ Q9K_TestHelloDone:
 * laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
 * (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
 * Vektorslot ueberschrieben).
-* Der I$ReadLn-Block ist hier voruebergehend uebersprungen. Er ist nicht
-* defekt -- der Lesepfad erreicht den Treiber, das Zeichen wird empfangen
-* und abgeholt, und der Weckruf per F$Send kommt an. Er kann aber erst
-* wieder eingeschaltet werden, wenn zwei Dinge geklaert sind:
-*   - das Prozessdeskriptor-Layout (s. u.): der Treiber liest P$ID an
-*     Offset $00 und bekommt bei uns Muell, weckt also die falsche ID
-*   - die Pfad-Semantik: blockiert der Erzeuger lesend auf einem Pfad,
-*     haengt ein schreibendes Kind darin fest
-* Bis dahin wuerde er den Boot zum Stillstand bringen und jeden anderen
-* Test verdecken. Stand ausfuehrlich in docs/OWN_KERNEL_STATUS.md.
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
+* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
+* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
+* Callcode ist also belegt, nicht geraten.
+*
+* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
+* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
+* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
+* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
+* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
+* ist die Kette in beide Richtungen offen.
+*
+* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
+* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
+* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
+* Vektorslot ueberschrieben).
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
+* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
+* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
+* Callcode ist also belegt, nicht geraten.
+*
+* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
+* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
+* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
+* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
+* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
+* ist die Kette in beide Richtungen offen.
+*
+* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
+* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
+* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
+* Vektorslot ueberschrieben).
+* Der I$ReadLn-Block ist hier voruebergehend uebersprungen -- eingeschaltet
+* bringt er den Boot zum Stillstand und verdeckt jeden anderen Test.
+* Stand: der Lesepfad erreicht den Treiber, das Zeichen wird empfangen und
+* abgeholt. Offen sind zwei Dinge, s. docs/OWN_KERNEL_STATUS.md:
+*   - der Treiber traegt die Prozess-ID des wartenden Lesers nicht ein und
+*     ruft F$Send daher gar nicht mehr (vor der Layout-Angleichung rief er
+*     es mit der Muell-ID $6105)
+*   - blockiert der Erzeuger lesend auf einem Pfad, haengt ein schreibendes
+*     Kind darin fest
         bra     Q9K_TestProcA_Loop
 
 Q9K_TestWriteNoPath:
