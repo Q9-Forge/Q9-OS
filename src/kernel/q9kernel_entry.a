@@ -322,6 +322,12 @@ Q9K_IRQScratch_Static     equ $13D4      * Q9_u32, (a2) EIN  = statischer Treibe
 Q9K_IRQScratch_Port       equ $13D8      * Q9_u32, (a3) EIN  = Geraete-Portadresse
 Q9K_IRQScratch_Error      equ $13DC      * Q9_u32, d1.w AUS bei Fehler
 Q9K_IRQScratch_Success    equ $13E0      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+* F$Send-Scratch (2026-09-04). Adressen frei gewaehlt hinter dem bisher
+* letzten belegten Block -- s. q9kernel_procsleep.c, dort dieselben Werte.
+Q9K_SendScratch_Pid       equ $1608      * Q9_u32, d0.w EIN
+Q9K_SendScratch_Signal    equ $160C      * Q9_u32, d1.w EIN
+Q9K_SendScratch_Error     equ $1610      * Q9_u32, d1.w AUS bei Fehler
+Q9K_SendScratch_Success   equ $1614      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
 Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
@@ -1721,6 +1727,38 @@ Q9K_TrapUnknown:
 * Schutzpruefung stillschweigend eine Zusicherung ohne Deckung.
 Q9K_SysFChkMem:
         andi    #$fe,ccr                         * Carry loeschen -- Bereich gilt als zulaessig
+        rts
+
+* Q9K_SysFSend -- F$Send (Callcode $08, "Send Signal"), 2026-09-04.
+*
+* Real per Live-Analyse gefunden: die ISR von sc68681 ruft ihn ueber den
+* PEA+RTS-Trampolinweg, sobald ein Zeichen empfangen ist -- d0.w = die
+* Prozess-ID des wartenden Lesers, d1.w = Signalcode. Ohne diesen Dienst
+* blieb ein ueber I$ReadLn wartender Prozess fuer immer liegen: der Treiber
+* holte das Zeichen zwar ab, sein Weckruf lief aber ins Leere.
+*
+* Umgesetzt ist die WECKWIRKUNG, nicht die Signalzustellung -- Begruendung
+* s. Kopfkommentar in q9kernel_procsleep.c.
+Q9K_SysFSend:
+        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
+        andi.l  #$0000ffff,d0                  * nur d0.w ist echte Eingabe
+        move.l  d0,Q9K_SendScratch_Pid
+        move.l  d1,-(sp)
+        andi.l  #$0000ffff,d1
+        move.l  d1,Q9K_SendScratch_Signal
+        move.l  (sp)+,d1
+        bsr     Q9K_SysSendImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+
+        tst.w   Q9K_SendScratch_Success+2
+        beq     Q9K_SysFSend_Fail
+        andi    #$fe,ccr                        * Carry loeschen -- Erfolg
+        rts
+
+Q9K_SysFSend_Fail:
+        move.w  Q9K_SendScratch_Error+2,d1
+        ori     #1,ccr                          * Carry setzen -- Fehlschlag
         rts
 
 Q9K_SysUnimplemented:
