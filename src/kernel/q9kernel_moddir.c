@@ -282,9 +282,32 @@ Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList)
     return added;
 }
 
-/* Sucht in der aktiven Verzeichnisliste nach Typ/Sprache-Filter (0 =
- * beliebig, exakter Wortvergleich sonst -- reale F$Link-Semantik,
- * 68k_tech.pdf S. 461) + Namen. Bei mehreren Treffern (mehrere
+/* Sucht in der aktiven Verzeichnisliste nach Typ/Sprache-Filter + Namen.
+ *
+ * FILTER-SEMANTIK (KORRIGIERT 2026-09-02, Vorbereitung "Dreiklang"): Typ
+ * (High-Byte) und Sprache (Low-Byte) werden GETRENNT geprueft, jeweils mit
+ * "0 = beliebig". Vorher stand hier ein exakter WORT-Vergleich
+ * ("desiredTyLang == 0 || tyLang == desiredTyLang") -- der war falsch und
+ * haette den Dreiklang (Descriptor->Driver->File-Manager) sofort brechen
+ * lassen. Beleg, empirisch an den ECHTEN Modulen aus dem Original-Image
+ * (CMDS/BOOTOBJS) nachgemessen, gegen die real verwendeten Filterwerte
+ * $F00/$E00/$D00 (s. docs/kernel-walkthrough/03-dreiklang/):
+ *
+ *   Rolle          Modul              M$TyLang   Filter   exakt?
+ *   Descriptor     term/t1/c0          $0F00      $F00     ja (zufaellig)
+ *   Driver         sc68681/cfide       $0E01      $E00     NEIN
+ *   File-Manager   scf/rbf             $0D01      $D00     NEIN
+ *
+ * Treiber und File-Manager tragen Sprache $01 (Maschinencode), die real
+ * benutzten Filter aber Sprache $00 -- mit exaktem Wortvergleich fiele
+ * die Kette also schon beim Treiber aus. Da es sich um ausgelieferte,
+ * nachweislich funktionierende Microware-Software handelt, MUSS die
+ * Sprache-0 im Filter "beliebig" bedeuten. Das Manual (68k_tech.pdf
+ * S. 461) ist an der Stelle unscharf ("Desired module type/language byte
+ * (0 = any)" -- Singular "byte", obwohl d0.w ein Wort ist); die
+ * byteweise Lesart ist die einzige, die zu den realen Modulen passt.
+ *
+ * Bei mehreren Treffern (mehrere
  * Revisionen desselben Namens) wird die hoechste M$Rev behalten --
  * gleiches Prinzip wie Q9K_FindModuleByName (Thema 01, Revisions-
  * Tiebreak statt "ersten Treffer nehmen"). Bei Erfolg: Link-Zaehler
@@ -300,7 +323,16 @@ Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name)
         Q9_u32 hdrAddr = Q9K_GetU32(slot + Q9K_MODDIR_HDRPTR_OFF);
         Q9_u16 tyLang  = Q9K_ModDirGetU16(slot + Q9K_MODDIR_TYLANG_OFF);
 
-        if (desiredTyLang == 0 || tyLang == desiredTyLang) {
+        /* Typ und Sprache getrennt, jeweils "0 = beliebig" (s. Kopfkommentar).
+         * Deckt den bisherigen Fall desiredTyLang==0 unveraendert mit ab:
+         * dann sind beide Teilfilter 0 und damit beide "beliebig". */
+        Q9_u16 wantType = (Q9_u16)((desiredTyLang >> 8) & 0x00FFU);
+        Q9_u16 wantLang = (Q9_u16)(desiredTyLang & 0x00FFU);
+        Q9_u16 haveType = (Q9_u16)((tyLang >> 8) & 0x00FFU);
+        Q9_u16 haveLang = (Q9_u16)(tyLang & 0x00FFU);
+
+        if ((wantType == 0 || wantType == haveType) &&
+            (wantLang == 0 || wantLang == haveLang)) {
             Q9_u32 nameOffset = Q9K_ReadU32BE((const Q9_u8 *)hdrAddr + Q9K_MH_NAME);
             Q9_u32 moduleSize = Q9K_ReadU32BE((const Q9_u8 *)hdrAddr + Q9K_MH_SIZE);
 

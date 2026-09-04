@@ -34,6 +34,8 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_PROCDESC_MODHDR_OFF     0x10UL
 #define Q9K_PROCDESC_EXITSTATUS_OFF 0x18UL
 #define Q9K_PROCDESC_SAVEDSP_OFF    0x20UL
+#define Q9K_PROCDESC_ALLOCBASE_OFF  0x28UL
+#define Q9K_PROCDESC_ALLOCSIZE_OFF  0x30UL
 
 #define Q9K_TEST_DESC_SIZE 64UL
 #define Q9K_TEST_POOL_COUNT 4UL
@@ -75,6 +77,16 @@ unsigned long Q9K_ModDirUnlinkByHeader(unsigned long hdrAddr)
     g_modDirUnlinkCalls++;
     g_modDirUnlinkLastHdr = hdrAddr;
     return 0;
+}
+
+static int g_freeMemCalls = 0;
+static unsigned long g_freeMemLastAddr = 0;
+static unsigned long g_freeMemLastSize = 0;
+void Q9K_FreeMem(unsigned long addr, unsigned long size)
+{
+    g_freeMemCalls++;
+    g_freeMemLastAddr = addr;
+    g_freeMemLastSize = size;
 }
 
 #include "q9kernel_procend.c"
@@ -272,6 +284,31 @@ int main(void)
                  Q9K_GetU32(d3 + Q9K_PROCDESC_PARENT_OFF), 0);
         checkU32("F6: d3 landet in der Freiliste (Q9K_PROCPOOL_FREE_ADDR == d3)",
                  Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR), d3);
+    }
+
+    /* Fall 7: Der eigene Prozessblock wird bereits beim F$Exit
+     * freigegeben, bleibt aber im Zombie-Zustand deskriptorseitig bis
+     * F$Wait. Das nachfolgende Reap darf NICHT doppelt freigeben. */
+    {
+        Q9_u32 childPid = 0;
+        Q9_u16 exitStatus = 0;
+        Q9_u16 error = 0;
+
+        resetPool(pool, poolBase);
+        g_freeMemCalls = 0;
+        Q9K_SetU32(d1 + Q9K_PROCDESC_PARENT_OFF, d0);
+        Q9K_SetU32(d1 + Q9K_PROCDESC_ALLOCBASE_OFF, 0xA000UL);
+        Q9K_SetU32(d1 + Q9K_PROCDESC_ALLOCSIZE_OFF, 0x400UL);
+        Q9K_SetU8(d0 + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+
+        Q9K_ProcExit(d1, 12);
+        checkU32("F7: F$Exit gibt den Prozessblock sofort einmal frei", (Q9_u32)g_freeMemCalls, 1);
+        checkU32("F7: Freigabe mit korrekter Basis", g_freeMemLastAddr, 0xA000UL);
+        checkU32("F7: Freigabe mit korrekter Groesse", g_freeMemLastSize, 0x400UL);
+        checkU32("F7: AllocBase wird nach Freigabe genullt",
+                 Q9K_GetU32(d1 + Q9K_PROCDESC_ALLOCBASE_OFF), 0);
+        checkU32("F7: Zombie-Reap findet das Kind", (Q9_u32)Q9K_ProcWaitTryReap(d0, &childPid, &exitStatus, &error), 1);
+        checkU32("F7: Zombie-Reap gibt denselben Block nicht doppelt frei", (Q9_u32)g_freeMemCalls, 1);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

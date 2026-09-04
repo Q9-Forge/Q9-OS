@@ -196,6 +196,25 @@ int main(void)
     checkU32("F$Link(\"init\", falscher Typfilter) liefert 0",
              Q9K_ModDirLinkByName(0x0D01, "init"), 0);
 
+    /* Fall 5b (2026-09-02, Vorbereitung "Dreiklang"): Typ/Sprache werden
+     * GETRENNT gefiltert, jeweils "0 = beliebig". Genau diese Semantik
+     * braucht die Descriptor->Driver->File-Manager-Kette, die real mit den
+     * Filtern $F00/$E00/$D00 gegen Module mit Sprache $01 linkt (Treiber
+     * $0E01, File-Manager $0D01) -- ein exakter Wortvergleich fiele dort
+     * durch. Die Testmodule oben tragen $0C01, also:
+     *   - Filter $0C00 (Typ passt, Sprache "beliebig")  -> MUSS finden
+     *   - Filter $0001 (Typ "beliebig", Sprache passt)  -> MUSS finden
+     *   - Filter $0C02 (Typ passt, Sprache passt NICHT) -> darf NICHT finden
+     *   - Filter $0E00 (Typ passt nicht)                -> darf NICHT finden */
+    checkU32("F$Link(\"foo\", Filter $0C00: Typ passt, Sprache beliebig) findet das Modul",
+             Q9K_ModDirLinkByName(0x0C00, "foo"), (Q9_u32)(unsigned long)(region + 1 * 64));
+    checkU32("F$Link(\"foo\", Filter $0001: Typ beliebig, Sprache passt) findet das Modul",
+             Q9K_ModDirLinkByName(0x0001, "foo"), (Q9_u32)(unsigned long)(region + 1 * 64));
+    checkU32("F$Link(\"foo\", Filter $0C02: falsche Sprache) liefert 0",
+             Q9K_ModDirLinkByName(0x0C02, "foo"), 0);
+    checkU32("F$Link(\"foo\", Filter $0E00: falscher Typ) liefert 0",
+             Q9K_ModDirLinkByName(0x0E00, "foo"), 0);
+
     /* Fall 6: F$UnLink -- muss den per F$Link gefundenen Header wieder
      * korrekt entfernen (Link-Zaehler auf 0 durch genau einen F$Link-
      * Aufruf oben), danach darf F$Link("init") nur noch die verbleibende

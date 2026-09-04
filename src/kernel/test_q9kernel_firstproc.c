@@ -21,7 +21,7 @@
 #include <string.h>
 
 static unsigned char g_fakeGlobals[0x2000];
-static unsigned char g_fakePool[1 << 16];
+static unsigned char g_fakePool[1 << 20]; /* 2026-09-01 von 64K auf 1M erhoeht -- Q9K_PROC_STACK_SIZE ist jetzt 32K statt 8K, der alte Pool reichte nicht mehr fuer mehrere Testprozesse */
 static unsigned long g_fakePoolNext;
 
 /* Grosszuegige, getrennte Testadressen -- gleiche Begruendung wie in
@@ -51,6 +51,8 @@ static unsigned long g_fakePoolNext;
 #define Q9K_PROCDESC_PARENT_OFF     0x38UL
 #define Q9K_PROCDESC_MODHDR_OFF     0x48UL
 #define Q9K_PROCDESC_EXITSTATUS_OFF 0x50UL
+#define Q9K_PROCDESC_ALLOCBASE_OFF  0x60UL
+#define Q9K_PROCDESC_ALLOCSIZE_OFF  0x68UL
 
 /* Minimaler Stub fuer das echte Q9K_GetA6 (q9kernel_entry.a) -- liefert
  * hier einen erfundenen, aber erkennbaren "a6-waere-hier"-Kanarienwert
@@ -68,6 +70,16 @@ unsigned long Q9K_AllocMem(unsigned long requestedSize)
     addr = (unsigned long)(g_fakePool + g_fakePoolNext);
     g_fakePoolNext += requestedSize;
     return addr;
+}
+
+static int g_freeMemCalls;
+static unsigned long g_freeMemLastAddr;
+static unsigned long g_freeMemLastSize;
+void Q9K_FreeMem(unsigned long addr, unsigned long size)
+{
+    g_freeMemCalls++;
+    g_freeMemLastAddr = addr;
+    g_freeMemLastSize = size;
 }
 
 /* Minimaler Stub fuer das echte Q9K_SchedInsert (q9kernel_sched.c) --
@@ -167,7 +179,7 @@ static void FakeEntryB(void) { /* nie aufgerufen, nur Adresse gebraucht */ }
 
 int main(void)
 {
-    static unsigned char procPool[4 * 128]; /* 4 Slots a 128 Byte, wie Q9K_PROCDESC_SIZE */
+    static unsigned char procPool[4 * Q9K_PROCDESC_SIZE]; /* 4 Slots, echte Q9K_PROCDESC_SIZE */
     Q9_u32 poolBase = (Q9_u32)(unsigned long)procPool;
     Q9_u32 entryA = (Q9_u32)(unsigned long)FakeEntryA;
     Q9_u32 desc1, desc2;
@@ -181,7 +193,7 @@ int main(void)
     Q9K_SetU32(Q9_D_ACTIVQ + Q9K_READYQ_NEXT_OFF, Q9_D_ACTIVQ);
     Q9K_SetU32(Q9_D_ACTIVQ + Q9K_READYQ_PREV_OFF, Q9_D_ACTIVQ);
 
-    buildFreeList(poolBase, 128, 4, Q9K_PROCPOOL_FREE_ADDR);
+    buildFreeList(poolBase, Q9K_PROCDESC_SIZE, 4, Q9K_PROCPOOL_FREE_ADDR);
 
     /* Fall 1: Erfolgsfall -- Deskriptor + Stack alloziert, Ready-Queue
      * korrekt verkettet (via Q9K_SchedInsert-Stub), Fake-Rahmen plausibel
@@ -208,6 +220,11 @@ int main(void)
              (Q9_u32)(*(Q9_u8 *)(desc1 + Q9K_PROCDESC_PRIORITY_OFF)), 7);
     checkU32("Deskriptor.EntryPC == entryA",
              Q9K_GetU32(desc1 + Q9K_PROCDESC_ENTRYPC_OFF), entryA);
+    checkU32("Deskriptor.AllocBase ist der eigene Stackblock",
+             Q9K_GetU32(desc1 + Q9K_PROCDESC_ALLOCBASE_OFF),
+             (Q9_u32)(unsigned long)g_fakePool);
+    checkU32("Deskriptor.AllocSize ist die Prozess-Stackgroesse",
+             Q9K_GetU32(desc1 + Q9K_PROCDESC_ALLOCSIZE_OFF), Q9K_PROC_STACK_SIZE);
 
     {
         Q9_u32 sp = Q9K_GetU32(desc1 + Q9K_PROCDESC_SAVEDSP_OFF);
@@ -261,12 +278,26 @@ int main(void)
     checkU32("Fuenfter Aufruf nach Pool-Erschoepfung schlaegt sauber fehl (0)",
              Q9K_ProcCreate(entryA, 1), 0);
 
+    /* Fall 4: Fehlschlag NACH dem Pool-Pop darf den Slot nicht verlieren. */
+    {
+        static unsigned char failedCreatePool[Q9K_PROCDESC_SIZE];
+        Q9_u32 failedDesc = (Q9_u32)(unsigned long)failedCreatePool;
+
+        memset(failedCreatePool, 0, sizeof(failedCreatePool));
+        Q9K_SetU32(Q9K_PROCPOOL_FREE_ADDR, failedDesc);
+        g_fakePoolNext = sizeof(g_fakePool); /* der naechste Stack-Alloc muss fehlschlagen */
+        checkU32("ProcCreate bei Arena-Erschoepfung liefert 0", Q9K_ProcCreate(entryA, 1), 0);
+        checkU32("ProcCreate bei Arena-Erschoepfung gibt den gepoppten Slot zurueck",
+                 Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR), failedDesc);
+        g_fakePoolNext = 0; /* die folgenden Fork-Faelle bekommen wieder Testarena */
+    }
+
     /* ==== Abschnitt "F$Fork" -- Q9K_ProcFork, eigener, frischer Pool ====
      * Unabhaengig vom obigen Q9K_ProcCreate-Pool (der ist jetzt sowieso
      * erschoepft) -- eigene Freiliste, eigenes Fake-Modulverzeichnis
      * (per g_stubModDirHdr gesteuert). */
     {
-        static unsigned char forkPool[2 * 128];       /* nur 2 Slots -- absichtlich knapp fuer Fall F5 */
+        static unsigned char forkPool[2 * Q9K_PROCDESC_SIZE]; /* nur 2 Slots -- absichtlich knapp fuer Fall F5 */
         Q9_u32 forkPoolBase = (Q9_u32)(unsigned long)forkPool;
         static unsigned char fakeHdr[0x40];           /* echter, byte-genauer Fake-Modulkopf */
         static unsigned char fakeParam[4] = { 0x11, 0x22, 0x33, 0x44 };
@@ -275,7 +306,7 @@ int main(void)
         Q9_u32 desc;
 
         memset(forkPool, 0, sizeof(forkPool));
-        buildFreeList(forkPoolBase, 128, 2, Q9K_PROCPOOL_FREE_ADDR);
+        buildFreeList(forkPoolBase, Q9K_PROCDESC_SIZE, 2, Q9K_PROCPOOL_FREE_ADDR);
         Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, forkPoolBase);
         Q9K_SetU32(Q9_D_PROC, 0);
 
@@ -310,6 +341,10 @@ int main(void)
          * Host-Zeiger, NICHT auf "unsigned int" gekappt. */
         checkU32("F1: Deskriptor-ModuleHdr == fakeHdr",
                  Q9K_GetU32(desc + Q9K_PROCDESC_MODHDR_OFF), (Q9_u32)(unsigned long)fakeHdr);
+        checkU32("F1: Deskriptor.AllocBase ist gesetzt",
+                 (Q9_u32)(Q9K_GetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF) != 0), 1);
+        checkU32("F1: Deskriptor.AllocSize == Gesamtgroesse",
+                 Q9K_GetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF), 16 + 256 + sizeof(fakeParam));
 
         {
             Q9_u32 sp = Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF);
@@ -391,9 +426,9 @@ int main(void)
             checkU32("Q9K_ProcFork() F2: liefert eine Prozess-ID != 0", (Q9_u32)(pid2 != 0), 1);
             checkU32("F2: PID == 2 (zweiter Slot, 1-basierte PID)", pid2, 2);
             checkU32("F2: Prioritaet vom Aufrufer geerbt (42)",
-                     (Q9_u32)*(Q9_u8 *)(forkPoolBase + 128 + Q9K_PROCDESC_PRIORITY_OFF), 42);
+                     (Q9_u32)*(Q9_u8 *)(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PRIORITY_OFF), 42);
             checkU32("F2: Deskriptor-ParentDesc == fakeCaller",
-                     Q9K_GetU32(forkPoolBase + 128 + Q9K_PROCDESC_PARENT_OFF),
+                     Q9K_GetU32(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PARENT_OFF),
                      (Q9_u32)(unsigned long)fakeCaller);
 
             Q9K_SetU32(Q9_D_PROC, 0); /* fuer die naechsten Faelle zuruecksetzen */
@@ -420,12 +455,17 @@ int main(void)
          * Kopfkommentar Q9K_ProcFork). */
         {
             int unlinkCallsBefore = g_stubModDirUnlinkCalls;
+            int freeCallsBefore = g_freeMemCalls;
 
             checkU32("Q9K_ProcFork() F4: liefert 0 bei erschoepftem Pool",
                      Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 1, &error), 0);
             checkU32("F4: Fehlercode == E_PRCFUL ($E5)", (Q9_u32)error, 0x00E5UL);
             checkU32("F4: Q9K_ModDirUnlinkByHeader wurde aufgerufen (Link-Zaehler zurueckgenommen)",
                      (Q9_u32)(g_stubModDirUnlinkCalls > unlinkCallsBefore), 1);
+            checkU32("F4: der bereits reservierte Prozessblock wird zurueckgegeben",
+                     (Q9_u32)(g_freeMemCalls == freeCallsBefore + 1), 1);
+            checkU32("F4: Rueckgabe verwendet die exakte Fork-Gesamtgroesse",
+                     g_freeMemLastSize, 16 + 256);
         }
     }
 
