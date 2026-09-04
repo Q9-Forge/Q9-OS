@@ -96,19 +96,19 @@ extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size); /* q9kernel_arena.c */
  * fuer das vollstaendige Layout). Per #ifndef ueberschreibbar (Host-
  * Tests). */
 #ifndef Q9K_PROCDESC_STATE_OFF
-#define Q9K_PROCDESC_STATE_OFF      0x00UL
+#define Q9K_PROCDESC_STATE_OFF      0x1DUL
 #endif
 #ifndef Q9K_PROCDESC_PARENT_OFF
-#define Q9K_PROCDESC_PARENT_OFF     0x04UL
+#define Q9K_PROCDESC_PARENT_OFF     0x1B8UL
 #endif
 #ifndef Q9K_PROCDESC_MODHDR_OFF
-#define Q9K_PROCDESC_MODHDR_OFF     0x08UL
+#define Q9K_PROCDESC_MODHDR_OFF     0x38UL
 #endif
 #ifndef Q9K_PROCDESC_EXITSTATUS_OFF
-#define Q9K_PROCDESC_EXITSTATUS_OFF 0x0CUL
+#define Q9K_PROCDESC_EXITSTATUS_OFF 0x1C0UL
 #endif
 #ifndef Q9K_PROCDESC_SAVEDSP_OFF
-#define Q9K_PROCDESC_SAVEDSP_OFF    0x38UL
+#define Q9K_PROCDESC_SAVEDSP_OFF    0x08UL
 #endif
 #ifndef Q9K_PROCDESC_ALLOCBASE_OFF
 #define Q9K_PROCDESC_ALLOCBASE_OFF  0x1B0UL
