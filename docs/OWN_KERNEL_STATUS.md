@@ -48,21 +48,35 @@ Zweck, für den OS-9 sie führt.
 
 ## Offene Punkte
 
-### Interrupt-Sturm über Vektor 80 (nächster Arbeitspunkt)
-Nach dem ersten `I$Write` feuert der DUART-Interrupt unablässig: gemessen
-17 Dispatcher-Eintritte in 4096 Instruktionen, jeder mit sauberem
-Durchlauf und `rte`, und sofort neu ausgelöst.
+### Exception nach dem ersten `I$Write` (nächster Arbeitspunkt)
+Der Text wird vollständig ausgegeben, `I$Write` meldet die korrekte
+Byte-Zahl zurück — kurz danach löst der DUART-Interrupt eine Exception aus
+(**Vektor 4, Illegal Instruction, PC=`$6C`**). Prozess A bleibt danach
+stehen, B läuft weiter.
 
-Gemessener Zustand: `IMR=$02` (**RxRDY**, nicht TxRDY), `IVR=$50` → Vektor
-80, Polling-Tabelle sauber (`ISR=$c98e`, `statisch=$35a10`,
-`Port=$fffff000`). Die sc68681-ISR läuft also und meldet „behandelt"
-(Carry gelöscht), **holt das Empfangszeichen aber nicht ab** — RxRDY bleibt
-gesetzt.
+**Was gemessen und damit ausgeschlossen ist:**
+- **Kein Interrupt-Sturm.** Vektor 80 kam genau **17 mal** — exakt die 17
+  gesendeten Bytes. Der Treiber sendet zeichenweise per Interrupt, das ist
+  korrektes Verhalten. (Die frühere Deutung „Sturm" war falsch.)
+- **Kein liegengebliebenes Empfangszeichen.** RX-FIFO leer
+  (`count=0`, kein Overflow), IMR=`$02`.
+- **`D_DevTbl` ist korrekt gefüllt** (Eintrag 0 verweist auf Treiber,
+  Deskriptor und File-Manager).
+- **Nicht das TxRDY-Zeitverhalten** der Emulation.
+- **Nicht Verschachtelung** — der Dispatcher sperrt seit `5467083` die
+  Interrupts für den Tabellendurchlauf; die Exception bleibt.
 
-Zu klären: Fehlt der ISR über `a2`/`a3` hinaus Kontext?
+**Der offene Faden:** Auf Level 3 gab es **18** Interrupt-Acknowledges, aber
+nur **17** mit Vektor 80. Einer lief als **Autovektor** durch, weil beim
+Acknowledge kein Gerät mehr „pending" meldete — ein Spurious Interrupt.
+Da für Autovektoren die gesamte Polling-Tabelle abgefragt wird, ruft der
+Dispatcher dabei die sc68681-ISR für einen Interrupt auf, der nicht von ihr
+stammt. Das ist der nächste zu prüfende Kandidat.
 
-Ausgeschlossen (jeweils gemessen, nicht vermutet): `D_DevTbl` ist korrekt
-gefüllt; das TxRDY-Zeitverhalten der Emulation ist hier nicht beteiligt.
+In der Instruktionsspur läuft der Dispatcher an dieser Stelle mit
+Vektornummer **0** und einem `a0` weit außerhalb der Tabelle — und die
+`a0`-Werte sind nicht einmal kongruent zu `$1500 + n·20`, stammen also
+nicht aus einer normalen Iteration.
 
 ### Bekannte Vereinfachungen
 - **`F$ChkMem` meldet immer Erfolg.** Der Kernel hat keinen Speicherschutz
