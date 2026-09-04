@@ -46,6 +46,41 @@ Zweck, für den OS-9 sie führt.
 
 ---
 
+## MEILENSTEIN: das erste echte Programm läuft
+
+    AAAA...Hallo aus einem echten Programm!\r\nBBBB...
+
+`hellosvc.a` ist ein eigenständiges OS-9-Programmmodul, das seine Ausgabe
+**ausschließlich über Syscalls** macht — `I$WritLn` auf Pfad 1, danach
+`F$Exit`. Darin liegt der Unterschied zu `forkchild`, dem bisherigen
+Fork-Testmodul: das schreibt direkt auf den DUART und kommt ohne
+Betriebssystem aus. `hellosvc` läuft über den vollständigen Weg
+**TRAP #0 → IOMan → scf → sc68681 → DUART**.
+
+Im Modul steht bewusst **kein** `movea.l #0,a6` und keine Pfadangabe — genau
+daran zeigt sich, ob der Kernel seine Aufgabe erfüllt. Zwei Dinge mussten
+dafür dazukommen:
+
+- **`Q9K_ProcFork` vererbt die Pfade** des Erzeugers (`P$Path`, Offset
+  `$168`). Ohne das hätte ein geforktes Kind eine leere Pfadtabelle. Das ist
+  der Grund, warum ein gewöhnliches Programm einfach auf Standard-Ein/Ausgabe
+  schreiben kann, ohne selbst etwas zu öffnen.
+  *Vereinfachung:* kopiert statt per `I$Dup` dupliziert — gleichwertig,
+  solange Pfade nie geschlossen werden; sobald es `I$Close` gibt, muss hier
+  `I$Dup` stehen.
+- **`Q9K_TrapExtInvoke` setzt `A6 = 0`** für externe Handler. Ein echtes
+  Programm hält in `A6` seinen *eigenen* statischen Datenbereich; das
+  Umschalten auf die Systemglobals kann ihm nur der Kernel abnehmen.
+
+**Nebenbefund, der die Kette bestätigt:** scf wandelt das mitgegebene CR in
+CR+LF — echtes Terminal-Verhalten, das wir nirgends selbst programmiert
+haben.
+
+**Offen:** Der `I$ReadLn`-Block im Testprozess ist vorübergehend
+übersprungen. Blockiert der Elternprozess lesend auf dem Pfad, hängt das
+schreibende Kind darin fest — ein Hinweis auf Pfad-Semantik, die wir noch
+nicht sauber abbilden.
+
 ## In Arbeit: `I$ReadLn` — die Gegenrichtung
 
 Der Lesepfad **erreicht den Treiber**: Der Testprozess ruft `I$ReadLn`
