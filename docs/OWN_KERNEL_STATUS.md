@@ -141,11 +141,41 @@ Daraus zwei harte Befunde:
 2. **`$748e` taucht in der gesamten Instruktionsspur kein einziges Mal auf.**
    Der `rte` landet also nicht dort, wo sein eigener Frame hinzeigt.
 
-**Das ist der Widerspruch, an dem der nächste Anlauf ansetzt:** Frame-Inhalt
-und tatsächliches `rte`-Ziel stimmen nicht überein. Zu prüfen ist, ob der
-Frame zwischen Eintritt und `rte` überschrieben wird (der Dispatcher legt
-60 + 16 + 2 Byte *unterhalb* ab, dürfte ihn also nicht berühren — eine ISR
-mit unbalanciertem Stack aber sehr wohl).
+**Der Frame wird NICHT überschrieben** — geprüft, indem der Stack zusätzlich
+unmittelbar vor dem `rte` gesichert wird: bei allen 17 regulären Durchläufen
+ist er beim Eintritt und vor dem `rte` byte-identisch
+(`2000 / 0000 748e / 0140`).
+
+**Die unmittelbare Ursache ist damit gefunden — es ist eine Bilanzlücke:**
+
+| | Anzahl |
+|---|---|
+| Dispatcher-Eintritte (`$795c`) | **17** |
+| `rte`-Durchläufe (`$79de`) | **18** |
+
+Ein Durchlauf erreicht das abschließende `movem.l (a7)+ / rte`, **ohne das
+einleitende `movem` gemacht zu haben**. Sein Stackzeiger verrät es:
+
+    reguläre Durchläufe:  sp=$2D3F4   (Frame: 2000 0000 748e 0140)
+    der überzählige:      sp=$2D430   (Stack dort: lauter Nullen)
+
+`$2D430 − $2D3F4 = $3C` = **exakt 60 Byte**, die Größe des einleitenden
+`movem.l d0-d7/a0-a6,-(sp)`. Der `rte` liest dort Nullen als Exception-Frame,
+springt nach 0, und von dort läuft die CPU durch die Systemglobals bis `$6C`.
+
+**Was als Erklärung dafür ausscheidet:** das Fenster zwischen `movem` und
+Interruptsperre (die Sperre steht seit `e58a109` als *erste* Instruktion —
+Bilanz unverändert), Frame-Überschreiben (s. o.), Stack-Verschachtelung
+(`sp` bei allen Eintritten identisch).
+
+**Nächster Schritt:** Herausfinden, auf welchem Weg der überzählige
+Durchlauf in den Dispatcher gelangt. Der naheliegendste verbliebene
+Kandidat ist der **Scheduler**: Der Timer-Handler (Vektor 30) sichert bei
+einem Kontextwechsel den Zustand des laufenden Prozesses im
+Prozessdeskriptor und stellt ihn später wieder her. Wurde Prozess A je
+*innerhalb* des Dispatchers unterbrochen, wird genau dieser Zustand später
+wieder aufgesetzt — mit einem Stack, dessen einleitendes `movem` in einem
+anderen Zeitschnitt liegt.
 
 ### Bekannte Vereinfachungen
 - **`F$ChkMem` meldet immer Erfolg.** Der Kernel hat keinen Speicherschutz
