@@ -2365,9 +2365,26 @@ Q9K_IRQDispatchTry:
 * zerstoerte a0 fiel also nie auf.
 * "movem" veraendert das CCR nicht -- das Carry der ISR bleibt fuer den
 * folgenden "bcc" erhalten.
-        movem.l d0/d2/d3/a0,-(sp)                       * Schleifenzustand retten
+        movem.l d0/d2/d3/a0,-(sp)                       * Schleifenzustand retten (16 Byte)
         jsr     (a1)
-        movem.l (sp)+,d0/d2/d3/a0                        * ... und unveraendert zurueckholen
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04): die ISR senkt die
+* Interruptmaske -- sie MUSS das, sonst koennte der Treiber waehrend des
+* Sendens nichts entgegennehmen. Damit war die Sperre, die dieser
+* Dispatcher am Anfang setzt, nach dem ISR-Aufruf WEG, und der Rest des
+* Tabellendurchlaufs lief ungeschuetzt.
+* Real gemessen (Instruktionsspur): ein Interrupt traf den aeusseren
+* Durchlauf bei "moveq #$f,d2" -- also NACH der a0-Initialisierung, aber
+* VOR dem Zaehler. Nach dem RTE lief die Schleife deshalb mit frischem
+* d2=15, aber altem, schon fortgeschrittenem a0 weiter und wanderte bei
+* jeder Runde weiter aus der Tabelle heraus, bis Stack und Rahmen nicht
+* mehr stimmten und das abschliessende RTE nach 0 sprang.
+* "move.w <ea>,ccr" setzt NUR die Bedingungsbits, nicht die Maske -- das
+* Carry der ISR kommt also zurueck, ohne die Sperre wieder aufzuheben.
+        move.w  sr,-(sp)                                  * SR mit dem CCR der ISR sichern
+        ori.w   #$0700,sr                                  * Sperre wiederherstellen
+        movem.l 2(sp),d0/d2/d3/a0                           * Schleifenzustand zurueck (liegt hinter dem SR-Wort)
+        move.w  (sp)+,ccr                                    * Carry der ISR zurueck, Maske bleibt gesperrt
+        lea     16(sp),sp                                     * geretteten Zustand verwerfen
         bcc     Q9K_IRQDispatchDone                       * Carry klar = behandelt, fertig
 Q9K_IRQDispatchNext:
         lea     Q9K_IRQTabEntSz(a0),a0
