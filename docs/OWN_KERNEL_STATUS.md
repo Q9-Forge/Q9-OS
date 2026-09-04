@@ -124,28 +124,98 @@ und die Exception nach dem Wecken ist behoben (ISR-Adressen werden
 plausibilisiert — ungerade Adressen und alles unter `$1000` werden
 übersprungen).
 
-**Verbleibend, mit verändertem Bild nach der Layout-Angleichung:**
+**Der Weckweg ist vermessen (2026-09-04) — und ein echter Bug darin behoben.**
 
-1. **Die Prozess-ID des wartenden Lesers wird nie eingetragen** — deshalb
-   ruft der Treiber `F$Send` gar nicht mehr (vorher rief er es mit der
-   Müll-ID `$6105`). Zwei Messungen grenzen das ein:
-   - **Statisch:** `sc68681` schreibt das Feld `$8(a2)` *nie* — im ganzen
-     Modul steht nur `clr.w $8(a2)` (zweimal), kein einziger schreibender
-     Zugriff.
-   - **Zur Laufzeit** (Schreib-Watch auf `$35a18`): dorthin geht
-     ausschließlich **0** — einmal von scf (`$bd6c`), siebenmal vom Treiber
-     per `clr.w` (`$c610`).
-   - **Es fehlt kein Syscall:** Der Unimplemented-Stub meldete sich während
-     des ganzen Lesevorgangs kein einziges Mal.
+Die frühere Notiz „die Prozess-ID des wartenden Lesers wird nie eingetragen"
+war ein **Messfehler**: In jenen Läufen kam nie ein Zeichen an, also trat auch
+nie ein Weckfall ein. Der Treiber trägt `V_WAKE` sehr wohl ein. Mit echter
+Eingabe (`hallo\r` über eine Pipe auf stdin) sieht der Weg so aus — alle
+Werte per Schreib-Watch auf die Gerätestatik `$35a10` gemessen:
 
-   Der Mechanismus, mit dem scf einen wartenden Leser registriert, läuft also
-   anders als angenommen — nicht über dieses Feld, oder über einen Pfad, den
-   wir noch nicht auslösen. Das ist der nächste Ansatzpunkt.
-2. **Pfad-Deadlock:** Blockiert der Erzeuger lesend auf einem Pfad, hängt ein
-   schreibendes Kind darin fest.
+| PC | Feld | Wert | Bedeutung |
+|---|---|---|---|
+| `$c454` | `V_BUSY` (`+$06`) | `1` | Treiber merkt sich den Leser |
+| `$c638` | `V_WAKE` (`+$08`) | `0` | Warteschleife, 16× |
+| `$c914` | `V_WAKE` | **`1`** | Treiber legt sich schlafen |
+| `$ccfe` | `V_WAKE` | `0` | ISR liest die ID und löscht das Feld |
 
-Der `I$ReadLn`-Block im Testprozess ist deshalb übersprungen — eingeschaltet
-brächte er den Boot zum Stillstand und verdeckte jeden anderen Test.
+Das Statiklayout stammt aus `MWOS/OS9/SRC/DEFS/iodev.a`: `V_PORT $00`,
+`V_LPRC $04`, `V_BUSY $06`, `V_WAKE $08`, `V_Paths $0a`.
+
+Danach kommt `F$Send` bei uns an und **gelingt** (Scratchzellen `$1608`ff:
+PID = 1, Signal = 1 = S$Wake, Fehler = 0, Erfolg = 1), und `Q9K_SchedWake`
+arbeitet korrekt: der Zustand des Geweckten geht von `'s'` auf `'a'`.
+
+### ECHTER BUG GEFUNDEN + GEFIXT: `F$Send` sicherte nur `a6`
+
+`Q9K_SysFSend` rettete vor dem C-Aufruf lediglich `a6`. Der C-Code darf aber
+`d0/d1/a0/a1` frei überschreiben — und **`F$Send` ist der einzige Syscall, den
+eine fremde Interruptroutine aufruft**: `sc68681` weckt damit den wartenden
+Leser. Die ISR lief anschließend mit unseren Zwischenwerten weiter und sprang
+in Datenmüll.
+
+Der Beweis stand vollständig in der Exception-Mitschrift — die Register beim
+Absturz waren *ausnahmslos* unsere eigenen:
+
+    Vektor=4 (Illegal Instruction)  PC=00019432   <- mitten im Prozessdeskriptor
+    A0=00001618   <- unsere Diagnose-Scratchzelle
+    A1=000193ff   <- Deskriptor minus 1
+    D1=00019400   <- der Deskriptor selbst
+
+Fix: kompletter Registersatz (`movem.l d0-d7/a0-a6`) um den C-Aufruf.
+Ausgänge sind allein Carry und `d1.w`, beide werden erst danach gesetzt.
+
+**Merksatz fürs nächste Mal:** Jeder Handler, den fremder Code aus einem
+Interrupt heraus aufrufen kann, muss den vollen Registersatz erhalten. Der
+Kandidatenkreis ist klein und sollte durchgesehen werden.
+
+### Stand danach: einen Schritt weiter, neue Bruchstelle
+
+Nach dem Fix wird der geweckte Prozess **tatsächlich eingeplant und
+gestartet** (die Ready-Queue enthält danach den anderen Prozess, nicht mehr
+den Geweckten). Das Fortsetzen selbst scheitert nun an anderer Stelle:
+
+    Vektor=14 (Format Error)  PC=00007582 (Kernel-Offset $482, Trap-Pfad)
+    A4=00019400 (Deskriptor des Geweckten)  A0=0000c6a4 (sc68681)
+
+`RTE` findet also einen Stackframe vor, dessen Formatwort nicht stimmt. Das
+passt zum bekannten Trampolin-Thema: Der Prozess hat `F$Sleep` **nicht** über
+`TRAP #0` betreten, sondern über den PEA+RTS-Trampolinweg in `D_SysDis`. Beim
+Blockieren wird ein Kontext gesichert, der beim Fortsetzen als
+Exception-Frame zurückgelesen wird — das kann so nicht aufgehen. **Das ist
+der nächste Arbeitspunkt.**
+
+### Offen: Pfad-Deadlock
+
+Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind
+darin fest.
+
+### Wie man den Lesetest fährt
+
+Der `I$ReadLn`-Block in `Q9K_TestProcA` ist **aktiv**; er hält den Boot an,
+solange die Bruchstelle oben besteht. Zum Abschalten den Block bis
+`Q9K_TestReadDone` durch ein `bra Q9K_TestProcA_Loop` ersetzen.
+
+Eingabe schickt man über eine Pipe, sonst tritt nie ein Weckfall ein:
+
+```bash
+(python3 -u -c "
+import time,sys
+time.sleep(10); sys.stdout.write('hallo\r'); sys.stdout.flush()
+time.sleep(4);  sys.stdout.write('\x1e'); sys.stdout.flush()   # Ctrl-^ = Dump
+time.sleep(4)
+" | ./build/macos/q9.exe --rom <rom> --cf <image>)
+```
+
+Der Dump landet in `local_images/q9dbg_dump.txt` (nicht auf stdout!). Er zeigt
+seit heute zusätzlich: die drei Warteschlangen mit Zuständen, die
+Scratchzellen `$1600`–`$1620`, den vollen Registersatz der Exception und einen
+Schreib-Watch mit Sequenznummern (`Q9_WATCH_ADDR`/`Q9_WATCH_LEN`).
+
+**Die Sequenznummer hat den Fall entschieden:** Der Geweckte wurde stets
+*112 Schreibzugriffe* vor dem Dump eingereiht, egal ob ich 6 oder 15 Sekunden
+wartete. Genau daran war zu sehen, dass das System längst stand — und nicht
+etwa der Scheduler den Prozess übersah.
 
 ## Offene Punkte
 

@@ -1155,90 +1155,29 @@ Q9K_TestHelloDone:
 * laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
 * (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
 * Vektorslot ueberschrieben).
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
-* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
-* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
-* Callcode ist also belegt, nicht geraten.
 *
-* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
-* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
-* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
-* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
-* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
-* ist die Kette in beide Richtungen offen.
-*
-* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
-* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
-* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
-* Vektorslot ueberschrieben).
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
-* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
-* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
-* Callcode ist also belegt, nicht geraten.
-*
-* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
-* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
-* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
-* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
-* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
-* ist die Kette in beide Richtungen offen.
-*
-* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
-* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
-* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
-* Vektorslot ueberschrieben).
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
-* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
-* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
-* Callcode ist also belegt, nicht geraten.
-*
-* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
-* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
-* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
-* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
-* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
-* ist die Kette in beide Richtungen offen.
-*
-* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
-* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
-* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
-* Vektorslot ueberschrieben).
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
-* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
-* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
-* Callcode ist also belegt, nicht geraten.
-*
-* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
-* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
-* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
-* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
-* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
-* ist die Kette in beide Richtungen offen.
-*
-* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
-* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
-* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
-* Vektorslot ueberschrieben).
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
-* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
-* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
-* Callcode ist also belegt, nicht geraten.
-*
-* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
-* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
-* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
-* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
-* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
-* ist die Kette in beide Richtungen offen.
-*
-* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
-* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
-* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
-* Vektorslot ueberschrieben).
-* Der I$ReadLn-Block ist hier uebersprungen -- eingeschaltet bringt er den
-* Boot zum Stillstand und verdeckt jeden anderen Test. Stand und
-* Messergebnisse: docs/OWN_KERNEL_STATUS.md.
-        bra     Q9K_TestProcA_Loop
+* Der Aufruf haelt den Boot an, solange der Weckweg nicht geschlossen ist
+* (Stand: docs/OWN_KERNEL_STATUS.md). Er steht hier trotzdem, weil nur er
+* den Lesepfad ueberhaupt bis in den Treiber bringt und damit die
+* Statikfelder V_BUSY/V_WAKE der Messung zugaenglich macht.
+        moveq   #'<',d7                     * DIAGNOSE: I$ReadLn wird versucht
+        bsr     Q9K_DiagWriteD7
+        clr.w   d0                          * Pfad 0 = Standardeingabe
+        moveq   #32,d1                      * Puffergroesse
+        lea     Q9K_TestReadBuf(pc),a0
+        trap    #0
+        dc.w    $008b                       * I$ReadLn
+        bcs     Q9K_TestReadFail
+        moveq   #'>',d7                     * DIAGNOSE: Zeile gelesen
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestReadDone
+
+Q9K_TestReadFail:
+        moveq   #'r',d7                     * DIAGNOSE: I$ReadLn fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+Q9K_TestReadDone:
 
 Q9K_TestWriteNoPath:
         moveq   #'n',d7                     * DIAGNOSE: kein belegter P$Path-Slot
@@ -1841,17 +1780,27 @@ Q9K_SysFChkMem:
 *
 * Umgesetzt ist die WECKWIRKUNG, nicht die Signalzustellung -- Begruendung
 * s. Kopfkommentar in q9kernel_procsleep.c.
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04, beim ersten I$ReadLn): dieser
+* Handler sicherte nur a6. Der C-Aufruf darunter darf aber d0/d1/a0/a1 nach
+* Belieben ueberschreiben (Scratch-Register der Aufrufkonvention) -- und
+* F$Send wird als EINZIGER Syscall aus einer fremden Interruptroutine
+* heraus gerufen: sc68681 weckt damit den wartenden Leser. Die ISR lief
+* danach mit unseren Zwischenwerten in ihren Registern weiter und sprang in
+* Datenmuell; die CPU meldete "Illegal Instruction" mitten im
+* Prozessdeskriptor des Geweckten (a1 = Deskriptor-1, d1 = Deskriptor,
+* a0 = unsere eigene Scratchzelle -- alles Werte aus DIESEM Handler).
+* Deshalb: kompletter Registersatz um den C-Aufruf, nicht nur a6. Ausgaenge
+* sind allein Carry und d1.w (Fehlercode), beide werden erst NACH dem
+* Zurueckholen gesetzt.
 Q9K_SysFSend:
-        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
-        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
+        movem.l d0-d7/a0-a6,-(sp)             * 60 Byte -- ALLES retten, s. oben
+        lea     Q9K_CRuntimeData(pc),a6        * fuer den C-Aufruf umschalten
         andi.l  #$0000ffff,d0                  * nur d0.w ist echte Eingabe
         move.l  d0,Q9K_SendScratch_Pid
-        move.l  d1,-(sp)
-        andi.l  #$0000ffff,d1
+        andi.l  #$0000ffff,d1                  * dito d1.w
         move.l  d1,Q9K_SendScratch_Signal
-        move.l  (sp)+,d1
         bsr     Q9K_SysSendImpl
-        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+        movem.l (sp)+,d0-d7/a0-a6              * Aufrufer sieht seine Register unveraendert
 
         tst.w   Q9K_SendScratch_Success+2
         beq     Q9K_SysFSend_Fail
