@@ -81,74 +81,59 @@ haben.
 schreibende Kind darin fest — ein Hinweis auf Pfad-Semantik, die wir noch
 nicht sauber abbilden.
 
-## WICHTIGER BEFUND: Prozessdeskriptor-Layout kollidiert mit OS-9
+## Prozessdeskriptor: an das echte OS-9-Layout angeglichen
 
-`F$Send` kam mit der Prozess-ID **`$6105`** an — und diese Zahl verrät alles:
-`$61` ist `'a'` (unser `STATE_ACTIVE`), `$05` die Priorität des
-Testprozesses. Der Treiber liest `P$ID` also als **Wort bei Offset `$00`**
-und bekommt dort unsere State- und Prioritäts-Bytes.
+Anlass war ein Fund mit hohem Wiedererkennungswert: `F$Send` kam mit der
+Prozess-ID **`$6105`** an — `$61` ist `'a'` (unser `STATE_ACTIVE`), `$05` die
+Priorität des Testprozesses. Der Treiber liest `P$ID` als Wort bei Offset
+`$00` und bekam dort unsere State- und Prioritäts-Bytes.
 
-Das echte Layout (`MWOS/OS9/SRC/DEFS/process.a`):
+Maßgeblich ist `MWOS/OS9/SRC/DEFS/process.a`. Angeglichen wurde alles, was
+fremde Module lesen können:
 
-    P$ID     $00 (word)   P$PID $02   P$SID $04   P$CID $06
-    P$sp     $08 (long)   P$usp $0C   P$MemSiz $10
-    P$Prior  $18 (word)   P$Age $1A   P$State  $1C (word)
-    P$Signal $26 (word)   P$SigVec $28 (long)
+| Feld | Offset | vorher |
+|---|---|---|
+| `P$ID` | `$00` (word) | *fehlte* — wird jetzt mitgeführt |
+| `P$sp` | `$08` (long) | `$38` (SavedSP) |
+| `P$Prior` | `$18` (word) | `$01` |
+| `P$Age` | `$1A` (word) | `$02` |
+| `P$State` | `$1C` (word) | `$00` |
+| `P$Signal` | `$26` (word) | *fehlte* — `F$Send` legt den Code hier ab |
+| `P$QueueN/P` | `$30`/`$34` | lag bereits richtig |
+| `P$PModul` | `$38` (long) | `$08` (Modulkopf) |
+| `P$Path` | `$168` | lag bereits richtig |
 
-Unseres weicht durchgehend ab: State als *Byte* bei `$00`, Priorität bei
-`$01`, `SavedSP` bei `$38`. Bisher fiel das nicht auf, weil die fremden
-Module nur wenige Felder lasen — `P$Path` bei `$168` hatten wir aus einem
-genau solchen Fund bereits richtig. **Sobald ein Modul `P$ID` liest, bekommt
-es Müll.**
+Byte-Felder liegen im *unteren* Byte des jeweiligen OS-9-Wortes (`State $1D`,
+`Prior $19`, `Age $1B`), damit bestehende Byte-Zugriffe unverändert bleiben.
+Eigene Zusatzfelder ohne OS-9-Entsprechung sitzen hinter `P$Path` ab `$1B8`.
 
-Bemerkenswert auch `P$Signal` (`$26`): dort gehört der Signalcode hin, den
-`F$Send` heute verwirft. Das Feld ist im echten Layout vorgesehen.
+**Zwei Lehren daraus:**
 
-**Konsequenz:** Das Layout gehört an OS-9 angeglichen — mindestens für die
-Felder, die fremde Module lesen (`P$ID`, `P$Prior`, `P$State`, `P$Signal`,
-`P$Path`). Das ist ein eigener, substanzieller Umbau und die Voraussetzung
-dafür, dass der Lesepfad und weitere Treiberdienste sauber funktionieren.
+- `P$QueueN`/`P$QueueP` liegen bei `$30`/`$34` — genau dort, wo unsere
+  Queue-Felder schon lagen. Ein erster Versuch, sie nach hinten zu schieben,
+  brach den Boot sofort: Die Queue-Sentinels sind kleine Strukturen im
+  Kernel-Global-Bereich, ein Offset von `$1CC` sprengt sie.
+- Die Host-Suiten bilden das Layout verkürzt nach und setzen eigene Offsets.
+  Der Scheduler-Test legte `SLEEPTICKS` auf `$18`–`$1B` — genau dorthin
+  fallen jetzt `Prior`/`Age`/`State`.
 
-## In Arbeit: `I$ReadLn` — die Gegenrichtung
+## Offen: der Lesepfad
 
-Der Lesepfad **erreicht den Treiber**: Der Testprozess ruft `I$ReadLn`
-(`$8b`, in IOMans Servicetabelle real auf dieselbe Routine registriert wie
-`I$Read`), der Marker `<` erscheint, und der Prozess **blockiert korrekt** —
-die Warteschlangen-Mechanik trägt also.
+Der Lesepfad erreicht den Treiber, das Zeichen wird empfangen und abgeholt,
+und die Exception nach dem Wecken ist behoben (ISR-Adressen werden
+plausibilisiert — ungerade Adressen und alles unter `$1000` werden
+übersprungen).
 
-Eine echte Konsoleneingabe wird **empfangen und vom Treiber abgeholt**: der
-RX-FIFO zeigt danach `count=0` bei `head=tail=3`, also drei eingegangene und
-entnommene Zeichen. Und es fehlt **kein Syscall** — der Unimplemented-Stub
-meldete sich während des gesamten Lesevorgangs kein einziges Mal (beim
-`I$Write`-Problem war genau das der Schlüssel gewesen).
+**Verbleibend, mit verändertem Bild nach der Layout-Angleichung:**
 
-**Der Weckweg ist gefunden und implementiert** (`f43b0dc`): Die ISR von
-sc68681 ruft `F$Send` (`$08`) über den PEA+RTS-Trampolinweg, sobald ein
-Zeichen empfangen ist — mit der Prozess-ID des wartenden Lesers in `d0.w`.
-Gemessen wurde beides: der Block wird 11× betreten, das Trampolin einmal
-genommen. Der Treiber hatte also eine gültige ID und hat wirklich gesendet;
-der Aufruf lief nur ins Leere, weil `F$Send` im Kernel fehlte.
+1. Der Treiber trägt die Prozess-ID des wartenden Lesers **nicht ein** und
+   ruft `F$Send` daher gar nicht mehr. Vorher rief er es mit der Müll-ID
+   `$6105`. Zu klären ist, woher er die ID nimmt und was ihm dabei noch fehlt.
+2. **Pfad-Deadlock:** Blockiert der Erzeuger lesend auf einem Pfad, hängt ein
+   schreibendes Kind darin fest.
 
-Umgesetzt ist die **Weckwirkung**, nicht die Signalzustellung — der Kernel
-hat noch keine Signalwarteschlange und keine Intercept-Routinen (`F$Icpt`),
-eine echte Zustellung hätte also keinen Ort. Neu ist dafür `Q9K_SchedWake`,
-das genau das Muster kapselt, mit dem `Q9K_SleepQDecrementAll` einen
-abgelaufenen Timeout behandelt.
-
-**Wirkung:** Der wartende Leser wird jetzt tatsächlich geweckt — Prozess A
-läuft nach der Eingabe weiter, statt für immer zu blockieren.
-
-**Die Exception nach dem Wecken ist behoben** (`45c262b`): Im Autovektor-Fall
-durchläuft der Dispatcher die Polling-Tabelle ungefiltert und rief dabei
-einen Eintrag mit der ISR-Adresse **1** auf. Eine ISR-Adresse muss plausibel
-sein, nicht bloß ungleich 0 — ungerade Adressen und alles unterhalb `$1000`
-werden jetzt übersprungen.
-
-**Offen bleiben zwei Dinge**, beide oben beschrieben: das
-Deskriptor-Layout (der Treiber weckt wegen `P$ID` die falsche ID) und die
-Pfad-Semantik (blockiert der Erzeuger lesend, hängt ein schreibendes Kind
-fest). Der `I$ReadLn`-Block ist deshalb vorübergehend übersprungen — er
-würde den Boot zum Stillstand bringen.
+Der `I$ReadLn`-Block im Testprozess ist deshalb übersprungen — eingeschaltet
+brächte er den Boot zum Stillstand und verdeckte jeden anderen Test.
 
 ## Offene Punkte
 
