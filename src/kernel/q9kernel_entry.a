@@ -1106,6 +1106,39 @@ Q9K_TestPathScanNext:
         move.l  d1,d5                         * d1.l = geschriebene Bytes
         bsr     Q9K_DiagWriteHex32
 
+* MEILENSTEIN-TEST (2026-09-04): ein ECHTES Programm starten. hellosvc
+* (s. hellosvc.a) ist ein eigenstaendiges OS-9-Programmmodul, das seine
+* Ausgabe ausschliesslich ueber Syscalls macht -- I$WritLn auf Pfad 1,
+* danach F$Exit. Anders als forkchild fasst es die Hardware nicht an.
+*
+* Es bekommt seinen Ausgabepfad NICHT von uns gesagt: F$Fork vererbt seit
+* heute die Pfade des Erzeugers (s. Q9K_ProcFork), und A6 wird fuer externe
+* Handler vom Kernel gesetzt (s. Q9K_TrapExtInvoke). Genau deshalb kommt
+* das Modul ohne jede Sonderbehandlung aus -- der Nachweis, dass ein
+* gewoehnliches Programm auf diesem Kernel laufen kann.
+*
+* d1-d4 genullt: keine zusaetzliche Speicher-/Parametergroesse, keine
+* Pfadangabe, Prioritaet vom Erzeuger geerbt.
+        clr.w   d0
+        clr.l   d1
+        clr.l   d2
+        clr.w   d3
+        clr.w   d4
+        lea     Q9K_TestHelloName(pc),a0
+        trap    #0
+        dc.w    3                                  * Funktionscode 3 = F$Fork
+        bcs     Q9K_TestHelloFail
+        moveq   #'H',d7                     * DIAGNOSE: hellosvc geforkt
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestHelloDone
+
+Q9K_TestHelloFail:
+        moveq   #'h',d7                     * DIAGNOSE: F$Fork("hellosvc") fehlgeschlagen
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+Q9K_TestHelloDone:
+
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
 * die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
 * dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
@@ -1122,38 +1155,9 @@ Q9K_TestPathScanNext:
 * laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
 * (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
 * Vektorslot ueberschrieben).
-        moveq   #'<',d7                     * DIAGNOSE: warte jetzt auf Eingabe
-        bsr     Q9K_DiagWriteD7
-        move.l  a6,-(sp)
-        movea.l #0,a6                          * reale Systemglobal-Basis fuer IOMans Handler
-        move.w  d3,d0                           * dieselbe Pfadnummer wie beim Schreiben
-        move.l  #Q9K_TestReadMax,d1              * d1.l = Puffergroesse
-        lea     Q9K_TestReadBuf(pc),a0            * (a0) = Puffer
-        trap    #0
-        dc.w    $008b                              * Funktionscode $8b = I$ReadLn
-        movea.l (sp)+,a6                            * CCR bleibt unberuehrt
-        bcs     Q9K_TestReadFail
-        moveq   #'>',d7                     * DIAGNOSE: I$ReadLn ohne Fehler zurueck
-        bsr     Q9K_DiagWriteD7
-        move.l  d1,d5                         * d1.l = gelesene Bytes
-        bsr     Q9K_DiagWriteHex32
-* Gelesenes zurueckschreiben -- der eigentliche Beweis, dass echte Daten
-* ankommen und nicht nur eine Laengenangabe.
-        move.l  d1,d4
-        lea     Q9K_TestReadBuf(pc),a3
-Q9K_TestReadEcho:
-        tst.l   d4
-        beq     Q9K_TestProcA_Loop
-        move.b  (a3)+,d7
-        bsr     Q9K_DiagWriteD7
-        subq.l  #1,d4
-        bra     Q9K_TestReadEcho
-
-Q9K_TestReadFail:
-        moveq   #'r',d7                     * DIAGNOSE: I$ReadLn fehlgeschlagen, Code folgt
-        bsr     Q9K_DiagWriteD7
-        move.l  d1,d5
-        bsr     Q9K_DiagWriteHex32
+* TEST 2026-09-04: I$ReadLn-Block voruebergehend uebersprungen -- er
+* blockiert den Elternprozess auf dem Pfad, waehrend das geforkte
+* Programm darauf schreiben will.
         bra     Q9K_TestProcA_Loop
 
 Q9K_TestWriteNoPath:
@@ -1217,6 +1221,10 @@ Q9K_TestReadBuf:
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 Q9K_TestReadMax equ 32
+
+Q9K_TestHelloName:
+        dc.b    "hellosvc",0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
 * Einbindung", DRITTER Versuch) -- Minimale "Ausgabe-Vtable" fuer IOMans
@@ -1591,6 +1599,20 @@ Q9K_TrapCallExternal:
 Q9K_TrapExtInvoke:
         move.l  Q9K_TrapHandlerScratch,-(sp)                  * Handler-Adresse darueber
         movea.l Q9_D_Proc,a4                                   * A4 = aktueller Prozessdeskriptor
+* NACHTRAG 2026-09-04: A6 = 0 (reale Systemglobal-Basis) fuer den externen
+* Handler. IOMans Code adressiert die Systemglobals durchgehend A6-relativ
+* -- $3a4(a6) fuer D_SysDis, $64(a6) fuer den Ausgabevektor und so fort.
+*
+* Bisher musste der AUFRUFER das selbst tun; unser Testcode hatte
+* entsprechend vor jedem Syscall ein "movea.l #0,a6" stehen. Ein echtes
+* OS-9-Programm tut das nicht und kann es auch nicht: dort zeigt A6 auf den
+* EIGENEN statischen Datenbereich (die vsect des Moduls), den es zwischen
+* zwei Syscalls braucht. Das Umschalten gehoert also in den Kernel.
+*
+* Der Aufrufer verliert dabei nichts: sein A6 steckt im R$-Rahmen und wird
+* beim Ruecksprung mit den uebrigen Registern zurueckgeschrieben
+* (s. Q9K_TrapCallExternal).
+        suba.l  a6,a6                                            * A6 = 0
         rts                                                     * springt in den Handler
 Q9K_TrapAfterCall:
 * NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor"): ECHTE Konvention per
