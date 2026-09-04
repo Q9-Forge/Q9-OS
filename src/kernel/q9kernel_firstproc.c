@@ -55,6 +55,13 @@
  *          Sleep(0) = unendlich (kann in diesem Kernel nur per
  *          F$Send/Signal geweckt werden -- existiert noch nicht,
  *          bewusste Grenze). Nur gueltig, wenn State=='s'.
+ *   +0x1B0 AllocBase   (4 Byte, NACHTRAG 2026-09-01) -- Basis des von
+ *          diesem Prozess belegten Daten-/Stack-Blocks. Liegt bewusst
+ *          HINTER der kompatiblen P$Path-Tabelle (bis +0x1A8), so dass
+ *          sie von keiner OS-9-Pfadlogik beruehrt wird.
+ *   +0x1B4 AllocSize   (4 Byte) -- exakt die zu AllocBase gehoerige
+ *          Allokationsgroesse. Beide Felder machen die Freigabe beim
+ *          F$Exit moeglich; 0/0 bedeutet "kein eigener Block".
  *   +0x30  Next     (4 Byte) -- Ready-Queue-Link
  *   +0x34  Prev     (4 Byte) -- Ready-Queue-Link
  *   +0x38  SavedSP  (4 Byte, eigene Ergaenzung) -- zeigt auf den
@@ -107,6 +114,7 @@ typedef unsigned short Q9_u16;
 typedef unsigned char  Q9_u8;
 
 extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
+extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size);
 extern void   Q9K_SchedInsert(Q9_u32 desc);  /* q9kernel_sched.c -- setzt Age=Prioritaet, haengt in Q9_D_ACTIVQ ein */
 extern Q9_u32 Q9K_GetA6(void);  /* q9kernel_entry.a -- liefert den aktuellen (permanent auf
                                   * Q9K_CRuntimeData fixierten) a6-Wert, s. dortigen Kommentar */
@@ -151,6 +159,12 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 #ifndef Q9K_PROCDESC_ENTRYPC_OFF
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x3CUL
 #endif
+#ifndef Q9K_PROCDESC_ALLOCBASE_OFF
+#define Q9K_PROCDESC_ALLOCBASE_OFF 0x1B0UL
+#endif
+#ifndef Q9K_PROCDESC_ALLOCSIZE_OFF
+#define Q9K_PROCDESC_ALLOCSIZE_OFF 0x1B4UL
+#endif
 #define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_ZOMBIE 'z'   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_WAITING 'w'  /* NACHTRAG 2026-08-22, s. Kopfkommentar */
@@ -192,7 +206,16 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
  * K F F F W" je genau einmal im Diagnose-Strom, kein 'k'/'w'/'H'/'S'),
  * danach 41101x 'A' und 41884x 'B' durchgehend fehlerfreies Round-Robin
  * ueber die volle Laufzeit -- kein Haenger, keine Korruption. */
-#define Q9K_PROC_STACK_SIZE 8192UL
+/* NACHTRAG 2026-09-01 (IOMan-Integration): von 8192 auf 32768 erhoeht,
+ * als Sicherheitsmarge fuer den seit Kurzem viel tieferen Aufrufpfad in
+ * Q9K_TestProcA (jsr in IOMans echten Einsprungpunkt, s. dort -- IOMan
+ * selbst ist eine reale, komplexe Fremdkomponente mit unbekanntem
+ * eigenen Stack-Bedarf). Getestet: behebt NICHT den aktuell offenen
+ * "kein A"-Befund (der hat eine andere, geklaerte Ursache -- s.
+ * Memory-Notiz q9-os-eigener-kernel-c, IOMan leitet I$Open an einen
+ * fehlenden Treiber weiter), bleibt aber als generelle Absicherung
+ * bestehen (Host-Test bestaetigt funktionale Korrektheit). */
+#define Q9K_PROC_STACK_SIZE 32768UL
 
 /* Fake-Rahmen-Geometrie, s. Kopfkommentar -- muss exakt zu "movem.l
  * (sp)+,d0-d7/a0-a6 / rte" passen. */
@@ -237,7 +260,7 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
  * "Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, cursor)") -- hier lokal dupliziert,
  * gebraucht fuer die Prozess-ID-Berechnung (s. Q9K_ProcFork). */
 #ifndef Q9K_PROCDESC_SIZE
-#define Q9K_PROCDESC_SIZE 128UL
+#define Q9K_PROCDESC_SIZE 0x200UL  /* deckt P$Path bis 0x1A8, s. q9kernel_tables.c */
 #endif
 #ifndef Q9K_PROCPOOL_BASE_ADDR
 #define Q9K_PROCPOOL_BASE_ADDR 0x1204UL
@@ -319,6 +342,16 @@ static Q9_u32 Q9K_ProcPoolAlloc(void)
     return head;
 }
 
+/* Gegenstueck zum Pop oben fuer einen abgebrochenen Erzeugungsvorgang.
+ * Der Slot war noch nie sichtbar/aktiv und braucht daher keine weitere
+ * Bereinigung; das Zurueckhaengen muss aber erfolgen, damit ein
+ * fehlgeschlagenes Q9K_ProcCreate keinen Pool-Slot verliert. */
+static void Q9K_ProcPoolAbortAlloc(Q9_u32 desc)
+{
+    Q9K_SetU32(desc, Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR));
+    Q9K_SetU32(Q9K_PROCPOOL_FREE_ADDR, desc);
+}
+
 /* Erzeugt EINEN neuen Prozess: Deskriptor aus dem Pool holen, eigenen
  * Stack allozieren (Arena), darauf den Fake-Rahmen aufbauen (s.
  * Kopfkommentar), Status aktiv/Prioritaet setzen, per Q9K_SchedInsert in
@@ -340,8 +373,10 @@ Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority)
         return 0;
 
     stackBase = Q9K_AllocMem(Q9K_PROC_STACK_SIZE);
-    if (stackBase == 0)
+    if (stackBase == 0) {
+        Q9K_ProcPoolAbortAlloc(desc);
         return 0;
+    }
 
     /* Stack waechst abwaerts -- der Fake-Rahmen liegt deshalb GANZ OBEN,
      * direkt unterhalb des allozierten Blockendes. */
@@ -378,6 +413,8 @@ Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority)
      * ueber F$Fork. */
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, stackBase);
+    Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF, Q9K_PROC_STACK_SIZE);
     Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
     Q9K_SetU32(desc + Q9K_PROCDESC_ENTRYPC_OFF, entryPC);
 
@@ -481,6 +518,7 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
 
     desc = Q9K_ProcPoolAlloc();
     if (desc == 0) {
+        Q9K_FreeMem(block, totalSize);
         Q9K_ModDirUnlinkByHeader(hdrAddr);
         *outError = (Q9_u16)Q9K_E_PRCFUL;
         return 0;
@@ -552,6 +590,8 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, (Q9_u8)priority);
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, parentDesc);   /* NACHTRAG 2026-08-22 */
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, hdrAddr);      /* NACHTRAG 2026-08-22 */
+    Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, block);
+    Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF, totalSize);
     Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
     Q9K_SetU32(desc + Q9K_PROCDESC_ENTRYPC_OFF, entryPC);
 

@@ -88,6 +88,7 @@ static void Q9K_ExcDefault(void)
  * "F$Link/F$UnLink", 2026-08-21). KEIN normaler C-aufrufbarer Handler
  * (RTE statt RTS, eigene Registerkonvention, direkt als Vektor-Ziel
  * gedacht) -- hier nur die ADRESSE gebraucht, fuer den Tabelleneintrag. */
+extern void Q9K_ExcTrap(void);   /* q9kernel_entry.a, s. Kommentar bei defaultHandler */
 extern void Q9K_TrapDispatch(void);
 
 /* q9kernel_entry.a -- setzt VBR (movec, privilegiert, in C nicht
@@ -105,6 +106,7 @@ extern void Q9K_SetVBR(Q9_u32 tableBase);
  * KEIN normaler C-aufrufbarer Handler (RTE statt RTS, eigene
  * Registerkonvention). */
 extern void Q9K_TimerIRQHandler(void);
+extern void Q9K_IRQDispatch(void);      /* q9kernel_entry.a -- Zustellung fuer F$IRQ-Eintraege */
 
 /* NUR Integer-Zaehler, KEINE Zeiger -- s. Kopfkommentar (echter l68-
  * Linker-Fund: Zeiger als const-Daten sind in Systm-Modulen verboten).
@@ -135,11 +137,173 @@ static const Q9_u16 Q9K_ExcGroupCounts[] = {
  * defaultHandler wird per Code (nicht als Daten-Initialisierer)
  * ermittelt -- s. Kopfkommentar zum Linker-Fund. Rueckgabe 0 = Erfolg,
  * 1 = Quelltabelle inkonsistent (Summe != 254). */
+/* ---------------------------------------------------------------------
+ * F$IRQ (Callcode $2A, "Enter IRQ Polling Table")
+ *
+ * Konvention aus dem realen Treiber sc68681 abgelesen (Modul-Offset
+ * $00ec ff., nicht geraten):
+ *     move.b $34(a1),d0     d0.b = Vektornummer  (aus dem Descriptor)
+ *     move.b $36(a1),d1     d1.b = Prioritaet
+ *     lea    $572(pc),a0    a0   = Interrupt-Service-Routine
+ *     trap   #0 / $002a
+ * Zusaetzlich gilt die OS-9-Konvention a2 = statischer Speicher des
+ * Treibers, a3 = Geraete-Portadresse; beide werden mitgefuehrt, damit
+ * der spaetere IRQ-Dispatch sie der ISR wieder vorlegen kann.
+ * a0 = 0 bedeutet "Eintrag entfernen" (Treiber-Terminate).
+ *
+ * ACHTUNG, bewusst noch unvollstaendig: Diese Fassung FUEHRT die Tabelle
+ * nur -- sie stellt noch KEINE Interrupts zu. Der Zweck ist zunaechst,
+ * dass die Treiber-Initialisierung durchlaeuft (sc68681 ruft F$IRQ
+ * dreimal und brach bisher an unserem Unimplemented-Stub mit E_UNKSVC
+ * ab). Die Zustellung gehoert in den IRQ-Pfad (Q9K_TimerIRQHandler bzw.
+ * einen dortigen Polling-Durchlauf) und ist ein eigener Schritt.
+ * --------------------------------------------------------------------- */
+#ifndef Q9K_IRQTAB_BASE
+#define Q9K_IRQTAB_BASE   0x1500UL   /* 16 Eintraege a 20 Byte, im genullten Global-Bereich */
+#endif
+#define Q9K_IRQTAB_SLOTS  16UL
+#define Q9K_IRQTAB_ENTSZ  20UL
+#define Q9K_IRQ_OFF_VECTOR  0UL      /* 0 = Slot frei */
+#define Q9K_IRQ_OFF_PRIO    4UL
+#define Q9K_IRQ_OFF_ISR     8UL
+#define Q9K_IRQ_OFF_STATIC  12UL
+#define Q9K_IRQ_OFF_PORT    16UL
+
+static Q9_u32 Q9K_IRQGet(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
+static void   Q9K_IRQSet(Q9_u32 addr, Q9_u32 v) { *(volatile Q9_u32 *)addr = v; }
+
+/* Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcIRQ(Q9_u32 vector, Q9_u32 prio, Q9_u32 isr,
+                Q9_u32 statics, Q9_u32 port, Q9_u16 *outError)
+{
+    Q9_u32 i;
+    Q9_u32 slot;
+    Q9_u32 freeSlot = 0;
+
+    *outError = 0;
+
+    if (isr == 0) {
+        /* Entfernen: Eintrag mit passendem Vektor UND statischem Speicher
+         * suchen (mehrere Geraete koennen sich denselben Vektor teilen). */
+        for (i = 0; i < Q9K_IRQTAB_SLOTS; i++) {
+            slot = Q9K_IRQTAB_BASE + i * Q9K_IRQTAB_ENTSZ;
+            if (Q9K_IRQGet(slot + Q9K_IRQ_OFF_VECTOR) == vector &&
+                Q9K_IRQGet(slot + Q9K_IRQ_OFF_STATIC) == statics) {
+                Q9K_IRQSet(slot + Q9K_IRQ_OFF_VECTOR, 0);
+                Q9K_IRQSet(slot + Q9K_IRQ_OFF_ISR, 0);
+                return 1;
+            }
+        }
+        *outError = 0x00E1U;            /* E_PARAM, kein solcher Eintrag */
+        return 0;
+    }
+
+    if (vector == 0) {
+        *outError = 0x00E1U;            /* E_PARAM, Vektor 0 ist unzulaessig */
+        return 0;
+    }
+
+    for (i = 0; i < Q9K_IRQTAB_SLOTS; i++) {
+        slot = Q9K_IRQTAB_BASE + i * Q9K_IRQTAB_ENTSZ;
+        if (Q9K_IRQGet(slot + Q9K_IRQ_OFF_VECTOR) == 0) {
+            if (freeSlot == 0)
+                freeSlot = slot;
+        } else if (Q9K_IRQGet(slot + Q9K_IRQ_OFF_VECTOR) == vector &&
+                   Q9K_IRQGet(slot + Q9K_IRQ_OFF_STATIC) == statics) {
+            /* Derselbe Treiber registriert denselben Vektor erneut --
+             * als Aktualisierung behandeln, nicht als Fehler. */
+            freeSlot = slot;
+            break;
+        }
+    }
+
+    if (freeSlot == 0) {
+        *outError = 0x00CAU;            /* E_POLL, Polling Table Full */
+        return 0;
+    }
+
+    Q9K_IRQSet(freeSlot + Q9K_IRQ_OFF_PRIO, prio);
+    Q9K_IRQSet(freeSlot + Q9K_IRQ_OFF_ISR, isr);
+    Q9K_IRQSet(freeSlot + Q9K_IRQ_OFF_STATIC, statics);
+    Q9K_IRQSet(freeSlot + Q9K_IRQ_OFF_PORT, port);
+    Q9K_IRQSet(freeSlot + Q9K_IRQ_OFF_VECTOR, vector);   /* zuletzt: macht den Slot gueltig */
+
+    /* NEU 2026-09-03: Zustellung einschalten. Bisher wurde die Tabelle nur
+     * gefuehrt -- ein eintreffender Geraete-Interrupt lief in den
+     * generischen Halt-Handler, der Treiber bekam nie sein TxRDY/RxRDY.
+     * Der Vektorslot wird erst HIER umgebogen (nicht pauschal beim Boot):
+     * so bleiben alle Vektoren, fuer die sich kein Treiber registriert hat,
+     * weiterhin auf dem Halt-Handler und melden einen echten Fehler, statt
+     * still ins Leere zu laufen.
+     * Ein einziger Dispatcher bedient alle Vektoren -- er liest seine
+     * Vektornummer aus dem Exception-Frame (s. Q9K_IRQDispatch). */
+    if (vector < Q9K_EXCTABLE_TOTAL) {
+        Q9_u32 tableBase = *(volatile Q9_u32 *)Q9_D_EXCJMP;
+
+        if (tableBase != 0) {
+            Q9K_ExcHandler *slotPtr =
+                (Q9K_ExcHandler *)(tableBase + vector * sizeof(Q9K_ExcHandler));
+            *slotPtr = Q9K_IRQDispatch;
+
+            /* Zusaetzlich die Autovektoren auf den Dispatcher legen (Vektor
+             * 25-31 = Level 1-7). Grund: der Interrupt eines Geraets kommt
+             * nicht zwingend unter seinem per IVR gesetzten Vektor an -- beim
+             * DUART liefert das Interrupt-Acknowledge real einen Autovektor
+             * (27 = Level 3). Der Dispatcher erkennt diesen Fall und fragt
+             * dann die gesamte Tabelle ab, statt nach Vektornummer zu filtern.
+             * Vektor 30 bleibt ausgespart: dort haengt der Board-Timer mit
+             * eigenem Handler (s. Q9K_TimerIRQHandler weiter unten). */
+            {
+                Q9_u32 av;
+
+                for (av = 25; av <= 31; av++) {
+                    Q9K_ExcHandler *avSlot;
+
+                    if (av == 30) {
+                        continue;
+                    }
+                    avSlot = (Q9K_ExcHandler *)(tableBase + av * sizeof(Q9K_ExcHandler));
+                    *avSlot = Q9K_IRQDispatch;
+                }
+            }
+        }
+    }
+    return 1;
+}
+
+/* Scratch-Bruecke fuer den Assembler-Handler, gleiches Muster wie ueberall. */
+#ifndef Q9K_IRQ_SCRATCH_VECTOR
+#define Q9K_IRQ_SCRATCH_VECTOR  0x13C8UL
+#define Q9K_IRQ_SCRATCH_PRIO    0x13CCUL
+#define Q9K_IRQ_SCRATCH_ISR     0x13D0UL
+#define Q9K_IRQ_SCRATCH_STATIC  0x13D4UL
+#define Q9K_IRQ_SCRATCH_PORT    0x13D8UL
+#define Q9K_IRQ_SCRATCH_ERROR   0x13DCUL
+#define Q9K_IRQ_SCRATCH_SUCCESS 0x13E0UL
+#endif
+
+void Q9K_SysIRQImpl(void)
+{
+    Q9_u16 err = 0;
+    int ok = Q9K_ProcIRQ(Q9K_IRQGet(Q9K_IRQ_SCRATCH_VECTOR),
+                         Q9K_IRQGet(Q9K_IRQ_SCRATCH_PRIO),
+                         Q9K_IRQGet(Q9K_IRQ_SCRATCH_ISR),
+                         Q9K_IRQGet(Q9K_IRQ_SCRATCH_STATIC),
+                         Q9K_IRQGet(Q9K_IRQ_SCRATCH_PORT), &err);
+    Q9K_IRQSet(Q9K_IRQ_SCRATCH_ERROR, (Q9_u32)err);
+    Q9K_IRQSet(Q9K_IRQ_SCRATCH_SUCCESS, ok ? 1UL : 0UL);
+}
+
 Q9_u32 Q9K_BuildExcTable(void)
 {
     Q9_u32 tableBase = *(volatile Q9_u32 *)Q9_D_EXCJMP;
     Q9_u32 vectorIndex = Q9K_EXCTABLE_RESERVED;
-    Q9K_ExcHandler defaultHandler = Q9K_ExcDefault;
+    /* 2026-09-02: Q9K_ExcTrap (Assembler, q9kernel_entry.a) statt der
+     * C-Funktion Q9K_ExcDefault -- letztere bekommt vom Compiler einen
+     * Stack-Check-Prolog, der bei einer Exception im Kontext eines
+     * externen Moduls (A6=0) selbst zuschlaegt und die eigentliche
+     * Exception verdeckt. Q9K_ExcTrap haelt Vektor, PC und SR fest. */
+    Q9K_ExcHandler defaultHandler = (Q9K_ExcHandler)Q9K_ExcTrap;
     unsigned int i;
 
     for (i = 0; i < Q9K_EXCSOURCE_COUNT; i++) {

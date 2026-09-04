@@ -87,7 +87,16 @@ extern void   Q9K_SysFExit(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F
 extern void   Q9K_SysFSleep(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Sleep (Callcode 0x0a) */
 extern void   Q9K_SysFSRqMem(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$SRqMem (Callcode 0x28) */
 extern void   Q9K_SysFSRtMem(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$SRtMem (Callcode 0x29) */
+extern void   Q9K_SysFSSvc(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$SSvc (Callcode 0x32) */
+extern void   Q9K_SysFGProcP(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$GProcP (Callcode 0x37) */
+extern void   Q9K_SysFIOpen(void);
+extern void   Q9K_SysFAllPD(void);   /* q9kernel_entry.a, F$AllPD (Callcode 0x30) */
+extern void   Q9K_SysFIRQ(void);     /* q9kernel_entry.a, F$IRQ  (Callcode 0x2a) */
+extern void   Q9K_SysFChkMem(void);  /* q9kernel_entry.a, F$ChkMem (Callcode 0x58) */
+extern void   Q9K_SysFPrsNam(void);  /* q9kernel_entry.a, F$PrsNam (Callcode 0x10) */   /* q9kernel_entry.a, TRAP-#0-Handler fuer I$Open (Callcode 0x84) */
+extern void   Q9K_SysFID(void);      /* q9kernel_entry.a, TRAP-#0-Handler fuer F$ID (Callcode 0x0c) */
 extern void   Q9K_SysFPanic(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Panic (Callcode 0x5e) */
+extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
 
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
  * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
@@ -143,22 +152,54 @@ extern void Q9K_Diag6(void);
  * F$Sleep NICHT mehr gelesen/geschrieben. */
 #define Q9K_SLEEPQ_SENTINEL_ADDR 0x12F0UL
 
-/* Freispeicher-Basis fuer die Arena (Abschnitt 2, Punkt 3) -- 2026-08-18
- * mit Andreas abgestimmt: fester Offset, VORLAEUFIG, unter der Annahme,
- * dass der Boot-ROM das Kernel-Abbild selbst oberhalb dieser Adresse
- * laedt (noch NICHT am echten/emulierten Boot-Pfad verifiziert -- der
- * neue Kernel wird testweise parallel zum echten dker030s ladbar
- * gemacht, s. build.sh/vendor, dort dann pruefen). Liegt bewusst deutlich
- * oberhalb von Q9K_CpuCount ($1200), damit spaeter noch Platz fuer
- * weitere eigene Kernel-Global-Erweiterungen bleibt, ohne die Arena-
- * Basis wieder verschieben zu muessen. */
-#define Q9K_FREEMEM_BASE    0x2000UL
+/* Freispeicher-Basis fuer die Arena (Abschnitt 2, Punkt 3).
+ *
+ * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-01, Stack-Corruption-Suche nach
+ * Q9K_PROCDESC_SIZE 128->512): der urspruengliche Wert $2000 war NIE
+ * gegen den tatsaechlichen Kernel-Stack geprueft worden (s. alter
+ * Kommentar unten, "VORLAEUFIG ... noch NICHT verifiziert" -- die
+ * Annahme stimmte nicht). Der eigene Boot-/Supervisor-Stack
+ * (Q9K_StackTop, q9kernel_entry.a) liegt bei
+ * Q9K_GlobBase($0)+Q9K_GlobSize($8000)+Q9K_StackSize($4000) = $C000 --
+ * der Stack belegt also $8000..$C000 (waechst abwaerts). Die Arena
+ * wuchs von $2000 aufwaerts OHNE Ruecksicht auf diesen Bereich: bei der
+ * fruehen, kleineren Q9K_PROCDESC_SIZE(128) blieb die Arena zufaellig
+ * unter $8000 (nie kollidiert), aber mit der jetzt noetigen Groesse
+ * (512, s. q9kernel_tables.c) wuchs sie bis $BC00 -- MITTEN in den
+ * Stack hinein. Die ProcPool-Nullungsschleife ueberschrieb dabei den
+ * eigenen Aufruf-Stack waehrend sie noch lief; der naechste
+ * verschachtelte Funktionsaufruf (Q9K_BuildFreeList) las danach eine
+ * bereits zerstoerte Ruecksprungadresse -> Sprung in zufaelligen
+ * Speicher ("random code execution", per Q9_BOARD_DEBUG-PC-Trace
+ * verifiziert). Per Bisektion mit Kanarien-Werten exakt auf diesen
+ * Speicherbereichs-Ueberlapp zurueckgefuehrt (Details: Memory-Notiz
+ * q9-os-eigener-kernel-c).
+ *
+ * Fix: Arena-Basis auf $10000 (64K) verschoben -- deutlich oberhalb von
+ * Q9K_StackTop ($C000), mit Sicherheitsmarge fuer kuenftiges
+ * Stack-Wachstum (Q9K_StackSize koennte spaeter erhoeht werden, ohne
+ * dass die Arena-Basis wieder verschoben werden muss). */
+/* NACHTRAG 2026-09-01 (BUGFIX "IOMan-Modul wird zur Laufzeit zerschossen",
+ * s. ausfuehrlichen Kommentar bei Q9K_StackBase in q9kernel_entry.a): Der
+ * Boot-Stack musste ueber die Bootkette ($7100..~$C400) hinaus verschoben
+ * werden und belegt jetzt $10000..$18000 -- also genau die bisherige
+ * Arena-Basis. Arena entsprechend mitgezogen, damit die Reihenfolge
+ * Globals / Bootkette / Stack / Arena ueberlappungsfrei bleibt. */
+#define Q9K_FREEMEM_BASE    0x18000UL
 
 /* Schreibt einen 32-Bit-Wert an eine absolute Adresse (=Kernel-Global-
  * Offset, da Kernel-Globals-Basis bei diesem Kernel $000000 ist) */
 static void Q9K_PutU32(Q9_u32 addr, Q9_u32 value)
 {
     *(volatile Q9_u32 *)addr = value;
+}
+
+/* Gegenstueck zu Q9K_PutU32 -- fuer die Q9K_SysUnimplemented-
+ * Fallback-Schleife gebraucht (pruefen, ob ein Slot noch 0/unregistriert
+ * ist), s. dort. */
+static Q9_u32 Q9K_GetU32(Q9_u32 addr)
+{
+    return *(volatile Q9_u32 *)addr;
 }
 
 /* Wie Q9K_PutU32, aber fuer 1-/2-Byte-Felder -- WICHTIG, nicht einfach
@@ -329,9 +370,17 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x04UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFWait);
                     Q9K_PutU32(usrdisBase + 0x06UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFExit);
                     Q9K_PutU32(usrdisBase + 0x0aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSleep);
+                    Q9K_PutU32(usrdisBase + 0x0cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFID);
                     Q9K_PutU32(usrdisBase + 0x28UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqMem);
                     Q9K_PutU32(usrdisBase + 0x29UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRtMem);
+                    Q9K_PutU32(usrdisBase + 0x32UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSSvc);
+                    Q9K_PutU32(usrdisBase + 0x37UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGProcP);
+                    Q9K_PutU32(usrdisBase + 0x84UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIOpen);
+                    Q9K_PutU32(usrdisBase + 0x30UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllPD);
+                    Q9K_PutU32(usrdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
+                    Q9K_PutU32(usrdisBase + 0x10UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPrsNam);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
+                    Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
 
                     Q9K_PutU32(sysdisBase + 0x00UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFLink);
                     Q9K_PutU32(sysdisBase + 0x02UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFUnLink);
@@ -339,9 +388,41 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x04UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFWait);
                     Q9K_PutU32(sysdisBase + 0x06UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFExit);
                     Q9K_PutU32(sysdisBase + 0x0aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSleep);
+                    Q9K_PutU32(sysdisBase + 0x0cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFID);
                     Q9K_PutU32(sysdisBase + 0x28UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqMem);
                     Q9K_PutU32(sysdisBase + 0x29UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRtMem);
+                    Q9K_PutU32(sysdisBase + 0x32UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSSvc);
+                    Q9K_PutU32(sysdisBase + 0x37UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGProcP);
+                    Q9K_PutU32(sysdisBase + 0x84UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIOpen);
+                    Q9K_PutU32(sysdisBase + 0x30UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllPD);
+                    Q9K_PutU32(sysdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
+                    Q9K_PutU32(sysdisBase + 0x10UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPrsNam);
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
+                    Q9K_PutU32(sysdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
+
+                    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per
+                     * Root-Cause-Suche eines echten IOMan-Stack-Crashs):
+                     * alle NOCH NICHT registrierten Slots (Wert 0) mit
+                     * Q9K_SysUnimplemented befuellen, statt sie auf 0 zu
+                     * lassen -- der reale, ECHTE Microware-Kernel macht
+                     * das ebenfalls (gemeinsamer Fehler-Stub, s.
+                     * REVERSE_ENGINEERING.md). Grund: der PEA+RTS-
+                     * Trampolin-Mechanismus (den externe Module wie
+                     * IOMan fuer performancekritische Primitive DIREKT
+                     * nutzen, s. modules/ioman/docs/REVERSE_ENGINEERING.md
+                     * "Runde 2") liest den Primaerarray-Wert und macht ein
+                     * "rts" DAHIN -- bei 0 waere das ein Sprung zu
+                     * physischer Adresse 0, mitten in die eigenen Kernel-
+                     * Global-DATEN. */
+                    {
+                        Q9_u32 slot;
+                        for (slot = 0; slot < 256UL; slot++) {
+                            if (Q9K_GetU32(usrdisBase + slot * 4UL) == 0)
+                                Q9K_PutU32(usrdisBase + slot * 4UL, (Q9_u32)(unsigned long)Q9K_SysUnimplemented);
+                            if (Q9K_GetU32(sysdisBase + slot * 4UL) == 0)
+                                Q9K_PutU32(sysdisBase + slot * 4UL, (Q9_u32)(unsigned long)Q9K_SysUnimplemented);
+                        }
+                    }
                 }
             }
             /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/

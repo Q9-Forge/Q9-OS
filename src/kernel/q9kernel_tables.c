@@ -18,15 +18,19 @@
  * Werte (docs/REVERSE_ENGINEERING.md, "Fund: Q9_disp_488" bzw. Thema 01
  * Modulverzeichnis-Nachtrag) -- keine Q9-Erfindung.
  *
- * Prozess-/Pfad-DESKRIPTOR-Groesse (Q9K_PROCDESC_SIZE/PATHDESC_SIZE)
- * dagegen IST eine eigene, bewusst vorlaeufige Q9-Festlegung: das echte
- * Deskriptor-Byte-Layout ist noch nicht reverse-engineert
- * (Q9_D_PROCSZ in q9sysglob.h ist selbst [PLATZHALTER]), und ein
- * Deskriptor-Layout ist ohnehin KEIN Kompat-Erfordernis (nur der externe
- * Modul-Header/Dreiklang ist es) -- deshalb hier bewusst ein einfacher,
- * generischer Slot-Pool mit Freiliste statt eines vorgetaeuschten
- * "echten" Layouts. Wird ueberarbeitet, sobald ein echtes Deskriptor-
- * Layout (Punkt 7, erster Ausfuehrungskontext) entworfen ist.
+ * Prozess-/Pfad-DESKRIPTOR-Groesse (Q9K_PROCDESC_SIZE/PATHDESC_SIZE):
+ * urspruenglich als reiner Platzhalter (128 Byte) angelegt, in der
+ * Annahme, das Deskriptor-Layout sei kein Kompat-Erfordernis. **Diese
+ * Annahme wurde 2026-09-01 widerlegt:** IOMan (externes, reales Modul)
+ * schreibt bei I$Dup unbedingt auf D_SysPrc+0x168 -- das ist exakt
+ * P$Path[0] im echten Microware-Layout (P$DIO@0x148, DefIOSiz=32,
+ * P$Path direkt danach@0x168, NumPaths(32)*2=64 Byte bis 0x1A8; per
+ * process.a gegengeprueft, nicht kopiert). Q9K_PROCDESC_SIZE ist daher
+ * jetzt bewusst auf 0x200 (512) vergroessert -- deckt P$Path (bis 0x1A8)
+ * plus Sicherheitsmarge fuer weitere, noch nicht benoetigte P$-Felder.
+ * Der Rest des Deskriptors bleibt unser eigener, generischer Slot-Pool
+ * mit Freiliste; nur der P$DIO/P$Path-Bereich ist jetzt layoutkompatibel
+ * reserviert (noch nicht inhaltlich befuellt -- s. q9kernel_iopath.c).
  *
  * Aufteilungsreihenfolge des EINEN grossen Arena-Blocks (SYSDIS ->
  * USRDIS -> Modulverzeichnis -> Prozess-Pool -> Pfad-Pool) folgt der
@@ -70,8 +74,18 @@ extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
 #define Q9K_INIT_OFF_PATHS    0x3AUL   /* M$Paths,  68k_tech.pdf Table 2-4 */
 #define Q9K_INIT_OFF_MDIRSZ   0x62UL   /* M$MDirSz, 68k_tech.pdf Table 2-4 */
 
-#define Q9K_PROCDESC_SIZE     128UL    /* PLATZHALTER, s. Kopfkommentar */
-#define Q9K_PATHDESC_SIZE     32UL     /* PLATZHALTER, s. Kopfkommentar */
+#define Q9K_PROCDESC_SIZE     0x200UL  /* deckt P$Path bis 0x1A8, s. Kopfkommentar */
+/* 32 -> 256 (2026-09-02): dieselbe Lektion wie oben beim Prozess-
+ * deskriptor, jetzt fuer den PFAD-Deskriptor belegt. IOMans I$Open
+ * kopiert den Geraete-Descriptor unbedingt nach Deskriptor+$80
+ * ("lea $80(a1),a2 / move.b (a0)+,(a2)+", Modul-Offset $143e) und liest
+ * anschliessend den Treibernamen von dort. Mit 32 Byte Slotgroesse lag
+ * das komplett ausserhalb des Deskriptors -- IOMan suchte daraufhin
+ * einen Treiber namens "!i" (Datenmuell) statt "sc68681" und meldete
+ * E_MNF ($DD). Zusaetzlich zerstoerte die Kopie die Nachbarslots des
+ * Pools. 256 Byte deckt die Kopie (bis zu $80 Byte ab Offset $80,
+ * s. "cmpi.w #$80,d1 / moveq #$7f,d1" dort) vollstaendig ab. */
+#define Q9K_PATHDESC_SIZE     256UL
 
 /* eigene Kernel-Global-Erweiterungen, direkt hinter Q9K_CpuCount
  * ($1200, s. q9kernel_cinit.c) -- kein Feld aus dem echten Kernel-
@@ -142,19 +156,37 @@ static void Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = v
  * Freiliste (erster Q9_u32 jedes Slots = Zeiger auf naechsten freien
  * Slot, 0 = Ende) und schreibt den Listenkopf nach freeHeadAddr. Eigene
  * Erfindung (kein Kompat-Bezug), gleiches Prinzip wie das Arena-
- * Freiblock-Format (q9kernel_arena.c). */
+ * Freiblock-Format (q9kernel_arena.c).
+ *
+ * NACHTRAG 2026-09-01 (Stack-Corruption-Suche nach Q9K_PROCDESC_SIZE
+ * 128->512): urspruenglich stand hier "i * slotSize" -- slotSize ist ein
+ * FUNKTIONSPARAMETER (zur Compile-Zeit unbekannt), der 68000 hat keine
+ * MULU.L, also ruft der Compiler dafuer das von Hand geschriebene
+ * __multiply-Laufzeitsymbol (q9kernel_entry.a) mit einer "empirisch
+ * ermittelten", nie mit echten Boot-Registerzustaenden getesteten
+ * Aufrufkonvention auf -- per Bisektion (Kanarien-Werte, s. Memory-Notiz
+ * q9-os-eigener-kernel-c) exakt AN DIESEM Aufruf lokalisiert: der Boot
+ * kommt bis unmittelbar davor, danach nie wieder. Fix: "i * slotSize"
+ * durch einen mitlaufenden Offset-Akkumulator ersetzt -- KEINE
+ * Multiplikation mehr, kein __multiply-Aufruf mehr noetig, fuer JEDEN
+ * Aufrufer (MODDIR/ProcPool/PathPool), unabhaengig vom Wert von
+ * slotSize. Funktional identisch, nur ohne den Verdaechtigen. */
 static void Q9K_BuildFreeList(Q9_u32 base, Q9_u32 slotSize, Q9_u32 count, Q9_u32 freeHeadAddr)
 {
     Q9_u32 i;
+    Q9_u32 offset;
 
     if (count == 0) {
         Q9K_SetU32(freeHeadAddr, 0);
         return;
     }
 
-    for (i = 0; i < count - 1; i++)
-        Q9K_SetU32(base + i * slotSize, base + (i + 1) * slotSize);
-    Q9K_SetU32(base + (count - 1) * slotSize, 0);
+    offset = 0;
+    for (i = 0; i < count - 1; i++) {
+        Q9K_SetU32(base + offset, base + offset + slotSize);
+        offset += slotSize;
+    }
+    Q9K_SetU32(base + offset, 0);
 
     Q9K_SetU32(freeHeadAddr, base);
 }
