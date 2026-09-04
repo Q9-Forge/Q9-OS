@@ -98,7 +98,6 @@ extern void   Q9K_SysFPrsNam(void);  /* q9kernel_entry.a, F$PrsNam (Callcode 0x1
 extern void   Q9K_SysFID(void);      /* q9kernel_entry.a, TRAP-#0-Handler fuer F$ID (Callcode 0x0c) */
 extern void   Q9K_SysFPanic(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Panic (Callcode 0x5e) */
 extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
-
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
  * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
  * wieder entfernen oder hinter ein Q9K_DIAG-Flag stellen (TODO). */
