@@ -2268,6 +2268,21 @@ Q9K_IRQTabSlots  equ 16
 Q9K_IRQTabEntSz  equ 20
 Q9K_IRQDispatch:
         movem.l d0-d7/a0-a6,-(sp)             * 60 Byte -- Frame liegt danach bei 60(sp)
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04): dieser Durchlauf darf sich
+* nicht selbst verschachteln. Die CPU maskiert beim Interrupt-Eintritt nur
+* den EIGENEN und niedrigere Pegel -- ein hoeherer (hier: der Board-Timer
+* auf Level 6) unterbricht den Tabellendurchlauf jederzeit. Trifft ihn das
+* mitten in der Schleife, laeuft nach dem RTE der aeussere Durchlauf mit
+* Zustandswerten weiter, die nicht mehr zusammenpassen: real gemessen
+* d0=0 (Vektornummer) und ein a0 weit ausserhalb der Tabelle ($753C statt
+* $1500), woraufhin die Schleife Muell als Eintraege las.
+* Nachgewiesen mit der Instruktionsspur: das RTE des inneren Durchlaufs
+* sprang nach $798E -- mitten in die Schleife des aeusseren.
+* Das geretteten SR im Exception-Frame bleibt unangetastet, die Sperre
+* endet also automatisch mit dem RTE. Der Timer-Interrupt geht dadurch
+* nicht verloren, er wird nur bis zum Ende dieses kurzen Durchlaufs
+* verzoegert.
+        ori.w   #$0700,sr                      * Interrupts fuer den Tabellendurchlauf sperren
         move.w  66(sp),d0                      * Format-/Vektor-Wort (60 + 6)
         andi.l  #$00000fff,d0
         lsr.l   #2,d0                            * d0 = eigene Vektornummer
