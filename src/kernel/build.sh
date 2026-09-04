@@ -101,3 +101,12 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
     -o=forkchild -f=orowoe forkchild.r < /dev/null
 echo "== Fertig: $OUTDIR/forkchild =="
 file forkchild || true
+
+echo "== hellosvc.a bauen (eigenstaendiges Testmodul fuer F\$Fork, s. dortigen Kopfkommentar) =="
+cp "$SRCDIR"/hellosvc.a .
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+    -o=hellosvc.r "hellosvc.a" < /dev/null
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+    -o=hellosvc -f=orowoe hellosvc.r < /dev/null
+echo "== Fertig: $OUTDIR/hellosvc =="
+file hellosvc || true
