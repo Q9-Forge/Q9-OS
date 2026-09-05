@@ -450,19 +450,37 @@ es reproduzierbar bleibt.
 `I$Open("/dd/startup", Modus 1)` scheitert mit **`E$MNF`** (`$DD`) — der
 Gerätedeskriptor `dd` wird nicht gefunden.
 
-Dazu passt ein zweiter Befund: Die Moduldirectory-Kette im Dump zeigt nur
-8 der 12 geladenen Module. Es fehlen `hellosvc`, `rbf`, `cfide` und `dd` —
-während `c0`, das *letzte* Modul im Bootfile, enthalten ist. Die Module
-selbst liegen korrekt im Speicher (nachgerechnet: `c0` bei `$fd3c`, exakt wie
-im Dump). Und `hellosvc` **läuft** trotz Fehlens in der Kette, wird von
-`F$Fork` also gefunden.
+**Zwischenstand: ein echter Bug gefunden und behoben.** Die
+Moduldirectory-Kette zeigte nur 8 der 12 geladenen Module — es fehlten
+`hellosvc`, `rbf`, `cfide` und `dd`, während ausgerechnet `c0` (das *letzte*
+Modul) enthalten war.
 
-Die Kette ist demnach lückenhaft (oder der Dump folgt ihr falsch) — beides
-muss geklärt werden, denn `I$Open` sucht den Gerätedeskriptor genau darüber.
+Der Weg dorthin, Schritt für Schritt gemessen:
+1. Ein Watch auf den Kettenkopf `$1238` zeigte: **alle 12 Slots werden
+   sauber gepusht** (`$19000`…`$190b0`, lückenlos). Die Kette ist beim Aufbau
+   also vollständig.
+2. Ein Watch auf ein NEXT-Feld zeigte einen **dritten** Schreibzugriff lange
+   nach dem Aufbau.
+3. Der Instruktions-Ring, beim *dritten* Watch-Treffer eingefroren, zeigte
+   eine Schleife über die Verzeichnis-Slots, die einen Eintrag **aushängt**.
 
-**Nächster Schritt:** Erst prüfen, ob `F$Link("dd")` den Deskriptor findet.
-Danach die Moduldirectory-Verwaltung selbst ansehen: Warum landen manche
-Module nicht in der Kette?
+Ursache: `Q9K_ModDirUnlinkByHeader` entfernte den Eintrag, sobald der
+Link-Zähler 0 erreichte — auch bei Modulen aus der **Bootdatei**. IOMan linkt
+und unlinkt beim Start reihum; danach waren `rbf`, `cfide` und `dd` aus dem
+Verzeichnis verschwunden, obwohl sie unverändert im Speicher lagen.
+
+Real bleibt ein Modul im Verzeichnis, solange es im Speicher liegt; der
+Eintrag verschwindet erst, wenn auch der Speicher freigegeben wird — was bei
+Bootdatei-Modulen nie passiert. Fix: Einträge aus dem Boot-Scan tragen ein
+**Permanent-Flag** (`$0E` im Slot) und werden nie ausgehängt.
+
+Damit stehen jetzt **alle 12 Module** in der Directory.
+
+**Noch offen:** `I$Open("/dd/startup")` meldet weiterhin `E$MNF`. Die
+Directory ist also nicht mehr die Ursache — der nächste Verdacht ist die
+Modulsuche selbst: Findet `F$Link("dd")` den Gerätedeskriptor, und mit
+welchem Typ/Sprache-Filter sucht IOMan ihn?
+
 
 ### Offen: Pfad-Deadlock
 
