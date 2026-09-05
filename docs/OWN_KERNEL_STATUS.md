@@ -786,10 +786,27 @@ String im Modul suchen, das `lea <text>(pc),a0` dazu finden, dann dessen
 Aufrufer. Alle drei Schritte lassen sich im extrahierten Modul offline
 erledigen.)*
 
-**Nächster Schritt:** Den `F$DAttach`-Aufruf mit und ohne Push vergleichen —
-Ring-Freeze auf `ioman+$12a` und den Rückweg des Dienstes ansehen. Zu klären
-ist, ob der Aufruf überhaupt bei IOMans eigenem Handler ankommt und mit
-welchem Ergebnis er zurückkehrt.
+### Gemessen: `F$DAttach` schlägt nur mit Push fehl
+
+| Zählpunkt | ohne Push | mit Push |
+|---|---|---|
+| `trap` (F$DAttach) | 1 | 1 |
+| **Fehlerpfad `$12a`** | **0** | **1** |
+| Fortsetzung danach | 0 | 1 |
+
+Der Aufruf findet in beiden Fällen statt; **nur mit Push schlägt er fehl**.
+Damit ist der Unterschied erstmals an einem einzelnen Dienst festgemacht.
+
+**Was daraus folgt:** `F$DAttach` selbst läuft über den *externen* Pfad
+(IOMan registriert `$64` per `F$SSvc`), wo der Push gar nicht steht. Betroffen
+sein kann also nur ein **innerer** Aufruf von `F$DAttach` — der Dienst ruft
+seinerseits Kernel-Dienste, und die laufen über unseren Dispatcher.
+
+**Nächster Schritt:** IOMans `F$DAttach`-Handler disassemblieren (Adresse aus
+dem Dispatch-Slot `$64` auslesen, wie bei den I$-Slots) und seine
+Syscall-Aufrufe auflisten. Dann per PC-Zähler feststellen, welcher davon mit
+Push ein anderes Ergebnis liefert. Das ist derselbe mechanische Weg, der
+schon die Meldungsstelle gefunden hat.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
