@@ -1153,11 +1153,50 @@ galt: **IOMan verlässt sich auf den `a4`-Wert, den unser Dispatcher bisher
 unbeabsichtigt liefert** (die Handleradresse). Der „korrekte" Aufrufer-`a4`
 bricht es — und zwar auch dann, wenn sonst nichts verändert wird.
 
-**Nächster Schritt, jetzt klar umrissen:** Bisektion über die drei Callcodes.
-Den stackfreien Fix selektiv nur für `$32`, `$2A` bzw. `$10` aktivieren und
-sehen, welcher Handler den korrekten `a4` nicht verträgt. Das sind zwei bis
-drei Läufe und benennt die Stelle exakt — statt weiter am Dispatcher als
-Ganzes zu drehen.
+### Die Stelle ist gefunden: `F$PrsNam` muss `a4` setzen
+
+**Bisektion über die drei Callcodes** — der stackfreie Fix jeweils nur für
+einen Callcode aktiviert, alle anderen unverändert:
+
+| Callcode | Handler | mit korrektem `a4` |
+|---|---|---|
+| `$32` | `F$SSvc` | läuft (`RP012`) |
+| `$2A` | `F$IRQ` | läuft (`RP012`) |
+| **`$10`** | **`F$PrsNam`** | **bricht (`RPn`)** |
+
+**`F$PrsNam` fasst `a4` selbst überhaupt nicht an** (q9kernel_entry.a,
+`Q9K_SysFPrsNam`) und kehrt per `rts` zurück; auch der Epilog stellt `a4`
+nie wieder her. Der Wert, den der Dispatcher hinterlässt, geht also
+unverändert an IOMan zurück.
+
+**Gemessen, was eingeht:** `a4 = $00019400` — der Prozessdeskriptor, exakt
+der Wert, den die frühere Messung an scfs Open gesehen hatte.
+
+**Trennungstest (`a4`-Wert oder Sprungmechanismus?):** Sprungweg exakt wie im
+funktionierenden Stand (`jsr (a4)`), nur `a4` danach per `movea` auf den
+Aufrufer-Wert zurückgesetzt — `movea` ist die einzige Instruktion, die nach
+dem `jsr` das CCR unberührt lässt, das der Epilog auswertet. **Ergebnis: es
+bricht.** Damit ist der Sprungmechanismus entlastet und der Befund steht:
+
+> IOMan darf nach `F$PrsNam` **nicht** seinen eigenen `a4` zurückbekommen.
+> Es braucht dort einen anderen Wert — den unser Handler nicht liefert.
+
+**Damit dreht sich die Bewertung des ganzen Problems um.** Der „Dispatcher-Bug"
+(`a4` wird von der Handleradresse überschrieben) ist nicht die Ursache,
+sondern hat einen zweiten, verdeckten Fehler bisher *kaschiert*: Unser
+`F$PrsNam` liefert eine `a4`-Ausgabe nicht, die IOMan erwartet. Im
+funktionierenden Stand bekommt IOMan zufällig die Handleradresse — einen
+Zeiger in unseren Kernelcode. **Genau das erklärt die
+Speicherkorruption**: RBFs `move.l d1,$14e(a4)` schreibt über dieselbe Kette
+in unseren Kernel. Der Zufallswert ist harmlos genug, dass der Boot
+durchläuft; der echte Prozessdeskriptor ist es nicht — dort zerstört der
+Schreibzugriff etwas, das gebraucht wird.
+
+**Nächster Schritt:** Klären, was der reale `F$PrsNam` in `a4` zurückgibt.
+Die Quelle dafür ist der disassemblierte Originalkernel (s.
+`docs/REVERSE_ENGINEERING.md`) — nicht weiteres Probieren am Dispatcher.
+Sobald der Wert bekannt ist, setzt ihn `Q9K_SysFPrsNam` selbst, und der
+`a4`-Erhalt im Dispatcher wird nachträglich richtig statt schädlich.
 
 ### Offen: Pfad-Deadlock
 
