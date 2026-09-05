@@ -1346,6 +1346,15 @@ Q9K_TestHelloName:
 * Assembler kennt die tatsaechliche Ladeadresse eines REENT-Moduls
 * nicht, deshalb hier nur 0 reserviert, vom Aufrufer zur Laufzeit per
 * PC-relativem lea befuellt (s. dort).
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-06): Diese Struktur MUSS gerade
+* ausgerichtet sein. IOMan springt mit "jsr $8(a1)" hinein; liegt die Basis
+* ungerade, ist auch das Sprungziel ungerade und die CPU bricht ab. Bisher
+* stimmte die Ausrichtung nur ZUFAELLIG -- jede Aenderung davor, die die
+* Codelaenge um eine ungerade Zahl verschiebt, kippte sie. Real erlebt: drei
+* Umbauversuche am Trap-Dispatcher scheiterten scheinbar an ihrer eigenen
+* Logik, tatsaechlich lag D_SysRom danach auf $75a7 (ungerade) und der
+* IOMan-Start brach beim ersten auszugebenden Zeichen ab.
+        align
 Q9K_IOManOutVtable:
         dc.l    0                          * +0x0, ungenutzt (laut Disassemblierung)
         dc.l    0                          * +0x4, ungenutzt (laut Disassemblierung)
