@@ -802,72 +802,42 @@ Damit ist der Unterschied erstmals an einem einzelnen Dienst festgemacht.
 sein kann also nur ein **innerer** Aufruf von `F$DAttach` — der Dienst ruft
 seinerseits Kernel-Dienste, und die laufen über unseren Dispatcher.
 
-### Zwei Funde beim Nachsehen im Dispatch-Slot `$64`
+### ~~F$DAttach fehlt~~ — WIDERLEGT: es fehlt überhaupt kein Syscall
 
-**1. `F$DAttach` ist bei uns gar nicht implementiert.** Der Slot zeigt nicht
-in IOMan, sondern in *unseren* Kernel — auf `Q9K_SysUnimplemented`. IOMan
-fordert den Dienst beim Anhängen des Konsolengeräts an und bekommt eine
-Absage. Das ist die eigentliche Lücke hinter `can't open console device`.
+Die Spur „IOMan scheitert an einem nicht implementierten `F$DAttach` (`$64`)"
+ist **falsch** und hier nur als Warnung dokumentiert.
 
-**2. ~~Der Stub wird 4 Byte zu spät betreten~~ — WIDERLEGT.** Diese Annahme
-stand kurzzeitig hier und war falsch. Sie entstand durch
-*Rückwärts*-Disassemblieren, das ohne gesicherte Ausrichtung beliebige
-Instruktionsgrenzen erfindet.
+Der Callcode `$64` stammte aus dem Byte hinter einem fremden `trap #0`
+(`dc.w $0064`) — also wieder aus einer Lesung ohne gesicherte Ausrichtung.
+Statt weiter zu raten, protokolliert der Unimplemented-Stub jetzt den
+Callcode, den der Dispatcher in `$1370` ablegt:
 
-Die Messung entscheidet eindeutig — gezählt wurde, welche Adresse die CPU
-tatsächlich ausführt:
-
-| Adresse | Treffer |
+| Lauf | Treffer im Unimplemented-Stub |
 |---|---|
-| `$77b6` (vermuteter `F$Link`-Anfang) | **0** |
-| `$77ba` (Slotwert `$00`) | **11** |
-| `$7bc0` (vermuteter `F$SRqMem`-Anfang) | **0** |
-| `$7bc4` (Slotwert `$28`) | **7** |
+| ohne Push (Konsole geht) | **0** |
+| mit Push (`can't open console device`) | **0** |
 
-**Die Slotwerte sind die Handler-Anfänge.** Die Adressen davor werden nie
-angesprungen. Die Eintragung in die Dispatch-Tabellen ist also korrekt, und
-`Error $0000` muss eine andere Ursache haben.
+**Der Stub wird in keinem der beiden Fälle betreten.** Es fehlt also kein
+einziger Dienst — weder `F$DAttach` noch sonst einer. Der Fehler kommt von
+einem **existierenden** Dienst, der mit Push ein anderes Ergebnis liefert.
 
-*(Merkposten, dritte Wiederholung heute: Rückwärts zu disassemblieren ist
-kein Beleg. Nur vorwärts von einem gesicherten Einsprung — oder besser: die
-Ausführung zählen.)*
+*(Damit ist auch klar, warum der Handler hinter Slot `$64` nie ausgeführt
+wurde: Diese Nummer wird schlicht nie angefordert.)*
 
-### Vor der Implementierung: die Grundlage ist noch nicht gesichert
+### Stand der Eingrenzung (belastbar)
 
-Ein Anlauf, `F$DAttach` zu implementieren, wurde bewusst **abgebrochen** —
-die Voraussetzung trägt noch nicht:
+- Der `a4`-Push behebt die Speicherkorruption (Illegal Instruction
+  verschwindet) — mehrfach gemessen.
+- Er bricht zugleich IOMans Konsolen-Open — ebenfalls mehrfach gemessen.
+- **Nicht** die Ursache: der `a4`-Wert selbst, die stackrelative
+  Rahmenerkennung, scfs Open, ein fehlender Syscall.
+- scfs Open gelingt in beiden Fällen identisch; der Unterschied entsteht
+  danach, beim Ergebnis eines bereits vorhandenen Dienstes.
 
-- Der Callcode `$64` stammt aus einer **Rückwärts-Lesung** der Bytes hinter
-  `trap #0` (`dc.w $0064`). Genau diese Methode hat heute schon dreimal in die
-  Irre geführt.
-- Die Messung widerspricht: Der Handler, auf den Slot `$64` zeigt, wird
-  **nie ausgeführt** (0 Treffer) — obwohl der `trap` nachweislich läuft und
-  `F$DAttach` mit Push fehlschlägt. Käme der Fehler aus dem
-  Unimplemented-Stub, müsste dieser getroffen werden.
-
-Einen Dienst zu bauen, den möglicherweise niemand unter dieser Nummer
-anfordert, wäre verfrüht.
-
-**Was zuerst zu klären ist:** Welchen Callcode führt der `trap` an
-`ioman+$0124` **tatsächlich** aus? Der Dispatcher legt ihn beim Eintritt in
-der Zelle `$1370` ab — sie im Fehlerfall auszulesen (oder einen Zähler auf
-die Slot-Adressen mehrerer Kandidaten zu setzen) beantwortet das eindeutig,
-ohne Byte-Raterei.
-
-Erst danach lohnt die Implementierung — dann aber auf gesicherter Grundlage,
-mit der Aufrufkonvention aus IOMans Aufrufstelle (`a0` = Gerätename,
-`d0` = Modus 3), genau wie zuvor bei `F$RetPD`.
-
-**Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
-auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
-wenn klar ist, warum `rts` dort falsch landet, lohnt der nächste
-Fix-Versuch.
-
-*(Werkzeugnotiz: Die Zuordnung Laufzeitadresse → Quelltext gelingt über die
-Linker-Map. `l68 -m` listet je Psect den Code-Offset im Modul; der
-Assembler-Teil beginnt bei `$3c`, die C-Dateien folgen ab `$c48`. Ohne die
-Map lässt sich eine Adresse im C-Teil nicht sinnvoll zuordnen.)*
-
+**Nächster Schritt:** Den Callcode an `ioman+$0126` **messen** statt lesen —
+`$1370` unmittelbar nach diesem `trap` auslesen (etwa per Watch mit Freeze
+auf die Zelle). Erst mit der gesicherten Nummer lässt sich der betroffene
+Dienst gezielt vergleichen.
 
 ### Offen: Pfad-Deadlock
 
