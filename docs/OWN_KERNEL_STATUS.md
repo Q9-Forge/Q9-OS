@@ -911,11 +911,28 @@ IOMan sichert `a4` zwar selbst (`movem` am Anfang, zurück bei `$1564`) — der
 Vergleich sollte also stimmen. Warum er mit Push trotzdem fehlschlägt, ist
 noch offen; reine Code-Lektüre reicht hier nicht weiter.
 
-**Nächster Schritt — direkt am Symptom messen:** Einen Schreib-Watch auf das
-Lock-Feld `$8(a1)` des Konsolen-Pfaddeskriptors setzen und beide Läufe
-vergleichen. Zu sehen ist dann unmittelbar, ob das Lock mit Push gesetzt und
-nicht mehr freigegeben wird — und mit welchen Werten. Das beantwortet die
-Frage ohne weitere Schlussketten.
+**Gemessen — das Lock bleibt nicht stehen.** Schreib-Watch auf das Lock-Feld
+des ersten Pfaddeskriptors (Pool-Basis `$21400`, Feld `+$8`):
+
+| Lauf | Beobachtung |
+|---|---|
+| ohne Push (Konsole geht) | Lock 2× gesetzt (Wert **1** = Prozess-ID), 2× freigegeben |
+| mit Push (`can't open`) | **identisch** — 2× gesetzt, 2× freigegeben |
+
+Der Wert `1` bestätigt nebenbei, dass `a4` beim Sperren korrekt ist (`$0(a4)`
+= `P$ID`). **Die Lock-Hypothese ist damit für diesen Deskriptor widerlegt** —
+das Feld ist am Ende in beiden Fällen sauber 0.
+
+Offen bleibt, ob ein *anderer* Pfaddeskriptor betroffen ist: Beim Öffnen der
+Konsole ist mehr als einer im Spiel, beobachtet wurde nur der erste aus dem
+Pool.
+
+**Nächster Schritt — die Frage direkt stellen:** Einen PC-Zähler auf den
+Fehlerzweig `ioman+$15a6` setzen (dorthin springt `bne` bei belegtem Lock)
+und beide Läufe vergleichen. Wird er mit Push getroffen, ist es doch ein
+Lock — dann aber ein anderer Deskriptor. Wird er nicht getroffen, scheidet
+der ganze Lock-Pfad aus, und der Fehler kommt aus dem Rückweg des Wrappers
+(`bsr.w $107a` bei `$1582`).
 
 ### Offen: Pfad-Deadlock
 
