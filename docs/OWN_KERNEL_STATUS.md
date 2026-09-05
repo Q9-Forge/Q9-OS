@@ -732,9 +732,38 @@ also erst *innerhalb* von scf oder danach — nicht auf dem Weg dorthin.
 Die Suche ist deutlich enger geworden, der Fix aber weiter offen. Der Code
 steht auf dem funktionierenden Stand.
 
-**Nächster Schritt:** In scfs Open-Pfad hineinmessen — welche Bedingung dort
-mit gesetztem Push anders ausfällt als ohne. Die Werkzeuge dafür sind alle
-vorhanden (PC-Zähler auf die Zweige, Ring-Freeze auf den Fehlerausgang).
+**Schritt 4 — scfs Open-Zweige, mit und ohne Push verglichen.** Gemessen
+wurden Einstieg, die beiden Fehlerausgänge und der Erfolgspfad:
+
+| Stelle | mit Push | ohne Push |
+|---|---|---|
+| Open-Einstieg | 1 | 1 |
+| `bcs` nach `F$SRqMem` | 1 | 1 |
+| **Erfolgspfad** | **1** | **1** |
+| Fehlerausgänge | 0 | 0 |
+
+**Exakt identisch — scfs Open gelingt in beiden Fällen.** Damit ist auch
+scfs Open als Ursache ausgeschlossen. Der Unterschied entsteht erst
+*danach*: IOMan bewertet das Ergebnis unterschiedlich, obwohl der
+File-Manager dasselbe tut.
+
+*(Nebenbei aus der Disassemblierung: scfs Open holt den Pfadnamen mit
+`movea.l $20(a5),a0` aus dem Registerrahmen, ruft `F$PrsNam` per **TRAP** —
+also durch unseren Dispatcher — und legt danach mit `lea -$2c(a7),a7 /
+movea.l a7,a5` selbst einen 44-Byte-Rahmen für `F$SRqMem` an. Beide Wege
+sind damit im Open-Pfad beteiligt.)*
+
+### Stand der Eingrenzung
+
+Ausgeschlossen sind inzwischen: der `a4`-Wert selbst, die Rahmenerkennung in
+`F$AllPD`/`F$SRqMem`, der Weg bis scfs Open, und scfs Open selbst.
+Übrig bleibt der **Rückweg von scfs Open zu IOMan** — dort wird das Ergebnis
+offenbar anders bewertet.
+
+**Nächster Schritt:** In IOMan die Stelle finden, die `can't open console
+device` ausgibt, und von dort rückwärts messen, welche Bedingung mit Push
+anders ausfällt. Kandidaten sind das durchgereichte Carry und der
+Registerrahmen.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
