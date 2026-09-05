@@ -856,10 +856,37 @@ Unimplemented-Stub hat zu Recht null Treffer.
 ohne Push) — trotzdem meldet IOMan Fehlschlag. Die Ursache liegt also in
 IOMans `I$Open`-**Nachbearbeitung**, nach der Rückkehr aus dem File-Manager.
 
-**Nächster Schritt:** IOMans `I$Open`-Handler ab dem Slotwert (`usr=$bd2e`)
-verfolgen — konkret den Abschnitt *nach* dem File-Manager-Aufruf. Dort per
-PC-Zähler die Zweige mit und ohne Push vergleichen. Das ist derselbe Weg, der
-die Stelle bis hierher eingegrenzt hat.
+### IOMans I$Open-Nachbearbeitung — der Unterschied ist eingekreist
+
+Der Handler (Modul-Offset `$124a` ff.) sieht so aus:
+
+    +$124a  move.b $3(a5),d1     * Modus aus dem Registerrahmen
+    +$124e  bsr.w  $135e         * Deskriptor besorgen
+    +$1252  bcs    $1266         * Fehler -> raus
+    +$1254  bsr.w  $14f8         * File-Manager rufen (darin scfs Open)
+    +$1258  bcs.w  $11ca         * Fehler -> raus
+    +$125c  moveq  #0,d0
+    +$125e  move.w $0(a1),d0     * Pfadnummer aus dem Deskriptor
+    +$1262  move.l d0,$0(a5)     * Rückgabe in den Registerrahmen
+
+Gemessen wurden die Zweige in beiden Läufen:
+
+| Stelle | ohne Push | mit Push |
+|---|---|---|
+| `bcs` nach File-Manager (`$1258`) | 1 | 1 |
+| **Rückgabe der Pfadnummer (`$1262`)** | **1** | **0** |
+
+**Mit Push wird die Rückgabe nie erreicht** — der Fehlerzweig nach
+`bsr.w $14f8` greift. Ohne Push läuft es bis zur Rückgabe durch.
+
+Damit ist der Fehler auf **die Routine `ioman+$14f8`** eingegrenzt: Sie ruft
+den File-Manager, und dessen Open gelingt nachweislich (mit und ohne Push
+identisch) — trotzdem kehrt sie mit Carry zurück. Der Fehler entsteht also in
+dieser Wrapper-Routine, vor oder nach dem eigentlichen Aufruf.
+
+**Nächster Schritt:** `ioman+$14f8` disassemblieren und ihre Zweige mit und
+ohne Push vergleichen. Das ist die letzte Ebene — dahinter liegt nur noch der
+File-Manager selbst, der bereits als unbeteiligt belegt ist.
 
 ### Offen: Pfad-Deadlock
 
