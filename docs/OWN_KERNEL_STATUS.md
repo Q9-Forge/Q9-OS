@@ -1003,6 +1003,47 @@ Beide Punkte sind lösbar, sollten aber **vorher entschieden** werden — nach
 fünf Fehlversuchen an dieser Stelle ist ein weiterer Schnellschuss der
 falsche Weg.
 
+### Nachprüfung 2026-09-05: die bisherige Erklärung der Nebenwirkung trägt nicht
+
+Vor dem sechsten Anlauf wurden die beiden oben notierten Erklärungen
+**rechnerisch** geprüft, ohne eine Zeile zu ändern. Beide halten nicht:
+
+**1. Die stackrelative Rahmenerkennung kann es nicht sein.** Oben steht als
+„Konsequenz für den Fix": Ein zusätzlicher Push verschiebe `sp` und
+verfälsche `cmpa.l a0,a5` in `F$AllPD`/`F$SRqMem`, deshalb `adda.l #20`
+statt `#16`. Das ist falsch, aus zwei unabhängigen Gründen:
+
+- Der **Trampolin-Weg läuft gar nicht durch `Q9K_TrapDispatch`** — der
+  Aufrufer springt per PEA+RTS direkt in den Slot. Ein Push im Dispatcher
+  erreicht diesen Pfad nie, kann seine Erkennung also auch nicht stören.
+- Im **TRAP-Weg** ist `a5` laut eigenem Kommentar „ein beliebiges
+  Aufruferregister". Die Erkennung schlägt dort mit *und* ohne Push fehl;
+  ein Versatz um 4 ändert daran nichts.
+
+**`adda.l #20` wäre demnach nicht die Lösung, sondern ein neuer Bug** — es
+würde den Trampolin-Weg brechen, der als einziger auf die Erkennung angewiesen
+ist. Die Zeile bleibt bewusst auf `#16`.
+
+**2. Die `60(sp)`-Carry-Löschung ist unkritisch.** Verdacht war, dass
+`andi.w #$fffe,60(sp)` in `F$Wait` (Z. 2286) und `F$Sleep` (Z. 2437) den
+Push nicht mitzieht und ein stehengebliebenes Carry das beobachtete
+`Error $0000` erzeugt. Geprüft: Die `60` ist die **eigene**
+Registersatzgröße (15 × 4) und wird *nach* dem handlereigenen `movem`
+gebildet; `F$Sleep` baut seinen Frame ohnehin selbst neu auf. Beide Offsets
+sind vom Dispatcher-Stack unabhängig, solange die jsr-Rücksprungadresse
+korrekt abgeräumt wird (`addq.l #8` statt `#4` — das war in Variante 4
+bereits enthalten).
+
+**Stand danach:** Die Ursache der Nebenwirkung ist damit **weiterhin offen**,
+aber zwei Erklärungen sind sauber ausgeschieden, statt weiter mitgeschleppt
+zu werden. Auch `Q9K_TrapAfterCall` (Zugriffe auf `(sp)`, `4(sp)`, `6(sp)`)
+ist unkritisch, sofern der Pop vor dem `bra` dorthin steht.
+
+Der nächste Schritt ist deshalb **kein Fixversuch, sondern eine Messung**:
+Push einbauen, den Boot bis zum fehlschlagenden Open per Ring-Freeze
+mitschreiben und die *erste* Abweichung gegen den funktionierenden Lauf
+suchen. Erst wenn die bekannt ist, lohnt ein sechster Anlauf.
+
 ### Offen: Pfad-Deadlock
 
 Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind
