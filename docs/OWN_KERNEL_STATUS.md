@@ -370,25 +370,55 @@ im Lesepfad wurde ja nachweislich kein fehlender Dienst angefordert.
 2. Danach der F$Load-Meilenstein (RBF + Plattentreiber ins Bootfile) — der
    räumt zugleich die `chgdir`-Meldung ab.
 
-### scf-Analyse (2026-09-05): der Lesepfad erreicht scf gar nicht
+### ~~scf-Analyse: der Lesepfad erreicht scf gar nicht~~ — WAR EIN MESSFEHLER
 
-scf aus dem Bootfile extrahiert (Laufzeitbasis `$bdbc`, Größe `$8e8`). Die
-Einstiegstabelle steht bei `M$Exec` (`+$80`) und besteht aus **16-Bit-Offsets
-relativ zum Tabellenanfang**, in der klassischen File-Manager-Reihenfolge.
-Die Deutung ist nicht geraten, sondern **im Betrieb bestätigt** (PC-Zähler):
+Diese Aussage vom 2026-09-05 ist **falsch** und hier nur noch als Warnung
+stehengeblieben. Ursache: **IOMan und scf liegen im Bootfile hinter dem
+Kernel und verschieben sich, sobald der Kernel wächst.** Alle damals
+benutzten Laufzeitadressen stammten aus einem älteren Dump — die PC-Zähler
+zeigten deshalb auf Adressen, die es so nicht mehr gab, und meldeten
+plausibel aussehende Nullen.
 
-| Eintrag | Adresse | Treffer im Lauf |
-|---|---|---|
-| Create/Open | `$be66` | 3 |
-| **Write** | `$c502` | **6** |
-| **WritLn** | `$c4fc` | **1** (der eine `I$WritLn` von `hellosvc`) |
-| **ReadLn** | `$c224` | **0** |
+**Merksatz:** Modulbasen vor jeder Messung frisch aus dem Dump holen
+(Moduldirectory-Kette), nie aus einer Notiz übernehmen. Derselbe Fehler ließ
+auch einen „Off-by-2" in der Dispatch-Tabelle erscheinen, den es nie gab.
 
-**Damit ist der Suchraum halbiert: scfs ReadLn wird nie aufgerufen.** Der
-Abbruch passiert in IOMan, bevor der File-Manager überhaupt drankommt. Alles,
-was in scf steht — Zeichenschleife, Zielpuffer aus `+$0e` des
-Pfaddeskriptors, Optionen ab `+$80` — ist für diesen Fehler nicht mehr
-verdächtig.
+### Der Lesepfad, vollständig verfolgt (2026-09-06)
+
+Mit frischen Basen (`ioman` `$aa32`, `scf` `$c04e`, `sc68681` `$c936`) und
+PC-Zählern ist die ganze Kette abgetastet. Sie läuft **viel weiter als
+gedacht**:
+
+| Station | Ergebnis |
+|---|---|
+| IOMan `I$ReadLn` (`$bc9a`) | erreicht |
+| `F$ChkMem` | besteht |
+| Pfadsuche über `D_PthDBT` | besteht |
+| **Modusprüfung `PD_MOD`** | **besteht** — `E$BMode`-Zweig 0 Treffer |
+| scf `ReadLn` (`$c4b6`) | **erreicht** |
+| scf holt Länge (R$d1) und Zielpuffer (`PD+$e`) | beides erreicht |
+| scf ruft die Zeichen-Hol-Routine (`$c5f4`) | erreicht |
+| … die ruft den Treiber (`$c8c2`, `d1=2` = Read) | erreicht |
+| **sc68681 `Read` (`$cbee`)** | **erreicht** |
+| Fehlerausgang `E$NotRdy` (`$F6`) | **nicht** genommen |
+| Fehlerausgang `E$Read` (`$F4`) | **nicht** genommen |
+| **Pufferprüfung `tst.w $70(a2)`** | **Puffer ist LEER** |
+| → Warteweg `$cba6` | genommen, kehrt mit Carry zurück |
+| Zeichen in den Puffer (`$cc18`, `$c52e`) | **nie erreicht** |
+
+**Damit ist die Frage präzise:** Warum ist der Eingabepuffer des Treibers
+leer, obwohl die Zeichen nachweislich ankommen (RX-FIFO `head = tail = 6`)?
+
+Der Treiber liest sie aus seiner eigenen Statik (`$70(a2)` Zähler,
+Ringpuffer ab `$88(a2)`, Lesezeiger `$58(a2)`). Dorthin legt sie die
+**Interruptroutine**. Naheliegender nächster Verdacht: Die ISR arbeitet mit
+einem anderen `a2` als der Treiber-Read — die ISR bekommt ihres aus der
+Polling-Tabelle (bei `F$IRQ` registriert), der Read-Pfad seines aus dem
+Gerätetabelleneintrag über den Pfaddeskriptor. Beide müssen dieselbe
+`V_STAT`-Adresse sein.
+
+**Nächster Schritt:** beide `a2`-Werte zur Laufzeit vergleichen und prüfen,
+ob die ISR das Zeichen überhaupt in den Ringpuffer schreibt.
 
 ### Zwei echte Bugs, die dabei auffielen
 
