@@ -429,6 +429,41 @@ Pufferprüfung zurückzukehren. Diese sieben Instruktionen waren die Antwort.
 - Reine Trefferzähler kennen keine Reihenfolge. Wo die Frage „wie kam der
   Code hierher?" lautet, braucht es den Ring mit Freeze.
 
+### F$Load-Meilenstein: RBF und CompactFlash-Treiber sind eingebunden
+
+Aus `OldBoot` (der originalen Bootdatei im Image) sind die fehlenden Module
+extrahiert und ins Testbootfile aufgenommen: **`rbf`** (Dateimanager),
+**`cfide`** (CompactFlash-Treiber) und die Gerätedeskriptoren **`dd`** und
+**`c0`**. Das Rezept steckt jetzt in `tools/mkbootfile.sh` (`--disk`), damit
+es reproduzierbar bleibt.
+
+**Zwei Ergebnisse sofort:**
+
+    CompactFlash driver build 42
+
+- Der Treiber initialisiert sich beim Boot.
+- **Die Meldung `can't chgdir to system device` ist verschwunden** — IOMan
+  findet sein System-Device. Der älteste offene Defekt ist damit erledigt,
+  und zwar wie vorhergesagt allein durch den Bootfile-Inhalt.
+
+**Noch offen: der Dateizugriff.** Ein Testaufruf
+`I$Open("/dd/startup", Modus 1)` scheitert mit **`E$MNF`** (`$DD`) — der
+Gerätedeskriptor `dd` wird nicht gefunden.
+
+Dazu passt ein zweiter Befund: Die Moduldirectory-Kette im Dump zeigt nur
+8 der 12 geladenen Module. Es fehlen `hellosvc`, `rbf`, `cfide` und `dd` —
+während `c0`, das *letzte* Modul im Bootfile, enthalten ist. Die Module
+selbst liegen korrekt im Speicher (nachgerechnet: `c0` bei `$fd3c`, exakt wie
+im Dump). Und `hellosvc` **läuft** trotz Fehlens in der Kette, wird von
+`F$Fork` also gefunden.
+
+Die Kette ist demnach lückenhaft (oder der Dump folgt ihr falsch) — beides
+muss geklärt werden, denn `I$Open` sucht den Gerätedeskriptor genau darüber.
+
+**Nächster Schritt:** Erst prüfen, ob `F$Link("dd")` den Deskriptor findet.
+Danach die Moduldirectory-Verwaltung selbst ansehen: Warum landen manche
+Module nicht in der Kette?
+
 ### Offen: Pfad-Deadlock
 
 Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind
