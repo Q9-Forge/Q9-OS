@@ -809,29 +809,33 @@ in IOMan, sondern in *unseren* Kernel — auf `Q9K_SysUnimplemented`. IOMan
 fordert den Dienst beim Anhängen des Konsolengeräts an und bekommt eine
 Absage. Das ist die eigentliche Lücke hinter `can't open console device`.
 
-**2. Der Stub wird 4 Byte zu spät betreten — ein echter Bug.** Der Slotwert
-ist `$77b0`, der Stub beginnt aber bei `$77ac`:
+**2. ~~Der Stub wird 4 Byte zu spät betreten~~ — WIDERLEGT.** Diese Annahme
+stand kurzzeitig hier und war falsch. Sie entstand durch
+*Rückwärts*-Disassemblieren, das ohne gesicherte Ausrichtung beliebige
+Instruktionsgrenzen erfindet.
 
-    0077ac  move.w #$d0,d1      * E$UnkSvc -- wird ÜBERSPRUNGEN
-    0077b0  ori.b  #$1,ccr      <- hierhin zeigt der Slot
-    0077b4  rts
+Die Messung entscheidet eindeutig — gezählt wurde, welche Adresse die CPU
+tatsächlich ausführt:
 
-Der Aufrufer bekommt damit **Carry ohne Fehlercode**: `d1` behält seinen
-alten Wert. Das erklärt rückwirkend das rätselhafte `Error $0000` in IOMans
-Meldung — es war nie ein „Fehler 0", sondern ein *nicht gesetzter*
-Fehlercode.
+| Adresse | Treffer |
+|---|---|
+| `$77b6` (vermuteter `F$Link`-Anfang) | **0** |
+| `$77ba` (Slotwert `$00`) | **11** |
+| `$7bc0` (vermuteter `F$SRqMem`-Anfang) | **0** |
+| `$7bc4` (Slotwert `$28`) | **7** |
 
-Ob die Ursache ein Off-by-4 beim Eintragen ist oder die Symboladresse anders
-aufgelöst wird, ist noch offen; zu prüfen ist, ob auch die Slots unserer
-*registrierten* Handler um 4 danebenliegen. Falls ja, wäre das ein Fehler mit
-weit größerer Reichweite als der `a4`-Punkt.
+**Die Slotwerte sind die Handler-Anfänge.** Die Adressen davor werden nie
+angesprungen. Die Eintragung in die Dispatch-Tabellen ist also korrekt, und
+`Error $0000` muss eine andere Ursache haben.
 
-**Nächste Schritte, in dieser Reihenfolge:**
-1. Den Slot eines bekannten eigenen Handlers (z. B. `F$Sleep`, `$0a`) mit
-   dessen tatsächlicher Adresse vergleichen — liegt der auch 4 daneben?
-2. Je nach Ergebnis: die Eintragung korrigieren.
-3. Danach `F$DAttach` implementieren — den Dienst braucht IOMan, um ein Gerät
-   anzuhängen.
+*(Merkposten, dritte Wiederholung heute: Rückwärts zu disassemblieren ist
+kein Beleg. Nur vorwärts von einem gesicherten Einsprung — oder besser: die
+Ausführung zählen.)*
+
+**Nächster Schritt:** `F$DAttach` implementieren — der Befund darüber steht
+unverändert, und IOMan braucht den Dienst, um ein Gerät anzuhängen. Die
+Konvention ist wie üblich aus IOMans Aufrufstelle ablesbar
+(`ioman+$011e`: `a0` = Gerätename, `d0` = Modus 3).
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
