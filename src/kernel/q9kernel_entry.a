@@ -1153,6 +1153,63 @@ Q9K_TestHelloFail:
         bsr     Q9K_DiagWriteHex32
 Q9K_TestHelloDone:
 
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06, Abschnitt "F$Load"):
+* Nachweis, dass der Dateizugriff ueber RBF wirklich traegt. Vor F$Load muss
+* feststehen, dass I$Open/I$Read auf eine ECHTE Datei funktionieren -- sonst
+* baut man den Lader auf Sand.
+*
+* Konvention (68k_tech): I$Open  d0.b = Zugriffsmodus (1 = Lesen),
+* (a0) = Pfadname; zurueck d0.w = Pfadnummer, a0 hinter dem Namen.
+*        I$Read  d0.w = Pfadnummer, d1.l = Anzahl, (a0) = Puffer;
+* zurueck d1.l = tatsaechlich gelesen.
+* Ausgegeben werden Marker und die ersten acht Bytes der Datei.
+        moveq   #'F',d7                     * DIAGNOSE: Dateitest beginnt
+        bsr     Q9K_DiagWriteD7
+        moveq   #1,d0                       * Modus 1 = Lesen
+        lea     Q9K_TestFileName(pc),a0
+        trap    #0
+        dc.w    $0084                       * I$Open
+        bcs     Q9K_TestFileOpenFail
+        move.w  d0,d4                       * Pfadnummer merken
+        moveq   #'o',d7                     * DIAGNOSE: geoeffnet
+        bsr     Q9K_DiagWriteD7
+
+        move.w  d4,d0
+        moveq   #8,d1
+        lea     Q9K_TestFileBuf(pc),a0
+        trap    #0
+        dc.w    $0089                       * I$Read
+        bcs     Q9K_TestFileReadFail
+        moveq   #'[',d7
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_TestFileBuf(pc),a1
+        moveq   #7,d6
+Q9K_TestFileShow:
+        move.b  (a1)+,d7
+        cmpi.b  #$20,d7
+        bcc     Q9K_TestFileShowChar
+        moveq   #'.',d7
+Q9K_TestFileShowChar:
+        bsr     Q9K_DiagWriteD7
+        dbra    d6,Q9K_TestFileShow
+        moveq   #']',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestFileDone
+
+Q9K_TestFileOpenFail:
+        moveq   #'f',d7                     * DIAGNOSE: I$Open fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+        bra     Q9K_TestFileDone
+
+Q9K_TestFileReadFail:
+        moveq   #'g',d7                     * DIAGNOSE: I$Read fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+Q9K_TestFileDone:
+
 * Der I$ReadLn-Test von hier ist entfernt (2026-09-06), nachdem er seinen
 * Zweck erfuellt hat: er machte den Lesepfad bis in den Treiber verfolgbar
 * und lieferte schliesslich die eingegebene Zeile zurueck ("H<>[hallo...]").
@@ -1214,6 +1271,13 @@ Q9K_TestWriteText:
         dc.b    "Hallo von Q9-OS!",$0d
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 Q9K_TestWriteLen equ 17
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06) -- Pfadname und Puffer
+* fuer den Dateitest oben. "/dd" ist der Geraetedeskriptor aus dem Bootfile.
+Q9K_TestFileName:
+        dc.b    "/dd/startup",0
+Q9K_TestFileBuf:
+        dc.b    0,0,0,0,0,0,0,0
 
 Q9K_TestHelloName:
         dc.b    "hellosvc",0
