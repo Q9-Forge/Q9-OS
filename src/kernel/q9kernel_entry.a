@@ -2505,6 +2505,9 @@ Q9K_SysFPrsNam:
         movea.l Q9K_PrsNamScratch_Past,a0          * a0 = hinter dem Namen
         move.l  Q9K_PrsNamScratch_Delim,d0          * d0.b = Trennzeichen
         move.l  Q9K_PrsNamScratch_Len,d1             * d1.w = Namenslaenge
+* TEST (allein): Registerrahmen versorgen wie der reale Handler ($a3e0).
+        movem.l d0-d1,(a5)                            * R$d0/R$d1
+        movem.l a0-a1,$20(a5)                          * R$a0/R$a1
         andi    #$fe,ccr                              * Carry loeschen -- Erfolg
         rts
 
