@@ -1192,11 +1192,48 @@ in unseren Kernel. Der Zufallswert ist harmlos genug, dass der Boot
 durchläuft; der echte Prozessdeskriptor ist es nicht — dort zerstört der
 Schreibzugriff etwas, das gebraucht wird.
 
-**Nächster Schritt:** Klären, was der reale `F$PrsNam` in `a4` zurückgibt.
-Die Quelle dafür ist der disassemblierte Originalkernel (s.
-`docs/REVERSE_ENGINEERING.md`) — nicht weiteres Probieren am Dispatcher.
-Sobald der Wert bekannt ist, setzt ihn `Q9K_SysFPrsNam` selbst, und der
-`a4`-Erhalt im Dispatcher wird nachträglich richtig statt schädlich.
+### Im Originalkernel nachgeschlagen: `F$PrsNam` schreibt in den Registerrahmen
+
+Der reale Handler liegt laut Slot-Tabelle bei `$a3e0` (Ladebasis `$7100`,
+Moduloffset `$32e0`). Disassembliert ist er bemerkenswert kurz:
+
+    a3e0  bsr.b    $a3f0            * eigentliche Parse-Routine
+    a3e2  movem.l  d0-d1,$0(a5)     * Ergebnisse in den REGISTERRAHMEN
+    a3e8  movem.l  a0-a1,$20(a5)
+    a3ee  rts
+
+**Der echte `F$PrsNam` gibt seine Ergebnisse nicht in den Registern zurück,
+sondern schreibt sie in den R$-Registerrahmen, den `a5` adressiert** — auf
+`R$d0=$00` und `R$a0=$20`, exakt die Offsets aus `process.a`. Unser Handler
+lieferte sie bisher nur in den Registern.
+
+**Gemessen, dass `a5` bei uns wirklich darauf zeigt:** beim `F$PrsNam`-Eintritt
+`a5 = $0002D398`, `sp = $0002D338` — `a5` liegt im Stackbereich, also auf
+einem echten Rahmen.
+
+**Umgesetzt und verifiziert:** `Q9K_SysFPrsNam` versorgt den Rahmen jetzt wie
+das Original. Der Kernel läuft damit unverändert durch (`RP012`,
+`Hallo von Q9-OS!`) — die Konvention ist nachgezogen und nachweislich
+unschädlich.
+
+**Das `a4`-Problem löst sie aber nicht.** Mit Rahmenversorgung *und*
+`a4`-Erhalt bricht das Open weiterhin; die Rahmenversorgung *allein* läuft.
+Getrennt gemessen, nicht beides zugleich geändert.
+
+**Wo die Suche jetzt steht.** Der Widerspruch ist enger geworden: Im
+funktionierenden Stand trägt IOMan drei Pfade in unseren Prozessdeskriptor
+ein (`RP012` liest sie bei `P$Path`/`$168` aus) — IOMan hat dort also schon
+heute den *richtigen* `a4`, den es über `Q9K_TrapCallExternal` bekommt, wo
+`a4 = D_Proc` korrekt gesetzt wird. Der `a4`-Erhalt im eigenen Handlerzweig
+zerstört demnach etwas anderes, das IOMan davor braucht — nicht den
+Open-Pfad selbst. Der Prozessdeskriptor scheidet als Ursache aus: Er ist
+`$200` groß und deckt `P$Path` bis `$1A8` (q9kernel_firstproc.c).
+
+**Nächster Schritt:** Nicht weiter am Dispatcher variieren, sondern den
+Unterschied *innerhalb IOMans Init* sichtbar machen — die drei Syscalls
+`$32`/`$2A`/`$10` liefern mit und ohne `a4`-Erhalt jeweils unterschiedliche
+Rückgaben; welche davon abweicht, ist mit der bewährten Marker-Methode
+(Zeichen + Hex-Wert an der Rücksprungstelle) in einem Lauf zu sehen.
 
 ### Offen: Pfad-Deadlock
 
