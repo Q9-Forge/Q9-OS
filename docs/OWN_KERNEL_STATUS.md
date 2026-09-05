@@ -1101,6 +1101,64 @@ Befund aber nicht nötig.)*
 
 **Der Code steht unverändert auf dem funktionierenden Stand.**
 
+### Aufgelöst (2026-09-05): es ist `a4` selbst — nicht der Stack
+
+Zwei weitere Messungen haben den Widerspruch geklärt, und dabei muss ich
+**meinen eigenen Schluss von oben korrigieren**.
+
+**1. Der Zweig läuft auch für die Trampolin-Aufrufe.** Ein `'*'` plus
+Callcode, ausgegeben bei jedem Durchlauf durch den eigenen Handlerzweig,
+zeigt zwischen IOMan-Einsprung und IOMans erster Meldung:
+
+    Q *00000000 *00000032 *0000002A *00000010 ioman: …
+
+IOMans Init ruft also `F$Link`, **`F$SSvc` ($32), `F$IRQ` ($2A) und
+`F$PrsNam` ($10)** — und alle laufen durch denselben `jsr (a4)`, obwohl der
+Trap-Trace dort **keinen** `TRAP #0` zeigt. Der Grund ist banal: Der Trace
+hängt an der `trap`-Instruktion, die Trampolin-Aufrufe (PEA+RTS) sind keine.
+**Die Aussage weiter oben, der Trampolin-Weg berühre den Dispatcher nicht,
+war damit falsch** — beide Wege teilen sich diesen Code.
+
+**2. Der stackfreie Fix trennt die beiden Verdächtigen sauber.** Der
+Handlerzeiger lässt sich anspringen, ohne `a4` anzufassen und ohne den Stack
+zu verändern — per speicherindirektem `jsr ([Q9K_TrapHandlerScratch])`. Der
+Q9 ist ein 68030 und kennt die Adressierungsart; nur `r68` kennt ihre Syntax
+nicht, deshalb als Opcode-Bytes:
+
+    dc.w    $4ebb,$01f1        * jsr ([…]): Modus 111/011, volles
+    dc.l    Q9K_TrapHandlerScratch   * Extension-Word, Basis+Index unterdrueckt
+
+**Der Opcode ist verifiziert** — mit ihm erscheinen exakt dieselben Callcodes
+wie im funktionierenden Lauf, alle Handler werden also korrekt erreicht.
+(Die Doku führte diesen Weg bisher als „`r68` kennt die speicherindirekte
+`jsr`-Form nicht" — nicht verfügbar ist nur die *Syntax*, nicht die
+Instruktion.)
+
+**Die Wahrheitstabelle aus vier Läufen:**
+
+| Variante | `a4` im Handler | Stack | Ergebnis |
+|---|---|---|---|
+| Original | Handleradresse | unverändert | **läuft** |
+| 2 `nop` (Größengegentest) | Handleradresse | unverändert | **läuft** |
+| Push/Pop | Aufrufer-`a4` | +4 | bricht |
+| `jsr ([…])` | Aufrufer-`a4` | **unverändert** | **bricht** |
+
+> **Es ist `a4` selbst, nicht der Stack.** Mein Schluss oben („es liegt an der
+> Stackänderung") war voreilig: Der `nop`-Gegentest schließt nur die
+> *Codegröße* aus, nicht den Stack. Erst die stackfreie Variante trennt beide
+> — und sie bricht genauso.
+
+Damit ist die alte Vermutung bestätigt, die zwischenzeitlich als widerlegt
+galt: **IOMan verlässt sich auf den `a4`-Wert, den unser Dispatcher bisher
+unbeabsichtigt liefert** (die Handleradresse). Der „korrekte" Aufrufer-`a4`
+bricht es — und zwar auch dann, wenn sonst nichts verändert wird.
+
+**Nächster Schritt, jetzt klar umrissen:** Bisektion über die drei Callcodes.
+Den stackfreien Fix selektiv nur für `$32`, `$2A` bzw. `$10` aktivieren und
+sehen, welcher Handler den korrekten `a4` nicht verträgt. Das sind zwei bis
+drei Läufe und benennt die Stelle exakt — statt weiter am Dispatcher als
+Ganzes zu drehen.
+
 ### Offen: Pfad-Deadlock
 
 Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind
