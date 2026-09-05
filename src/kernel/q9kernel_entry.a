@@ -1153,70 +1153,13 @@ Q9K_TestHelloFail:
         bsr     Q9K_DiagWriteHex32
 Q9K_TestHelloDone:
 
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
-* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
-* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
-* Callcode ist also belegt, nicht geraten.
-*
-* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
-* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
-* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
-* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
-* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
-* ist die Kette in beide Richtungen offen.
-*
-* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
-* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
-* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
-* Vektorslot ueberschrieben).
-*
-* Der Aufruf haelt den Boot an, solange der Weckweg nicht geschlossen ist
-* (Stand: docs/OWN_KERNEL_STATUS.md). Er steht hier trotzdem, weil nur er
-* den Lesepfad ueberhaupt bis in den Treiber bringt und damit die
-* Statikfelder V_BUSY/V_WAKE der Messung zugaenglich macht.
-        moveq   #'<',d7                     * DIAGNOSE: I$ReadLn wird versucht
-        bsr     Q9K_DiagWriteD7
-        moveq   #1,d0                       * Pfad 1 -- derselbe, auf dem I$Write laeuft
-*                                             (Pfad 0 erreichte scfs ReadLn nachweislich nie,
-*                                              IOMan brach vorher ab -- s. PC-Zaehler 2026-09-05)
-        moveq   #32,d1                      * Puffergroesse
-        lea     Q9K_TestReadBuf(pc),a0
-        trap    #0
-        dc.w    $008b                       * I$ReadLn
-        bcs     Q9K_TestReadFail
-        moveq   #'>',d7                     * DIAGNOSE: Zeile gelesen
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestReadDone
-
-Q9K_TestReadFail:
-        moveq   #'r',d7                     * DIAGNOSE: I$ReadLn fehlgeschlagen, Code folgt
-        bsr     Q9K_DiagWriteD7
-        move.l  d1,d5
-        bsr     Q9K_DiagWriteHex32
-Q9K_TestReadDone:
-* DIAGNOSE 2026-09-04, wieder zu entfernen: die ersten 8 Pufferbytes zeigen.
-* Entscheidet die eigentliche Frage -- kommen die Zeichen an? Der Rueckgabe-
-* status allein sagt das nicht, und der Puffer liegt PC-relativ, laesst sich
-* also nicht von aussen an fester Adresse mitlesen.
-        moveq   #'@',d7                     * DIAGNOSE: Laufzeitadresse des Puffers, fuer den Schreib-Watch
-        bsr     Q9K_DiagWriteD7
-        lea     Q9K_TestReadBuf(pc),a1
-        move.l  a1,d5
-        bsr     Q9K_DiagWriteHex32
-        moveq   #'[',d7
-        bsr     Q9K_DiagWriteD7
-        lea     Q9K_TestReadBuf(pc),a1
-        moveq   #7,d6
-Q9K_TestReadDump:
-        move.b  (a1)+,d7
-        cmpi.b  #$20,d7
-        bcc     Q9K_TestReadDumpChar
-        moveq   #'.',d7                     * Nichtdruckbares als Punkt
-Q9K_TestReadDumpChar:
-        bsr     Q9K_DiagWriteD7
-        dbra    d6,Q9K_TestReadDump
-        moveq   #']',d7
-        bsr     Q9K_DiagWriteD7
+* Der I$ReadLn-Test von hier ist entfernt (2026-09-06), nachdem er seinen
+* Zweck erfuellt hat: er machte den Lesepfad bis in den Treiber verfolgbar
+* und lieferte schliesslich die eingegebene Zeile zurueck ("H<>[hallo...]").
+* Stehen bleiben darf er nicht -- I$ReadLn blockiert bis zum Zeilenende, der
+* Boot wartete sonst bei JEDEM Start auf eine Eingabe. Hergang und Ursache
+* (P$Age lag ein Byte zu hoch und zerstoerte damit P$State, worauf sc68681
+* den wartenden Prozess fuer "condemned" hielt): docs/OWN_KERNEL_STATUS.md.
 
 Q9K_TestWriteNoPath:
         moveq   #'n',d7                     * DIAGNOSE: kein belegter P$Path-Slot
@@ -1271,14 +1214,6 @@ Q9K_TestWriteText:
         dc.b    "Hallo von Q9-OS!",$0d
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 Q9K_TestWriteLen equ 17
-
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04) -- Eingabepuffer fuer den
-* I$ReadLn-Versuch. 32 Byte, geradzahlig, wird zur Laufzeit von IOman/scf
-* beschrieben (Zeiger per "lea (pc)" uebergeben, s. Aufrufer).
-Q9K_TestReadBuf:
-        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Q9K_TestReadMax equ 32
 
 Q9K_TestHelloName:
         dc.b    "hellosvc",0
