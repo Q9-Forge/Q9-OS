@@ -529,10 +529,55 @@ erwartet der aufrufende Code (IOMan) aber den Prozessdeskriptor. `$7cfe`
 liegt unmittelbar vor dem gezeigten Ausschnitt, dürfte also der Einstieg des
 Handlers selbst sein.
 
-**Nächster Schritt:** Klären, wer nach `$7d22` springt. `F$GProcP` wird von
-IOMan sehr häufig gerufen; der Verdacht liegt auf dem Rückweg — entweder
-einer verrutschten Rücksprungadresse oder einer Verwechslung von
-Handler-Einstieg und Deskriptor in `a4`.
+**Ursache gefunden: RBF schreibt in unseren Kernel-Code.**
+
+Ein Code-Dump aus dem *laufenden* Speicher (nicht aus der Moduldatei!) zeigte
+die Bescherung — an zwei Stellen steht etwas anderes als im Modul:
+
+| Adresse | Moduldatei | Speicher |
+|---|---|---|
+| `$7d0e` | `2c5f 4a79` | **`0000 8200`** |
+| `$7d1e` | `1384 023c` | **`0000 8200`** |
+
+Ein Schreib-Watch nannte den Verursacher: **`pc=$d7e4`, also `rbf+$57c`**:
+
+    move.l  d1, $14e(a4)
+
+RBF schreibt in den Prozessdeskriptor bei `+$14e`. Aus der Zieladresse folgt
+`a4 = $7bc0` — eine Adresse **in unserem Kernel-Code**, nicht der
+Prozessdeskriptor (`D_Proc` war zeitgleich korrekt `$19400`).
+
+**Woher das kommt:** Der Trap-Dispatcher benutzt `a4` als Sprungregister:
+
+    movea.l Q9K_TrapA4Save,a4          * A4 korrekt wiederhergestellt
+    bne     Q9K_TrapCallExternal
+    movea.l Q9K_TrapHandlerScratch,a4  * eigener Handler: a4 = HANDLER-ADRESSE
+    jsr     (a4)                        * ... und bleibt danach stehen
+
+Für den *externen* Pfad ist das längst berücksichtigt (bsr+Stub, damit `a4`
+frei bleibt). Für unsere **eigenen** Handler nicht — und genau die ruft IOMan
+laufend (`F$GProcP`, `F$AllPD`, `F$SRqMem` …). IOMan und die File-Manager
+führen in `a4` aber den Prozessdeskriptor und rechnen nach dem Aufruf damit
+weiter.
+
+**Der Fix ist noch offen.** Zwei Anläufe sind gescheitert, beide sind
+dokumentiert, damit sie niemand wiederholt:
+
+1. `a4` hinterher aus `Q9K_TrapA4Save` zurückholen — die Zelle ist **global**
+   und übersteht keinen verschachtelten Trap; der IOMan-Start brach sofort
+   mit einer Exception ab. Dieselbe Bug-Klasse wie beim früheren
+   `Q9K_InTrapPath`.
+2. Sprung über `bsr`+Stub (wie im externen Pfad) — bricht an derselben
+   frühen Stelle. Der Verdacht ist, dass der Epilog oder einzelne Handler
+   `a4` in seiner bisherigen Bedeutung erwarten; das ist noch nicht geprüft.
+
+`jsr ([Q9K_TrapHandlerScratch])` scheidet aus: `r68` übersetzt die
+speicherindirekte Form nicht („bad operand").
+
+**Nächster Schritt:** Prüfen, wer `a4` nach dem Handler-Aufruf tatsächlich
+liest — Trap-Epilog und die eigenen Handler durchsehen. Erst danach eine
+Variante wählen, die `a4` erhält, ohne den Stackzustand der blockierenden
+Handler (`F$Sleep`/`F$Wait`/`F$Exit`) zu verändern.
 
 *(Werkzeugnotiz: Die Zuordnung Laufzeitadresse → Quelltext gelingt über die
 Linker-Map. `l68 -m` listet je Psect den Code-Offset im Modul; der
