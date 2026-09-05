@@ -884,9 +884,38 @@ den File-Manager, und dessen Open gelingt nachweislich (mit und ohne Push
 identisch) — trotzdem kehrt sie mit Carry zurück. Der Fehler entsteht also in
 dieser Wrapper-Routine, vor oder nach dem eigentlichen Aufruf.
 
-**Nächster Schritt:** `ioman+$14f8` disassemblieren und ihre Zweige mit und
-ohne Push vergleichen. Das ist die letzte Ebene — dahinter liegt nur noch der
-File-Manager selbst, der bereits als unbeteiligt belegt ist.
+### Der Wrapper `ioman+$14f8`: ein Lock im Pfaddeskriptor
+
+Die Routine ist jetzt vollständig gelesen. Sie **sperrt den Pfad**, ruft den
+File-Manager und gibt die Sperre wieder frei:
+
+    +$14f8  movem.l d0-d1/a0-a6,-(a7)   * eigener Registersatz, a4 landet bei $28(a7)
+    +$1502  ori.w   #$700,sr            * Interrupts sperren
+    +$1506  move.w  $8(a1),d0           * Lock im Pfaddeskriptor
+    +$150a  bne.w   $15a6               * schon belegt -> FEHLER
+    +$150e  move.w  $0(a4),$8(a1)       * Lock = Prozess-ID aus a4
+    ...     Sprung in den File-Manager über dessen Sprungtabelle
+    +$1564  movea.l $28(a7),a4          * a4 zurückholen
+    +$158a  move.w  $0(a4),d0
+    +$158e  cmp.w   $8(a1),d0           * Lock == eigene ID?
+    +$1592  bne.b   $1598               * nein -> NICHT freigeben
+    +$1594  clr.w   $8(a1)              * ja  -> freigeben
+
+**Das Lock wird nur freigegeben, wenn `$0(a4)` beim Rückweg denselben Wert
+liefert wie beim Setzen.** Bleibt es stehen, scheitert jeder weitere Open an
+`bne $15a6` — genau das beobachtete Verhalten.
+
+Damit ist der Mechanismus verstanden: Es geht um `a4` **über den gesamten
+Aufruf hinweg**, nicht nur um seinen Wert nach einem einzelnen Handler.
+IOMan sichert `a4` zwar selbst (`movem` am Anfang, zurück bei `$1564`) — der
+Vergleich sollte also stimmen. Warum er mit Push trotzdem fehlschlägt, ist
+noch offen; reine Code-Lektüre reicht hier nicht weiter.
+
+**Nächster Schritt — direkt am Symptom messen:** Einen Schreib-Watch auf das
+Lock-Feld `$8(a1)` des Konsolen-Pfaddeskriptors setzen und beide Läufe
+vergleichen. Zu sehen ist dann unmittelbar, ob das Lock mit Push gesetzt und
+nicht mehr freigegeben wird — und mit welchen Werten. Das beantwortet die
+Frage ohne weitere Schlussketten.
 
 ### Offen: Pfad-Deadlock
 
