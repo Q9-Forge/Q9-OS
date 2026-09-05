@@ -129,6 +129,17 @@ static Q9_u16 Q9K_ModDirGetU16(Q9_u32 addr)
  * dupliziert, gleiche Logik wie Q9K_NamesMatch (q9kernel_modsearch.c,
  * dort static, deshalb keine gemeinsame Nutzung). moduleName darf
  * innerhalb von nameMaxLen liegen -- bricht sicher ab. */
+/* Gueltiges Zeichen INNERHALB eines Modulnamens -- gleiche Menge wie in
+ * F$PrsNam (Q9K_ProcPrsNam, q9kernel_iopath.c): Buchstaben, Ziffern sowie
+ * '_', '.' und '$'. Alles andere beendet den Namen. */
+static int Q9K_ModDirIsNameChar(Q9_u8 c)
+{
+    return (c >= '0' && c <= '9') ||
+           (c >= 'A' && c <= 'Z') ||
+           (c >= 'a' && c <= 'z') ||
+           c == '_' || c == '.' || c == '$';
+}
+
 static int Q9K_ModDirNamesMatch(const Q9_u8 *moduleName, Q9_u32 nameMaxLen, const char *targetName)
 {
     Q9_u32 i;
@@ -136,13 +147,27 @@ static int Q9K_ModDirNamesMatch(const Q9_u8 *moduleName, Q9_u32 nameMaxLen, cons
     for (i = 0; i < nameMaxLen; i++) {
         Q9_u8 a = moduleName[i];
         Q9_u8 b = (Q9_u8)targetName[i];
-        Q9_u8 aLower = (a >= 'A' && a <= 'Z') ? (Q9_u8)(a + ('a' - 'A')) : a;
-        Q9_u8 bLower = (b >= 'A' && b <= 'Z') ? (Q9_u8)(b + ('a' - 'A')) : b;
+        Q9_u8 aLower;
+        Q9_u8 bLower;
+
+        /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-06): Ist der MODULNAME zu
+         * Ende, galt bisher nur ein ebenfalls beendeter Zielname als Treffer.
+         * IOMan sucht aber mit dem REST DES PFADES: beim Open von
+         * "/dd/startup" fragt es nach dem Modul "dd/startup" -- der
+         * Geraetename endet fuer den Kernel am '/'. Real endet ein Modulname
+         * im F$Link-Aufruf am ersten Zeichen, das kein Namenszeichen ist;
+         * dass danach noch Text folgt, ist ausdruecklich erlaubt (F$Link
+         * liefert in a0 genau deshalb den Zeiger HINTER den Namen zurueck).
+         * Symptom vorher: I$Open meldete E_MNF, obwohl F$Link("dd") den
+         * Deskriptor per Einzeltest sauber fand. */
+        if (a == 0)
+            return Q9K_ModDirIsNameChar(b) ? 0 : 1;
+
+        aLower = (a >= 'A' && a <= 'Z') ? (Q9_u8)(a + ('a' - 'A')) : a;
+        bLower = (b >= 'A' && b <= 'Z') ? (Q9_u8)(b + ('a' - 'A')) : b;
 
         if (aLower != bLower)
             return 0;
-        if (a == 0)
-            return 1;
     }
     return 0;
 }

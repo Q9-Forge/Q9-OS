@@ -1234,6 +1234,12 @@ Q9K_TestFileShowChar:
         bra     Q9K_TestFileDone
 
 Q9K_TestFileOpenFail:
+* DIAGNOSE-HAKEN: als ERSTES eine sonst unbenutzte Zelle beschreiben. Ein
+* Schreib-Watch mit Freeze darauf (Q9_WATCH_ADDR=0x1700, Q9_WATCH_FREEZE=1)
+* haelt den Instruktions-Ring GENAU hier an -- er enthaelt dann noch den Weg,
+* auf dem der Fehler entstanden ist. Auf den Fehlerzweig selbst laesst sich
+* nicht triggern, ohne seine Laufzeitadresse zu kennen.
+        move.l  d1,$1700
         moveq   #'f',d7                     * DIAGNOSE: I$Open fehlgeschlagen, Code folgt
         bsr     Q9K_DiagWriteD7
         move.l  d1,d5
