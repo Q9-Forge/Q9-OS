@@ -476,10 +476,24 @@ Bootdatei-Modulen nie passiert. Fix: Einträge aus dem Boot-Scan tragen ein
 
 Damit stehen jetzt **alle 12 Module** in der Directory.
 
-**Noch offen:** `I$Open("/dd/startup")` meldet weiterhin `E$MNF`. Die
-Directory ist also nicht mehr die Ursache — der nächste Verdacht ist die
-Modulsuche selbst: Findet `F$Link("dd")` den Gerätedeskriptor, und mit
-welchem Typ/Sprache-Filter sucht IOMan ihn?
+**Noch offen: `I$Open("/dd/startup")` meldet weiterhin `E$MNF`.** Zwei
+Verdächtige sind inzwischen ausgeschlossen:
+
+- **Die Modulsuche nicht.** Ein Testaufruf `F$Link` findet **alle drei**
+  Module des Dreiklangs — Deskriptor `dd`, File-Manager `rbf` und Treiber
+  `cfide` —, sowohl mit Filter 0 als auch mit `$0F00`.
+- **IOMans eigene E$MNF-Stelle nicht.** Der Fehlercode `$DD` kommt in IOMan
+  nur an einer einzigen Stelle vor (`+$028a`); ein Freeze des
+  Instruktions-Rings darauf löst **nie** aus. Der Code wird also von einem
+  Unterdienst geliefert und durchgereicht.
+
+*(Merkposten zur Messtechnik: `F$Link` liefert den Modulkopf in **`a2`**,
+die daraus berechnete Einsprungadresse in `a1`. Ein Test, der `a1` ausgibt,
+zeigt eine Adresse, die nach einem Fehler aussieht, aber keiner ist.)*
+
+**Nächster Schritt:** Den Instruktions-Ring beim Fehlerzweig des Testaufrufs
+einfrieren. Er zeigt dann die letzten Instruktionen vor dem gesetzten Carry
+— also die Stelle, an der `E$MNF` wirklich entsteht.
 
 
 ### Offen: Pfad-Deadlock
