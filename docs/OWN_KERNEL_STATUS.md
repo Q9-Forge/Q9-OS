@@ -574,10 +574,32 @@ dokumentiert, damit sie niemand wiederholt:
 `jsr ([Q9K_TrapHandlerScratch])` scheidet aus: `r68` übersetzt die
 speicherindirekte Form nicht („bad operand").
 
-**Nächster Schritt:** Prüfen, wer `a4` nach dem Handler-Aufruf tatsächlich
-liest — Trap-Epilog und die eigenen Handler durchsehen. Erst danach eine
-Variante wählen, die `a4` erhält, ohne den Stackzustand der blockierenden
-Handler (`F$Sleep`/`F$Wait`/`F$Exit`) zu verändern.
+**Epilog und Handler sind inzwischen durchgesehen:**
+
+- **Der Epilog (`Q9K_TrapAfterCall`) fasst `a4` nicht an.** Er arbeitet nur
+  mit CCR, `d0` und dem Stack. Er scheidet als Ursache aus.
+- **Der Dispatcher benutzt `a4` als Arbeitsregister**, und zwar früh: erst
+  als geretteter PC (`movea.l 38(sp),a4`), dann als Tabellenbasis
+  (`Q9_D_USRDIS`), dann als Handler-Adresse. Danach holt
+  `movem.l (sp),d2-d7/a3-a5` den Registersatz des Aufrufers zurück — **ab da
+  steht in `a4` wieder dessen Wert**. Die Sicherung in `Q9K_TrapA4Save`
+  (Zeile 1617) trifft also den richtigen Wert; nur wird `a4` unmittelbar vor
+  dem `jsr` erneut mit der Handler-Adresse überschrieben.
+
+Damit ist die Stelle eindeutig: Es geht allein um die zwei Zeilen
+`movea.l Q9K_TrapHandlerScratch,a4` / `jsr (a4)`.
+
+**Dritter gescheiterter Anlauf** (bsr+Stub, diesmal mit Messung): Der PC
+landet bei `$75af` — mitten in den Kernel-*Daten*, drumherum steht der String
+`hellosvc`. Der per `rts` geholte Wert war also keine Handler-Adresse.
+`SR=2010`, `A4=0`, auf dem Stack IOMan-Adressen. Warum der gepushte Wert
+falsch ist, ist noch ungeklärt — die Zelle `Q9K_TrapHandlerScratch` wird
+unmittelbar davor gelesen, ein Timing-Problem scheidet also aus.
+
+**Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
+auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
+wenn klar ist, warum `rts` dort falsch landet, lohnt der nächste
+Fix-Versuch.
 
 *(Werkzeugnotiz: Die Zuordnung Laufzeitadresse → Quelltext gelingt über die
 Linker-Map. `l68 -m` listet je Psect den Code-Offset im Modul; der
