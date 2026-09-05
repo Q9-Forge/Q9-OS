@@ -834,10 +834,32 @@ wurde: Diese Nummer wird schlicht nie angefordert.)*
 - scfs Open gelingt in beiden Fällen identisch; der Unterschied entsteht
   danach, beim Ergebnis eines bereits vorhandenen Dienstes.
 
-**Nächster Schritt:** Den Callcode an `ioman+$0126` **messen** statt lesen —
-`$1370` unmittelbar nach diesem `trap` auslesen (etwa per Watch mit Freeze
-auf die Zelle). Erst mit der gesicherten Nummer lässt sich der betroffene
-Dienst gezielt vergleichen.
+### Der Callcode ist `$0084` — `I$Open`
+
+Nachgesehen an der Stelle selbst, deren Instruktionsanfang durch den
+PC-Zähler gesichert ist (`+$0124` wird ausgeführt):
+
+    +$011e  41f2 0000    lea    (a2),a0      * Gerätename
+    +$0122  7003         moveq  #3,d0        * Modus
+    +$0124  4e40         trap   #0
+    +$0126  0084         dc.w   $0084        * I$Open
+    +$0128  6406         bcc.b  +6           * bei Erfolg überspringen
+    +$012a  6100 01c4    bsr.w  $2f0         * Fehlermeldung
+
+**Es ist `I$Open` (`$84`), nicht `$64`.** Die frühere Lesung war schlicht
+falsch abgelesen. Damit ist auch die letzte Unklarheit ausgeräumt: `$84` wird
+von IOMan selbst bedient (Slot zeigt in IOMan), es fehlt kein Dienst, und der
+Unimplemented-Stub hat zu Recht null Treffer.
+
+**Der Kreis schließt sich:** IOMan ruft beim Anhängen der Konsole seinen
+**eigenen `I$Open`**. Darin gelingt scfs Open nachweislich (identisch mit und
+ohne Push) — trotzdem meldet IOMan Fehlschlag. Die Ursache liegt also in
+IOMans `I$Open`-**Nachbearbeitung**, nach der Rückkehr aus dem File-Manager.
+
+**Nächster Schritt:** IOMans `I$Open`-Handler ab dem Slotwert (`usr=$bd2e`)
+verfolgen — konkret den Abschnitt *nach* dem File-Manager-Aufruf. Dort per
+PC-Zähler die Zweige mit und ohne Push vergleichen. Das ist derselbe Weg, der
+die Stelle bis hierher eingegrenzt hat.
 
 ### Offen: Pfad-Deadlock
 
