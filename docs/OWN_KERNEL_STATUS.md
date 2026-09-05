@@ -936,10 +936,27 @@ lag auf der Push-Adresse, obwohl der Lauf als „ohne Push" gedacht war. Nach
 jedem Kernel-Umbau gehört das Image neu gebaut, sonst misst man zweimal
 dasselbe.)*
 
-**Nächster Schritt:** Verfolgen, was zwischen dem zweiten und dem dritten
-Wrapper-Aufruf geschieht — also im `I$Open`-Ablauf oberhalb des Wrappers.
-Ring-Freeze auf den Wrapper-Einstieg beim **dritten** Treffer (ohne Push)
-zeigt, welcher Weg dorthin führt; mit Push fehlt genau dieser.
+**Der dritte Wrapper-Aufruf kommt aus `ioman+$0dca`.** Ring-Freeze auf den
+Wrapper-Einstieg beim dritten Treffer (im funktionierenden Lauf) zeigt den
+Weg dorthin:
+
+    ioman+$144a / $144c   * Namens-Kopierschleife, 8 Durchläufe
+    ioman+$1450 … $145c
+    ioman+$0dca, $0dce    * von hier wird gerufen
+    ioman+$14f8           * Wrapper, 3. Mal
+
+Vor dem Aufruf kopiert IOMan also einen Namen (die Schleife bei `$1448`:
+`moveq #$7f,d1 / move.b (a0)+,(a2)+ / dbra`) und ruft dann über `$0dca` den
+File-Manager. **Genau dieser dritte Aufruf fehlt mit Push.**
+
+*(Auch hier hat die frisch dokumentierte Regel sofort gegriffen: Der erste
+Freeze-Versuch lief ins Leere, weil nach dem `git checkout` das Image nicht
+neu gebaut war — der Ring blieb ungefroren. Nach dem Neubau griff er sofort.)*
+
+**Nächster Schritt:** Einen PC-Zähler auf `ioman+$0dca` in beide Läufe setzen.
+Wird die Stelle mit Push gar nicht erreicht, liegt der Abbruch davor — dann
+ist die Umgebung von `$0dca` der nächste Ort zum Nachsehen. Wird sie erreicht,
+scheitert erst der Aufruf selbst.
 
 ### Offen: Pfad-Deadlock
 
