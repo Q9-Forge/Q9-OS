@@ -1176,7 +1176,9 @@ Q9K_TestHelloDone:
 * Statikfelder V_BUSY/V_WAKE der Messung zugaenglich macht.
         moveq   #'<',d7                     * DIAGNOSE: I$ReadLn wird versucht
         bsr     Q9K_DiagWriteD7
-        clr.w   d0                          * Pfad 0 = Standardeingabe
+        moveq   #1,d0                       * Pfad 1 -- derselbe, auf dem I$Write laeuft
+*                                             (Pfad 0 erreichte scfs ReadLn nachweislich nie,
+*                                              IOMan brach vorher ab -- s. PC-Zaehler 2026-09-05)
         moveq   #32,d1                      * Puffergroesse
         lea     Q9K_TestReadBuf(pc),a0
         trap    #0

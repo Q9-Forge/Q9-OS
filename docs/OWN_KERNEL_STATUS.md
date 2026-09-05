@@ -370,6 +370,73 @@ im Lesepfad wurde ja nachweislich kein fehlender Dienst angefordert.
 2. Danach der F$Load-Meilenstein (RBF + Plattentreiber ins Bootfile) — der
    räumt zugleich die `chgdir`-Meldung ab.
 
+### scf-Analyse (2026-09-05): der Lesepfad erreicht scf gar nicht
+
+scf aus dem Bootfile extrahiert (Laufzeitbasis `$bdbc`, Größe `$8e8`). Die
+Einstiegstabelle steht bei `M$Exec` (`+$80`) und besteht aus **16-Bit-Offsets
+relativ zum Tabellenanfang**, in der klassischen File-Manager-Reihenfolge.
+Die Deutung ist nicht geraten, sondern **im Betrieb bestätigt** (PC-Zähler):
+
+| Eintrag | Adresse | Treffer im Lauf |
+|---|---|---|
+| Create/Open | `$be66` | 3 |
+| **Write** | `$c502` | **6** |
+| **WritLn** | `$c4fc` | **1** (der eine `I$WritLn` von `hellosvc`) |
+| **ReadLn** | `$c224` | **0** |
+
+**Damit ist der Suchraum halbiert: scfs ReadLn wird nie aufgerufen.** Der
+Abbruch passiert in IOMan, bevor der File-Manager überhaupt drankommt. Alles,
+was in scf steht — Zeichenschleife, Zielpuffer aus `+$0e` des
+Pfaddeskriptors, Optionen ab `+$80` — ist für diesen Fehler nicht mehr
+verdächtig.
+
+### Zwei echte Bugs, die dabei auffielen
+
+**1. Pfaddeskriptor: 32 gegen 256.** `q9kernel_tables.c` legt die Pool-Slots
+mit 256 Byte an (korrekt, real `PDSIZE` aus `MWOS/OS9/SRC/DEFS/io.a`),
+`q9kernel_iopath.c` definierte `Q9K_PATHDESC_SIZE` aber ein zweites Mal als
+**32**. `Q9K_ProcAllPD` nullte deshalb nur das erste Achtel eines frisch
+vergebenen Deskriptors — alles ab `+$20` blieb Altbestand, darunter die
+Optionen ab `+$80`, die scf beim Lesen auswertet.
+
+**2. Der Deskriptorkopf war selbst erfunden.** Dort stand ein „Typ"-Langwort
+auf Offset 0, das die beiden realen Felder überschrieb:
+
+    PD_PD  ($00, Wort)  Pfadnummer          (MWOS/OS9/SRC/DEFS/sysio.a)
+    PD_MOD ($02, Byte)  Mode (read/write/update)
+
+`PD_MOD` ist keine Nebensache — IOMan prüft es vor **jedem** Lesezugriff:
+
+    $ba46  moveq  #$5,d1        * verlangt Lesezugriff
+    $ba4e  and.b  $2(a1),d1     * PD_MOD
+    $ba52  bne    ...           * passt -> weiter zum File-Manager
+    $ba56  move.w #$cb,d1       * sonst E$BMode
+
+Beides ist behoben; `I$Open` trägt jetzt Pfadnummer und Zugriffsmodus ein.
+Das Symptom des Lesetests ändert sich dadurch **nicht** — die Pfade, die der
+Test benutzt, legt IOMan selbst über `F$AllPD` an, nicht über unser `I$Open`.
+Die Korrekturen sind trotzdem richtig und waren beide echte Abweichungen vom
+realen Layout.
+
+### Offen: wo genau IOMan aussteigt
+
+Die Vermutung, es sei die Modusprüfung, ist **noch nicht belegt**. Die dafür
+gemessene Routine lag an einem Offset aus einer veralteten Notiz (`$1268`);
+die echten Einstiegspunkte stehen in den Dispatch-Tabellen und wurden
+inzwischen zur Laufzeit ausgelesen (neu im Dump):
+
+    $89/$8b Read/ReadLn   sys=$bc88  usr=$bc4a
+    $8a/$8c Write/WritLn  sys=$bd3a  usr=$bcf8
+
+Von diesen Adressen aus muss der Weg neu verfolgt werden. Der Code dort ist
+kein gewöhnlicher Rumpf (`$bcf8` ist ein „springe an `a0`"-Idiom), die
+Disassemblierung braucht also einen gesicherten Anker statt eines geratenen
+Startoffsets.
+
+**Nächster Schritt:** ab `$bc4a` mit PC-Zählern den tatsächlich genommenen
+Weg abtasten, statt ihn aus dem Listing zu erschließen — dieselbe Methode,
+die scfs Tabellendeutung bestätigt hat.
+
 ### Offen: Pfad-Deadlock
 
 Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind

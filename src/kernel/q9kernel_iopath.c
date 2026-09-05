@@ -52,20 +52,54 @@ typedef unsigned char  Q9_u8;
 #ifndef Q9K_PATHPOOL_FREE_ADDR
 #define Q9K_PATHPOOL_FREE_ADDR 0x121CUL
 #endif
+/* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-05): hier stand 32. Der Pool legt
+ * die Slots aber laengst mit 256 Byte an (q9kernel_tables.c, dort mit
+ * ausfuehrlicher Begruendung) -- die beiden Definitionen widersprachen
+ * einander. Folge: Q9K_ProcAllPD nullte von einem frisch vergebenen
+ * Deskriptor nur das erste Achtel; alles ab +$20 blieb Altbestand.
+ *
+ * Das trifft ausgerechnet die Felder, die scf beim Lesen auswertet. Der
+ * reale Pfaddeskriptor ist 256 Byte gross (PDSIZE in
+ * MWOS/OS9/SRC/DEFS/io.a), die ersten 128 Byte gehoeren dem File-Manager
+ * ("do.b 128 File manager variables"), ab +$80 stehen die Optionen. scfs
+ * ReadLn liest daraus u.a. +$81 (Grossschreibung -- danach wandelt es
+ * $61..$7a um) und die neun Sonderzeichen ab +$89, und es holt den
+ * Zielpuffer aus +$0e. Mit einem nur 32 Byte genullten Deskriptor sind
+ * das samt und sonders Zufallswerte.
+ */
 #ifndef Q9K_PATHDESC_SIZE
-#define Q9K_PATHDESC_SIZE 32UL
+#define Q9K_PATHDESC_SIZE 256UL
 #endif
 
-/* Pfad-Deskriptor-Layout (32 Byte, s. Kopfkommentar q9kernel_tables.c):
+/* Pfad-Deskriptor-Layout (256 Byte, real PDSIZE aus io.a):
  *   +0x00 (4)  bei FREI: Next-Zeiger (Freilisten-Verkettung, gleiches
- *              Prinzip wie Q9K_ProcPoolAlloc); bei ALLOZIERT: unteres
- *              Byte = Pfad-TYP (1 = Konsole/DUART, einziger bisher
- *              unterstuetzter Typ), Rest 0.
- *   +0x04..+0x1F: reserviert fuer spaetere Erweiterung (Dateiposition,
- *              Geraetereferenz, Zugriffsmodus) -- bleibt vorerst 0.
+ *              Prinzip wie Q9K_ProcPoolAlloc); bei ALLOZIERT: die
+ *              Deskriptornummer (Q9K_ProcAllPD legt sie dort ab, IOMan
+ *              prueft sie gegen den Tabellenindex).
+ *   +0x00..+0x7F: Bereich der File-Manager (scf/rbf), von IOMan und dem
+ *              jeweiligen Manager belegt -- u.a. +$0e Zielpuffer.
+ *   +0x80..+0xFF: Optionen (PD_OPT), beim Open aus dem Geraetedeskriptor
+ *              gefuellt -- u.a. +$81 Grossschreibung, ab +$89 die
+ *              Sonderzeichen.
  */
-#define Q9K_PATHDESC_TYPE_OFF 0x00UL
-#define Q9K_PATHDESC_TYPE_CONSOLE 1UL
+/* Kopf des Pfaddeskriptors, real belegt in MWOS/OS9/SRC/DEFS/sysio.a:
+ *   PD_PD  ($00, Wort) Pfadnummer
+ *   PD_MOD ($02, Byte) Zugriffsmodus (read/write/update)
+ *
+ * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-05): hier stand stattdessen ein
+ * selbst erfundenes "Typ"-Langwort auf Offset 0 -- das ueberschrieb BEIDE
+ * realen Felder mit 0. IOMan prueft aber vor JEDEM Lesen den Modus:
+ *
+ *     $ba46  moveq  #$5,d1        * verlangt Lesezugriff
+ *     $ba4e  and.b  $2(a1),d1     * PD_MOD
+ *     $ba52  bne    ...           * passt -> weiter zum File-Manager
+ *     $ba56  move.w #$cb,d1       * sonst E_BMODE
+ *
+ * Mit PD_MOD = 0 brach IOMan deshalb ab, OHNE scf ueberhaupt zu rufen --
+ * per PC-Zaehler bestaetigt: scfs ReadLn-Einstieg ($c224) wurde nie
+ * erreicht, waehrend Write ($c502) und WritLn ($c4fc) normal ansprangen. */
+#define Q9K_PATHDESC_NUM_OFF  0x00UL
+#define Q9K_PATHDESC_MODE_OFF 0x02UL
 
 /* Scratchzellen fuer F$RetPD -- gleiche Konvention wie ueberall in diesem
  * Kernel (Assembler-Trampolin legt die Eingaben ab, holt die Ausgaben). */
@@ -363,8 +397,7 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
 {
     Q9_u32 p = pathnamePtr;
     Q9_u32 slot;
-
-    (void)mode; /* s. Kopfkommentar -- noch keine echte Zugriffspruefung */
+    Q9_u32 pathNum;
 
     while (*(volatile Q9_u8 *)p != 0)
         p++;
@@ -375,14 +408,28 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
     if (slot == 0)
         return 0;
 
-    *(volatile Q9_u32 *)(slot + Q9K_PATHDESC_TYPE_OFF) = Q9K_PATHDESC_TYPE_CONSOLE;
-
     /* Pfadnummer aus der Slot-Position ableiten (kein pro-Prozess-
      * Zaehler vorhanden, s. Kopfkommentar) -- Offset 3, damit die bei
      * echtem OS-9 fuer stdin/stdout/stderr reservierten Nummern 0-2
      * nicht kollidieren, auch wenn wir diese noch nicht wirklich
      * vorbelegen. */
-    return (slot - Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR)) / Q9K_PATHDESC_SIZE + 3UL;
+    pathNum = (slot - Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR)) / Q9K_PATHDESC_SIZE + 3UL;
+
+    Q9K_WriteU16BE(slot + Q9K_PATHDESC_NUM_OFF, (Q9_u16)pathNum);
+
+    /* Zugriffsmodus eintragen -- ohne ihn verweigert IOMan jeden Lese- und
+     * Schreibzugriff auf diesen Pfad (s. Kopfkommentar oben). Faellt der
+     * Aufrufer mit 0 herein, wird daraus Lesen+Schreiben: ein Pfad, auf dem
+     * NICHTS erlaubt ist, waere in jedem Fall unbrauchbar, und die Konsole
+     * kann real beides. */
+    {
+        Q9_u8 m = (Q9_u8)(mode & 0xFFUL);
+        if (m == 0)
+            m = 3;                      /* READ_ | WRITE_ */
+        *(volatile Q9_u8 *)(slot + Q9K_PATHDESC_MODE_OFF) = m;
+    }
+
+    return pathNum;
 }
 
 /* Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
