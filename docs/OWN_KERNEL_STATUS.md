@@ -911,28 +911,35 @@ IOMan sichert `a4` zwar selbst (`movem` am Anfang, zurück bei `$1564`) — der
 Vergleich sollte also stimmen. Warum er mit Push trotzdem fehlschlägt, ist
 noch offen; reine Code-Lektüre reicht hier nicht weiter.
 
-**Gemessen — das Lock bleibt nicht stehen.** Schreib-Watch auf das Lock-Feld
-des ersten Pfaddeskriptors (Pool-Basis `$21400`, Feld `+$8`):
+**Gemessen — die Lock-Hypothese ist endgültig widerlegt.** PC-Zähler auf den
+Fehlerzweig `ioman+$15a6` (dorthin springt `bne` bei belegtem Lock), dazu
+Wrapper-Einstieg und Freigabestelle:
 
-| Lauf | Beobachtung |
-|---|---|
-| ohne Push (Konsole geht) | Lock 2× gesetzt (Wert **1** = Prozess-ID), 2× freigegeben |
-| mit Push (`can't open`) | **identisch** — 2× gesetzt, 2× freigegeben |
+| Stelle | ohne Push | mit Push |
+|---|---|---|
+| **Fehlerzweig (Lock belegt)** | **0** | **0** |
+| Wrapper-Einstieg (`$14f8`) | **5** | **2** |
+| Lock setzen / freigeben | 4 / 4 | 2 / 2 |
 
-Der Wert `1` bestätigt nebenbei, dass `a4` beim Sperren korrekt ist (`$0(a4)`
-= `P$ID`). **Die Lock-Hypothese ist damit für diesen Deskriptor widerlegt** —
-das Feld ist am Ende in beiden Fällen sauber 0.
+Der Fehlerzweig wird in **keinem** Lauf getroffen; Sperren und Freigeben sind
+immer paarig. Kein Lock bleibt hängen.
 
-Offen bleibt, ob ein *anderer* Pfaddeskriptor betroffen ist: Beim Öffnen der
-Konsole ist mehr als einer im Spiel, beobachtet wurde nur der erste aus dem
-Pool.
+**Der eigentliche Befund liegt woanders:** Mit Push wird der Wrapper nur
+**zweimal statt fünfmal** aufgerufen. IOMan kommt also gar nicht so weit — die
+Kette bricht *vor* dem dritten File-Manager-Aufruf ab. Der Fehler entsteht
+somit **zwischen** zwei Wrapper-Aufrufen, nicht in einem davon.
 
-**Nächster Schritt — die Frage direkt stellen:** Einen PC-Zähler auf den
-Fehlerzweig `ioman+$15a6` setzen (dorthin springt `bne` bei belegtem Lock)
-und beide Läufe vergleichen. Wird er mit Push getroffen, ist es doch ein
-Lock — dann aber ein anderer Deskriptor. Wird er nicht getroffen, scheidet
-der ganze Lock-Pfad aus, und der Fehler kommt aus dem Rückweg des Wrappers
-(`bsr.w $107a` bei `$1582`).
+*(Messhygiene: Eine frühere Lock-Messung schien „identisch" auszufallen, weil
+das Testimage nicht neu gebaut worden war und beide Läufe dieselbe
+Push-Variante benutzten. Erkennbar wurde das an der Freigabe-Adresse — sie
+lag auf der Push-Adresse, obwohl der Lauf als „ohne Push" gedacht war. Nach
+jedem Kernel-Umbau gehört das Image neu gebaut, sonst misst man zweimal
+dasselbe.)*
+
+**Nächster Schritt:** Verfolgen, was zwischen dem zweiten und dem dritten
+Wrapper-Aufruf geschieht — also im `I$Open`-Ablauf oberhalb des Wrappers.
+Ring-Freeze auf den Wrapper-Einstieg beim **dritten** Treffer (ohne Push)
+zeigt, welcher Weg dorthin führt; mit Push fehlt genau dieser.
 
 ### Offen: Pfad-Deadlock
 
