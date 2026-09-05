@@ -682,11 +682,41 @@ Stackänderung erhält — die ist aber noch zu finden: Eine globale Zelle
 scheidet wegen Verschachtelung aus, `bsr`+Stub bricht, und `r68` kennt die
 speicherindirekte `jsr`-Form nicht.
 
-**Nächster Schritt:** Entweder die beiden stackrelativen Erkennungen
-mitanpassen (klein, aber es bleiben zwei versteckte Kopplungen im Code), oder
-die Rahmenerkennung grundsätzlich von `sp` entkoppeln. Letzteres ist die
-robustere Lösung und würde zugleich eine Fehlerquelle beseitigen, die schon
-mehrfach zugeschlagen hat.
+**Vierter Fix-Anlauf, ebenfalls gescheitert.** Versucht wurde die robuste
+Variante: die Rahmenerkennung zusätzlich am Aufrufweg festmachen
+(`tst.w Q9K_InTrapPath` vor der stackrelativen Prüfung), zusammen mit dem
+`a4`-Push und `addq.l #8` in den Blockierpfaden. Ergebnis: Das Konsolen-Open
+scheitert weiterhin, und der Boot bleibt zusätzlich früher hängen.
+
+Der Denkfehler war nicht die Idee, sondern das Vorgehen: **drei Änderungen
+auf einmal**, ohne sie einzeln zu messen. Damit lässt sich nicht mehr
+zuordnen, welche davon was bewirkt. Der Code steht deshalb wieder auf dem
+funktionierenden Stand (Konsole geht, `Hallo von Q9-OS!` erscheint).
+
+### Was gesichert ist
+
+- **Die Ursachenkette ist vollständig verstanden:** Der Dispatcher lässt bei
+  eigenen Handlern die Handler-Adresse in `a4` stehen; IOMan und die
+  File-Manager führen dort einen eigenen Zeiger und schreiben damit weiter —
+  `rbf` trifft so unseren Kernel-Code (`move.l d1,$14e(a4)`).
+- **`a4` zu erhalten behebt das nachweislich** (Illegal Instruction
+  verschwindet).
+- **Der Push kollidiert mit der stackrelativen Rahmenerkennung** in
+  `F$AllPD`/`F$SRqMem` (`a5 == sp+8`, Zeilen ~2734/2798).
+- **`a4` ist beim Konsolen-Open nicht die Ursache** — der Wert ist mit und
+  ohne Fix identisch (`$19400`).
+
+### Nächster Schritt — diesmal einzeln
+
+1. **Nur** den `a4`-Push einbauen, sonst nichts, und messen: Bricht das
+   Konsolen-Open? (Erwartung nach bisherigem Stand: ja.)
+2. Dann **nur** die Rahmenerkennung anpassen (`#20` statt `#16`) und erneut
+   messen.
+3. Erst wenn beide Wirkungen einzeln belegt sind, die endgültige Variante
+   bauen.
+
+Fünf Anläufe mit jeweils mehreren gleichzeitigen Änderungen haben gezeigt,
+dass hier nur schrittweises Vorgehen weiterführt.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
