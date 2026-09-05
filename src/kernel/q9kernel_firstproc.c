@@ -635,6 +635,24 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
             Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL,
                        Q9K_GetU16(parentDesc + Q9K_PROCDESC_PATH_OFF + i * 2UL));
         }
+    } else {
+        /* ECHTER BUG, gefunden 2026-09-06: Ohne Erzeuger blieb die
+         * P$Path-Tabelle voellig UNINITIALISIERT -- sie enthielt den
+         * Speichermuell, der zufaellig an der Stelle stand (gemessen:
+         * $6600000C $23CD0000, also 68k-Code aus einer frueheren Belegung).
+         *
+         * IOMans I$Open sucht dort das erste freie Wort
+         * ("lea $168(a4),a0 / moveq #$1f,d0 / tst.w (a0)+ / dbeq d0,...").
+         * Unter 32 Muellworten steht nie eine Null, also meldete IOMan
+         * E$PthFul und gab "can't open console device" aus -- aber NUR,
+         * sobald A4 korrekt auf den Prozessdeskriptor zeigt. Solange der
+         * Dispatcher A4 mit der Handleradresse ueberschrieb, suchte IOMan
+         * in unserem Kernelcode und fand dort zufaellig eine Null. Genau
+         * dieser Zufall hat den Fehler jahrelang verdeckt und zugleich die
+         * Speicherkorruption erzeugt (RBFs "move.l d1,$14e(a4)"). */
+        for (i = 0; i < Q9K_PROCDESC_PATH_COUNT; i++) {
+            Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL, 0);
+        }
     }
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, hdrAddr);      /* NACHTRAG 2026-08-22 */
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, block);
