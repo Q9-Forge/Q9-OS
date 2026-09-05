@@ -476,24 +476,44 @@ Bootdatei-Modulen nie passiert. Fix: Einträge aus dem Boot-Scan tragen ein
 
 Damit stehen jetzt **alle 12 Module** in der Directory.
 
-**Noch offen: `I$Open("/dd/startup")` meldet weiterhin `E$MNF`.** Zwei
-Verdächtige sind inzwischen ausgeschlossen:
+### ~~E$MNF beim Öffnen~~ — GELÖST (2026-09-06)
 
-- **Die Modulsuche nicht.** Ein Testaufruf `F$Link` findet **alle drei**
-  Module des Dreiklangs — Deskriptor `dd`, File-Manager `rbf` und Treiber
-  `cfide` —, sowohl mit Filter 0 als auch mit `$0F00`.
-- **IOMans eigene E$MNF-Stelle nicht.** Der Fehlercode `$DD` kommt in IOMan
-  nur an einer einzigen Stelle vor (`+$028a`); ein Freeze des
-  Instruktions-Rings darauf löst **nie** aus. Der Code wird also von einem
-  Unterdienst geliefert und durchgereicht.
+**IOMan sucht Module mit dem Rest des Pfades.** Ein Protokoll der
+Modulsuch-Anfragen brachte es an den Tag:
 
-*(Merkposten zur Messtechnik: `F$Link` liefert den Modulkopf in **`a2`**,
-die daraus berechnete Einsprungadresse in `a1`. Ein Test, der `a1` ausgibt,
-zeigt eine Adresse, die nach einem Fehler aussieht, aber keiner ist.)*
+    Letzte Modulsuche: Filter=0f00 Name="dd/startup"
 
-**Nächster Schritt:** Den Instruktions-Ring beim Fehlerzweig des Testaufrufs
-einfrieren. Er zeigt dann die letzten Instruktionen vor dem gesetzten Carry
-— also die Stelle, an der `E$MNF` wirklich entsteht.
+Beim Öffnen von `/dd/startup` fragt IOMan nach einem Modul namens
+**`dd/startup`** — der Gerätename endet für den Kernel am `/`. Unser
+Namensvergleich lief dagegen bis zum NUL-Byte und verwarf den Treffer.
+
+Real endet ein Modulname im `F$Link`-Aufruf am ersten Zeichen, das kein
+Namenszeichen ist (Buchstaben, Ziffern, `_`, `.`, `$` — dieselbe Menge wie in
+`F$PrsNam`); dass danach noch Text folgt, ist ausdrücklich vorgesehen. Genau
+deshalb liefert `F$Link` in `a0` den Zeiger **hinter** den Namen zurück.
+
+Das erklärt auch, warum der Einzeltest `F$Link("dd")` sauber funktionierte
+und trotzdem `I$Open` scheiterte.
+
+**Wie es gefunden wurde:** Der Weg war per Ring-Freeze verfolgbar — IOMan
+ruft im Fehlerpfad `F$RetPD` und reicht danach einen zuvor auf dem Stack
+geparkten Fehlercode weiter (`move.l (a7)+,d1`). Der Fehler selbst entstand
+im langen Kernel-Lauf davor, also in unserer Modulsuche. Ein Protokoll der
+gesuchten Namen zeigte dann sofort, wonach wirklich gefragt wurde.
+
+### Neue Bruchstelle: Illegal Instruction im Kernel
+
+Mit dem Fix läuft `I$Open` weiter in RBF hinein und stürzt dort ab:
+
+    Vektor=4 (Illegal Instruction)  PC=00007d22   (Kernel-Offset $c22, C-Teil)
+    A6=00007296  A3=00007587  A4=00007cfe  D0=$2bc  D1=$fc
+
+Der Absturz liegt in **unserem** Kernel. `$c22` fällt in den vom Compiler
+erzeugten Teil, ist also im Assembler-Listing nicht auffindbar — die Stelle
+muss über die Modul-Map oder per Ring-Freeze zugeordnet werden.
+
+**Nächster Schritt:** Ring-Freeze auf `$7d22`, um zu sehen, welcher Dienst
+dorthin führt und mit welchen Werten.
 
 
 ### Offen: Pfad-Deadlock
