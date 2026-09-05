@@ -383,89 +383,51 @@ plausibel aussehende Nullen.
 (Moduldirectory-Kette), nie aus einer Notiz übernehmen. Derselbe Fehler ließ
 auch einen „Off-by-2" in der Dispatch-Tabelle erscheinen, den es nie gab.
 
-### Der Lesepfad, vollständig verfolgt (2026-09-06)
+### ✅ GELÖST (2026-09-06): der Lesepfad ist offen
 
-Mit frischen Basen (`ioman` `$aa32`, `scf` `$c04e`, `sc68681` `$c936`) und
-PC-Zählern ist die ganze Kette abgetastet. Sie läuft **viel weiter als
-gedacht**:
+    ...H < > @0000751C [hallo...] n hallo
 
-| Station | Ergebnis |
-|---|---|
-| IOMan `I$ReadLn` (`$bc9a`) | erreicht |
-| `F$ChkMem` | besteht |
-| Pfadsuche über `D_PthDBT` | besteht |
-| **Modusprüfung `PD_MOD`** | **besteht** — `E$BMode`-Zweig 0 Treffer |
-| scf `ReadLn` (`$c4b6`) | **erreicht** |
-| scf holt Länge (R$d1) und Zielpuffer (`PD+$e`) | beides erreicht |
-| scf ruft die Zeichen-Hol-Routine (`$c5f4`) | erreicht |
-| … die ruft den Treiber (`$c8c2`, `d1=2` = Read) | erreicht |
-| **sc68681 `Read` (`$cbee`)** | **erreicht** |
-| Fehlerausgang `E$NotRdy` (`$F6`) | **nicht** genommen |
-| Fehlerausgang `E$Read` (`$F4`) | **nicht** genommen |
-| **Pufferprüfung `tst.w $70(a2)`** | **Puffer ist LEER** |
-| → Warteweg `$cba6` | genommen, kehrt mit Carry zurück |
-| Zeichen in den Puffer (`$cc18`, `$c52e`) | **nie erreicht** |
+`>` = `I$ReadLn` kehrt erfolgreich zurück, der Puffer enthält `hallo`.
+Ein- und Ausgabe laufen damit in beide Richtungen über die echten
+Microware-Module.
 
-**Damit ist die Frage präzise:** Warum ist der Eingabepuffer des Treibers
-leer, obwohl die Zeichen nachweislich ankommen (RX-FIFO `head = tail = 6`)?
+**Ursache: ein Byte Versatz in einem Feldoffset.** `Q9K_PROCDESC_AGE_OFF`
+stand auf `$1B`. Das Feld ist zwei Byte breit, belegte also `$1B` **und**
+`$1C` — und `$1C` ist im echten Layout `P$State` (Wort,
+`MWOS/OS9/SRC/DEFS/process.a`). Jedes Altern eines Prozesses schrieb damit
+ins obere Byte von `P$State`.
 
-Der Treiber liest sie aus seiner eigenen Statik (`$70(a2)` Zähler,
-Ringpuffer ab `$88(a2)`, Lesezeiger `$58(a2)`). Dorthin legt sie die
-**Interruptroutine**. Naheliegender nächster Verdacht: Die ISR arbeitet mit
-einem anderen `a2` als der Treiber-Read — die ISR bekommt ihres aus der
-Polling-Tabelle (bei `F$IRQ` registriert), der Read-Pfad seines aus dem
-Gerätetabelleneintrag über den Pfaddeskriptor. Beide müssen dieselbe
-`V_STAT`-Adresse sein.
+`sc68681` prüft nach dem Aufwachen genau dieses Byte:
 
-**Nächster Schritt:** beide `a2`-Werte zur Laufzeit vergleichen und prüfen,
-ob die ISR das Zeichen überhaupt in den Ringpuffer schreibt.
+    $cc66  move.w $26(a4),d1     * P$Signal -- anliegendes Signal?
+    $cc6a  beq.b  $cc72          * keins -> weiter
+    $cc72  btst.b #$1,$1c(a4)    * P$State, oberes Byte
+    $cc78  bne.b  $cc7e          * gesetzt -> Abbruch
+    $cc80  ori.b  #$1,ccr        * Carry
 
-### Zwei echte Bugs, die dabei auffielen
+Stand das Alter gerade auf 6 (oder einem anderen Wert mit Bit 1), hielt der
+Treiber den wartenden Prozess für **„condemned"** und kehrte mit Fehler
+zurück — statt den längst gefüllten Eingabepuffer auszulesen. Real gemessen:
+`P$State = $0661` bei einem Prozess, dessen Alter gerade 6 war.
 
-**1. Pfaddeskriptor: 32 gegen 256.** `q9kernel_tables.c` legt die Pool-Slots
-mit 256 Byte an (korrekt, real `PDSIZE` aus `MWOS/OS9/SRC/DEFS/io.a`),
-`q9kernel_iopath.c` definierte `Q9K_PATHDESC_SIZE` aber ein zweites Mal als
-**32**. `Q9K_ProcAllPD` nullte deshalb nur das erste Achtel eines frisch
-vergebenen Deskriptors — alles ab `+$20` blieb Altbestand, darunter die
-Optionen ab `+$80`, die scf beim Lesen auswertet.
+Korrektes Layout in dem Bereich: `P$Prior $18` (Wort), **`P$Age $1a`**
+(Wort), `P$State $1c` (Wort). Das Alter liegt jetzt auf `$1A` und ist damit
+sogar das echte `P$Age` statt einer Eigenerfindung.
 
-**2. Der Deskriptorkopf war selbst erfunden.** Dort stand ein „Typ"-Langwort
-auf Offset 0, das die beiden realen Felder überschrieb:
+**Wie es gefunden wurde** — die Kette wurde von außen nach innen abgetastet,
+jede Station per PC-Zähler bestätigt statt aus dem Listing erschlossen:
+IOMans `I$ReadLn` → `F$ChkMem` → Pfadsuche → Modusprüfung → scfs `ReadLn` →
+dessen Zeichen-Hol-Routine → Treiber-Aufruf → `sc68681`s Read → Warteweg →
+`F$Sleep` → Rückkehr. Den Ausschlag gab der Instruktions-Ring mit Freeze auf
+scfs Fehlerausgang: Er zeigte, dass der Treiber nach dem Aufwachen nur
+**sieben Instruktionen** läuft und dann herausspringt — statt zur
+Pufferprüfung zurückzukehren. Diese sieben Instruktionen waren die Antwort.
 
-    PD_PD  ($00, Wort)  Pfadnummer          (MWOS/OS9/SRC/DEFS/sysio.a)
-    PD_MOD ($02, Byte)  Mode (read/write/update)
-
-`PD_MOD` ist keine Nebensache — IOMan prüft es vor **jedem** Lesezugriff:
-
-    $ba46  moveq  #$5,d1        * verlangt Lesezugriff
-    $ba4e  and.b  $2(a1),d1     * PD_MOD
-    $ba52  bne    ...           * passt -> weiter zum File-Manager
-    $ba56  move.w #$cb,d1       * sonst E$BMode
-
-Beides ist behoben; `I$Open` trägt jetzt Pfadnummer und Zugriffsmodus ein.
-Das Symptom des Lesetests ändert sich dadurch **nicht** — die Pfade, die der
-Test benutzt, legt IOMan selbst über `F$AllPD` an, nicht über unser `I$Open`.
-Die Korrekturen sind trotzdem richtig und waren beide echte Abweichungen vom
-realen Layout.
-
-### Offen: wo genau IOMan aussteigt
-
-Die Vermutung, es sei die Modusprüfung, ist **noch nicht belegt**. Die dafür
-gemessene Routine lag an einem Offset aus einer veralteten Notiz (`$1268`);
-die echten Einstiegspunkte stehen in den Dispatch-Tabellen und wurden
-inzwischen zur Laufzeit ausgelesen (neu im Dump):
-
-    $89/$8b Read/ReadLn   sys=$bc88  usr=$bc4a
-    $8a/$8c Write/WritLn  sys=$bd3a  usr=$bcf8
-
-Von diesen Adressen aus muss der Weg neu verfolgt werden. Der Code dort ist
-kein gewöhnlicher Rumpf (`$bcf8` ist ein „springe an `a0`"-Idiom), die
-Disassemblierung braucht also einen gesicherten Anker statt eines geratenen
-Startoffsets.
-
-**Nächster Schritt:** ab `$bc4a` mit PC-Zählern den tatsächlich genommenen
-Weg abtasten, statt ihn aus dem Listing zu erschließen — dieselbe Methode,
-die scfs Tabellendeutung bestätigt hat.
+**Zwei Messfallen, die dabei Zeit gekostet haben** (beide jetzt dokumentiert):
+- Modulbasen verschieben sich, sobald der Kernel wächst — sie gehören vor
+  jeder Messung frisch aus dem Dump geholt, nie aus einer Notiz.
+- Reine Trefferzähler kennen keine Reihenfolge. Wo die Frage „wie kam der
+  Code hierher?" lautet, braucht es den Ring mit Freeze.
 
 ### Offen: Pfad-Deadlock
 
