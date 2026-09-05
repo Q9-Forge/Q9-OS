@@ -1163,6 +1163,43 @@ Q9K_TestHelloDone:
 *        I$Read  d0.w = Pfadnummer, d1.l = Anzahl, (a0) = Puffer;
 * zurueck d1.l = tatsaechlich gelesen.
 * Ausgegeben werden Marker und die ersten acht Bytes der Datei.
+* Vorprobe: findet unsere EIGENE Modulsuche den kompletten "Dreiklang"?
+* IOMan braucht beim Open drei Module: den Geraetedeskriptor, den darin
+* genannten File-Manager und den Treiber. Faellt EINES aus, meldet der
+* Aufruf E_MNF -- und zwar ohne dass IOMans eigene E_MNF-Stelle je erreicht
+* wird (per Freeze geprueft), der Code kommt also aus einem Unterdienst.
+* Ausgegeben wird je Name ein Grossbuchstabe bei Erfolg, ein Kleinbuchstabe
+* plus Fehlercode sonst.
+        lea     Q9K_TestTriadNames(pc),a3
+        moveq   #'1',d3                     * Kennung des gerade geprueften Namens
+Q9K_TestTriadLoop:
+        tst.b   (a3)
+        beq     Q9K_TestTriadDone
+        clr.w   d0                          * Typ/Sprache beliebig
+        movea.l a3,a0
+        movem.l d3/a3,-(sp)
+        trap    #0
+        dc.w    $0000                       * F$Link
+        movem.l (sp)+,d3/a3
+        bcs     Q9K_TestTriadFail
+        move.b  d3,d7                       * Ziffer = gefunden
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestTriadNext
+Q9K_TestTriadFail:
+        moveq   #'x',d7                     * DIAGNOSE: nicht gefunden
+        bsr     Q9K_DiagWriteD7
+        move.b  d3,d7
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+Q9K_TestTriadNext:
+        addq.b  #1,d3
+Q9K_TestTriadSkip:
+        tst.b   (a3)+                        * bis hinter das NUL-Byte
+        bne     Q9K_TestTriadSkip
+        bra     Q9K_TestTriadLoop
+Q9K_TestTriadDone:
+
         moveq   #'F',d7                     * DIAGNOSE: Dateitest beginnt
         bsr     Q9K_DiagWriteD7
         moveq   #1,d0                       * Modus 1 = Lesen
@@ -1274,6 +1311,14 @@ Q9K_TestWriteLen equ 17
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06) -- Pfadname und Puffer
 * fuer den Dateitest oben. "/dd" ist der Geraetedeskriptor aus dem Bootfile.
+* Namensliste fuer die Dreiklang-Probe: Deskriptor, File-Manager, Treiber.
+* Doppeltes NUL beendet die Liste.
+Q9K_TestTriadNames:
+        dc.b    "dd",0
+        dc.b    "rbf",0
+        dc.b    "cfide",0
+        dc.b    0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 Q9K_TestFileName:
         dc.b    "/dd/startup",0
 Q9K_TestFileBuf:
