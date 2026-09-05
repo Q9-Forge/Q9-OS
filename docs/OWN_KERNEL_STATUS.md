@@ -832,10 +832,31 @@ angesprungen. Die Eintragung in die Dispatch-Tabellen ist also korrekt, und
 kein Beleg. Nur vorwärts von einem gesicherten Einsprung — oder besser: die
 Ausführung zählen.)*
 
-**Nächster Schritt:** `F$DAttach` implementieren — der Befund darüber steht
-unverändert, und IOMan braucht den Dienst, um ein Gerät anzuhängen. Die
-Konvention ist wie üblich aus IOMans Aufrufstelle ablesbar
-(`ioman+$011e`: `a0` = Gerätename, `d0` = Modus 3).
+### Vor der Implementierung: die Grundlage ist noch nicht gesichert
+
+Ein Anlauf, `F$DAttach` zu implementieren, wurde bewusst **abgebrochen** —
+die Voraussetzung trägt noch nicht:
+
+- Der Callcode `$64` stammt aus einer **Rückwärts-Lesung** der Bytes hinter
+  `trap #0` (`dc.w $0064`). Genau diese Methode hat heute schon dreimal in die
+  Irre geführt.
+- Die Messung widerspricht: Der Handler, auf den Slot `$64` zeigt, wird
+  **nie ausgeführt** (0 Treffer) — obwohl der `trap` nachweislich läuft und
+  `F$DAttach` mit Push fehlschlägt. Käme der Fehler aus dem
+  Unimplemented-Stub, müsste dieser getroffen werden.
+
+Einen Dienst zu bauen, den möglicherweise niemand unter dieser Nummer
+anfordert, wäre verfrüht.
+
+**Was zuerst zu klären ist:** Welchen Callcode führt der `trap` an
+`ioman+$0124` **tatsächlich** aus? Der Dispatcher legt ihn beim Eintritt in
+der Zelle `$1370` ab — sie im Fehlerfall auszulesen (oder einen Zähler auf
+die Slot-Adressen mehrerer Kandidaten zu setzen) beantwortet das eindeutig,
+ohne Byte-Raterei.
+
+Erst danach lohnt die Implementierung — dann aber auf gesicherter Grundlage,
+mit der Aufrufkonvention aus IOMans Aufrufstelle (`a0` = Gerätename,
+`d0` = Modus 3), genau wie zuvor bei `F$RetPD`.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
