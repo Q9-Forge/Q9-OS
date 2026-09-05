@@ -1229,11 +1229,42 @@ zerstört demnach etwas anderes, das IOMan davor braucht — nicht den
 Open-Pfad selbst. Der Prozessdeskriptor scheidet als Ursache aus: Er ist
 `$200` groß und deckt `P$Path` bis `$1A8` (q9kernel_firstproc.c).
 
-**Nächster Schritt:** Nicht weiter am Dispatcher variieren, sondern den
-Unterschied *innerhalb IOMans Init* sichtbar machen — die drei Syscalls
-`$32`/`$2A`/`$10` liefern mit und ohne `a4`-Erhalt jeweils unterschiedliche
-Rückgaben; welche davon abweicht, ist mit der bewährten Marker-Methode
-(Zeichen + Hex-Wert an der Rücksprungstelle) in einem Lauf zu sehen.
+### Zweiter echter Bug gefunden: die `P$Path`-Tabelle war uninitialisiert
+
+**Die Callcode-Sequenzen beider Läufe, direkt gegenübergestellt:**
+
+    ohne a4-Erhalt:  0000 0000 0032 002A 0010 | 0003 0000 0000 0000 0006
+    mit  a4-Erhalt:  0000 0000 0032 002A 0010 |  (nichts mehr)
+
+Bis einschließlich `F$PrsNam` identisch; danach fehlt der `F$Fork ($03)`
+unseres Init — er bleibt aus, weil IOMan keine Pfade angelegt hat. (Die
+Fehlermarken zeigen im funktionierenden Lauf drei `F$Link` mit `$DD`/E$MNF —
+erwartete Suchfehlschläge, in beiden Läufen unauffällig.)
+
+**Der Fund:** `Q9K_ProcCreate` (q9kernel_firstproc.c) füllt die
+`P$Path`-Tabelle nur, **wenn es einen Erzeuger gibt**. Beim allerersten
+Prozess blieb sie damit völlig uninitialisiert und enthielt den Speichermüll
+der vorherigen Belegung. IOMans `I$Open` sucht dort das erste freie Wort
+(`lea $168(a4),a0 / moveq #$1f,d0 / tst.w (a0)+ / dbeq d0,…`) — unter 32
+Müllworten steht nie eine Null, also `E$PthFul`.
+
+**Behoben:** Der `else`-Zweig nullt die Tabelle jetzt. Verifiziert an der
+richtigen Adresse: `$168(D_Proc) = 0`, `$16c(D_Proc) = 0`, und der Kernel
+läuft unverändert durch (`RP012`, `Hallo von Q9-OS!`).
+
+**Messfalle, die dabei fast in die Irre geführt hätte** — und die hier steht,
+damit sie niemand wiederholt: Eine erste Messung von `$168(a4)` *im Handler*
+lieferte `$6600000C $23CD0000` und sah nach genau diesem Bug aus. Sie war
+aber wertlos: **Im Handler ist `a4` bereits die Handleradresse** (gemessen
+`a4 = $00007A16`, Kernelcode), nicht der Deskriptor — gelesen wurde also
+unser eigener Code. Der Aufrufer-`a4` (`$00019400 = D_Proc`) ist nur *vor*
+dem `movea.l Q9K_TrapHandlerScratch,a4` im Dispatcher zu sehen. Wer `a4`
+misst, muss dazusagen, an welcher Stelle der Kette.
+
+**Das `a4`-Problem bleibt auch damit offen.** Nullung allein läuft, Nullung
+plus `a4`-Erhalt bricht weiterhin — getrennt gemessen. Beide heute gefundenen
+Fehler (`F$PrsNam`-Rahmen, `P$Path`-Nullung) waren echt und sind behoben,
+aber keiner von beiden ist die Ursache der Nebenwirkung.
 
 ### Offen: Pfad-Deadlock
 
