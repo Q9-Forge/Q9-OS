@@ -706,17 +706,35 @@ funktionierenden Stand (Konsole geht, `Hallo von Q9-OS!` erscheint).
 - **`a4` ist beim Konsolen-Open nicht die Ursache** — der Wert ist mit und
   ohne Fix identisch (`$19400`).
 
-### Nächster Schritt — diesmal einzeln
+### Schrittweise Messung — drei Ergebnisse
 
-1. **Nur** den `a4`-Push einbauen, sonst nichts, und messen: Bricht das
-   Konsolen-Open? (Erwartung nach bisherigem Stand: ja.)
-2. Dann **nur** die Rahmenerkennung anpassen (`#20` statt `#16`) und erneut
-   messen.
-3. Erst wenn beide Wirkungen einzeln belegt sind, die endgültige Variante
-   bauen.
+Diesmal jeweils **eine** Änderung, einzeln gemessen:
 
-Fünf Anläufe mit jeweils mehreren gleichzeitigen Änderungen haben gezeigt,
-dass hier nur schrittweises Vorgehen weiterführt.
+**Schritt 1 — nur der `a4`-Push.** Das Konsolen-Open bricht. Damit ist der
+Push zweifelsfrei der Auslöser, unabhängig von allem anderen.
+
+**Schritt 2 — Push plus Rahmenerkennung auf `#20`.** Bricht *früher* als
+zuvor. **Die Hypothese ist damit widerlegt**, und im Nachhinein ist auch
+klar warum: Der Push betrifft nur den TRAP-Weg — dort soll die Erkennung
+gerade **nicht** greifen. Der Trampolin-Weg läuft überhaupt nicht durch den
+Dispatcher, für ihn bleibt `#16` richtig. `#20` bringt die Erkennung also
+genau falsch herum durcheinander.
+
+**Schritt 3 — Push allein, Freeze auf scfs Open-Routine.** Ergebnis:
+
+    pc=0000c1cc (scf+$00aa)   a4=00019400
+
+**scfs Open wird erreicht, und `a4` ist dort korrekt.** Der Fehler entsteht
+also erst *innerhalb* von scf oder danach — nicht auf dem Weg dorthin.
+
+### Stand
+
+Die Suche ist deutlich enger geworden, der Fix aber weiter offen. Der Code
+steht auf dem funktionierenden Stand.
+
+**Nächster Schritt:** In scfs Open-Pfad hineinmessen — welche Bedingung dort
+mit gesetztem Push anders ausfällt als ohne. Die Werkzeuge dafür sind alle
+vorhanden (PC-Zähler auf die Zweige, Ring-Freeze auf den Fehlerausgang).
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
