@@ -589,12 +589,38 @@ speicherindirekte Form nicht („bad operand").
 Damit ist die Stelle eindeutig: Es geht allein um die zwei Zeilen
 `movea.l Q9K_TrapHandlerScratch,a4` / `jsr (a4)`.
 
-**Dritter gescheiterter Anlauf** (bsr+Stub, diesmal mit Messung): Der PC
-landet bei `$75af` — mitten in den Kernel-*Daten*, drumherum steht der String
-`hellosvc`. Der per `rts` geholte Wert war also keine Handler-Adresse.
-`SR=2010`, `A4=0`, auf dem Stack IOMan-Adressen. Warum der gepushte Wert
-falsch ist, ist noch ungeklärt — die Zelle `Q9K_TrapHandlerScratch` wird
-unmittelbar davor gelesen, ein Timing-Problem scheidet also aus.
+**Der dritte Anlauf hat einen ganz anderen Bug aufgedeckt — und der ist
+behoben.**
+
+Per Ring-Freeze auf die Absturzadresse wurde der Weg sichtbar: Die Stelle
+gehört gar nicht zum Handler-Aufruf, sondern ist **IOMans
+Zeichenausgabe-Schleife**:
+
+    $ad9c  movea.l $64(a6),a1    * a1 = D_SysRom
+    $ada8  jsr     $8(a1)        * unsere Ausgabe-Routine (Vtable +8)
+    $adac  move.b  (a0)+,d0
+    $adae  bne     $ada8
+
+IOMan wollte also eine Meldung ausgeben. Der Grund des Absturzes stand
+direkt daneben:
+
+    D_SysRom($64) = 000075a7      <- UNGERADE
+
+**`Q9K_IOManOutVtable` lag auf einer ungeraden Adresse.** Damit ist auch das
+Sprungziel `+8` ungerade, und die CPU bricht ab. Bisher stimmte die
+Ausrichtung nur **zufällig** — jede Änderung davor, die die Codelänge um eine
+ungerade Zahl verschiebt, kippte sie. Genau das haben meine Umbauversuche am
+Dispatcher getan: Sie scheiterten scheinbar an ihrer eigenen Logik,
+tatsächlich brach der IOMan-Start am ersten auszugebenden Zeichen.
+
+Fix: ein `align` vor der Struktur. `D_SysRom` liegt jetzt stabil gerade
+(`$75a8`), das Verhalten ist sonst unverändert.
+
+**Der A4-Fix selbst bleibt offen.** Auch mit korrekter Ausrichtung bricht die
+bsr+Stub-Variante — dann allerdings an einer *früheren* Stelle im Boot. Der
+Ausrichtungsfehler war also ein Störfaktor, der alle bisherigen Messungen
+verfälscht hat; die Fix-Versuche müssen auf dieser bereinigten Grundlage neu
+bewertet werden.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
