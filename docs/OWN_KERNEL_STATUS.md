@@ -802,11 +802,36 @@ Damit ist der Unterschied erstmals an einem einzelnen Dienst festgemacht.
 sein kann also nur ein **innerer** Aufruf von `F$DAttach` — der Dienst ruft
 seinerseits Kernel-Dienste, und die laufen über unseren Dispatcher.
 
-**Nächster Schritt:** IOMans `F$DAttach`-Handler disassemblieren (Adresse aus
-dem Dispatch-Slot `$64` auslesen, wie bei den I$-Slots) und seine
-Syscall-Aufrufe auflisten. Dann per PC-Zähler feststellen, welcher davon mit
-Push ein anderes Ergebnis liefert. Das ist derselbe mechanische Weg, der
-schon die Meldungsstelle gefunden hat.
+### Zwei Funde beim Nachsehen im Dispatch-Slot `$64`
+
+**1. `F$DAttach` ist bei uns gar nicht implementiert.** Der Slot zeigt nicht
+in IOMan, sondern in *unseren* Kernel — auf `Q9K_SysUnimplemented`. IOMan
+fordert den Dienst beim Anhängen des Konsolengeräts an und bekommt eine
+Absage. Das ist die eigentliche Lücke hinter `can't open console device`.
+
+**2. Der Stub wird 4 Byte zu spät betreten — ein echter Bug.** Der Slotwert
+ist `$77b0`, der Stub beginnt aber bei `$77ac`:
+
+    0077ac  move.w #$d0,d1      * E$UnkSvc -- wird ÜBERSPRUNGEN
+    0077b0  ori.b  #$1,ccr      <- hierhin zeigt der Slot
+    0077b4  rts
+
+Der Aufrufer bekommt damit **Carry ohne Fehlercode**: `d1` behält seinen
+alten Wert. Das erklärt rückwirkend das rätselhafte `Error $0000` in IOMans
+Meldung — es war nie ein „Fehler 0", sondern ein *nicht gesetzter*
+Fehlercode.
+
+Ob die Ursache ein Off-by-4 beim Eintragen ist oder die Symboladresse anders
+aufgelöst wird, ist noch offen; zu prüfen ist, ob auch die Slots unserer
+*registrierten* Handler um 4 danebenliegen. Falls ja, wäre das ein Fehler mit
+weit größerer Reichweite als der `a4`-Punkt.
+
+**Nächste Schritte, in dieser Reihenfolge:**
+1. Den Slot eines bekannten eigenen Handlers (z. B. `F$Sleep`, `$0a`) mit
+   dessen tatsächlicher Adresse vergleichen — liegt der auch 4 daneben?
+2. Je nach Ergebnis: die Eintragung korrigieren.
+3. Danach `F$DAttach` implementieren — den Dienst braucht IOMan, um ein Gerät
+   anzuhängen.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
