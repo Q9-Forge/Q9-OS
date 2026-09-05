@@ -501,19 +501,43 @@ geparkten Fehlercode weiter (`move.l (a7)+,d1`). Der Fehler selbst entstand
 im langen Kernel-Lauf davor, also in unserer Modulsuche. Ein Protokoll der
 gesuchten Namen zeigte dann sofort, wonach wirklich gefragt wurde.
 
-### Neue Bruchstelle: Illegal Instruction im Kernel
+### Neue Bruchstelle: Sprung mitten in eine Instruktion (F$GProcP)
 
-Mit dem Fix läuft `I$Open` weiter in RBF hinein und stürzt dort ab:
+Mit dem Namensfix läuft `I$Open` weiter in RBF hinein und stürzt dort ab:
 
-    Vektor=4 (Illegal Instruction)  PC=00007d22   (Kernel-Offset $c22, C-Teil)
+    Vektor=4 (Illegal Instruction)  PC=00007d22
     A6=00007296  A3=00007587  A4=00007cfe  D0=$2bc  D1=$fc
 
-Der Absturz liegt in **unserem** Kernel. `$c22` fällt in den vom Compiler
-erzeugten Teil, ist also im Assembler-Listing nicht auffindbar — die Stelle
-muss über die Modul-Map oder per Ring-Freeze zugeordnet werden.
+**Die Stelle ist exakt zugeordnet.** Der Linker (`l68 -m`) legt den
+Assembler-Psect auf Modul-Offset `$3c`; `$7d22` fällt damit in den
+**Erfolgspfad von `F$GProcP`** (Callcode `$37`) — und zwar *mitten* in eine
+Instruktion:
 
-**Nächster Schritt:** Ring-Freeze auf `$7d22`, um zu sehen, welcher Dienst
-dorthin führt und mit welchen Werten.
+    007d0e  movea.l (a7)+, a6        * Rückkehr aus dem C-Teil
+    007d10  tst.w   $138c.l          * Success-Flag
+    007d16  beq.w   $7d26            * Fehlerpfad
+    007d1a  movea.l $1384.l, a1      * Deskriptor
+    007d20  andi.b  #$fe, ccr        * <- $7d22 liegt HIER drin
+    007d24  rts
+
+Bei `$7d22` stehen die Immediate-Bytes `00fe` — als Instruktion ungültig,
+was den Vektor 4 erklärt. Etwas springt also **zwei Byte zu weit**, statt
+`$7d24` (das `rts`) zu erreichen.
+
+Auffällig dazu: **`A4` enthält `$7cfe`, eine Codeadresse** — an dieser Stelle
+erwartet der aufrufende Code (IOMan) aber den Prozessdeskriptor. `$7cfe`
+liegt unmittelbar vor dem gezeigten Ausschnitt, dürfte also der Einstieg des
+Handlers selbst sein.
+
+**Nächster Schritt:** Klären, wer nach `$7d22` springt. `F$GProcP` wird von
+IOMan sehr häufig gerufen; der Verdacht liegt auf dem Rückweg — entweder
+einer verrutschten Rücksprungadresse oder einer Verwechslung von
+Handler-Einstieg und Deskriptor in `a4`.
+
+*(Werkzeugnotiz: Die Zuordnung Laufzeitadresse → Quelltext gelingt über die
+Linker-Map. `l68 -m` listet je Psect den Code-Offset im Modul; der
+Assembler-Teil beginnt bei `$3c`, die C-Dateien folgen ab `$c48`. Ohne die
+Map lässt sich eine Adresse im C-Teil nicht sinnvoll zuordnen.)*
 
 
 ### Offen: Pfad-Deadlock
