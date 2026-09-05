@@ -130,10 +130,31 @@ typedef unsigned char  Q9_u8;
 #define Q9K_SLEEPQ_SENTINEL_ADDR 0x12F0UL
 #endif
 
-#define Q9K_PROCDESC_STATE_OFF    0x1DUL
-#define Q9K_PROCDESC_PRIORITY_OFF 0x19UL   /* eigene Erweiterung, 1 Byte (0-255) */
-#define Q9K_PROCDESC_AGE_OFF      0x1BUL   /* eigene Erweiterung, 2 Byte -- "Ages never
-                                             * increment beyond $ffff" (Manual), passt exakt */
+/* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-06): Q9K_PROCDESC_AGE_OFF stand auf
+ * $1B. Das Feld ist 2 Byte breit und belegte damit $1B UND $1C -- und $1C ist
+ * im echten Layout P$State (Wort, MWOS/OS9/SRC/DEFS/process.a). Jedes Altern
+ * schrieb also ins obere Byte von P$State.
+ *
+ * Das hat den ganzen Lesepfad blockiert: sc68681 prueft nach dem Aufwachen
+ *
+ *     $cc72  btst.b #$1,$1c(a4)    * P$State, oberes Byte
+ *     $cc78  bne    ...            * gesetzt -> Abbruch mit Carry
+ *
+ * Stand das Alter gerade auf 6 (oder einem anderen Wert mit Bit 1), hielt der
+ * Treiber den wartenden Prozess fuer "condemned" und kehrte mit Fehler
+ * zurueck, statt den laengst gefuellten Eingabepuffer auszulesen. Real
+ * gemessen: P$State=$0661 bei einem Prozess, dessen Alter gerade 6 war.
+ *
+ * Reales Layout in diesem Bereich: P$Prior $18 (Wort), P$Age $1a (Wort),
+ * P$State $1c (Wort). Das Alter gehoert also nach $1A -- dort liegt es jetzt,
+ * und es ist damit sogar das ECHTE P$Age statt einer Eigenerfindung.
+ */
+#define Q9K_PROCDESC_STATE_OFF    0x1DUL   /* unteres Byte von P$State ($1c, Wort) --
+                                             * eigener Zustandsbuchstabe, kollisionsfrei
+                                             * solange das obere Byte 0 bleibt */
+#define Q9K_PROCDESC_PRIORITY_OFF 0x19UL   /* unteres Byte von P$Prior ($18, Wort) */
+#define Q9K_PROCDESC_AGE_OFF      0x1AUL   /* P$Age (Wort) -- "Ages never increment
+                                             * beyond $ffff" (Manual), passt exakt */
 #ifndef Q9K_PROCDESC_SLEEPTICKS_OFF
 #define Q9K_PROCDESC_SLEEPTICKS_OFF 0x1C4UL   /* s. q9kernel_firstproc.c Kopfkommentar */
 #endif

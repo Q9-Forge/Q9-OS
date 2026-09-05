@@ -143,6 +143,13 @@ void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
 
         routineAddr = entryAddr + signExtOffset + 4UL;
 
+        /* NACHSCHLAGEN, falls wieder gebraucht (2026-09-06): hier jede
+         * Registrierung mitzuschreiben (codeword, routineAddr, entryAddr --
+         * z.B. als Liste ab $1700, im Q9-Flux-Dump ausgegeben) beantwortet
+         * die Frage, WER welchen Dispatch-Slot zuletzt beschreibt. Damit
+         * wurde bestaetigt, dass die Rechnung unten stimmt und die Slots
+         * exakt das enthalten, was IOMans Tabelle vorgibt -- ein vermeintlicher
+         * Off-by-2 entpuppte sich als veraltete Laufzeitbasis. */
         *(volatile unsigned char *)(Q9K_SSVC_EXTERNAL_BASE + realCode) = 1U;
 
         Q9K_SetU32(sysdisBase + realCode * 4UL, routineAddr);

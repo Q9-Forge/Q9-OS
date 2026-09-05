@@ -14,7 +14,21 @@
 #include <stdio.h>
 #include <string.h>
 
-static unsigned char g_pathPool[4 * 32];    /* 4 Slots a 32 Byte, wie real */
+/* F$RetPD gibt einen Deskriptor an den Pool zurueck. Der Zeiger dorthin
+ * stammt aus einem DBT-Slot (echte 4 Byte, 68k-Zeigerbreite) und ist auf
+ * einem 64-Bit-Host nicht dereferenzierbar -- die Testpuffer liegen ueber
+ * 4 GB, und niedrigen Speicher zu mappen verhindert macOS (__PAGEZERO).
+ * Deshalb wird die Pool-Rueckgabe hier abgefangen und nur protokolliert. */
+static unsigned long g_freedDesc;
+static int           g_freedCount;
+static void testPathPoolFree(unsigned long desc)
+{
+    g_freedDesc = desc;
+    g_freedCount++;
+}
+#define Q9K_TEST_PATHPOOL_FREE_HOOK testPathPoolFree
+
+static unsigned char g_pathPool[4 * 256];   /* 4 Slots a 256 Byte = PDSIZE, wie real */
 static unsigned char g_poolGlobals[16];     /* nur BASE/FREE-Zeigerfelder */
 
 #define Q9K_PATHPOOL_BASE_ADDR ((unsigned long)(g_poolGlobals + 0x00))
@@ -70,8 +84,10 @@ int main(void)
     checkU32("F1: erste Pfadnummer == 3", num1, 3);
     checkU32("F1: past-Zeiger zeigt hinter das NUL-Byte",
              past, name1Addr + (Q9_u32)sizeof(name1));
-    checkU32("F1: Slot 0 als Konsole markiert (TYPE==1)",
-             Q9K_GetU32(poolBase + Q9K_PATHDESC_TYPE_OFF), Q9K_PATHDESC_TYPE_CONSOLE);
+    checkU32("I$Open traegt die Pfadnummer in PD_PD ein",
+             (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_NUM_OFF), 3);
+    checkU32("I$Open traegt den Zugriffsmodus in PD_MOD ein -- ohne ihn verweigert IOMan jeden Zugriff",
+             (Q9_u32)*(volatile unsigned char *)(unsigned long)(poolBase + Q9K_PATHDESC_MODE_OFF), 3);
 
     /* Fall 2: zweiter, unabhaengiger Pfad -- naechste Pfadnummer = 4. */
     num2 = Q9K_ProcIOpen(1, name2Addr, &past);
@@ -108,7 +124,7 @@ int main(void)
 
         memset(dbt, 0, sizeof dbt);
         dbt[0] = 0; dbt[1] = 8;                 /* hoechster Index = 8, big-endian */
-        buildFreeList(poolBase, 32, 4, Q9K_PATHPOOL_FREE_ADDR);
+        buildFreeList(poolBase, 256, 4, Q9K_PATHPOOL_FREE_ADDR);
 
         ok = Q9K_ProcAllPD(dbtAddr, &desc, &num, &err);
         checkU32("F$AllPD Erfolg", (Q9_u32)ok, 1);
@@ -128,7 +144,7 @@ int main(void)
         memset(dbt, 0, sizeof dbt);
         dbt[0] = 0; dbt[1] = 8;
         Q9K_WriteU32BE_At(dbtAddr + 4, 0xDEADBEEFUL);   /* Slot 1 belegt */
-        buildFreeList(poolBase, 32, 4, Q9K_PATHPOOL_FREE_ADDR);
+        buildFreeList(poolBase, 256, 4, Q9K_PATHPOOL_FREE_ADDR);
         ok = Q9K_ProcAllPD(dbtAddr, &desc, &num, &err);
         checkU32("F$AllPD ueberspringt belegten Slot 1", (Q9_u32)num, 2);
 
@@ -198,6 +214,55 @@ int main(void)
         ok = Q9K_ProcPrsNam(0, &nameStart, &past, &len, &delim, &err);
         checkU32("F$PrsNam Nullzeiger meldet Fehlschlag", (Q9_u32)ok, 0);
         checkU32("F$PrsNam Nullzeiger meldet E_BPNAM", (Q9_u32)err, 0x00D7);
+    }
+
+    /* --- F$RetPD (Callcode $31), 2026-09-05 -------------------------
+     * Gegenstueck zu F$AllPD. Konvention aus IOMans Aufrufstelle
+     * abgelesen (d0.w = Nummer, a0 = DBT), s. Q9K_ProcRetPD. Geprueft
+     * werden: Freigeben raeumt den DBT-Slot, der Deskriptor kehrt in die
+     * Freiliste zurueck (naechstes Allozieren bekommt ihn wieder), und
+     * alle drei Fehlerfaelle. */
+    {
+        static unsigned char dbt[4 + 8 * 4];
+        Q9_u32 dbtAddr = (Q9_u32)(unsigned long)dbt;
+        Q9_u32 desc = 0;
+        Q9_u16 num = 0, err = 0;
+        int ok;
+
+        printf("\n--- F$RetPD ---\n");
+
+        memset(dbt, 0, sizeof dbt);
+        dbt[0] = 0; dbt[1] = 8;
+        buildFreeList(poolBase, 256, 4, Q9K_PATHPOOL_FREE_ADDR);
+        g_freedDesc = 0; g_freedCount = 0;
+
+        ok = Q9K_ProcAllPD(dbtAddr, &desc, &num, &err);
+        checkU32("F$RetPD Vorbereitung: AllPD liefert Nummer 1", (Q9_u32)num, 1);
+
+        ok = Q9K_ProcRetPD(dbtAddr, num, &err);
+        checkU32("F$RetPD Erfolg", (Q9_u32)ok, 1);
+        checkU32("F$RetPD DBT-Slot ist wieder frei", Q9K_ReadU32BE_At(dbtAddr + 4), 0);
+        checkU32("F$RetPD gibt genau einen Deskriptor zurueck", (Q9_u32)g_freedCount, 1);
+        checkU32("F$RetPD gibt den Deskriptor aus dem DBT-Slot zurueck",
+                 (Q9_u32)(g_freedDesc & 0xFFFFFFFFUL), desc & 0xFFFFFFFFUL);
+
+        ok = Q9K_ProcRetPD(dbtAddr, 0, &err);
+        checkU32("F$RetPD Nummer 0 meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$RetPD Nummer 0 meldet E_BPNUM", (Q9_u32)err, 0x00C9);
+
+        ok = Q9K_ProcRetPD(dbtAddr, 9, &err);
+        checkU32("F$RetPD Nummer ueber dem Hoechstindex meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$RetPD Nummer ueber dem Hoechstindex meldet E_BPNUM", (Q9_u32)err, 0x00C9);
+
+        ok = Q9K_ProcRetPD(dbtAddr, 5, &err);
+        checkU32("F$RetPD schon freier Slot meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$RetPD schon freier Slot meldet E_BPNUM", (Q9_u32)err, 0x00C9);
+
+        ok = Q9K_ProcRetPD(0, 1, &err);
+        checkU32("F$RetPD Null-DBT meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$RetPD Null-DBT meldet E_BPADDR", (Q9_u32)err, 0x00D2);
+
+        checkU32("F$RetPD gibt in keinem Fehlerfall etwas frei", (Q9_u32)g_freedCount, 1);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
