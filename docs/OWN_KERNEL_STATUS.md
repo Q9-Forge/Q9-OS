@@ -984,8 +984,24 @@ dort erwarten. Die Rücksprungadresse steht im Exception-Frame; ein Vergleich
 gegen die Kernel-Modulgrenzen genügt. Für eigene Prozesse bliebe alles
 unverändert, und die Stack-Verschiebung träfe nur den Pfad, der sie braucht.
 
-Das ist eine kleine, gezielte Änderung — und sie umgeht die Nebenwirkung,
-statt sie weiter zu jagen.
+Das umgeht die Nebenwirkung, statt sie weiter zu jagen.
+
+**Umsetzungshürde, vor dem Bauen zu klären:** Die Herkunftsprüfung braucht
+den Rücksprung-PC aus dem Exception-Frame (`2(sp)` nach `lea 36(sp),sp`) und
+einen Vergleich gegen die Kernel-Modulgrenzen. Beides ist heikel:
+
+- **Kein freies Register.** `d0`/`d1`/`a0`/`a1`/`a2` sind Syscall-Eingaben,
+  `d2`-`d7`/`a3`-`a5` müssen dem Aufrufer erhalten bleiben. Ein Register
+  temporär auf dem Stack zu sichern geht (der Versatz ist vor dem Handler
+  wieder weg), muss aber sauber vor dem eigentlichen `a4`-Push passieren.
+- **Die Kernel-Grenzen stehen nicht als Konstante bereit.** `cmpi.l` braucht
+  ein Immediate; die Ladeadresse ist erst zur Laufzeit bekannt. Entweder legt
+  der Boot sie in einer Zelle ab (dann braucht der Vergleich doch ein
+  Register), oder die Prüfung wird PC-relativ formuliert.
+
+Beide Punkte sind lösbar, sollten aber **vorher entschieden** werden — nach
+fünf Fehlversuchen an dieser Stelle ist ein weiterer Schnellschuss der
+falsche Weg.
 
 ### Offen: Pfad-Deadlock
 
