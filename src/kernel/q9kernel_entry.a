@@ -334,6 +334,14 @@ Q9K_SendScratch_Success   equ $1614      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 * Speicherzelle und kein Register: an dieser Stelle ist der Registersatz des
 * Aufrufers noch NICHT gesichert und muss unangetastet bleiben.
 Q9K_SleepScratch_RetPC    equ $1618      * Q9_u32, nur waehrend des Frame-Baus belegt
+
+* F$RetPD (Callcode $31) -- Gegenstueck zu F$AllPD. Ausgaenge sind nur Carry
+* und d1.w, deshalb keine Rahmenversorgung (s. die Warnung bei F$Sleep).
+Q9K_RetPDScratch_DbtIn    equ $161C      * Q9_u32, (a0) EIN = DBT-Basis
+Q9K_RetPDScratch_NumIn    equ $1620      * Q9_u32, d0.w EIN = Deskriptornummer
+Q9K_RetPDScratch_Error    equ $1624      * Q9_u32, d1.w AUS bei Fehler
+Q9K_RetPDScratch_Success  equ $1628      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
 Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
@@ -1145,63 +1153,113 @@ Q9K_TestHelloFail:
         bsr     Q9K_DiagWriteHex32
 Q9K_TestHelloDone:
 
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04, Abschnitt "Eingabe"):
-* die Gegenrichtung. I$ReadLn ($8b) ist in IOMans Servicetabelle real auf
-* dieselbe Routine registriert wie I$Read ($89, Modul-Offset $1268) -- der
-* Callcode ist also belegt, nicht geraten.
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06, Abschnitt "F$Load"):
+* Nachweis, dass der Dateizugriff ueber RBF wirklich traegt. Vor F$Load muss
+* feststehen, dass I$Open/I$Read auf eine ECHTE Datei funktionieren -- sonst
+* baut man den Lader auf Sand.
 *
-* Reale Konvention (68k_tech): d0.w = Pfadnummer, d1.l = Puffergroesse,
-* (a0) = Puffer; zurueck d1.l = tatsaechlich gelesene Bytes, im Fehlerfall
-* Carry und d1.w = Fehlercode. Der Aufruf BLOCKIERT bis zum Zeilenende --
-* genau das ist der Nachweis: erscheint '<' und der Prozess wartet, laeuft
-* der Lesepfad bis in den Treiber; kommt danach '>' mit den Zeichen zurueck,
-* ist die Kette in beide Richtungen offen.
-*
-* Der Puffer wird per "lea ...(pc)" adressiert, also PC-relativ und damit
-* laufzeitrichtig -- NICHT ueber ein absolut adressiertes Modul-Label
-* (s. die Warnung bei Q9K_IOManPutChar: genau das hat zuletzt einen
-* Vektorslot ueberschrieben).
-*
-* Der Aufruf haelt den Boot an, solange der Weckweg nicht geschlossen ist
-* (Stand: docs/OWN_KERNEL_STATUS.md). Er steht hier trotzdem, weil nur er
-* den Lesepfad ueberhaupt bis in den Treiber bringt und damit die
-* Statikfelder V_BUSY/V_WAKE der Messung zugaenglich macht.
-        moveq   #'<',d7                     * DIAGNOSE: I$ReadLn wird versucht
-        bsr     Q9K_DiagWriteD7
-        clr.w   d0                          * Pfad 0 = Standardeingabe
-        moveq   #32,d1                      * Puffergroesse
-        lea     Q9K_TestReadBuf(pc),a0
+* Konvention (68k_tech): I$Open  d0.b = Zugriffsmodus (1 = Lesen),
+* (a0) = Pfadname; zurueck d0.w = Pfadnummer, a0 hinter dem Namen.
+*        I$Read  d0.w = Pfadnummer, d1.l = Anzahl, (a0) = Puffer;
+* zurueck d1.l = tatsaechlich gelesen.
+* Ausgegeben werden Marker und die ersten acht Bytes der Datei.
+* Vorprobe: findet unsere EIGENE Modulsuche den kompletten "Dreiklang"?
+* IOMan braucht beim Open drei Module: den Geraetedeskriptor, den darin
+* genannten File-Manager und den Treiber. Faellt EINES aus, meldet der
+* Aufruf E_MNF -- und zwar ohne dass IOMans eigene E_MNF-Stelle je erreicht
+* wird (per Freeze geprueft), der Code kommt also aus einem Unterdienst.
+* Ausgegeben wird je Name ein Grossbuchstabe bei Erfolg, ein Kleinbuchstabe
+* plus Fehlercode sonst.
+        lea     Q9K_TestTriadNames(pc),a3
+        moveq   #'1',d3                     * Kennung des gerade geprueften Namens
+Q9K_TestTriadLoop:
+        tst.b   (a3)
+        beq     Q9K_TestTriadDone
+        clr.w   d0                          * Typ/Sprache beliebig
+        movea.l a3,a0
+        movem.l d3/a3,-(sp)
         trap    #0
-        dc.w    $008b                       * I$ReadLn
-        bcs     Q9K_TestReadFail
-        moveq   #'>',d7                     * DIAGNOSE: Zeile gelesen
+        dc.w    $0000                       * F$Link
+        movem.l (sp)+,d3/a3
+        bcs     Q9K_TestTriadFail
+        move.b  d3,d7                       * Ziffer = gefunden
         bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestReadDone
-
-Q9K_TestReadFail:
-        moveq   #'r',d7                     * DIAGNOSE: I$ReadLn fehlgeschlagen, Code folgt
+        bra     Q9K_TestTriadNext
+Q9K_TestTriadFail:
+        moveq   #'x',d7                     * DIAGNOSE: nicht gefunden
+        bsr     Q9K_DiagWriteD7
+        move.b  d3,d7
         bsr     Q9K_DiagWriteD7
         move.l  d1,d5
         bsr     Q9K_DiagWriteHex32
-Q9K_TestReadDone:
-* DIAGNOSE 2026-09-04, wieder zu entfernen: die ersten 8 Pufferbytes zeigen.
-* Entscheidet die eigentliche Frage -- kommen die Zeichen an? Der Rueckgabe-
-* status allein sagt das nicht, und der Puffer liegt PC-relativ, laesst sich
-* also nicht von aussen an fester Adresse mitlesen.
+Q9K_TestTriadNext:
+        addq.b  #1,d3
+Q9K_TestTriadSkip:
+        tst.b   (a3)+                        * bis hinter das NUL-Byte
+        bne     Q9K_TestTriadSkip
+        bra     Q9K_TestTriadLoop
+Q9K_TestTriadDone:
+
+        moveq   #'F',d7                     * DIAGNOSE: Dateitest beginnt
+        bsr     Q9K_DiagWriteD7
+        moveq   #1,d0                       * Modus 1 = Lesen
+        lea     Q9K_TestFileName(pc),a0
+        trap    #0
+        dc.w    $0084                       * I$Open
+        bcs     Q9K_TestFileOpenFail
+        move.w  d0,d4                       * Pfadnummer merken
+        moveq   #'o',d7                     * DIAGNOSE: geoeffnet
+        bsr     Q9K_DiagWriteD7
+
+        move.w  d4,d0
+        moveq   #8,d1
+        lea     Q9K_TestFileBuf(pc),a0
+        trap    #0
+        dc.w    $0089                       * I$Read
+        bcs     Q9K_TestFileReadFail
         moveq   #'[',d7
         bsr     Q9K_DiagWriteD7
-        lea     Q9K_TestReadBuf(pc),a1
+        lea     Q9K_TestFileBuf(pc),a1
         moveq   #7,d6
-Q9K_TestReadDump:
+Q9K_TestFileShow:
         move.b  (a1)+,d7
         cmpi.b  #$20,d7
-        bcc     Q9K_TestReadDumpChar
-        moveq   #'.',d7                     * Nichtdruckbares als Punkt
-Q9K_TestReadDumpChar:
+        bcc     Q9K_TestFileShowChar
+        moveq   #'.',d7
+Q9K_TestFileShowChar:
         bsr     Q9K_DiagWriteD7
-        dbra    d6,Q9K_TestReadDump
+        dbra    d6,Q9K_TestFileShow
         moveq   #']',d7
         bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestFileDone
+
+Q9K_TestFileOpenFail:
+* DIAGNOSE-HAKEN: als ERSTES eine sonst unbenutzte Zelle beschreiben. Ein
+* Schreib-Watch mit Freeze darauf (Q9_WATCH_ADDR=0x1700, Q9_WATCH_FREEZE=1)
+* haelt den Instruktions-Ring GENAU hier an -- er enthaelt dann noch den Weg,
+* auf dem der Fehler entstanden ist. Auf den Fehlerzweig selbst laesst sich
+* nicht triggern, ohne seine Laufzeitadresse zu kennen.
+        move.l  d1,$1700
+        moveq   #'f',d7                     * DIAGNOSE: I$Open fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+        bra     Q9K_TestFileDone
+
+Q9K_TestFileReadFail:
+        moveq   #'g',d7                     * DIAGNOSE: I$Read fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+Q9K_TestFileDone:
+
+* Der I$ReadLn-Test von hier ist entfernt (2026-09-06), nachdem er seinen
+* Zweck erfuellt hat: er machte den Lesepfad bis in den Treiber verfolgbar
+* und lieferte schliesslich die eingegebene Zeile zurueck ("H<>[hallo...]").
+* Stehen bleiben darf er nicht -- I$ReadLn blockiert bis zum Zeilenende, der
+* Boot wartete sonst bei JEDEM Start auf eine Eingabe. Hergang und Ursache
+* (P$Age lag ein Byte zu hoch und zerstoerte damit P$State, worauf sc68681
+* den wartenden Prozess fuer "condemned" hielt): docs/OWN_KERNEL_STATUS.md.
 
 Q9K_TestWriteNoPath:
         moveq   #'n',d7                     * DIAGNOSE: kein belegter P$Path-Slot
@@ -1257,13 +1315,20 @@ Q9K_TestWriteText:
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 Q9K_TestWriteLen equ 17
 
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-04) -- Eingabepuffer fuer den
-* I$ReadLn-Versuch. 32 Byte, geradzahlig, wird zur Laufzeit von IOman/scf
-* beschrieben (Zeiger per "lea (pc)" uebergeben, s. Aufrufer).
-Q9K_TestReadBuf:
-        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Q9K_TestReadMax equ 32
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06) -- Pfadname und Puffer
+* fuer den Dateitest oben. "/dd" ist der Geraetedeskriptor aus dem Bootfile.
+* Namensliste fuer die Dreiklang-Probe: Deskriptor, File-Manager, Treiber.
+* Doppeltes NUL beendet die Liste.
+Q9K_TestTriadNames:
+        dc.b    "dd",0
+        dc.b    "rbf",0
+        dc.b    "cfide",0
+        dc.b    0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+Q9K_TestFileName:
+        dc.b    "/dd/startup",0
+Q9K_TestFileBuf:
+        dc.b    0,0,0,0,0,0,0,0
 
 Q9K_TestHelloName:
         dc.b    "hellosvc",0
@@ -1281,6 +1346,15 @@ Q9K_TestHelloName:
 * Assembler kennt die tatsaechliche Ladeadresse eines REENT-Moduls
 * nicht, deshalb hier nur 0 reserviert, vom Aufrufer zur Laufzeit per
 * PC-relativem lea befuellt (s. dort).
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-06): Diese Struktur MUSS gerade
+* ausgerichtet sein. IOMan springt mit "jsr $8(a1)" hinein; liegt die Basis
+* ungerade, ist auch das Sprungziel ungerade und die CPU bricht ab. Bisher
+* stimmte die Ausrichtung nur ZUFAELLIG -- jede Aenderung davor, die die
+* Codelaenge um eine ungerade Zahl verschiebt, kippte sie. Real erlebt: drei
+* Umbauversuche am Trap-Dispatcher scheiterten scheinbar an ihrer eigenen
+* Logik, tatsaechlich lag D_SysRom danach auf $75a7 (ungerade) und der
+* IOMan-Start brach beim ersten auszugebenden Zeichen ab.
+        align
 Q9K_IOManOutVtable:
         dc.l    0                          * +0x0, ungenutzt (laut Disassemblierung)
         dc.l    0                          * +0x4, ungenutzt (laut Disassemblierung)
@@ -1848,6 +1922,48 @@ Q9K_SysFSend_Fail:
         ori     #1,ccr                          * Carry setzen -- Fehlschlag
         rts
 
+*******************************************************************************
+* Q9K_SysFRetPD -- Handler fuer F$RetPD (Callcode $31, "Return Process/Path
+* Descriptor"), Gegenstueck zu Q9K_SysFAllPD.
+*
+* Konvention aus der IOMan-Disassemblierung ABGELESEN (2026-09-05,
+* Aufrufstelle ioman+$1206), nicht geraten:
+*   IN  d0.w = Deskriptornummer (IOMan holt sie per "move.w $0(a1),d0" aus
+*              dem Deskriptor selbst -- dort legt F$AllPD sie ab)
+*       a0   = Basis der Deskriptor-Blocktabelle, aus D_PthDBT ($48)
+*   OUT nichts ausser Carry; d1.w = Fehlercode im Fehlerfall.
+*
+* KEINE Rahmenversorgung: der Dienst gibt keine Register zurueck. Das ist
+* wichtig -- der blinde Nachbau der F$SRqMem-Rahmenerkennung hat bei F$Sleep
+* nachweislich fremden Speicher zerstoert (s. dortige Warnung).
+*******************************************************************************
+Q9K_SysFRetPD:
+        move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
+        move.l  a0,Q9K_RetPDScratch_DbtIn
+        move.l  d0,-(sp)
+        andi.l  #$0000ffff,d0                  * nur d0.w ist echte Eingabe
+        move.l  d0,Q9K_RetPDScratch_NumIn
+        move.l  (sp)+,d0
+        bsr     Q9K_SysRetPDImpl
+        movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
+
+        tst.w   Q9K_RetPDScratch_Success+2
+        beq     Q9K_SysFRetPD_Fail
+        andi    #$fe,ccr                        * Carry loeschen -- Erfolg
+        rts
+
+Q9K_SysFRetPD_Fail:
+        move.w  Q9K_RetPDScratch_Error+2,d1
+        ori     #1,ccr                          * Carry setzen -- Fehlschlag
+        rts
+
+* NACHSCHLAGEN, falls wieder gebraucht (2026-09-05): ein 'U' hier auszugeben
+* ("movem.l d0-d7/a0-a6,-(sp) / moveq #'U',d7 / bsr Q9K_DiagWriteD7 / movem.l
+* zurueck", VOR dem move.w unten) beantwortet die Frage, ob ueberhaupt ein
+* nicht belegter Dienst angefordert wird -- sonst kehrt der Stub
+* stillschweigend mit Carry zurueck und ist von einem echten Fehler des
+* Dienstes nicht zu unterscheiden. Damit wurde F$RetPD gefunden.
 Q9K_SysUnimplemented:
         move.w  #$00d0,d1                        * d1.w = E_UNKSVC (gleicher Wert wie Q9K_TrapUnknown)
         ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
@@ -2316,23 +2432,39 @@ Q9K_SysFSleep:
         clr.w   -(sp)                           * Format/Vektor-Wort = 0
         move.l  Q9K_SleepScratch_RetPC,-(sp)     * PC -- dorthin kehrt er beim Aufwachen zurueck
         move.w  sr,-(sp)                          * SR (Supervisor/Maske des Aufrufers)
+        move.l  d0,Q9K_SleepScratch_TicksIn
+        movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des schlafenden Aufrufers sichern
+        andi.w  #$fffe,60(sp)             * Carry im gesicherten SR loeschen -- F$Sleep gelingt immer
+
+* HIER NICHT: Registerrettungsrahmen des Trampolin-Aufrufers versorgen.
+* Das wurde am 2026-09-04 versucht (analog Q9K_SysFSRqMem) und ist
+* NACHWEISLICH FALSCH -- der Versuch hat den Stack des Aufrufers zerstoert
+* und endete in einer Illegal Instruction mitten im Stackbereich.
+*
+* Grund: Den 44-Byte-Rahmen legt nur IOMans Wrapper-Subroutine an
+* (ioman+$15ca..$1610). Der F$Sleep-Aufruf kommt aber von woanders --
+* gemessene Ruecksprungadresse $b998, also ioman+$11f8, weit ausserhalb des
+* Wrappers. Es gibt hier folglich gar keinen Rahmen; a5 war nur ZUFAELLIG
+* sp+8, womit die von SRqMem uebernommene Erkennung fehlschlug. Genau davor
+* warnt deren Kopfkommentar ("dort DARF nicht in den Rahmen geschrieben
+* werden, sonst wird fremder Speicher zerstoert") -- die Erkennung allein
+* ist kein hinreichender Beweis, dass ein Rahmen vorliegt.
         bra     Q9K_SysFSleep_Block
 
 Q9K_SysFSleep_TrapPath:
-        addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
-
-* Ab hier ist der Stack in BEIDEN Faellen gleich: ganz oben ein gueltiger
-* 8-Byte-Exception-Frame, darunter der Stack des Aufrufers.
-Q9K_SysFSleep_Block:
         move.l  d0,Q9K_SleepScratch_TicksIn
+        addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen -- kein Ruecksprung dorthin
         movem.l d0-d7/a0-a6,-(sp)         * kompletten Registersatz des schlafenden Aufrufers sichern
+        andi.w  #$fffe,60(sp)             * Carry im gesicherten SR loeschen (s. u.)
 
-* NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor") -- gleicher Fix/gleiche
-* Begruendung wie bei Q9K_SysFWaits Blockierpfad oben: das Carry-Bit im
-* gesicherten SR-Wort stammt noch vom URSPRUENGLICHEN TRAP-#0-Zeitpunkt
-* und wuerde beim Aufwachen unveraendert weitergegeben. F$Sleep schlaegt
-* in diesem Kernel nie fehl -- explizit geloescht.
-        andi.w  #$fffe,60(sp)             * Carry im gesicherten SR-Wort explizit loeschen
+* Ab hier ist der Zustand in BEIDEN Faellen gleich: gueltiger Exception-Frame
+* mit geloeschtem Carry, darueber der gesicherte Registersatz.
+Q9K_SysFSleep_Block:
+
+* Das Carry im gesicherten SR-Wort stammt noch vom urspruenglichen
+* Aufrufzeitpunkt und wuerde beim Aufwachen unveraendert weitergegeben
+* (NACHTRAG 2026-08-31, "CCR-Refactor"). F$Sleep schlaegt in diesem Kernel nie
+* fehl -- deshalb steht das Loeschen oben in BEIDEN Zweigen.
 
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack

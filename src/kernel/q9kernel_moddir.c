@@ -80,6 +80,13 @@ extern int Q9K_ValidModuleHeader(const Q9_u8 *addr, Q9_u32 availableLen);
 #ifndef Q9K_MODDIR_LINKCNT_OFF
 #define Q9K_MODDIR_LINKCNT_OFF 0x0CUL
 #endif
+#ifndef Q9K_MODDIR_FLAGS_OFF
+/* $0E ist der letzte freie Platz im 16-Byte-Slot (NEXT $00, HDRPTR $04,
+ * TYLANG $08, ATTREV $0A, LINKCNT $0C). Bit 0 = "permanent": Eintrag darf
+ * nie aus dem Verzeichnis verschwinden. */
+#define Q9K_MODDIR_FLAGS_OFF   0x0EUL
+#define Q9K_MODDIR_FLAG_PERM   0x0001U
+#endif
 
 /* Eigene Kernel-Global-Erweiterungen, direkt hinter Q9K_TrapHandlerScratch
  * ($1230, s. q9kernel_entry.a) -- kein Feld aus dem echten Kernel-Layout. */
@@ -122,6 +129,17 @@ static Q9_u16 Q9K_ModDirGetU16(Q9_u32 addr)
  * dupliziert, gleiche Logik wie Q9K_NamesMatch (q9kernel_modsearch.c,
  * dort static, deshalb keine gemeinsame Nutzung). moduleName darf
  * innerhalb von nameMaxLen liegen -- bricht sicher ab. */
+/* Gueltiges Zeichen INNERHALB eines Modulnamens -- gleiche Menge wie in
+ * F$PrsNam (Q9K_ProcPrsNam, q9kernel_iopath.c): Buchstaben, Ziffern sowie
+ * '_', '.' und '$'. Alles andere beendet den Namen. */
+static int Q9K_ModDirIsNameChar(Q9_u8 c)
+{
+    return (c >= '0' && c <= '9') ||
+           (c >= 'A' && c <= 'Z') ||
+           (c >= 'a' && c <= 'z') ||
+           c == '_' || c == '.' || c == '$';
+}
+
 static int Q9K_ModDirNamesMatch(const Q9_u8 *moduleName, Q9_u32 nameMaxLen, const char *targetName)
 {
     Q9_u32 i;
@@ -129,13 +147,27 @@ static int Q9K_ModDirNamesMatch(const Q9_u8 *moduleName, Q9_u32 nameMaxLen, cons
     for (i = 0; i < nameMaxLen; i++) {
         Q9_u8 a = moduleName[i];
         Q9_u8 b = (Q9_u8)targetName[i];
-        Q9_u8 aLower = (a >= 'A' && a <= 'Z') ? (Q9_u8)(a + ('a' - 'A')) : a;
-        Q9_u8 bLower = (b >= 'A' && b <= 'Z') ? (Q9_u8)(b + ('a' - 'A')) : b;
+        Q9_u8 aLower;
+        Q9_u8 bLower;
+
+        /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-06): Ist der MODULNAME zu
+         * Ende, galt bisher nur ein ebenfalls beendeter Zielname als Treffer.
+         * IOMan sucht aber mit dem REST DES PFADES: beim Open von
+         * "/dd/startup" fragt es nach dem Modul "dd/startup" -- der
+         * Geraetename endet fuer den Kernel am '/'. Real endet ein Modulname
+         * im F$Link-Aufruf am ersten Zeichen, das kein Namenszeichen ist;
+         * dass danach noch Text folgt, ist ausdruecklich erlaubt (F$Link
+         * liefert in a0 genau deshalb den Zeiger HINTER den Namen zurueck).
+         * Symptom vorher: I$Open meldete E_MNF, obwohl F$Link("dd") den
+         * Deskriptor per Einzeltest sauber fand. */
+        if (a == 0)
+            return Q9K_ModDirIsNameChar(b) ? 0 : 1;
+
+        aLower = (a >= 'A' && a <= 'Z') ? (Q9_u8)(a + ('a' - 'A')) : a;
+        bLower = (b >= 'A' && b <= 'Z') ? (Q9_u8)(b + ('a' - 'A')) : b;
 
         if (aLower != bLower)
             return 0;
-        if (a == 0)
-            return 1;
     }
     return 0;
 }
@@ -187,9 +219,18 @@ static Q9_u32 Q9K_ModDirAdd(const Q9_u8 *hdr)
     Q9K_ModDirSetU16(slot + Q9K_MODDIR_TYLANG_OFF, Q9K_GetU16BE(hdrAddr + Q9K_MH_TYLANG));
     Q9K_ModDirSetU16(slot + Q9K_MODDIR_ATTREV_OFF, Q9K_GetU16BE(hdrAddr + Q9K_MH_TYLANG + 2));
     Q9K_ModDirSetU16(slot + Q9K_MODDIR_LINKCNT_OFF, 0);
+    Q9K_ModDirSetU16(slot + Q9K_MODDIR_FLAGS_OFF, 0);
 
     Q9K_ModDirListPush(slot);
     return slot;
+}
+
+/* Markiert einen Eintrag als permanent -- s. Q9K_MODDIR_FLAG_PERM. */
+static void Q9K_ModDirMarkPermanent(Q9_u32 slot)
+{
+    Q9K_ModDirSetU16(slot + Q9K_MODDIR_FLAGS_OFF,
+                     (Q9_u16)(Q9K_ModDirGetU16(slot + Q9K_MODDIR_FLAGS_OFF) |
+                              Q9K_MODDIR_FLAG_PERM));
 }
 
 /* Abschnitt 2, Punkt "F$Link/F$UnLink": durchsucht Q9K_BootList (s.
@@ -274,8 +315,16 @@ Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList)
              * Reihenfolge stehen. */
             offset += moduleSize;
 
-            if (Q9K_ModDirAdd(candidate) != 0)
-                added++;
+            {
+                /* Module aus der Bootdatei liegen PERMANENT im Speicher --
+                 * sie koennen gar nicht verschwinden. Ihr Verzeichniseintrag
+                 * darf deshalb nie entfernt werden (s. Q9K_ModDirUnlinkByHeader). */
+                Q9_u32 newSlot = Q9K_ModDirAdd(candidate);
+                if (newSlot != 0) {
+                    Q9K_ModDirMarkPermanent(newSlot);
+                    added++;
+                }
+            }
         }
     }
 
@@ -379,7 +428,17 @@ Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr)
                 linkCnt--;
             Q9K_ModDirSetU16(slot + Q9K_MODDIR_LINKCNT_OFF, linkCnt);
 
-            if (linkCnt == 0) {
+            /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-06): hier wurde der
+             * Eintrag entfernt, sobald der Zaehler 0 erreichte -- auch bei
+             * Modulen aus der Bootdatei. IOMan linkt und unlinkt beim Start
+             * reihum; danach waren rbf, cfide und dd aus dem Verzeichnis
+             * verschwunden, obwohl sie unveraendert im Speicher lagen, und
+             * I$Open meldete E_MNF. Real bleibt ein Modul im Verzeichnis,
+             * solange es im Speicher liegt; entfernt wird der Eintrag erst,
+             * wenn auch der Speicher freigegeben wird -- was bei
+             * Bootdatei-Modulen nie passiert. */
+            if (linkCnt == 0 &&
+                (Q9K_ModDirGetU16(slot + Q9K_MODDIR_FLAGS_OFF) & Q9K_MODDIR_FLAG_PERM) == 0) {
                 Q9_u32 next = Q9K_GetU32(slot + Q9K_MODDIR_NEXT_OFF);
 
                 if (prev == 0)
