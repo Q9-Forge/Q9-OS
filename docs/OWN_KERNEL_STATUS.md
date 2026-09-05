@@ -616,11 +616,41 @@ tatsächlich brach der IOMan-Start am ersten auszugebenden Zeichen.
 Fix: ein `align` vor der Struktur. `D_SysRom` liegt jetzt stabil gerade
 (`$75a8`), das Verhalten ist sonst unverändert.
 
-**Der A4-Fix selbst bleibt offen.** Auch mit korrekter Ausrichtung bricht die
-bsr+Stub-Variante — dann allerdings an einer *früheren* Stelle im Boot. Der
-Ausrichtungsfehler war also ein Störfaktor, der alle bisherigen Messungen
-verfälscht hat; die Fix-Versuche müssen auf dieser bereinigten Grundlage neu
-bewertet werden.
+### Der A4-Fix: wirkt, hat aber eine ungeklärte Nebenwirkung
+
+Auf der bereinigten Grundlage (Ausrichtung gefixt) sind drei Varianten
+durchgemessen. **Die Kernaussage: `a4` zu erhalten behebt die
+Speicherkorruption tatsächlich** — die Illegal Instruction verschwindet, die
+Exception-Mitschrift bleibt leer. **Aber jede Variante bricht IOMans
+Konsolenöffnung** (`ioman: can't open console device`), womit auch die
+Testausgabe `Hallo von Q9-OS!` ausbleibt.
+
+| Variante | Ergebnis |
+|---|---|
+| `a4` aus globaler Zelle `Q9K_TrapA4Save` zurückholen | IOMan-Start bricht sofort ab — die Zelle übersteht keinen verschachtelten Trap |
+| Sprung über `bsr`+Stub (wie im externen Pfad) | bricht früh im Boot |
+| hinterher `movea.l Q9_D_Proc,a4` | Korruption weg, aber Konsole nicht mehr zu öffnen |
+| `a4` über den Aufruf **auf dem Stack** retten (plus `addq.l #8,sp` in den beiden blockierenden Handlern) | Korruption weg, **keine Exception mehr**, aber Konsole ebenfalls nicht mehr zu öffnen |
+
+Die letzte Variante ist die sauberste und funktioniert technisch: Der
+Registersatz stimmt, die Blockierpfade räumen korrekt ab, alle 14
+Host-Testsuiten bleiben grün. Trotzdem scheitert das Öffnen der Konsole mit
+`Error $0000`.
+
+**Damit ist klar: IOMan verlässt sich beim Öffnen auf einen `a4`-Wert, den
+unser Dispatcher bisher — unbeabsichtigt — geliefert hat.** Welchen, ist noch
+offen. Ein naheliegender Verdacht (ein Handler setzt `a4` absichtlich als
+Rückgabe) wurde geprüft und ausgeschlossen: Die einzige Stelle, die `a4`
+selbst setzt, gehört zum Testprozess, nicht zu einem Handler.
+
+**Der Code bleibt deshalb vorerst auf dem alten Stand** — ein Kernel ohne
+Konsolenausgabe wäre für die weitere Arbeit unbrauchbar, auch wenn die
+Korruption damit weiterbesteht.
+
+**Nächster Schritt:** Messen, welchen Wert IOMan beim Konsolen-Open in `a4`
+tatsächlich vorfindet und weiterverwendet — Ring-Freeze auf die
+Fehlermeldungs-Ausgabe, dann rückwärts. Erst wenn dieser Wert bekannt ist,
+lässt sich eine Variante bauen, die beides erfüllt.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
