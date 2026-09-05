@@ -953,10 +953,39 @@ File-Manager. **Genau dieser dritte Aufruf fehlt mit Push.**
 Freeze-Versuch lief ins Leere, weil nach dem `git checkout` das Image nicht
 neu gebaut war — der Ring blieb ungefroren. Nach dem Neubau griff er sofort.)*
 
-**Nächster Schritt:** Einen PC-Zähler auf `ioman+$0dca` in beide Läufe setzen.
-Wird die Stelle mit Push gar nicht erreicht, liegt der Abbruch davor — dann
-ist die Umgebung von `$0dca` der nächste Ort zum Nachsehen. Wird sie erreicht,
-scheitert erst der Aufruf selbst.
+**Gemessen — `$0dca` ist nicht die Bruchstelle:**
+
+| Stelle | ohne Push | mit Push |
+|---|---|---|
+| Aufrufstelle `$0dca` | 1 | **1** |
+| Wrapper-Einstieg | 5 | **2** |
+
+Die Stelle wird in **beiden** Läufen genau einmal erreicht. Mit Push fehlen
+also die *anderen* Wrapper-Aufrufe, nicht der von hier.
+
+### Zwischenbilanz zum A4-Punkt — und ein Vorschlag
+
+Die Eingrenzung ist weit gekommen und hat unterwegs mehrere echte Bugs
+zutage gefördert (Vtable-Ausrichtung, Moduldirectory, Pfaddeskriptor-Layout).
+Zum `a4`-Punkt selbst gilt gesichert:
+
+- Der Push **behebt die Speicherkorruption** — reproduzierbar.
+- Er **bricht zugleich das Konsolen-Open** — ebenso reproduzierbar.
+- Ausgeschlossen sind: der `a4`-Wert, die stackrelative Rahmenerkennung,
+  scfs Open, ein fehlender Syscall, das Pfad-Lock, und die Aufrufstelle
+  `$0dca`.
+
+Jede Messrunde grenzt weiter ein, öffnet aber zugleich eine neue Ebene. Statt
+diesen Weg fortzusetzen, bietet sich ein **anderer Ansatz** an:
+
+`a4` nur dann wiederherstellen, **wenn der Aufrufer außerhalb des Kernels
+liegt** — also genau für IOMan und die File-Manager, die den Prozessdeskriptor
+dort erwarten. Die Rücksprungadresse steht im Exception-Frame; ein Vergleich
+gegen die Kernel-Modulgrenzen genügt. Für eigene Prozesse bliebe alles
+unverändert, und die Stack-Verschiebung träfe nur den Pfad, der sie braucht.
+
+Das ist eine kleine, gezielte Änderung — und sie umgeht die Nebenwirkung,
+statt sie weiter zu jagen.
 
 ### Offen: Pfad-Deadlock
 
