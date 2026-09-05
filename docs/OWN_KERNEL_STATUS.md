@@ -760,10 +760,36 @@ Ausgeschlossen sind inzwischen: der `a4`-Wert selbst, die Rahmenerkennung in
 Übrig bleibt der **Rückweg von scfs Open zu IOMan** — dort wird das Ergebnis
 offenbar anders bewertet.
 
-**Nächster Schritt:** In IOMan die Stelle finden, die `can't open console
-device` ausgibt, und von dort rückwärts messen, welche Bedingung mit Push
-anders ausfällt. Kandidaten sind das durchgereichte Carry und der
-Registerrahmen.
+### Die Stelle in IOMan ist gefunden
+
+Über den Meldungstext (Modul-Offset `$3f7`) rückwärts: Ihn lädt `ioman+$2f4`,
+das ist die Meldungsroutine ab `$2f0`. Ihr einziger Aufrufer ist `ioman+$12a`
+— und davor steht der eigentliche Vorgang:
+
+    ioman+$011e  lea     (a2,d0.w),a0     * Gerätename aus dem Deskriptor
+    ioman+$0122  moveq   #$3,d0           * Modus 3 = Lesen+Schreiben
+    ioman+$0124  trap    #0
+    ioman+$0126  dc.w    $0064            * F$DAttach
+    ioman+$012a  bsr.w   $2f0             * -> "can't open console device"
+
+**IOMan scheitert am `F$DAttach` (`$64`)** — dem Dienst, der ein Gerät an das
+System anhängt. Der Code ist per `MWOS/OS9/SRC/DEFS/funcs.a` bestätigt
+(`$60` F$Trans, **`$64` F$DAttach**, `$65` F$Flash, `$66` F$PwrMan).
+
+Bemerkenswert: **Wir registrieren `$64` nicht selbst** — er muss also von
+IOMan über `F$SSvc` kommen, wird demnach über den *externen* Pfad
+(`Q9K_TrapCallExternal`) ausgeführt, wo der `a4`-Push gar nicht steht. Warum
+er trotzdem nur mit Push fehlschlägt, ist der nächste Messpunkt.
+
+*(Werkzeugnotiz: Der Weg vom Meldungstext zur Ursache ist mechanisch —
+String im Modul suchen, das `lea <text>(pc),a0` dazu finden, dann dessen
+Aufrufer. Alle drei Schritte lassen sich im extrahierten Modul offline
+erledigen.)*
+
+**Nächster Schritt:** Den `F$DAttach`-Aufruf mit und ohne Push vergleichen —
+Ring-Freeze auf `ioman+$12a` und den Rückweg des Dienstes ansehen. Zu klären
+ist, ob der Aufruf überhaupt bei IOMans eigenem Handler ankommt und mit
+welchem Ergebnis er zurückkehrt.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
