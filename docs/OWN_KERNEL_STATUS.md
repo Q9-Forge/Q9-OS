@@ -647,10 +647,46 @@ selbst setzt, gehört zum Testprozess, nicht zu einem Handler.
 Konsolenausgabe wäre für die weitere Arbeit unbrauchbar, auch wenn die
 Korruption damit weiterbesteht.
 
-**Nächster Schritt:** Messen, welchen Wert IOMan beim Konsolen-Open in `a4`
-tatsächlich vorfindet und weiterverwendet — Ring-Freeze auf die
-Fehlermeldungs-Ausgabe, dann rückwärts. Erst wenn dieser Wert bekannt ist,
-lässt sich eine Variante bauen, die beides erfüllt.
+### Gemessen: `a4` ist beim Konsolen-Open gar nicht die Ursache
+
+Der Instruktions-Ring zeichnet jetzt auch `a4` auf. Ergebnis, per Freeze auf
+scfs Open-Routine:
+
+    ohne Fix:  a4 = 00019400   (Prozessdeskriptor)
+    mit Fix:   a4 = 00019400   (identisch)
+
+**`a4` ist in beiden Fällen korrekt und identisch.** Meine Arbeitshypothese
+war falsch — der Open-Fehler hat mit `a4` nichts zu tun. (Nebenbei bestätigt:
+Auf dem Open-Pfad läuft alles über `Q9K_TrapCallExternal`, wo `a4 = D_Proc`
+ohnehin korrekt gesetzt wird.)
+
+**Die Ursache ist der Push selbst.** Ein Gegentest ohne die
+`addq.l #8`-Anpassung bricht genauso — es liegt also allein am
+`move.l a4,-(sp)` im Dispatcher. Und dazu passt eine Konstruktion, die es
+schon gibt: `F$AllPD` und `F$SRqMem` erkennen den Trampolin-Registerrahmen
+**stackrelativ**:
+
+    movem.l d0/a0,-(sp)
+    movea.l sp,a0
+    adda.l  #16,a0        * sp vor dem movem (8) + 8
+    cmpa.l  a0,a5         * a5 == sp+8  ->  Rahmen vorhanden
+
+Ein zusätzlicher Push verschiebt `sp` um 4 und verfälscht damit genau diese
+Erkennung. Die Handler versorgen den Rahmen dann nicht mehr (oder fälschlich),
+IOMan bekommt Müll zurück — und das Öffnen scheitert.
+
+**Konsequenz für den Fix:** Jede Lösung, die den Stack im Dispatcher
+verändert, muss diese beiden Erkennungen mitziehen (`adda.l #20` statt `#16`,
+Zeilen 2734 und 2798). Sauberer wäre eine Variante, die `a4` **ohne**
+Stackänderung erhält — die ist aber noch zu finden: Eine globale Zelle
+scheidet wegen Verschachtelung aus, `bsr`+Stub bricht, und `r68` kennt die
+speicherindirekte `jsr`-Form nicht.
+
+**Nächster Schritt:** Entweder die beiden stackrelativen Erkennungen
+mitanpassen (klein, aber es bleiben zwei versteckte Kopplungen im Code), oder
+die Rahmenerkennung grundsätzlich von `sp` entkoppeln. Letzteres ist die
+robustere Lösung und würde zugleich eine Fehlerquelle beseitigen, die schon
+mehrfach zugeschlagen hat.
 
 **Nächster Schritt:** Den Stub-Weg im Einzelschritt verfolgen (Ring-Freeze
 auf den Stub selbst) und dabei den tatsächlich gepushten Wert mitlesen. Erst
