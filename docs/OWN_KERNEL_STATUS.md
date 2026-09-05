@@ -1040,9 +1040,66 @@ zu werden. Auch `Q9K_TrapAfterCall` (Zugriffe auf `(sp)`, `4(sp)`, `6(sp)`)
 ist unkritisch, sofern der Pop vor dem `bra` dorthin steht.
 
 Der nächste Schritt ist deshalb **kein Fixversuch, sondern eine Messung**:
-Push einbauen, den Boot bis zum fehlschlagenden Open per Ring-Freeze
-mitschreiben und die *erste* Abweichung gegen den funktionierenden Lauf
-suchen. Erst wenn die bekannt ist, lohnt ein sechster Anlauf.
+Push einbauen, den Boot bis zum fehlschlagenden Open mitschreiben und die
+*erste* Abweichung gegen den funktionierenden Lauf suchen. Erst wenn die
+bekannt ist, lohnt ein sechster Anlauf.
+
+### Die Messung (2026-09-05) — und ein Gegentest, der eine Klasse ausschließt
+
+**Messaufbau, reproduzierbar:**
+
+    # Bootfile bauen (Referenz ohne hellosvc, das fuegt mkbootfile.sh frisch ein)
+    REF_TAIL_START=0x33d6 REF_TAIL_SPLIT=0x35d2 \
+        tools/mkbootfile.sh <ref.boot> <image>
+    # Lauf mit Syscall-Mitschrift -- BEIDE Variablen noetig:
+    Q9_TRAP_TRACE=<datei> Q9_TRAP_TRACE_ALL=1 expect run.exp <image> <log>
+
+`Q9_TRAP_TRACE` ist der **Dateipfad**, `Q9_TRAP_TRACE_ALL` schaltet auf alle
+Traps — nur eine von beiden zu setzen liefert stillschweigend nichts.
+(Weitere Falle: `os9 gen -b=` bricht mit *„is fragmented"* ab, sobald das
+Zielimage schon eine fragmentierte Bootdatei enthält. Dann frisch vom
+Masterimage klonen — `cp -c OS9SYS.hda …` —, nicht vom Arbeitsstand.)
+
+**Ergebnis, drei Läufe:**
+
+| Lauf | Konsole | Trap-Zeilen | Pfad-Marker |
+|---|---|---|---|
+| ohne Push (Referenz) | `Hallo von Q9-OS!` | 28 | `RP012` |
+| mit `a4`-Push | `can't open console device: Error $0000` | **2** | `RPn` |
+| **Gegentest: 2 `nop` statt Push/Pop** | `Hallo von Q9-OS!` | 28 | `RP012` |
+
+Der Marker `P` gibt je eine Ziffer pro belegtem `P$Path`-Slot aus, `n` heißt
+„kein belegter Slot" — IOMan legt mit Push also **gar keine Pfade** an.
+
+**Der Gegentest ist der eigentliche Ertrag.** Zwei `nop` sind exakt so groß
+wie `move.l a4,-(sp)` plus `movea.l (sp)+,a4` (je 2 Byte) und lassen das
+Modullayout identisch verschieben — aber sie ändern den Stack nicht. Damit
+ist bewiesen:
+
+> Es liegt an der **Stackänderung**, nicht an der Codegröße oder einer
+> verschobenen Modulbasis. Diese ganze Erklärungsklasse ist erledigt.
+
+**Und zugleich ein scharfer Widerspruch:** Alle 28 Trap-Einträge des
+Referenzlaufs sind mit `kernel=1` klassifiziert — der erste ist `F$SSvc` aus
+*unserem* Init, danach unser `I$Open("/term")`. **IOMans Init macht keinen
+einzigen `TRAP #0`**, es läuft vollständig über die Trampoline. Ein Push in
+`Q9K_TrapDispatch` dürfte es also überhaupt nicht erreichen — tut es aber
+reproduzierbar.
+
+**Stärkster verbliebener Kandidat:** Fünf Handler verlassen den Dispatcher
+per `rte` statt über `Q9K_TrapAfterCall` — `F$Exit`, `F$Panic`, `F$PrsNam`,
+`F$Sleep`, `F$Wait`. Sie überspringen den Pop, und ihr `rte` liest den
+Exception-Frame dann 4 Byte versetzt. Dagegen spricht bisher, dass der Trace
+vor dem Bruch keinen solchen Aufruf zeigt — genau das ist der nächste
+Messgegenstand. Der `addq.l #4` → `#8` in den Blockierpfaden allein erklärt
+es nicht: der Bruch tritt mit **und** ohne diese Anpassung auf (beide Läufe
+gemessen).
+
+*(Nicht geglückt: der Ring-Dump per Ctrl-^ blieb bei `Q9_TRACE_INSTR=1` und
+`Q9_FREEZE_PC=0x73a0` leer. Der Weg ist noch zu klären, war für diesen
+Befund aber nicht nötig.)*
+
+**Der Code steht unverändert auf dem funktionierenden Stand.**
 
 ### Offen: Pfad-Deadlock
 
