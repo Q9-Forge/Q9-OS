@@ -1833,3 +1833,87 @@ verifiziert) ausreichen.
 
 **Alle temporären Test-Prints in `Q9-Flux` sind revertiert** (`git status`
 sauber), keine dauerhafte Codeänderung.
+
+## DURCHBRUCH: echte Speicherkorruption gefunden — es ist der Stack Pointer (A7), nicht A4
+
+Mit dem jetzt funktionierenden Instruktions-Hook (siehe oben) endlich echtes
+Einzelschritt-Tracing durchgeführt — und dabei zwei eigene Messfallen
+unterwegs gefunden und umschifft, bevor der eigentliche Durchbruch gelang.
+
+### Zwei neue Werkzeugfallen, dokumentiert
+
+1. **`expect`s PTY mischt `stdout` und `stderr` zeichenweise mit der
+   emulierten Konsolenausgabe.** Ein `printf()`/`fprintf(stderr,…)` aus dem
+   Emulator-C-Code kann durch die zeitgleiche emulierte UART-Ausgabe MITTEN
+   IM STRING zerrissen werden (beobachtet: eine eigene Debug-Zeile brach
+   nach 5 von 8 Hexziffern ab, gefolgt vom Kernel-eigenen `'E'`-Zeichen).
+   **Abhilfe:** eigene Diagnoseausgaben in eine dedizierte Datei schreiben
+   (`fopen("/tmp/...")`), nie über `stdout`/`stderr`, wenn zeitgleich auch
+   emulierter Code auf die Konsole schreibt.
+2. **PC-Fenster-Filter mit Lücken im Grep-Muster verschleiern echte
+   Adressen.** Ein Suchmuster wie `"pc=0000a70"` findet `a704` nicht aber
+   verpasst `a754` (passt nicht auf `"a70"`) -- immer den vollen Adressraum
+   durchsuchen, nie ein Präfix-Muster, das zufällig zu kurz greift.
+
+### Der Aufruf läuft tatsächlich vollständig korrekt bis zum Fail-Pfad
+
+Sauberes Einzelschritt-Tracing des EINZIGEN `F$GProcP`-Aufrufs im ganzen Boot
+(`pid=$2008`, nicht `$588F` — das war eine Fehlmessung aus einer früheren
+Runde, s. u.) zeigt: `Q9K_ProcLookup` UND `Q9K_SysGProcPImpl` laufen
+**instruktionsgenau korrekt** bis zum Fail-Pfad (`pid=$2008 > count=$40` →
+`E$PrcID`). Auch `Q9K_SysFGProcP`s eigener Fail-Zweig (`move.w Error,d1` /
+`ori.b #1,ccr`) läuft korrekt.
+
+**Der Absturz passiert exakt am `rts` von `Q9K_SysFGProcP_Fail`** — der
+CPU landet danach nicht beim Aufrufer, sondern mitten in `Q9K_ExcTrap`.
+
+### Die Ursache: `andi.b #$fe,ccr` (Erfolgspfad) ist im Live-Speicher zerstört
+
+Direkter Live-Speicher-Vergleich an der kritischen Adresse (`$7d2a`, dem
+`andi.b #$fe,ccr` am Ende des ERFOLGSPFADS, unmittelbar VOR dem Fail-Zweig
+im Speicher): Datei sagt `02 3c 00 fe` (der echte Opcode), **Live-Speicher
+zeigt `82 00 00 fe`** — die ersten 2 Byte sind überschrieben. Die CPU
+decodiert `$8200` als eigenständige (2-Byte-)Instruktion, springt dadurch
+nur 2 statt 4 Byte weiter, landet auf `$00FE` (dem ehemaligen Operanden-
+Wort) als neuem „Opcode" — **echte Illegal Instruction, kein
+Interpretationsfehler unsererseits.**
+
+**Wer schreibt das?** Mit `Q9_WATCH_ADDR=0x7d2a Q9_WATCH_LEN=2` direkt
+beobachtet: Der Schreibzugriff kommt von `pc=$D81E` — das liegt **in RBFs
+eigenem Modulbereich** (`$D2EE`-`$F894`), nicht in unserem Kernel! An
+RBF-Offset `$530` steht:
+
+```
+052e  move.l  $54(a3), -(a7)     * <== der Schreibzugriff
+```
+
+**Das ist ein GANZ NORMALER Stack-Push** (Teil von RBFs eigenem Trampolin-
+Aufruf für `F$Time`, Slot `$54` in `D_SysDis`) — keine wilde
+Zeiger-Schreibaktion. Die einzige Erklärung: **`a7` (der Stack Pointer)
+selbst zeigt an dieser Stelle fälschlich auf `$7D28` — mitten in unseren
+Kernelcode — statt auf RBFs echten Stack-Bereich.** RBFs eigener,
+vollkommen korrekter Push zerstört dadurch fremden Speicher, einfach weil
+der Zeiger falsch ist.
+
+**Das dreht die gesamte bisherige A4-Untersuchung um eine Achse weiter:**
+Es ist nicht (nur) `A4`, das an einer bestimmten Stelle falsch gesetzt
+wird — der **Stack Pointer selbst** gerät irgendwann während RBFs
+Ausführung auf einen Wert, der wie eine Kernel-Codeadresse aussieht. Woher
+dieser falsche `A7`-Wert kommt (welcher Aufruf/Rückkehr ihn zuletzt
+korrekt gesetzt hat, und wo genau er abweicht), ist die nächste offene
+Frage — aber zum ersten Mal mit einem konkreten, reproduzierbaren
+Ziel-Symptom (`SP≈$7D28` bei RBF-Offset `$530`) statt einer vagen
+Vermutung.
+
+**Frühere Fehlmessung korrigiert:** Der oft zitierte Wert `d0=$588F` als
+„angeforderte PID" war eine Verwechslung — dieser Wert stammt aus einer
+GANZ FRÜHEN, unabhängigen ROM-Scan-Routine (`a0=$fe001aaa`, weit vor RBF),
+nicht aus RBFs `F$GProcP`-Aufruf. Der echte, einzige `F$GProcP`-Aufruf im
+ganzen Boot hat `pid=$2008`.
+
+**Stand:** Kein Fixversuch. Alle temporären Test-Prints in `Q9-Flux`
+revertiert (`git status` sauber, `2ef1bae` unverändert). Nächster Schritt:
+`SP` ab RBFs Modul-Einsprung verfolgen (mit dem jetzt funktionierenden
+Instruktions-Hook, dediziertes File statt stdout!), um die genaue Stelle
+zu finden, an der er von einem echten Stack-Wert auf `$7D28`-artige
+Kernel-Adressen abdriftet.
