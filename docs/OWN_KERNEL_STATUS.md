@@ -1756,3 +1756,47 @@ verfolgung** innerhalb des C-Aufrufs selbst (nicht nur davor/danach), um die
 exakte Instruktion zu finden, an der die Ausführung abweicht — mit dem
 etablierten Ein-Build-Verfahren und eigenen, kollisionsfreien Diagnose-
 zeichen (nicht `A`/`B`, die durch `Q9K_TestProcA`/`B` belegt sind).
+
+## Compilierten Code direkt disassembliert — sauber, aber Ursache weiterhin offen
+
+Da der eingebaute Instruktions-Hook in diesem Emulator-Build nachweislich
+nicht feuert (früherer Fund, s. o.), kein echtes Einzelschritt-Tracing
+möglich. Stattdessen `Q9K_SysGProcPImpl` und `Q9K_ProcLookup` direkt im
+kompilierten Kernel-Binary lokalisiert (über die eindeutigen Scratch-
+Adressen `$1384`/`$1388`) und von Hand disassembliert.
+
+**Beide Funktionen sind korrekt.** `Q9K_ProcLookup`s Vergleichslogik
+(`pid==0`, `pid>count` unsigniert via `bhi`, `base==0`) entspricht exakt
+dem C-Quelltext, Prolog/Epilog sind bezüglich der geretteten Register
+balanciert. Mit `pid=$588F` und `count=$40` müsste der Fail-Zweig
+genommen werden — kein Fehler im generierten Code sichtbar.
+
+### Nebenfund: `_stklimit` ist unerwartet klein — aber (vermutlich) folgenlos
+
+Jede C-Funktion prüft per Compiler-Konvention `subi.l #N,_stklimit(a6) /
+bcc.b weiter / [Ueberlauf-Behandlung]`. Live gemessen: `_stklimit=$1A000`
+(106496) — weit unter dem einzigen im Quelltext vorkommenden Init-Wert
+`$7FFFFFFF` (`q9kernel_entry.a:753`, **die einzige Stelle**, die dieses
+Feld je setzt). Gewöhnliche Kleinbeträge pro Aufruf ($14–$24) erklären
+diesen Abfall über eine einzelne Boot-Sequenz nicht — woher der Wert
+kommt, ist ungeklärt.
+
+**Folgenlos für den Absturz:** `$1A000` liegt weit über jedem einzelnen
+Abzugsbetrag, der Unterlauf-Zweig (`_stkhandler`, gibt `'S'` aus und hält
+an) wird nachweislich nicht betreten — kein `'S'` in der Ausgabe. Bleibt
+als ungeklärter Nebenbefund stehen, ist aber nicht die Ursache dieses
+Absturzes.
+
+### Ehrliche Zwischenbilanz nach fünf Fortsetzungsrunden
+
+Sechs Erklärungen systematisch geprüft und verworfen: IRQ-Abhängigkeit,
+`F$DAttach`-Fehlen, Trampolin-Kodierungsfehler, Speicherkorruption,
+Stack-Erschöpfung, `_stklimit`-Unterlauf. Der generierte Code für die
+beiden beteiligten C-Funktionen ist nachweislich korrekt. **Die
+eigentliche Ursache ist damit nicht gefunden.**
+
+Ohne echtes Einzelschritt-Tracing (der Instruktions-Hook des Emulators
+müsste zuerst repariert werden — eigener, separater Untersuchungsaufwand)
+ist der nächste sinnvolle Schritt in der jetzigen Werkzeuglage nicht mehr
+die naheliegende Fortsetzung. Diese Sitzung markiert deshalb bewusst einen
+Haltepunkt, statt eine siebte Hypothese ungeprüft anzuschieben.
