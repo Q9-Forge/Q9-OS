@@ -1645,11 +1645,20 @@ Q9K_TrapDispatch:
 * GEMESSEN (2026-09-07): RBFs echte Speicherkorruption an einer per
 * Speicher-Watch nachgewiesenen Adresse verschwindet mit diesem Fix,
 * IOMans Konsolen-Open bleibt (erstmals nach fuenf Fehlversuchen) heil.
-        lea     Q9K_ModuleStart(pc),a4               * a4 = Lade-Basis dieses Moduls (a4 noch frei)
+* NACHTRAG (zweite Praezisierung): weder eine geratene 64-KByte-Konstante
+* (zu grosszuegig, s. o.) NOCH "M\$Size ab Q9K_ModuleStart" (zu kurz --
+* Q9K_ModuleStart markiert laut eigenem Kopfkommentar NICHT Offset 0 des
+* Moduls, sondern das Ende des generierten Kopfs, $3C=Q9K_ModuleHeaderSize
+* Byte WEITER; "4(a4)" traf dadurch auf echten Code statt auf M$Size --
+* per Messung entdeckt: gelesener "M$Size"-Wert war offensichtlicher
+* Muell). Um Q9K_ModuleHeaderSize korrigiert zeigt a4 jetzt auf den
+* WAHREN Modulanfang (M$ID), "4(a4)" liest dort das echte M$Size-Feld.
+        lea     Q9K_ModuleStart(pc),a4               * a4 = Ende des generierten Modulkopfs
+        suba.l  #Q9K_ModuleHeaderSize,a4                * a4 = WAHRER Modulanfang (M$ID-Wort)
         move.l  Q9K_TrapCallerPC,d7
-        sub.l   a4,d7                                  * d7 = Ruecksprung-PC minus Lade-Basis
-        cmpi.l  #$10000,d7                              * grosszuegige 64-KByte-Modulgrenze
-        bcc     Q9K_TrapCallForeignCaller               * >= 64K (oder negativ/unsigniert riesig): Aufrufer AUSSERHALB
+        sub.l   a4,d7                                  * d7 = Ruecksprung-PC minus wahre Lade-Basis
+        cmp.l   4(a4),d7                                * gegen echtes M$Size aus dem Modulkopf
+        bcc     Q9K_TrapCallForeignCaller               * >= eigene Groesse: Aufrufer AUSSERHALB
         movea.l Q9K_TrapHandlerScratch,a4                 * Aufrufer ist WIR SELBST: unveraendertes Verhalten
         jsr     (a4)
         bra     Q9K_TrapAfterCall
