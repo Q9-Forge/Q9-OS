@@ -2127,3 +2127,76 @@ größeren Themenblock und nicht mehr in seinem Vorfeld.
 Antworten überhaupt erreichen bzw. ob unser Treiber/Deskriptor die von
 RBF erwarteten Werte für diesen Kapazitäts-/Pool-Zähler liefert, ist noch
 nicht gemessen — das ist der konkrete erste Schritt in den "Dreiklang".
+
+## $D8-Spurensuche in RBFs Binärcode: konkreter Verdacht, aber noch nicht bewiesen (2026-09-08/09)
+
+Weitergehende dynamische Messung (Instruktionsspur + gezielte Speicher-
+Dumps im Emulator, alle Q9-Flux-Änderungen dabei nur temporär und
+inzwischen wieder vollständig zurückgesetzt) zur Frage: woher kommt die
+"$36(a1)-$32(a1)=0"-Kapazitätserschöpfung, die laut vorigem Fund zu `$D3`
+→ `$D8` führt?
+
+**Zwischenfrage des Nutzers geklärt:** Der Pfad `/dd/startup` selbst ist
+korrekt — auf dem Referenz-Image (`os9 dir OS9SYS.hda,`) existiert er
+tatsächlich im Wurzelverzeichnis (`--e-rewr`), zusätzlich (aber getrennt
+davon) auch `/dd/SYS/startup`. Kein Pfadproblem.
+
+**Methodischer Fallstrick entdeckt:** Eine erste Runde statischer
+Disassemblierung (capstone, `rbf.mod` ab einem willkürlich gewählten
+Byte-Offset `$ea0`) ergab plausibel aussehenden, aber tatsächlich
+FALSCH ausgerichteten Code — bestätigt per `Q9_COUNT_PC` an sechs so
+gewonnenen Kandidatenadressen: vier der sechs (`$1250`, `$64c`, `$f1c`,
+`$f24`) wurden beim echten Boot NIE erreicht (0 Treffer), nur die aus
+dem unmittelbaren Kontext übernommene Adresse `$eb2` traf tatsächlich
+(2 Treffer, je einmal pro `I$Open`). Capstone synchronisiert sich beim
+Start mitten in einer `bsr.w`-Verschiebungskonstante nicht von selbst
+auf echte Befehlsgrenzen — jede weitere Adresse aus so einem Lauf ist
+erst durch eine LIVE-Messung (Freeze/Count) zu vertrauen, nicht durch
+bloßes Ablesen der Disassemblierung.
+
+**Live bestätigt (per `Q9_FREEZE_PC`, Instruktionsspur mit a0/a1/a4/sp):**
+Beim zweiten `I$Open`-Aufruf (also `/dd/startup`) hält RBF durchgehend
+`a1 = $00021500`. Ein Rohspeicher-Dump dieser Adresse (temporärer
+`Q9_DUMP_ADDR`-Hebel in `q9boardrun.c`, inzwischen entfernt) zeigt an
+Offset `+$32`/`+$36` (nach der — mit der oben genannten Unsicherheit
+behafteten — ursprünglichen Feldzuordnung) zwei **identische** 32-Bit-
+Werte: `$000003C0` (960 dezimal). Genau das ist das Muster, das die
+vermutete Kapazitätsprüfung (`$36(a1)-$32(a1)`) auf `0` und damit auf
+Fehlschlag `$D3`→`$D8` treibt.
+
+**Ebenfalls live vermessen:** Zwei `F$SRqMem`-Aufrufe (Callcode `$28`)
+mit je `d0=$200` (512 Byte) treten im selben Zeitfenster auf
+(`pc=$e040` mit `d1=$1ff`, `pc=$e3e6` mit `d1=$9,d2=$8200`). Der erste
+liefert `a2=$00035C80` — **nicht** `$21500`. Der zweite Rücksprungpunkt
+ließ sich mit der (aus dem ersten Fehler bereits als unzuverlässig
+erkannten) Adressrechnung nicht sauber treffen (0 Treffer trotz
+mehrerer Versuche) und wurde nicht weiter verfolgt. `a1=$21500` ist
+damit vermutlich NICHT einer dieser beiden 512-Byte-Puffer, sondern
+eine andere, vermutlich früher (z. B. bei `I$Attach`) angelegte private
+RBF-Struktur.
+
+**Einordnung — was wirklich gesichert ist und was nicht:**
+- Gesichert: `a1=$21500` beim scheiternden `I$Open`, Speicherinhalt dort
+  wie oben gedumpt, zwei identische `$3C0`-Langworte an einer Stelle,
+  die zur ursprünglich vermuteten Kapazitätsprüfung passen würde.
+- NICHT gesichert: dass `+$32`/`+$36` (statt z. B. `+$30`/`+$34` oder
+  anderer Offsets) wirklich die exakt richtigen Feldnamen/-lagen sind —
+  die static-disasm-Grundlage dafür ist durch den oben beschriebenen
+  Fund erschüttert und wurde nicht mit derselben Live-Methode
+  nachgeprüft wie `$eb2`.
+- Offen: WER die beiden `$3C0`-Werte schreibt und warum identisch —
+  ob das eine legitime RBF-Eigeninitialisierung ist (die z. B. eine von
+  UNS gelieferte GetStat-Antwort dupliziert unverändert übernimmt) oder
+  ob unser eigener Allokator/unsere Attach-Verdrahtung hier fehlerhaft
+  zweimal denselben Wert liefert, ist NICHT geklärt.
+
+**Empfehlung für den nächsten Anlauf:** Statt weiter mit ad-hoc
+capstone-Bereichen zu arbeiten, entweder (a) RBF vollständig und mit
+echten Funktionsgrenzen disassemblieren (z. B. beginnend an der
+M$Exec-Einsprungadresse aus dem Modulkopf, linear, ohne Bereichslücken)
+und JEDE daraus abgeleitete Adresse per `Q9_COUNT_PC`/`Q9_FREEZE_PC`
+gegenmessen, bevor sie als gesichert gilt, oder (b) gezielt die
+GetStat-Kommunikation zwischen RBF und unserem Treiber/Deskriptor beim
+`I$Attach` von `/dd`/`/term` mitschneiden (der eigentliche "Dreiklang"-
+Einstieg) und dort direkt nach Feldern suchen, die unverändert in zwei
+verschiedene Zielorte kopiert werden.
