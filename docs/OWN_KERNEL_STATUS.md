@@ -1800,3 +1800,36 @@ müsste zuerst repariert werden — eigener, separater Untersuchungsaufwand)
 ist der nächste sinnvolle Schritt in der jetzigen Werkzeuglage nicht mehr
 die naheliegende Fortsetzung. Diese Sitzung markiert deshalb bewusst einen
 Haltepunkt, statt eine siebte Hypothese ungeprüft anzuschieben.
+
+## Werkzeugkorrektur: der Instruktions-Hook war nie kaputt
+
+Auf Bitte hin zuerst geprüft, ob der Q9-Flux-Emulator gerade anderweitig
+genutzt wird (kein laufender `q9.exe`-Prozess, keine tmux-Sitzung mit
+Q9-Bezug, nur ein Worktree ohne fremde Änderungen) — sicher, weitergemacht.
+
+**Die Ursache war nicht der Emulator, sondern die eigene Testmethode.**
+`expect`s `spawn` verbindet `stdout` **und** `stderr` des Kindprozesses über
+dasselbe Pseudo-Terminal — eine äußere `2>datei`-Umleitung auf das
+`expect`-Kommando selbst erreicht davon **nichts**, sie fängt nur `expect`s
+eigene Fehlerausgabe. Jede heutige Messung mit `Q9_TRACE_INSTR=1` UND einer
+separaten `2>`-Umleitung hat deshalb ins Leere gegriffen — nicht weil der
+Hook nicht feuerte, sondern weil seine Ausgabe nie im geprüften File landete.
+
+**Verifiziert:** Mit unbedingtem `fprintf(stderr,...)` direkt im
+Hook-Callback und Prüfung der **`log_file`-Mitschrift** (nicht einer
+separaten stderr-Umleitung) feuert der Hook zuverlässig, mehrfach pro
+Sekunde, über den gesamten Boot. Ein sauberer Neubau der Musashi-
+Objektdateien (`musashi_m68kcpu.o` u. a.) war dafür nicht nötig, hat aber
+zur Sicherheit stattgefunden.
+
+**Praktische Konsequenz:** `Q9_TRACE_INSTR=1` funktioniert, ebenso vermutlich
+`Q9_FREEZE_PC`/`Q9_COUNT_PC` (hängen an derselben Kette) — für echtes
+Einzelschritt-Tracing steht das Werkzeug also grundsätzlich zur Verfügung.
+Offen bleibt der separate Ctrl-^-Ringdump-Mechanismus, der bei einem
+Testlauf keine Ausgabe zeigte — vermutlich ein eigener, kleinerer Fehler,
+nicht der zuvor vermutete grundsätzliche Hook-Defekt. Nicht weiter verfolgt,
+da für die eigentliche Kernel-Fehlersuche eigene `fprintf`-Sonden (wie hier
+verifiziert) ausreichen.
+
+**Alle temporären Test-Prints in `Q9-Flux` sind revertiert** (`git status`
+sauber), keine dauerhafte Codeänderung.
