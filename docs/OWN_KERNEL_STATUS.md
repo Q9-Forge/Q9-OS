@@ -1266,6 +1266,57 @@ plus `a4`-Erhalt bricht weiterhin — getrennt gemessen. Beide heute gefundenen
 Fehler (`F$PrsNam`-Rahmen, `P$Path`-Nullung) waren echt und sind behoben,
 aber keiner von beiden ist die Ursache der Nebenwirkung.
 
+## NACHTRAG 2026-09-07: `F$PrsNam` und `I$Attach` kommen von `scf`, nicht IOMan
+
+**Messfalle, die den ganzen Vormittag verzerrt hat:** Die Kernelgröße wächst
+mit jedem Fix (heute: 13270 → 14286 Byte), damit verschieben sich alle
+Modulbasen im Testimage. Eine Disassemblierung mit der GESTERN gültigen
+`ioman`-Basis (`$A778`) landete im FALSCHEN Modul und lieferte plausibel
+aussehenden, aber bedeutungslosen Code. Die Basis muss **bei jeder Messung
+frisch aus dem aktuellen Testimage gelesen werden** (Modulliste per
+Magic-Marker-Scan, nicht aus einer Notiz) — dieselbe Falle wie im
+Kopfkommentar der letzten Runde, diesmal real erlebt statt nur zitiert.
+
+**Vollständige Callcode+PC-Sequenz (funktionierender Lauf), diesmal mit
+korrekter Basis:**
+
+    #F$Link #F$Link #F$SSvc  +I$Open(ioman)  #F$IRQ  #F$PrsNam(scf+$4C0)
+    +I$Attach(scf+$56E)  +I$Dup(ioman)  +I$Dup(ioman)  +I$Chgdir(ioman)  +I$Write
+
+**Wichtiger Fund: `F$PrsNam` und der ERSTE `I$Attach`-Aufruf laufen nicht in
+IOMan, sondern in `scf`** (dem File-Manager) — IOMan ruft nur `I$Open` auf,
+scf parst darin selbst den Pfadnamen und hängt sich selbst am Gerät an; erst
+danach kommen `I$Dup`/`I$Chgdir` wieder aus IOMans eigenem Code.
+
+**Der Divergenzpunkt ist exakt eingegrenzt.** `I$Attach` ($80) wird
+zweimal aufgerufen. Der erste Aufruf ist in beiden Läufen (mit/ohne
+`a4`-Erhalt) identisch (`sr=$2700 d1=$10000`). Beim **zweiten** Aufruf:
+
+| | Carry | `d1` |
+|---|---|---|
+| ohne Fix (funktioniert) | 0 | **1** |
+| mit Fix (bricht) | 0 | **0** |
+
+Kein Fehlerpfad (Carry ist beide Male 0) — eine echte, bedeutungstragende
+Rückgabe. Das deutet auf einen internen Zustandsvergleich in `scf` hin (z. B.
+„ist dieses Gerät für diesen Aufrufer schon angehängt?"), der wahrscheinlich
+`a4` als Schlüssel benutzt: Mit dem alten Bug ist `a4` bei jedem Aufruf ein
+anderer Zufallswert (Handleradresse), der Vergleich schlägt nie an; mit
+`a4 = D_Proc` konstant über beide Aufrufe hinweg schlägt er plötzlich an,
+und IOMan liest daraus „nichts zu duplizieren" — die beiden `I$Dup`-Aufrufe
+entfallen.
+
+**Einordnung:** Das führt in `scf`s eigene, private Zustandsverwaltung
+(statischer Speicherbereich, den ein echter OS-9-Kernel per M$Exec-Konvention
+aufsetzt — unser Kernel tut das nicht). Eine vollständige Klärung bräuchte
+vermutlich die Disassemblierung von scfs internem Attach-Buchführungscode
+und/oder eine korrekte Umsetzung der M$Exec-Konvention für Dateimanager. Das
+ist ein groesseres Stueck Arbeit, kein schneller Fix mehr.
+
+**Stand:** Code unverändert auf dem funktionierenden Stand. Kein neuer
+Fixversuch heute — die Messungen waren die Arbeit, nicht ein weiterer
+siebter Blindversuch.
+
 ### Offen: Pfad-Deadlock
 
 Blockiert der Erzeuger lesend auf einem Pfad, hängt ein schreibendes Kind
