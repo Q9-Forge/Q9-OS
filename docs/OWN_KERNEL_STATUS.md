@@ -2061,3 +2061,69 @@ Konsolen-Open, present bei RBFs `F$Load`-Vorarbeit — nach sechs Anläufen
 tatsächlich gelöst, nicht nur verstanden.** Der Fehlercode `$D8` beim
 `I$Open("/dd/startup")` ist der nächste, aber inhaltlich andere
 Meilenstein (`F$Load` selbst) — kein Speicherkorruptionsproblem mehr.
+## F$PrsNam-Guard (2026-09-08/09): echter Latenzfehler gefunden, aber NICHT die Ursache von $D8
+
+Bei `Q9K_SysFPrsNam` (F$PrsNam, Callcode `$10`) schrieb der Erfolgszweig
+**bedingungslos** den R$-Registerrahmen nach `(a5)`:
+
+```
+movem.l d0-d1,(a5)        * R$d0/R$d1
+movem.l a0-a1,$20(a5)     * R$a0/R$a1
+```
+
+als sei `a5` immer ein gültiger Trampolin-Rahmenzeiger. Für RBFs eigenen,
+per echtem `trap #0` abgesetzten `F$PrsNam`-Aufruf (bestätigt: Rücksprung-PC
+lag nachweislich innerhalb von RBFs Modul) ist `a5` aber nur ein
+gewöhnliches Aufrufer-Register — der Schreibzugriff traf fremden Speicher.
+**Fix (übernommen und committet):** dieselbe stackrelative
+Rahmenerkennung wie bei `Q9K_SysFAllPD`/`Q9K_SysFSRqMem`
+(`a5 == sp_bei_Eintritt + 8`) — nur bei einem echten Rahmen wird
+geschrieben, sonst bleibt es bei den bereits gesetzten Ausgaberegistern.
+
+**Per Messung falsifiziert:** eine temporäre `W`/`S`-Diagnose an der
+Verzweigungsstelle zeigte, dass RBFs Aufruf zuverlässig den **Sprungzweig**
+(`S`, kein Schreibzugriff) nimmt — der Guard arbeitet korrekt. Trotzdem
+bleibt `$D8` beim anschließenden `I$Open("/dd/startup")` **unverändert**
+bestehen. Der Guard ist ein echter, sinnvoller Fix (verhindert eine
+Speicherstörung, die früher oder später real aufgetreten wäre), aber er
+war **nicht** die Ursache des `$D8`-Symptoms — diese frühere Vermutung ist
+damit widerlegt.
+
+## Die wahre Herkunft von $D8: kein Korruptionssymptom, sondern echte RBF-Logik
+
+Statische Disassemblierung (capstone) des unveränderten `rbf.mod` klärt
+den Ursprung abschließend:
+
+- Dateioffset `$f24`: `move.w #$d8,d1` — RBF setzt `$D8` hier **fest und
+  bedingungslos**, als Übersetzung eines zuvor aufgetretenen `$D3`
+  (`E$Share`, "Non-sharable file busy" — echter Wert laut korrekt
+  ausgezähltem `funcs.a`, `org 64`-Tabelle: `E$DevBsy=$D0`, `E$Share=$D3`;
+  die in einer früheren Sitzung angenommene Gleichsetzung „$D8 =
+  E$DevBsy" war ein Auszählfehler und ist damit ebenfalls korrigiert).
+- `$D3` wiederum stammt aus einer RBF-internen Kapazitätsprüfung bei
+  Dateioffset `$64e`: `d2 = (a1)+$36 - (a1)+$32`; unterläuft diese
+  Subtraktion (Carry, d. h. `+$32 > +$36`) oder ist die Differenz `0`,
+  meldet RBF `$D3` — ein klassisches "kein Platz mehr im Pool"-Muster
+  (Ringpuffer-/Zähler-Paar, `+$32`=Ist, `+$36`=Limit).
+- `a1` zeigt dabei auf RBFs **eigene, private** Geräte-/Pfad-Verwaltungs-
+  struktur (Felder ab Offset `$24` aufwärts — außerhalb des
+  standardisierten, dokumentierten PD-Kopfs). Diese Struktur wird von RBF
+  selbst verwaltet; unser Kernel liefert nur die Rohdaten, aus denen RBF
+  sie beim Attach befüllt (insbesondere über GetStat-Rückfragen an
+  Treiber/Deskriptor).
+
+**Einordnung:** `$D8` ist damit **keine Speicherkorruption und kein
+Bug in unserem eigenen Trap-Dispatch mehr**, sondern eine legitime
+Fehlerantwort des echten RBF-Binärcodes auf einen Zustand, den unsere
+eigene Descriptor/Driver/File-Manager-Verdrahtung offenbar nicht wie von
+RBF erwartet aufsetzt. Das deckt sich mit dem in
+`Q9-OS eigener Kernel (C-Neuimplementierung)`-Notizen bereits als
+nächster großer Schritt benannten **"Dreiklang" (Descriptor→Driver→
+File-Manager)** — die A4-Speicherkorruptions-Untersuchung ist damit
+wirklich abgeschlossen, der nächste Fehler liegt bereits in diesem neuen,
+größeren Themenblock und nicht mehr in seinem Vorfeld.
+
+**Nicht mehr offen:** ob RBFs GetStat-Anfragen beim Attach unsere
+Antworten überhaupt erreichen bzw. ob unser Treiber/Deskriptor die von
+RBF erwarteten Werte für diesen Kapazitäts-/Pool-Zähler liefert, ist noch
+nicht gemessen — das ist der konkrete erste Schritt in den "Dreiklang".
