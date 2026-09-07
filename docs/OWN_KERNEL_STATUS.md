@@ -1557,3 +1557,53 @@ verglichen — da die Konsole längst laden, muss der allgemeine
 Attach-Mechanismus irgendwo funktionieren; der Unterschied liegt vermutlich
 in etwas RBF-/Massenspeicher-Spezifischem, das SCFs Zeichengeräte-Weg nicht
 durchläuft.
+
+## F$Load: die Ursache des Absturzes — 2 Byte danebenliegender Sprung
+
+Weitergesucht, warum `F$GProcP` (Callcode `$37`, von RBF aufgerufen) nie
+zurückkehrt. Der Weg dorthin führte über zwei eigene Messfallen, beide jetzt
+dokumentiert, damit niemand sie wiederholt:
+
+**Falle 1 — der Emulator meldet Exceptions nicht automatisch, aber unser
+eigener Handler tut es.** `Q9K_ExcTrap` (q9kernel_entry.a) gibt bei jeder
+unbehandelten Exception ein `'E'` aus, bevor er in eine Endlosschleife
+(`Q9K_ExcTrapSpin`) geht. Genau dieses `E` stand die ganze Zeit als
+scheinbar abgeschnittener Rest am Ende der Konsolenausgabe — es ist die
+Antwort selbst, keine Ctrl-C-Nachwirkung.
+
+**Falle 2 — Adressen aus VERSCHIEDENEN Builds sind nicht vergleichbar, auch
+nicht auf 2 Byte genau.** Ein erster Live-Speicher-Dump an der
+Absturzadresse sah aus wie Fremdkorruption (Bytes stimmten nicht mit der
+Datei überein) — bis klar wurde, dass Tabellenwert-Messung und
+Speicherdump aus zwei GETRENNTEN Kernel-Builds stammten (jeder eigene Fix
+verändert die Kernelgröße und verschiebt alles Nachfolgende). Mit **einem
+einzigen, konsistenten Build** für Absturz-PC und Speicherdump zusammen
+verschwindet der scheinbare Widerspruch vollständig: Live-Speicher und
+Datei stimmen exakt überein. **Keine Speicherkorruption.**
+
+### Der echte Befund: der Sprung landet 2 Byte zu spät
+
+Vektor `$10` → `($10 & $FFF)/4 = 4` → **Illegal Instruction**. Absturz-PC
+fällt exakt 2 Byte vor den Beginn von `andi.b #$fe,ccr` (Bytes `02 3c 00 fe`)
+— dem Ende von `Q9K_SysFGProcP`s Erfolgspfad. Der Sprung landet also
+**mitten in einer gültigen Instruktion**, nicht auf einer Befehlsgrenze —
+ein um exakt 2 Byte falsches Sprungziel, kein Fremdzugriff.
+
+RBF ruft `F$GProcP` vermutlich über denselben PEA+RTS-Trampolin-Mechanismus
+wie IOMan (der Ganzsitzungs-Fund von vorgestern). Die Tabelleneinträge in
+`Q9_D_SYSDIS`/`Q9_D_USRDIS` selbst sind identisch und korrekt (beide zeigen
+auf `Q9K_SysFGProcP`s echten Anfang) — der Fehler liegt also nicht in der
+Tabelle, sondern vermutlich in der Adressberechnung des Trampolin-Sprungs
+selbst (RBFs eigener Code, wie IOMans PEA+RTS-Muster, aber mit einem
+2-Byte-Versatz).
+
+**Reihenfolge bis zum Absturz** (gemessen, `pid`-markiert): `I$Open` →
+`F$SRqMem` → `F$PrsNam` → `F$SRqMem` → **`F$GProcP` → Absturz**. Alles im
+selben Prozess (unser Testprozess, nicht `forkchild`).
+
+**Stand:** Kein Fixversuch heute mehr. Nächster Schritt: RBFs eigenen
+Trampolin-Aufruf für `F$GProcP` disassemblieren (Rücksprungadresse aus dem
+Stack unter dem Exception-Frame — `Ret0`/`Ret1` waren beim ersten Versuch
+nicht brauchbar, da aus dem inkonsistenten Build gelesen; mit dem jetzt
+etablierten Ein-Build-Verfahren neu messen) und mit IOMans bekanntem
+Trampolin-Muster vergleichen, um den 2-Byte-Versatz zu erklären.
