@@ -2017,3 +2017,47 @@ demselben Grundmechanismus, aber einem zweiten Aufrufweg.
 Stack-Layout unterscheiden lassen (evtl. über `Q9K_InTrapPath` oder ein
 analoges Kennzeichen, das für Trampolin-Aufrufe bereits gesetzt/gelesen
 wird), und die Herkunftsprüfung für BEIDE Wege korrekt herleiten.
+
+## A4-FIX VOLLSTAENDIG: beide Speicherkorruptionen behoben, kein Absturz mehr
+
+Der zweite Korruptionsfall (`a4=$7c00`/`$7c02`, dieselbe Handler-Adresse-
+Symptomatik wie zuvor) lag NICHT am Trampolin-Weg, wie zunächst vermutet —
+`F$SRqMem` läuft nachweislich durch `Q9K_TrapDispatch` (per Callcode-
+Mitschrift bestätigt: `$28` erscheint mehrfach im Dispatcher-Log). Der
+eigentliche Fehler steckte in der ersten Fix-Fassung selbst, in zwei
+Schritten gefunden:
+
+1. **Die geratene 64-KByte-Grenze war zu großzügig.** RBF/scf/ioman laden
+   alle innerhalb von 64 KByte hinter unserem Kernel (alle Testmodule
+   zusammen ~36 KByte) — die Prüfung stufte dadurch ausnahmslos alles als
+   „intern" ein und griff nie. Per Messung entdeckt: alle beobachteten
+   Distanzen lagen deutlich unter `$10000`.
+2. **Ersetzt durch einen Vergleich gegen `M$Size` aus dem echten
+   Modulkopf** — aber `4(a4)` nach `lea Q9K_ModuleStart(pc),a4` traf dabei
+   zunächst auf Datenmüll statt auf `M$Size`: `Q9K_ModuleStart` markiert
+   laut eigenem Kopfkommentar **nicht** Offset 0 des Moduls, sondern das
+   Ende des vom Linker automatisch generierten, `$3C` Byte großen
+   Modulkopfs (`Q9K_ModuleHeaderSize`, bereits als Konstante vorhanden).
+   Um diese Konstante korrigiert (`suba.l #Q9K_ModuleHeaderSize,a4`)
+   zeigt `a4` auf den wahren Modulanfang, `4(a4)` liest dort das echte
+   `M$Size`.
+
+### Vollständig verifiziert
+
+- Konsole läuft weiterhin (`Hallo von Q9-OS!`, `RP012`, drei Pfade).
+- **Beide** Speicherkorruptionsstellen sind verschwunden.
+- **Breite Prüfung des gesamten 32-KByte-Kernel-Codebereichs** per
+  Speicher-Watch über den kompletten Boot: keine Fremdkorruption mehr
+  irgendwo — die einzigen verbleibenden Schreibzugriffe sind legitime
+  Updates von `Q9K_CRuntimeData` selbst (`_stklimit` u. a., alle nahe
+  `$7296`).
+- **Der Absturz (Illegal Instruction, `'E'`-Marke) tritt nicht mehr auf.**
+  Der `F$Load`-Testpfad scheitert jetzt sauber mit einem echten
+  Fehlercode (`$D8`) statt zu crashen, der Boot läuft normal in die
+  Testprozess-Schleifen weiter.
+
+**Damit ist die A4-Untersuchung — begonnen vor Tagen bei `scf`s
+Konsolen-Open, present bei RBFs `F$Load`-Vorarbeit — nach sechs Anläufen
+tatsächlich gelöst, nicht nur verstanden.** Der Fehlercode `$D8` beim
+`I$Open("/dd/startup")` ist der nächste, aber inhaltlich andere
+Meilenstein (`F$Load` selbst) — kein Speicherkorruptionsproblem mehr.
