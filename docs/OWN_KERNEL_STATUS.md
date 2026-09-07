@@ -1713,3 +1713,46 @@ Stackgrenze (`P$Stack`/aktueller `SP` gegen `PD_ALLOCBASE`) an exakt dieser
 Stelle zu messen, um die Stack-Erschöpfungs-Hypothese zu bestätigen oder zu
 verwerfen — mit **einem einzigen konsistenten Build**, wie in den letzten
 Runden gelernt.
+
+## Stack-Hypothese widerlegt — Ursache bleibt offen
+
+Direkt gemessen (ein konsistenter Build): `SP=$0002D304`,
+`AllocBase=$00025400`, `AllocSize=$00008000` (32 KByte). Der Stack liegt
+damit nur **252 Byte** unter seinem oberen Ende (`AllocBase+AllocSize` =
+`$2D400`) — praktisch ungenutzt, keine 32-KByte-Erschöpfung in Sicht.
+
+**Die Stack-Erschöpfungs-Hypothese ist damit widerlegt, nicht bestätigt.**
+Auch der zuvor als möglicher Beleg gedeutete Fund (Diagnosemarke ohne
+Hex-Ausgabe feuert, dieselbe Marke MIT Hex-Ausgabe feuert nicht) hat also
+vermutlich eine andere Ursache — am ehesten einen Fehler im eigenen
+Messcode selbst (Registerbehandlung um `Q9K_DiagPrintU32`), nicht im
+gemessenen Kernel.
+
+### Zwischenbilanz nach vier Fortsetzungsrunden
+
+Gesichert:
+- Absturz ist eine echte CPU-Exception (Illegal Instruction, Vektor 4),
+  von unserem eigenen `Q9K_ExcTrap` abgefangen.
+- Keine Speicherkorruption (bei konsistentem Build stimmt Live-Speicher
+  exakt mit der Datei überein).
+- `F$GProcP`s Aufrufstelle in RBF (`rbf+$1324`) ist ein regulärer
+  `trap #0 / dc.w $0037`, Konvention nachweislich korrekt (`68k_tech.pdf`
+  S. 443).
+- `F$SRqMem` muss laut Doku (`68k_tech.pdf` S. 503-505) keinen genullten
+  Speicher liefern — die naheliegende „Müll-PID aus unitialisiertem
+  Speicher"-Erklärung ist damit angezweifelt, nicht bestätigt.
+- Stack-Erschöpfung ausgeschlossen (32 KByte, 252 Byte genutzt).
+- Der Absturz liegt nachweislich **innerhalb** des C-Aufrufs
+  (`Q9K_SysGProcPImpl`) oder unmittelbar danach — vor der Tail-Logik.
+
+Widerlegt/entkräftet: IRQ-Abhängigkeit, `F$DAttach`-Fehlen, Trampolin-
+Kodierungsfehler, Speicherkorruption, Stack-Erschöpfung.
+
+**Offen:** die tatsächliche Ursache innerhalb `Q9K_SysGProcPImpl`s
+Ausführung. Fünf plausible, aber unbewiesene Erklärungen sind mittlerweile
+gefallen — an dieser Stelle ist ein weiterer Rateversuch der falsche Weg.
+Der nächste sinnvolle Schritt wäre eine **Schritt-für-Schritt-Instruktions-
+verfolgung** innerhalb des C-Aufrufs selbst (nicht nur davor/danach), um die
+exakte Instruktion zu finden, an der die Ausführung abweicht — mit dem
+etablierten Ein-Build-Verfahren und eigenen, kollisionsfreien Diagnose-
+zeichen (nicht `A`/`B`, die durch `Q9K_TestProcA`/`B` belegt sind).
