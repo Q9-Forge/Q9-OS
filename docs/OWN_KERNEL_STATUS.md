@@ -1473,3 +1473,87 @@ Siehe Kopfkommentare in `src/kernel/q9kernel_entry.a`. Kurz:
 `AABAABBA…` im Ausgabestrom belegt echten Kontextwechsel; dass ein
 `level_held`-Interrupt sich *nicht* wiederholt, belegt, dass die ISR ihn
 wirklich bedient hat.
+
+
+## F$Load-Vorarbeit 2026-09-07: Treiber wird nie erreicht
+
+Nach dem A4-Thema (bleibt in PR #13, ruht vorerst) auf `F$Load` gewechselt.
+**Messfalle als Erstes selbst begangen und behoben:** Der ganze A4-Messtag
+lief ohne `--disk`, `dd`/`rbf`/`cfide` waren nie im Bootfile. Mit `--disk`
+(Module aus `Q9-Flux/OS9Boot.noprot.test` extrahiert, Größen 9638/1462/148/148
+Byte an den per Magic-Marker-Scan gefundenen Offsets) findet der
+„Dreiklang"-Test jetzt alle drei Namen (`123`).
+
+**Der eigentliche Dateizugriff (`I$Open("/dd/startup")`) hängt** — ohne
+Fehlermarker, ohne jeden weiteren Trap.
+
+### IRQ-Hypothese geprüft und verworfen — mit echtem Quellcode
+
+`MWOS/OS9/68030/PORTS/common/RBF/cfide/cfide_v42.a` liegt vor (passt zur
+Boot-Meldung „build 42"). `CF_Read`/`CF_Write`/`ChkInit`/`SetDev` benutzen
+ausschließlich das `WaitStatus`-Makro: Software-Timeout (~1,2 Mio.
+Durchläufe), reines `btst.b`-Polling auf BSY/DRQ — **kein `F$IRQ`, kein
+`trap #0`** im gesamten Lese-/Schreibpfad. Die rohe CF-Sektoremulation im
+Emulator ist über `test_cf_sector512` ohnehin vollständig verifiziert
+(30/30). Die IRQ-Spur ist damit endgültig erledigt.
+
+### Werkzeugfund: der Instruktions-Hook des Emulators feuert in diesem Build nie
+
+`Q9_TRACE_INSTR=1` registriert `q9_dbg_instr_hook`, aber die Funktion wird
+**nachweislich nie aufgerufen** (mit einem unbedingten `fprintf` direkt am
+Funktionskopf geprüft — keine Ausgabe, auf einer garantiert erreichten
+Adresse). Das erklärt rückwirkend, warum der Ring-Dump per Ctrl-^ diese
+Sitzung nie etwas lieferte (dokumentiert, aber bisher ungeklärt) — derselbe
+tote Mechanismus. `Q9_FREEZE_PC`/`Q9_COUNT_PC` hängen an derselben Kette und
+sind damit ebenfalls betroffen. **Funktionieren weiterhin:** `Q9_TRAP_TRACE`
+(eigener Callback, `m68k_set_trap_instr_callback`) und der Speicher-Watch
+(`Q9_WATCH_ADDR`/`Q9_WATCH_LEN`, hängt an `m68k_write_memory_*`, unabhängig
+vom Instruktions-Hook) — beide über eigene, funktionierende Codepfade.
+Ursache (fehlendes Compile-Flag in Musashi? nie aktivierter Init-Pfad?) noch
+nicht untersucht — für heute nur als Falle vermerkt, nicht behoben.
+
+### Gemessen (verlässlicher Mechanismus): der Treiber wird nie erreicht
+
+Mit einer temporären `fprintf`-Zeile direkt in `q9_dbg_watch`
+(`Q9-Flux/src/kernel/m68krt.c`, revertiert nach der Messung) auf
+`Q9_WATCH_ADDR=0xFFFFE000 Q9_WATCH_LEN=16` (die CF-Portadresse laut
+Deskriptor und Emulator-Konfiguration) über den **gesamten** Testlauf:
+**null Treffer.** Kein einziger Schreibzugriff auf die CF-Hardware — weder
+`CF_Init` noch `ChkInit`/`SetDev`/`CF_Read` laufen jemals an.
+
+**Der Hänger liegt vollständig in Software, bevor der Treiber je berührt
+wird** — irgendwo in IOMans/RBFs eigener Attach-Verarbeitung nach `I$Open`.
+
+### Eine Fährte geprüft und verworfen: `F$DAttach` (`$64`)
+
+Naheliegender Verdacht: `F$DAttach` (der Dienst, der laut
+`MWOS/OS9/SRC/DEFS/funcs.a` ein Gerät anhängt, Treiber-Statikspeicher
+alloziert und `V_PORT` — Offset `$00`, „Required by kernel in static storage
+of all devices", `MWOS/OS9/SRC/DEFS/iodev.a` — aus dem Deskriptor einträgt)
+fehlt bei uns (`$64` nicht in der `q9kernel_cinit.c`-Tabelle, fällt auf
+`Q9K_SysUnimplemented`). **Das ist aber eine Sackgasse:** Laut
+`docs/REVERSE_ENGINEERING.md` (Zeile 2169) ist `$64`–`$70` auch im **echten,
+unveränderten** Microware-Kernel nicht registriert — der Dienst wird also nie
+per `trap #0` angefordert, auch nicht real. (Eine frühere Sitzung ist exakt
+dieser Spur schon einmal gefolgt und hat sie widerlegt — dort stellte sich
+ein vermeintliches `$0064` als falsch ausgerichtetes `$0084`/I$Open heraus,
+s. Abschnitt weiter oben. Diesmal ist der Befund solide, da direkt aus der
+eigenen C-Registrierungstabelle gelesen — aber die Konsequenz ist dieselbe:
+falsche Spur.)
+
+**Der Deskriptor selbst ist korrekt:** `P$PORT` in `dd` (Offset `0x32`)
+trägt `$FFFFE000`, exakt die konfigurierte Onboard-CF-Basis.
+
+**Damit bleibt offen, WIE V_PORT in einem echten Microware-Kernel gesetzt
+wird**, wenn nicht über `F$DAttach`. Vermutlich direkt in IOMans/RBFs eigenem
+Code (kein separater Syscall) — RBF selbst liegt nur als Binärmodul vor
+(kein Quellcode im MWOS-Baum gefunden, anders als die Gerätetreiber), das
+wäre die nächste Disassemblierungsrunde.
+
+**Stand:** Kein Fixversuch. `F$DAttach` NICHT implementieren (Sackgasse,
+s. o.). Konkreter nächster Schritt: entweder RBFs eigenen Attach-Code
+disassemblieren, oder sc68681s (funktionierenden!) Attach-Weg mit cfides
+verglichen — da die Konsole längst laden, muss der allgemeine
+Attach-Mechanismus irgendwo funktionieren; der Unterschied liegt vermutlich
+in etwas RBF-/Massenspeicher-Spezifischem, das SCFs Zeichengeräte-Weg nicht
+durchläuft.
