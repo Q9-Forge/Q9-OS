@@ -1917,3 +1917,63 @@ revertiert (`git status` sauber, `2ef1bae` unverändert). Nächster Schritt:
 Instruktions-Hook, dediziertes File statt stdout!), um die genaue Stelle
 zu finden, an der er von einem echten Stack-Wert auf `$7D28`-artige
 Kernel-Adressen abdriftet.
+
+## Der Kreis schließt sich: A7-Theorie widerlegt, A4-Theorie bestätigt
+
+Die vorige `A7`-Schlussfolgerung war ein Messfehler — derselbe wie schon
+mehrfach heute: Zwischen der Watch-Messung und der RBF-Disassemblierung
+hatte sich die Kernelgröße erneut leicht verschoben (14278 → 14222 Byte),
+wodurch die Aufrufstelle im RBF-Modul falsch berechnet wurde
+(`RBF+$530` statt korrekt `RBF+$588`). Mit frisch ermittelten
+Modulgrenzen für **exakt** dieses Testimage neu disassembliert.
+
+### Die echte Instruktion — und sie schließt den Kreis zur ursprünglichen A4-Suche
+
+```
+057c  move.l  d1, $14e(a4)     * DER historische Fund von vor Tagen
+0580  andi.b  #$4, d3
+0584  beq.w   $48e
+0588  move.l  d1, $15e(a4)     * <== DIESER Schreibzugriff, seine Schwester-
+                                *     instruktion, 16 Byte weiter im selben
+                                *     Feldupdate-Block
+```
+
+**Live gemessen:** `a4 = $00007BCA`, `sp = $0002D358` (gesund, unauffällig).
+`$7BCA + $15E = $7D28` — exakt die beobachtete Schreibadresse. Der
+Stack Pointer war die ganze Zeit gesund; die frühere „A7 statt A4"-
+Schlussfolgerung ist damit zurückgenommen.
+
+**`$7BCA` ist der Anfang einer unserer EIGENEN Syscall-Handler-Funktionen**
+(Prolog `movem.l d0/a0,-(a7)` gefolgt vom bekannten Stack-Rahmen-
+Erkennungsmuster `adda.l #$10,a0 / cmpa.l a0,a5` — identisch zu
+`Q9K_SysFSRqMem`/`Q9K_SysFAllPD`s Struktur, s. `q9kernel_entry.a`).
+
+### Das ist exakt der seit Tagen dokumentierte A4-Mechanismus
+
+`Q9K_TrapDispatch` lässt im eigenen-Handler-Zweig `a4` auf die
+Handler-Adresse zeigen (`movea.l Q9K_TrapHandlerScratch,a4 / jsr (a4)`) und
+stellt sie beim Rücksprung **nie** auf den Wert des Aufrufers zurück. RBF
+(wie `scf` vor Tagen bei der Konsole) erwartet dort seinen Geräte-
+Statikspeicher- bzw. Prozessdeskriptor-Zeiger für ganz normale, legitime
+Feldschreibzugriffe (`V_ZeroRd`-artige Flags o. ä.) — bekommt stattdessen
+die stehengebliebene Handler-Adresse unseres eigenen `F$SRqMem`/`F$AllPD`
+und schreibt damit in eigenen Kernelcode.
+
+**Damit ist die MONATE-alte A4-Untersuchung inhaltlich abgeschlossen:**
+Der Mechanismus war die ganze Zeit korrekt identifiziert (dokumentiert seit
+den ersten `scf`-Funden) — was fehlte, war der Nachweis an einem ZWEITEN,
+unabhängigen Fall (`RBF` statt `scf`, `$15e` statt `$14e`), der die
+Erklärung endgültig von einer Vermutung zu einem bewiesenen Mechanismus
+macht.
+
+**Der bekannte, bisher ungelöste Konflikt bleibt bestehen:** Der naheliegende
+Fix (`a4` beim Rücksprung auf den Aufrufer-Wert zurücksetzen) wurde vor
+Tagen bereits mehrfach versucht und bricht dabei zuverlässig IOMans
+Konsolen-Open (dokumentiert weiter oben, Abschnitt „Der A4-Fix: wirkt, hat
+aber eine ungeklärte Nebenwirkung"). Der zuletzt vorgeschlagene, noch nicht
+umgesetzte Ansatz — `a4` nur für Aufrufer AUSSERHALB des Kernels
+zurücksetzen — bleibt der plausibelste nächste Schritt, jetzt mit einem
+zweiten, unabhängig bestätigten Fall als zusätzlicher Motivation.
+
+**Stand:** Kein Fixversuch in dieser Runde. Alle temporären Test-Prints in
+`Q9-Flux` revertiert (`git status` sauber).
