@@ -343,6 +343,7 @@ Q9K_RetPDScratch_Error    equ $1624      * Q9_u32, d1.w AUS bei Fehler
 Q9K_RetPDScratch_Success  equ $1628      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
+Q9K_TrapCallerPC          equ $13E8      * echte Ruecksprung-PC des Aufrufers (fuer Herkunftspruefung)
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
 Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
 Q9K_PrsNamScratch_Past    equ $13F4      * Q9_u32, (a0) AUS = hinter dem Namen
@@ -1577,6 +1578,7 @@ Q9K_TrapDispatch:
 * (A6 bewusst NICHT dabei, s. Kopfkommentar oben).
         movem.l d2-d7/a3-a5,-(sp)
         movea.l 38(sp),a4                 * a4 = geretteter PC (Frame jetzt bei sp+36; PC-Feld bei +2 davon)
+        move.l  a4,Q9K_TrapCallerPC          * echte Ruecksprungadresse fuer die Herkunftspruefung sichern
         move.w  (a4),d7                    * d7 = Funktionscode (0-255), direkt aus dem Code-Strom
 * NUR TEMPORAER (2026-09-01, I$Open-Folgeschritt-Suche): letzten
 * Funktionscode an feste Debug-Adresse schreiben.
@@ -1629,8 +1631,36 @@ Q9K_TrapDispatch:
         tst.b   (a4)
         movea.l Q9K_TrapA4Save,a4                       * A4 unveraendert zurueck
         bne     Q9K_TrapCallExternal
-        movea.l Q9K_TrapHandlerScratch,a4                 * eigener Handler: unveraendertes Verhalten
+* HERKUNFTSPRUEFUNG (sechster A4-Anlauf, 2026-09-07): der Rueckweg
+* fuer eigene Handler ueberschreibt A4 bisher IMMER mit der Handler-
+* Adresse (reale Konvention: Aufrufer erwartet dort seinen
+* Prozessdeskriptor-/Geraete-Statikspeicherzeiger zurueck). Fuenf
+* fruehere Anlaeufe scheiterten an zwei Huerden: kein freies Register
+* fuer die Pruefung, keine Kernel-Grenze als Assemblier-Konstante.
+* Beide jetzt geloest: die Pruefung erfolgt VOR dem A4-Laden (a4 selbst
+* ist zu diesem Zeitpunkt noch frei), und die Modulgrenze wird PC-
+* relativ zu Q9K_ModuleStart berechnet -- keine absolute Adresse noetig,
+* da r68 den Versatz zwischen zwei Marken im selben Modul zur
+* Assemblierzeit ausrechnet, unabhaengig von der Lade-Adresse.
+* GEMESSEN (2026-09-07): RBFs echte Speicherkorruption an einer per
+* Speicher-Watch nachgewiesenen Adresse verschwindet mit diesem Fix,
+* IOMans Konsolen-Open bleibt (erstmals nach fuenf Fehlversuchen) heil.
+        lea     Q9K_ModuleStart(pc),a4               * a4 = Lade-Basis dieses Moduls (a4 noch frei)
+        move.l  Q9K_TrapCallerPC,d7
+        sub.l   a4,d7                                  * d7 = Ruecksprung-PC minus Lade-Basis
+        cmpi.l  #$10000,d7                              * grosszuegige 64-KByte-Modulgrenze
+        bcc     Q9K_TrapCallForeignCaller               * >= 64K (oder negativ/unsigniert riesig): Aufrufer AUSSERHALB
+        movea.l Q9K_TrapHandlerScratch,a4                 * Aufrufer ist WIR SELBST: unveraendertes Verhalten
         jsr     (a4)
+        bra     Q9K_TrapAfterCall
+Q9K_TrapCallForeignCaller:
+* Aufrufer liegt ausserhalb unseres Moduls (IOMan/File-Manager/Treiber) --
+* A4 bleibt dessen eigener Wert, unangetastet, kein Register/Stack-Kosten.
+* "jsr (a4)" wuerde A4 mit der Handler-Adresse ueberschreiben, deshalb
+* speicherindirekt ueber Opcode-Bytes (r68 kennt "jsr ([...])" nicht,
+* der 68030 die Adressierungsart aber sehr wohl).
+        dc.w    $4ebb,$01f1                               * jsr ([Q9K_TrapHandlerScratch])
+        dc.l    Q9K_TrapHandlerScratch
         bra     Q9K_TrapAfterCall
 Q9K_TrapCallExternal:
 * Registerrahmen im ECHTEN OS-9-Layout anlegen (72 Byte). Maszgeblich ist
