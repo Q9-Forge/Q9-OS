@@ -1607,3 +1607,65 @@ Stack unter dem Exception-Frame — `Ret0`/`Ret1` waren beim ersten Versuch
 nicht brauchbar, da aus dem inkonsistenten Build gelesen; mit dem jetzt
 etablierten Ein-Build-Verfahren neu messen) und mit IOMans bekanntem
 Trampolin-Muster vergleichen, um den 2-Byte-Versatz zu erklären.
+
+## RBFs Aufrufstelle disassembliert: echter TRAP #0, plausible Eingabe
+
+Weiter am 2-Byte-Sprungfehler. Mit einem **einzigen konsistenten Build**
+(Lehre aus der letzten Runde befolgt) `F$GProcP`s echte Aufrufstelle in
+RBF gefunden: `rbf+$1324`.
+
+### Die Aufrufstelle selbst ist unauffällig
+
+```
+1302  move.w  $2d6(a4), d0     * "angeforderte PID" aus RBFs eigener Struktur
+...
+130e  move.l  a3, -(a7)         * ein GANZ ANDERER, vorangehender Trampolin-
+1310  movea.l $3a4(a6), a3      * Aufruf (F$Send, Slot $20 in D_SysDis) --
+1314  pea.l   $1322(pc)         * unabhaengig von F$GProcP, hier nur zufaellig
+1318  move.l  $20(a3), -(a7)    * direkt davor im Code
+131c  movea.l $420(a3), a3
+1320  rts
+1322  movea.l (a7)+, a3
+1324  trap    #$0               * <== F$GProcP, GANZ REGULAeR
+1326  dc.w    $0037              * Callcode als Folgewort -- exakt unsere
+                                  * eigene Konvention (wie F$Link im Testharness)
+```
+
+**Kein Trampolin-Sonderfall.** RBF ruft `F$GProcP` über ein stinknormales
+`trap #0 / dc.w $0037` — dieselbe Konvention, die den ganzen Tag zuverlässig
+funktioniert hat. Der vorangehende Trampolin-Block (Zeilen `130e`-`1320`)
+ist ein **unabhängiger** Aufruf (Slot `$20` = `F$Send`), der nur zufällig
+direkt davor im Code steht.
+
+### Die Eingabe (D0 = angeforderte PID) ist real, aber unplausibel groß
+
+Sauber gemessen (Push/Pop, kein Stack-Rateversuch mehr): `d0.w = $588F`
+(22671 dezimal). Gegen `68k_tech.pdf S.443` geprüft — unsere Konvention
+(`d0.w = requested process ID`, `(a1) = Deskriptorzeiger`) ist exakt
+korrekt umgesetzt, keine Fehldeutung unsererseits.
+
+**Verdacht geprüft: uninitialisierter Speicher aus dem vorangehenden
+`F$SRqMem`.** `Q9K_ProcSRqMem` (q9kernel_sysmem.c) nullt den zurückgegebenen
+Block nicht — geprüft, ob das nach echter Konvention nötig wäre:
+`68k_tech.pdf S.503-505` **verspricht explizit KEIN genulltes Gedächtnis**
+für `F$SRqMem`. Damit ist die einfache „wir vergessen zu nullen"-Erklärung
+entkräftet — ein echtes, konventionskonformes RBF dürfte sich ohnehin nicht
+darauf verlassen und müsste das Feld selbst initialisieren, bevor es
+gelesen wird.
+
+**Damit bleibt offen, ob `$588F` echte (aber im Kontext ungültige) RBF-
+Nutzdaten sind oder ob RBFs Erwartung an `$2d6(a4)` an anderer Stelle
+verletzt wird** (z. B. wenn RBF dieses Feld NUR bei einer bestimmten
+Vorbedingung selbst setzt, die in unserem Ablauf nie eintritt). Der Wert
+selbst (Carry+Fehlercode von `F$GProcP`) konnte noch nicht sauber gemessen
+werden — zwei Versuche scheiterten an CCR-Zerstörung durch dazwischen-
+liegende `move`-Befehle bzw. an erneuten Build-Inkonsistenzen.
+
+**Stand:** Der 2-Byte-Sprungfehler selbst (Absturz-PC 2 Byte vor
+`Q9K_SysFGProcP`s `andi.b #$fe,ccr`) ist weiterhin ungeklärt — die
+Aufrufkonvention ist nachweislich korrekt, also liegt die Ursache
+vermutlich NICHT im Aufruf selbst, sondern entweder (a) in `F$GProcP`s
+Fehlerpfad (falls `d0=$588F` zu Recht mit `E$PrcID` scheitert und RBFs
+eigene Fehlerbehandlung fehlerhaft ist) oder (b) einem Stack-bezogenen
+Problem nach vielen verschachtelten Aufrufen (`I$Open → F$SRqMem →
+F$PrsNam → F$SRqMem → F$GProcP`).
