@@ -1977,3 +1977,43 @@ zweiten, unabhängig bestätigten Fall als zusätzlicher Motivation.
 
 **Stand:** Kein Fixversuch in dieser Runde. Alle temporären Test-Prints in
 `Q9-Flux` revertiert (`git status` sauber).
+
+## Fix gemergt, aber unvollstaendig: Trampolin-Weg vermutlich nicht erfasst
+
+Der A4-Herkunftsfix ist **committet** (`53d3d61`) und gegen zwei
+unabhängige Sanity-Checks verifiziert: Konsole (`Hallo von Q9-OS!`, drei
+Pfade) läuft nach FÜNF vorherigen gescheiterten Anläufen zum ersten Mal
+weiter, und die konkret per Watch nachgewiesene erste RBF-Korruption
+(`$15e(a4)`, Aufrufkette `F$SRqMem→F$PrsNam→F$SRqMem`) ist an ihrer
+ursprünglichen Adresse verschwunden.
+
+### Zweite, andersartige Korruption gefunden — derselbe Mechanismus, aber der Fix greift dort nicht
+
+Direkt danach erneut per Watch geprüft: **Es gibt eine zweite
+Korruptionsstelle**, strukturell identisch (Live-Speicher `82 00` statt
+`02 3c` an `Q9K_SysFGProcP`s `andi.b`), aber mit einem ANDEREN falschen
+`a4`-Wert (`$7C02` statt `$7BCA`) — wieder der Anfang einer unserer eigenen
+Handler-Funktionen (dasselbe Stack-Rahmen-Erkennungsmuster). Der Fix greift
+hier **nicht**.
+
+**Wahrscheinliche Erklärung:** IOMan/RBF rufen Kernel-Primitive über ZWEI
+verschiedene Wege auf — echtes `TRAP #0` UND den direkten PEA+RTS-
+Trampolin-Sprung in denselben Dispatcher-Code (seit Tagen dokumentiert,
+„beide Wege teilen sich diesen Code"). Der neue Fix liest die
+Rücksprungadresse des Aufrufers bei `38(sp)` — das ist der korrekte
+Offset für einen ECHTEN Hardware-Exception-Frame (`TRAP #0`), aber der
+Trampolin-Weg baut vermutlich KEINEN identischen Frame auf (PEA+RTS ist
+eine reine Software-Konvention, kein Prozessor-Trap). Für Trampolin-
+Aufrufe liest die Herkunftsprüfung an dieser Stelle also vermutlich
+Datenmüll statt der echten Rücksprungadresse — mit unvorhersagbarem
+Ergebnis der `bcc`-Verzweigung.
+
+**Einordnung:** Kein Rückschritt — die ERSTE, ursprünglich gejagte
+Korruption ist nachweislich behoben, der Fix bleibt committet. Es gibt
+schlicht eine zweite, bisher von der ersten verdeckte Fehlerquelle mit
+demselben Grundmechanismus, aber einem zweiten Aufrufweg.
+
+**Nächster Schritt:** Klären, wie sich TRAP- und Trampolin-Weg am
+Stack-Layout unterscheiden lassen (evtl. über `Q9K_InTrapPath` oder ein
+analoges Kennzeichen, das für Trampolin-Aufrufe bereits gesetzt/gelesen
+wird), und die Herkunftsprüfung für BEIDE Wege korrekt herleiten.
