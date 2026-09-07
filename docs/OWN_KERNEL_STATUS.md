@@ -1669,3 +1669,47 @@ Fehlerpfad (falls `d0=$588F` zu Recht mit `E$PrcID` scheitert und RBFs
 eigene Fehlerbehandlung fehlerhaft ist) oder (b) einem Stack-bezogenen
 Problem nach vielen verschachtelten Aufrufen (`I$Open → F$SRqMem →
 F$PrsNam → F$SRqMem → F$GProcP`).
+
+## Neue Spur: der Absturz liegt IM C-Aufruf selbst, nicht in der Nachbearbeitung
+
+Auf den Widerspruch (Absturz-PC im Erfolgspfad, obwohl `pid=$588F > count=64`
+eigentlich fehlschlagen müsste) hin direkt in `Q9K_SysFGProcP` selbst
+gemessen (temporär, revertiert).
+
+### Der Widerspruch löst sich auf — anders als angenommen
+
+Eine Marke unmittelbar NACH dem C-Aufruf (`bsr Q9K_SysGProcPImpl`) feuert
+**nie**. Das bedeutet: Die frühere Analyse „Absturz 2 Byte vor `andi.b`"
+bezog sich auf einen **anderen Build** als die PID/Count-Messung — dieselbe
+Falle wie schon mehrfach heute (jede Änderung verschiebt alle Adressen).
+Der tatsächliche Absturz liegt **innerhalb** des C-Aufrufs oder unmittelbar
+danach, nicht in der Tail-Logik.
+
+### Eigenes Messwerkzeug wird selbst zum Symptom — Hinweis auf Stack-Erschöpfung
+
+Eine Marke UNMITTELBAR VOR dem C-Aufruf (Zeichen ohne Hex-Ausgabe direkt
+danach) feuert zuverlässig. Dieselbe Marke MIT einer anschließenden
+Hex-Ausgabe (`Q9K_DiagPrintU32`, ein weiterer `bsr`) feuert dagegen **nie**
+— obwohl exakt derselbe Codepfad, nur mit einem zusätzlichen
+Unterprogrammaufruf mehr Stack-Tiefe.
+
+**Das ist der stärkste bisherige Hinweis auf Stack-Erschöpfung statt eines
+Logikfehlers.** Die Aufrufkette ist zu diesem Zeitpunkt bereits sehr tief:
+`I$Open → F$SRqMem → F$PrsNam → F$SRqMem → F$GProcP`, jeweils mit
+IOMan/scf/RBF-eigenen Zwischenrahmen. Wenn der Stack an dieser Stelle nahe
+der Grenze ist, kann **jeder zusätzliche `bsr`** — ob der echte
+`Q9K_SysGProcPImpl`-Aufruf oder ein eigener Diagnose-Aufruf — der
+Tropfen sein, der das Fass zum Überlaufen bringt. Das würde auch die
+2-Byte-Landung mitten in eigenem Kernelcode erklären: Stack und Kernelcode
+liegen nah beieinander, ein Überlauf schreibt direkt in Codebereiche.
+
+**Zusätzliche Messfalle dokumentiert:** Die Zeichen `'A'`/`'B'` sind bereits
+durch `Q9K_TestProcA`/`Q9K_TestProcB` (eigene Busy-Loop-Testprozesse, die
+laufend `'A'`/`'B'` ausgeben) belegt — jede neue Diagnose-Markierung muss
+andere Zeichen verwenden, sonst verschmilzt sie mit deren Dauerausgabe.
+
+**Stand:** Kein Fixversuch. Der nächste, konkrete Schritt ist, `Q9_D_Proc`s
+Stackgrenze (`P$Stack`/aktueller `SP` gegen `PD_ALLOCBASE`) an exakt dieser
+Stelle zu messen, um die Stack-Erschöpfungs-Hypothese zu bestätigen oder zu
+verwerfen — mit **einem einzigen konsistenten Build**, wie in den letzten
+Runden gelernt.
