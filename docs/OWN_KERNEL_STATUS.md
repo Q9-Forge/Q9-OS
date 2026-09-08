@@ -2679,3 +2679,85 @@ nächsten Anlauf empfiehlt sich einer von zwei Wegen:
    ihn ausschließlich aus dem Binärcode zu rekonstruieren.
 
 Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
+
+## ECHTER FIX GEFUNDEN UND ANGEWENDET: F$PrsNam-Kettenkonvention (2026-09-08, Fortsetzung 7)
+
+Weiter zurückverfolgt, wie der reale Namensvergleich innerhalb von RBF
+tatsächlich abläuft (Live-Ground-Truth-Bytes, `Q9_DUMP_ADDR`/`Q9_WATCH_ADDR`,
+über mehrere Sprünge hinweg bis zur eigentlichen Vergleichsroutine):
+
+### Der Fund
+
+RBF vergleicht jeden Verzeichniseintrag byteweise gegen einen Namen, dessen
+Startzeiger und Länge es sich EINMALIG, VOR Beginn des Scans, auf seinem
+eigenen Stack ablegt (`$8(a7)`/`$2(a7)`) — nicht pro Eintrag neu über
+`F$PrsNam` geholt. Per Live-Messung (Freeze exakt beim Eintrag "startup",
+der nachweislich real und korrekt im Puffer steht — Byte für Byte
+`73 74 61 72 74 75 f0` = "startup"+Hochbit-Ende) zweifelsfrei nachgewiesen:
+
+- Der Startzeiger für den Vergleich war (VOR dem Fix) `$758C` — das ist
+  exakt der Rückgabewert von `Q9K_ProcPrsNam`s `outPastName` für den
+  Namen `"dd"`, und `$758C` zeigt auf den TRENNER (`/`) vor `"startup"`,
+  NICHT auf `"startup"` selbst.
+- Ergebnis: RBF verglich jeden Verzeichniseintrag gegen `"/startup"`
+  (8 Byte, mit Schrägstrich) statt gegen `"startup"` (7 Byte) — das kann
+  gegen KEINEN echten Verzeichniseintrag matchen.
+
+### Die Ursache: `outPastName` folgte nicht der echten Kettenkonvention
+
+Der eigene Kopfkommentar von `Q9K_SysFPrsNam` (aus der echten
+`scf`-Disassemblierung übernommen) sagt: "a0 = hinter dem Namen" — das
+ist mehrdeutig. Die Live-Messung klärt es: RBF benutzt `outPastName`
+**direkt** als nächsten Namenszeiger, OHNE selbst noch einen Trenner zu
+überspringen — die reale Kettenkonvention verlangt also, dass
+`outPastName` schon HINTER einem eventuellen `/`-Trenner steht, nicht nur
+hinter dem Namen selbst.
+
+### Der Fix
+
+`Q9K_ProcPrsNam` (`src/kernel/q9kernel_iopath.c`) überspringt jetzt einen
+`/`-Trenner beim Setzen von `*outPastName` (NUL-Trenner/Pfadende bleibt
+unangetastet, sonst liefe der Zeiger über das Stringende hinaus). Per
+neuem Host-Regressionstest verifiziert (Kettenaufruf: `outPastName`
+direkt als nächster `pathPtr` an `Q9K_ProcPrsNam` übergeben, liefert
+korrekt `"SYS"` aus `"/dd/SYS/motd"`).
+
+**Live im Emulator verifiziert:** der Vergleichs-Startzeiger ist jetzt
+korrekt `$758D` (zeigt exakt auf das `'s'` von `"startup"`). Der
+byteweise Vergleich selbst **findet jetzt tatsächlich einen Treffer**
+(`d0=0` nach der Vergleichsschleife, kein XOR-Rest) — der Fix behebt
+also einen echten, jetzt live bestätigten Bug.
+
+### Trotzdem noch kein voller Erfolg — zweiter, verwandter Bug gefunden
+
+Der volle Boot-Test zeigt weiterhin `$D8`. Grund, ebenfalls live
+verifiziert: die Vergleichs**länge** (`$2(a7)`) ist weiterhin `2` (die
+Länge von `"dd"`), nicht `7` (die Länge von `"startup"`) — die
+Vergleichsschleife bricht nach nur 2 verglichenen Zeichen (`'s'`,`'t'`)
+ab, und eine zusätzliche Sicherheitsprüfung danach (die erkennt, dass
+der Verzeichniseintrag nach den 2 verglichenen Zeichen noch nicht zu
+Ende ist) verwirft den eigentlich korrekten Treffer zu Recht als
+Präfix-Treffer statt Volltreffer.
+
+Per Aufrufer-PC-Diagnose (`Q9K_TrapCallerPC`) zweifelsfrei geklärt: BEIDE
+beobachteten `F$PrsNam`-Aufrufe für `/dd/startup` kommen von DERSELBEN
+RBF-internen Adresse (Dateioffset `$160C`) und liefern BEIDE `"dd"` —
+`F$PrsNam` wird für `"startup"` selbst **nie** aufgerufen. Die
+Vergleichslänge `2` muss also aus `"dd"`s eigener, gecachter Länge
+stammen (vermutlich wiederverwendet statt für die zweite Pfadebene neu
+berechnet) — vermutlich RBFs eigene interne Nachfolge-Scan-Logik, die
+NICHT über `F$PrsNam` läuft und noch nicht bis zu ihrer Quelle
+zurückverfolgt wurde.
+
+**Nächster Schritt (noch offen):** herausfinden, WOHER die
+Vergleichslänge `2` tatsächlich kommt (vermutlich RBFs eigener,
+`F$PrsNam`-unabhängiger Nachfolge-Namens-Scan) und warum sie nicht auf
+`7` aktualisiert wird, wenn der Startzeiger (jetzt korrekt) auf
+`"startup"` zeigt.
+
+**Status:** Der `F$PrsNam`-Fix ist ein echter, verifizierter,
+eigenständiger Bugfix (committet) — er behebt eine reale
+Fehlfunktion, auch wenn der `$D8`-Symptomfall wegen des zweiten,
+noch offenen Bugs weiterhin auftritt.
+
+Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
