@@ -2200,3 +2200,117 @@ GetStat-Kommunikation zwischen RBF und unserem Treiber/Deskriptor beim
 `I$Attach` von `/dd`/`/term` mitschneiden (der eigentliche "Dreiklang"-
 Einstieg) und dort direkt nach Feldern suchen, die unverändert in zwei
 verschiedene Zielorte kopiert werden.
+
+## DURCHBRUCH: wahre Ursache von $D8 gefunden — kein Bug in RBF, sondern ein Verzeichnis-Lesefehler (2026-09-08)
+
+Nach dem oben dokumentierten Methodenfehler (unausgerichtete
+Disassemblierung) folgte eine **vollständige, sauber ausgerichtete**
+Disassemblierung von `rbf.mod`, verankert am echten Modulkopf-Feld
+`M$Exec` (Offset `$30` laut `src/q9moduleheader.h`, hier Wert `$A6`) —
+nicht mehr an einem geratenen Byte-Offset. Zwei methodische Fixes waren
+nötig, bis die Ausrichtung über die GESAMTE 9,6-KByte-Datei hinweg
+sauber blieb (nur noch 2 nicht aufgelöste Stellen, beide fernab der
+relevanten Bereiche):
+
+1. **`M$Exec` selbst zeigt NICHT auf Code, sondern auf eine
+   13-Einträge-Sprungtabelle** (2 Byte pro Eintrag, `I$Attach` bis
+   `I$WritLn` — `I$GetStt`/`I$SetStt`/`I$Close` NICHT über diese Tabelle
+   geroutet). Echter Code beginnt danach bei Offset `$C0`.
+2. **`trap #0` gefolgt vom Inline-Callcode-Wort** (die OS-9-Konvention,
+   die unser eigener Kernel an vielen Stellen selbst nutzt) muss beim
+   linearen Scan explizit übersprungen werden — sonst desynchronisiert
+   jeder einzelne interne Syscall (`F$PrsNam`, `F$SRqMem`, `F$GProcP`
+   — alle real in RBF gefunden, an den Dateioffsets `$196`/`$FC8` bzw.
+   `$A9E`/`$D70`/`$1116` bzw. `$1268`/`$1326`) die Disassemblierung ab
+   dort.
+
+**Live gegengeprüft (Q9_FREEZE_PC/Q9_COUNT_PC), RBF_BASE für den
+Testlauf bestätigt `$E11A`** (`F$PrsNam`-Rücksprung-PC `$E2B2` minus
+Call-Offset `$198`, UND unabhängig bestätigt durch einen exakten
+Live-Treffer bei PC `$EFCC` = `RBF_BASE+$EB2`).
+
+### Der eigentliche Fund: ein Speicher-Watch auf `$32(a1)`/`$36(a1)`
+
+Statt weiter zu raten, wurde direkt beobachtet, WER diese beiden Felder
+beschreibt (`Q9_WATCH_ADDR=0x21532 Q9_WATCH_LEN=8`, RBF hält `a1=$21500`
+durchgehend für den `/dd/startup`-Pfad):
+
+- `$36(a1)` wird EINMALIG auf `$3C0` (960) gesetzt — das ist die
+  Verzeichnisgröße (30 Einträge à 32 Byte), keine willkürliche
+  Dopplung.
+- `$32(a1)` wird danach in einer Schleife exakt 30-mal um je `$20` (32,
+  Standard-Verzeichniseintragsgröße) hochgezählt: `$20, $40, $60, ...,
+  $3C0`. Bei `$3C0` ist `$36(a1)-$32(a1)=0` — GENAU DANN meldet RBF
+  `$D3`→`$D8`.
+
+**Das ist kein Speicherfehler und kein uninitialisiertes Feld — RBF
+durchsucht sein Verzeichnispuffer stur bis zum Ende, findet "startup"
+nicht und meldet korrekt "nicht gefunden" (nur eben über den
+Kapazitäts-/Poolmechanismus statt über `E$PNNF` kodiert, offenbar eine
+Eigenheit dieser RBF-Version).**
+
+### Warum RBF "startup" nicht findet: der Verzeichnispuffer beginnt mitten im Verzeichnis
+
+Ein Rohspeicher-Dump des tatsächlich durchsuchten Puffers (`a0=$36310`
+beim allerersten Schleifendurchlauf, `Q9_DUMP_ADDR`) zeigt **echte,
+korrekte Dateinamen aus dem Referenz-Image** — aber beginnend erst bei
+`OldBoot`:
+
+```
+$36310: (nicht-lesbarer erster Eintrag, evtl. Kopf/Kontrollfeld)
+$36330: "OldBoot"
+$36350: "HOME" (als "HOM." mit Endekennung)
+$36370: "PROJECT..."
+$36390: "netmod..."
+$363b0: "ET..." (ETC)
+$363d0: "xterm..."
+$363f0: "rtc7242..."
+$36410: "startsp..." (startspf)
+$36430: "bas..." (bash)
+$36450: "mbrsca..." (mbrscan)
+$36470: "cfboot_os9.b..."
+$36490: "OS9Boo..." (OS9Boot)
+$364b0: "CP" (CPM)
+$364d0 ff.: Nullen (Rest bis Verzeichnisende)
+```
+
+Das reale Wurzelverzeichnis (per `os9 dir OS9SYS.hda,` am Host
+verifiziert) lautet vollständig: `C CMDS CMDS_NEW DEFS GDP IO KERMIT
+LIB MWOS README SYS **startup** reinstall.old reinstall.ultra OldBoot
+HOME PROJECTS netmods ETC xterms rtc72421 startspf bash mbrscan
+cfboot_os9.bl OS9Boot CPM`.
+
+**`OldBoot` ist exakt der 16. reale Eintrag** (nach den vermutlich zwei
+reservierten `.`/`..`-Slots plus den ersten 14 echten Namen `C` bis
+`reinstall.ultra`, in denen `startup` als 12. Name steckt) — der
+Puffer, den RBF durchsucht, beginnt also **zwei komplette 256-Byte-
+Sektoren (16 Einträge à 32 Byte) zu spät**. Die ersten beiden Sektoren
+des Verzeichnisses — und damit `startup` — fehlen komplett in dem, was
+RBF zu sehen bekommt.
+
+### Einordnung
+
+Das ist **kein Bug in RBF** (das reale, unveränderte Modul verhält sich
+korrekt gegenüber dem, was es zu lesen bekommt) und **keine
+Speicherkorruption**. Die Ursache liegt in der Lesekette davor —
+vermutlich in der Sektor-/LSN-Berechnung beim tatsächlichen
+Verzeichnis-Einlesen (Treiber `cfide.mod` bzw. der Deskriptor `dd.mod`,
+oder in einem F$-Dienst, den WIR dafür bereitstellen und der die
+LSN/Blockzahl falsch weiterreicht). Das genau ist der "Dreiklang"-
+Bereich (Descriptor→Driver→File-Manager).
+
+**Nächster konkreter Schritt (noch nicht begonnen):** den tatsächlichen
+Lesevorgang zurückverfolgen, der diesen Puffer befüllt (vermutlich ein
+`I$Read`/GetStat-Austausch zwischen RBF und `cfide.mod`, oder ein
+direkter Treiberaufruf) und die dabei verwendete Start-LSN mit der
+tatsächlich benötigten (LSN des Wurzelverzeichnisses laut Deskriptor
+`dd.mod`) vergleichen — mit dem Ziel, die Zwei-Sektor-Verschiebung auf
+eine konkrete Quelle (falsche Konstante, falsches Feld, falsche
+Einheit — Sektoren vs. Bytes o. Ä.) zurückzuführen.
+
+Alle Emulator-Diagnosen (Ringpuffer-Erweiterung um a1/a2,
+`Q9_DUMP_ADDR`) waren wieder nur temporär und sind vollständig
+zurückgesetzt; die vollständige, ausgerichtete RBF-Disassemblierung
+liegt (aus Lizenzgründen — proprietärer Microware-Code, nur
+Kurzausschnitte hier im Dokument) ausschließlich im Job-Scratch, nicht
+im Repo.
