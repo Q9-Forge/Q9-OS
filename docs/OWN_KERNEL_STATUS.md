@@ -3438,3 +3438,27 @@ beiden Aufrufen ein Rueckgabewert gelesen wird. Der eigentliche
 Aufrufer DIESER Dispatch-Routine (der zweimal hierher springt) ist
 noch nicht lokalisiert -- das ist die konkrete Fortsetzung fuer den
 naechsten Anlauf, mit dem im "Nächster Schritt" oben skizzierten Ziel.
+
+**Aufrufer gefunden, aber neue Ebene geoeffnet statt geschlossen:**
+per Live-Trace direkt vor den zweiten `$D5B2`-Aufruf zurueckverfolgt:
+bei `$BF20` prueft IOMan erneut `cmpi.b #$2f,(a0)` (a0 weiterhin
+`$7589`, der volle, unveraenderte Rohpfad) und ruft bei `$BF56`
+(`bsr.w $b6b0`) eine gemeinsame Subroutine auf -- ganz in der Naehe
+der schon aus der allerersten Sitzungsphase bekannten
+`$B6C0`-Stelle ("Fortsetzung 10": IOMans Slash-Ueberspring-Logik).
+Ob `$B6B0` dieselbe Routine ODER eine andere, eigenstaendige ist, und
+ob/wo dabei der Pfadzeiger fuer die zweite Ebene tatsaechlich
+entsteht (bei `$BF60`/`$BF64` wird ein Ergebnis in `a1+4` abgelegt,
+noch nicht ausgewertet, wofuer), ist NICHT mehr geklaert -- eine
+weitere Schicht IOMan-Code, kein Abschluss.
+
+**Einordnung zum Sessionende:** diese Sitzung hat den `$D8`-Fehler von
+einer vagen Vermutung ("irgendwo in RBFs Vergleich") zu einem exakt
+bewiesenen Mechanismus gebracht (`$E150`→`$2D34A`→`$E19A`,
+Fortsetzung 13/14) und den Verdacht plausibel eine Ebene hoeher
+verortet (IOMans Pfad-Fortschreibung zwischen den beiden `$D5B2`-
+Aufrufen). Der IOMan-Aufrufcode selbst (`$BF20` ff., `$B6B0`) ist
+aber ein NEUES, noch unerschlossenes Feld -- vermutlich mehrere
+weitere Fortsetzungen wert, sinnvollerweise mit frischem Kopf statt
+am Ende einer bereits sehr langen Sitzung. Reproduktion unveraendert:
+`Q9-Flux/local_images/OS9SYS.dbg10.hda`, RBF_BASE=`$D2DC`.
