@@ -198,7 +198,30 @@ int main(void)
         ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p2, &nameStart, &past, &len, &delim, &err);
         checkU32("F$PrsNam \"/dd/SYS/motd\" liefert erstes Element", (Q9_u32)len, 2);
         checkU32("F$PrsNam \"/dd/...\" Trennzeichen '/'", (Q9_u32)delim, '/');
-        checkU32("F$PrsNam \"/dd/...\" a0 auf dem '/'", past, (Q9_u32)(unsigned long)(p2 + 3));
+        /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08): a0 muss HINTER dem
+         * Trenner stehen (p2+4, beim 'S' von "SYS"), nicht AUF ihm
+         * (p2+3) -- real per Live-Messung nachgewiesen, dass RBF diesen
+         * Zeiger direkt als naechsten Suchnamen weiterverwendet, ohne
+         * selbst noch einen Trenner zu ueberspringen. Mit dem alten
+         * Verhalten (a0 auf dem '/') verglich RBF beim naechsten Namen
+         * faelschlich gegen "/startup" statt "startup" -- das war die
+         * wahre Ursache des $D8-Fehlers bei I$Open("/dd/startup"), s.
+         * docs/OWN_KERNEL_STATUS.md. */
+        checkU32("F$PrsNam \"/dd/...\" a0 HINTER dem '/' (beim naechsten Namen)",
+                 past, (Q9_u32)(unsigned long)(p2 + 4));
+
+        /* Kettentest: der zurueckgegebene a0-Zeiger muss sich OHNE
+         * weitere Anpassung direkt als naechster Eingabezeiger eignen
+         * (genau die Verkettung, die RBF laut obigem Fund tatsaechlich
+         * nutzt) und "SYS" liefern. */
+        {
+            Q9_u32 nameStart2 = 0, past2 = 0;
+            Q9_u16 len2 = 0, delim2 = 0, err2 = 0;
+            int ok2 = Q9K_ProcPrsNam(past, &nameStart2, &past2, &len2, &delim2, &err2);
+            checkU32("F$PrsNam Kettenaufruf liefert \"SYS\" (Laenge 3)", (Q9_u32)ok2, 1);
+            checkU32("F$PrsNam Kettenaufruf Laenge 3", (Q9_u32)len2, 3);
+            checkU32("F$PrsNam Kettenaufruf Name beginnt bei 'S'", nameStart2, past);
+        }
 
         ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p3, &nameStart, &past, &len, &delim, &err);
         checkU32("F$PrsNam ohne fuehrenden '/' Erfolg", (Q9_u32)ok, 1);
