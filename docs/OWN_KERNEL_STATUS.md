@@ -3355,3 +3355,73 @@ noch unbekannter Zwischenschritt beteiligt ist.
 
 Alle Emulator-Diagnosen (`d1`/`a1`-Tracking) wieder vollständig
 zurückgesetzt (`git checkout`).
+
+## Fortsetzung 14: Schreib-Lese-Kette bewiesen; Verdacht wandert eine Ebene höher -- zu IOMans Aufrufkonvention für RBF (2026-09-08, dieselbe Session)
+
+### Der Beweis: `$E150` schreibt direkt dorthin, wo `$E19A` liest
+
+`Q9_WATCH_ADDR=0x2D34A Q9_WATCH_LEN=2` (die Adresse, die `$2(a7)` bei
+`$e19a` entspricht) über den GESAMTEN Boot beobachtet -- nur 51
+Treffer insgesamt, davon einer eindeutig:
+
+    #630520  pc=0000e150 -> 0002d34a schrieb 00000002 (2 Byte)
+
+**Exakter, direkter Beweis:** `$E150` (die Stelle, die Fortsetzung 10
+faelschlich als "wird nie zurückgelesen" einordnete, weil der
+umschliessende Stack-Slot per `addq.l #4,a7` formal freigegeben wird)
+schreibt die `2` in genau die physische Speicherzelle, die `$E19A`
+später als Vergleichslänge liest -- keine Vermutung mehr, sondern eine
+lückenlose Schreib→Lese-Kette über zwei verschiedene, sich
+überlappende Stack-Tiefen hinweg (68K-Idiom: der als "frei" markierte
+Speicher bleibt inhaltlich gültig, bis ihn jemand überschreibt).
+
+### Gegenprobe: `$c(a7)` bei `$E078` ist NICHT die vermutete Verkettungsadresse
+
+Die in Fortsetzung 13 offen gelassene Vermutung ("vielleicht sollte
+dort `$758D` zwischengespeichert sein") widerlegt: `Q9_WATCH_ADDR` auf
+`$2D354` (= `$c(a7)` bei `$e078`) zeigt, dass dort zuverlässig
+`$00021500` steht (geschrieben bei `$DF9E`, kurz nach der
+Deskriptor-Dereferenzierung) -- ein fester, mit dem Pfadnamen
+unzusammenhängender Wert (vermutlich eine Puffer-/Tabellenadresse).
+Kein Zwischenspeicher für `$758D` an dieser Stelle.
+
+### Neuer, praeziserer Denkansatz: das Problem liegt eine Ebene hoeher
+
+Alles bisher Gefundene passt zu EINEM konsistenten Bild: RBFs
+Eintrittspunkt `$D5B2` wird zweimal aufgerufen (Fortsetzung 11), BEIDE
+Male mit dem IDENTISCHEN, unveraenderten Rohpfad `$7589`
+("/dd/startup", Deskriptor bei `$2D380`). Wenn RBF (unveraendert,
+funktioniert auf echten OS-9-Systemen nachweislich) bei jedem Aufruf
+selbst `F$PrsNam` auf den vollen Pfad anwendet und dabei IMMER "dd"
+(nicht "startup") als aktuellen Namen bekommt, kann die
+Laengenverwechslung bei `$E142`/`$E150` eine ZWANGSLAEUFIGE FOLGE
+davon sein, nicht ihre eigentliche Ursache.
+
+**Der Verdacht wandert damit eine Ebene hoeher: IOMan muesste
+zwischen dem ersten und zweiten `$D5B2`-Aufruf den Pfadzeiger im
+Deskriptor auf `outPastName` aus RBFs ERSTEM Aufruf fortschreiben
+(analog zur dokumentierten I$Open-Konvention "(a0) = Updated past
+pathlist") -- tut es aber laut Messung nicht (beide Aufrufe: exakt
+derselbe Deskriptor, derselbe Rohpfad). Das koennte daran liegen, dass
+UNSER F$SSvc-Dispatch/Trap-Rueckweg fuer RBFs eigene Antwort
+("wie viel vom Pfad wurde verbraucht") nicht korrekt bis zu IOMan
+durchgereicht wird** -- eine architektonische Frage auf der
+Trap-Rueckgabe-Ebene, nicht mehr auf der Registerebene innerhalb von
+RBF.
+
+**Nächster Schritt:** klären, WAS zwischen dem ersten und zweiten
+`$D5B2`-Aufruf tatsaechlich passiert (Aufrufer-Code bei `$C0AE`-`$C0D4`
+in IOMan Schritt fuer Schritt disassemblieren -- unveraendert, also
+Ground-Truth-lesbar) -- insbesondere: liest IOMan dort ueberhaupt einen
+Rueckgabewert von RBFs erstem Aufruf, und wenn ja, woher (Register?
+Deskriptorfeld?) -- und ob unser eigener Trap-Rueckweg (`Q9K_SysSSvc`
+o. ae., das RBF im Moduldirectory eintraegt) diesen Wert liefert. Falls
+IOMan dort tatsaechlich NICHTS liest (RBF selbst muesste dann intern
+zwischen Ebenen wechseln), waere die Fragestellung erneut auf die
+`$E062`-`$E142`-Kette innerhalb von RBF zurueckzufuehren -- diesmal
+aber mit dem Wissen, dass BEIDE Aufrufe denselben Rohpfad bekommen,
+was bislang nicht beruecksichtigt wurde.
+
+Alle Emulator-Diagnosen (`Q9_WATCH_ADDR`) wieder vollständig
+zurückgesetzt (keine Quelltextänderung diese Runde -- nur bereits
+committete Werkzeuge verwendet).
