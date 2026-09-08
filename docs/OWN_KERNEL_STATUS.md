@@ -61,18 +61,21 @@ herausgestellt hat:
   `"startup"` selbst parst, liefert die richtige Länge aber einen
   Zeiger, der schon dahinter liegt.
 
-**Offener nächster Schritt:** klären, ob RBF `F$PrsNam` an dieser
-Stelle EIGENTLICH ZWEIMAL aufrufen sollte (einmal für den Zeiger,
-einmal für die Länge) und einer der beiden Aufrufe bei uns ausfällt,
-ODER ob die Vergleichslänge in einer korrekten Umgebung aus einer
-GANZ ANDEREN Quelle stammt als `$E150`s Schreibvorgang (der bei uns
-nur zufällig der letzte von 51 Schreibzugriffen auf diese
-Speicherzelle vor dem Lesen ist — nicht alle 51 wurden geprüft).
-**Konkret:** `Q9_COUNT_PC` auf die neue Adresse `$E140` legen (mit dem
-Fix könnte sich die Aufrufzahl geändert haben — vorher nur 1x
-insgesamt), und/oder die volle `Q9_WATCH_ADDR`-Trefferliste (51
-Einträge) noch einmal komplett durchsuchen. Details:
-`Fortsetzung 15`+`16` unten.
+**Offener nächster Schritt — jetzt architektonisch statt registerweise
+begründet (Fortsetzung 17):** aus der echten Doku (`68k_tech.pdf`,
+Kap. 3, "File Manager I/O Responsibilities") zitiert: *"Open and
+Create begin searching in this [aktuellen] directory when the
+caller's pathlist does NOT begin with a slash (/) character."* Ein
+Pfad, der mit `/` beginnt, wird IMMER ab der Wurzel gesucht. Unser
+Pfad ist `/dd/startup` (absolut) — wenn RBF für die zweite Ebene
+intern denselben, unveränderten absoluten Pfad erneut verwendet, MUSS
+er zwangsläufig wieder ab der Wurzel suchen statt innerhalb von "dd".
+**Konkret zu klären:** wird `P$DIO` (Prozessdeskriptor-Feld, laut
+Doku von Chgdir gesetzt) nach dem ersten `$D5B2`-Aufruf korrekt auf
+"dd"s Verzeichnis gesetzt? Und wer genau (RBF selbst oder unser
+eigener Kernel) übergibt den zweiten, absoluten Pfad — Rücksprung-
+adresse `$BD9E` weiter zurückverfolgen. Details: `Fortsetzung 15`–`17`
+unten.
 
 **WICHTIG bei jedem neuen Kernel-Build:** RBF_BASE hat sich mit dem
 Fix bereits einmal verschoben (`$D2DC` → `$D2DA`, Kernel um 2 Byte
@@ -3643,3 +3646,71 @@ Adressen um `-2` verschoben.
 Alle Emulator-Diagnosen (`d1`/`a1`-Tracking) wieder vollständig
 zurückgesetzt. Der `Q9K_ProcPrsNam`-Fix selbst bleibt committet
 (`400dfcd`) -- echter Spec-Fix, auch wenn er `$D8` allein nicht löst.
+
+## Fortsetzung 17: Architektonischer Durchbruch aus der Doku -- der zweite RBF-Aufruf MUSS einen relativen Pfad bekommen
+
+**Zwei entscheidende Zitate aus `68k_tech.pdf`** (Kapitel 3, "OS-9
+Input/Output System", Tabelle "File Manager I/O Responsibilities"):
+
+> **Open**: "...If the file manager controls multifile devices (such
+> as RBF...), directory searching is performed to find the specified
+> file." -- Verzeichnissuche über MEHRERE Ebenen passiert also
+> INNERHALB eines einzigen Open-Aufrufs, intern von RBF selbst
+> gesteuert.
+>
+> **Chgdir**: "...the address of the directory is saved in the
+> caller's process descriptor at P\$DIO... **Open and Create begin
+> searching in this directory when the caller's pathlist does NOT
+> begin with a slash (/) character.**"
+
+**Das ist der Schlüssel:** ein Pfad, der mit `/` beginnt, wird
+IMMER ab dem Wurzelverzeichnis gesucht -- unabhängig vom aktuellen
+Verzeichniskontext. Unser Pfad `$7589` ist `"/dd/startup"` -- beginnt
+mit `/`. Wenn RBF für die zweite Ebene (Suche nach `"startup"`
+INNERHALB von `"dd"`) intern denselben, unveränderten, ABSOLUTEN Pfad
+erneut an den Open-Mechanismus übergibt, MUSS dieser zwangsläufig
+wieder ab der Wurzel suchen -- nicht innerhalb von `"dd"`.
+
+**Für einen korrekten zweiten Aufruf müsste der übergebene Pfad also
+entweder relativ sein (z. B. nur `"startup"`, ohne führenden `/`) oder
+zumindest nicht erneut als vollständiger, absoluter Pfad interpretiert
+werden.** Das deckt sich exakt mit allem bisher Gemessenen: beide
+`$D5B2`-Aufrufe bekommen denselben Deskriptor mit demselben, absoluten
+Rohpfad `$7589` -- das ist nach dieser Doku-Lektüre nicht nur
+"zufällig verdächtig", sondern **nachweislich der falsche Zustand**
+für einen funktionierenden zweiten Aufruf.
+
+### Wo genau der Pfad fortgeschrieben werden müsste, ist noch nicht gefunden
+
+`$BDC0`/`$BED4` (Fortsetzung 15) ist keine eigenständige, separat
+aufgerufene Funktion, sondern nur eine LABEL-Stelle INNERHALB einer
+größeren Funktion, die schon bei `$BD9E` (oder früher) beginnt --
+diese Stelle wird selbst wiederum als Rücksprungziel aus einem TRAP
+in UNSEREN EIGENEN Kernel erreicht (`a4=$BD9E` als gespeicherte
+Rücksprungadresse gefunden, s. Fortsetzung 15). Die eigentliche Frage
+ist jetzt: **ruft RBF (unverändert) hier tatsächlich erneut "Open" auf
+sich selbst mit dem UNVERÄNDERTEN absoluten Pfad auf (dann wäre das
+ein eigenständiges RBF-Verhalten, das wir nicht direkt reparieren
+können, sondern nur durch korrekte P\$DIO-Verwaltung UMGEHEN müssten),
+oder liegt der Fehler in UNSEREM eigenen Code, der diesen Aufruf erst
+auslöst/vorbereitet** (die TyLang-Modulsuche bei `$7440`-`$7710` läuft
+nachweislich in UNSEREM Kernel, vermutlich `Q9K_ModDirLinkByName` in
+`q9kernel_moddir.c` -- passt zur `F$Link`-Semantik, ist aber
+wahrscheinlich nur die MODUL-Auflösung, nicht die eigentliche
+Pfad-Weitergabe).
+
+**Nächster Schritt:** die Rücksprungadresse `$BD9E` weiter
+zurückverfolgen -- WER (RBF-Code selbst, per `bsr`/`jsr`, oder unser
+eigener Kernel via F\$SSvc-Trampolin) tatsächlich in diese Funktion
+hineinspringt, und ob `P$DIO` (Prozessdeskriptor-Feld, s. Chgdir-
+Zitat oben) nach dem ERSTEN `$D5B2`-Aufruf korrekt auf "dd"s
+Verzeichnis gesetzt wird. Falls ja: die Frage wird dann, warum RBF
+trotzdem den absoluten statt einen relativen Pfad für den zweiten
+Aufruf verwendet. Falls `P$DIO` NICHT gesetzt wird: das waere ein
+eigenstaendiger, klar benennbarer Bug in unserer Prozessdeskriptor-
+Pflege (`Q9K_PROCDESC_SIZE`/`P$DIO`-Feld, s. `q9kernel_procapi.c`
+bzw. `q9kernel_iopath.c`).
+
+Reproduktion: `Q9-Flux-68k/local_images/OS9SYS.fix16.hda`,
+RBF_BASE=`$D2DA` (mit dem `F$PrsNam`-Fix). Alle Emulator-Diagnosen
+wieder vollständig zurückgesetzt.
