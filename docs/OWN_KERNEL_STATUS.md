@@ -4004,3 +4004,95 @@ zu vermeiden oder zu kompensieren, OHNE RBF selbst zu verändern.
 Alle Emulator-Diagnosen (Sofort-Dump-Werkzeug) wieder vollständig
 zurückgesetzt -- das Werkzeug selbst (Code-Patch) ist dokumentiert
 und leicht rekonstruierbar (s. o., "Werkzeug-Lücke gefunden").
+
+## Fortsetzung 22: mathematischer Vollbeweis -- $10(a7) hat KEINE versteckte zweite Quelle, der Widerspruch ist strukturell, nicht zufällig
+
+**`$10(a7)` (die Adresse, die `$E13C`/alt `$E13E` als `pathPtr` für
+den zweiten `F$PrsNam`-Aufruf laedt) per `Q9_WATCH_ADDR` über den
+GESAMTEN Boot beobachtet, Snapshot exakt beim `$E140`-Freeze
+gesichert (neues Sofort-Dump-Werkzeug aus Fortsetzung 21 genutzt):
+**genau EIN relevanter Schreibzugriff insgesamt** -- `pc=$E0F2`
+(alt `$E0F0`+2, das zweite `move.l a0,$10(a7)`) schreibt `$758C`.
+Keine andere Stelle schreibt jemals in diese Speicherzelle, bevor
+`$E140` sie liest. **Damit ist zweifelsfrei ausgeschlossen, dass es
+eine versteckte, "richtige" zweite Quelle gibt, die nur durch Zufall
+überschrieben wird** -- die in Fortsetzung 20 vorgeschlagene
+Hypothese ("vielleicht schreibt was Korrektes dazwischen") ist
+widerlegt.
+
+### Der Mechanismus jetzt vollständig verstanden -- und der Widerspruch mathematisch zwingend
+
+Mit dieser letzten Messung lässt sich die komplette Kette jetzt exakt
+nachrechnen (kein Rätselraten mehr):
+
+1. RBFs ERSTER `F$PrsNam`-Aufruf (`$E060`/alt `$E062`) bekommt
+   `pathPtr=$7589` ("/dd/startup"), parst `"dd"`. **Output:**
+   `a0=outPastName=$758D` (Zeiger auf "startup") -- KORREKT, aber wird
+   bei `$E074` durch `movea.l a1,a0` verworfen.
+2. `a1=outNameStart` (laut Fix jetzt "hinter dem Namen", `$758C`,
+   die Trenner-Position) wird nach `a0` kopiert, dann in `$8(a7)`
+   UND `$10(a7)` gesichert (`$E0EE`/`$E0F2`).
+3. `$E13C` lädt `a0` aus `$10(a7)` (`$758C`) und ruft `F$PrsNam` ein
+   ZWEITES Mal (`$E140`) -- diesmal mit `pathPtr=$758C`.
+4. **Rechnerisch zwingend:** `F$PrsNam($758C)` parst zwangsläufig
+   `"startup"` selbst (der führende `/` bei `$758C` wird übersprungen,
+   landet direkt bei `"startup"`) -- das liefert IMMER
+   `outPastName=$7594` (HINTER "startup", nicht davor) UND `outLen=7`
+   (korrekt). **Es gibt KEINEN mathematisch möglichen Eingabewert für
+   `$E140`, der GLEICHZEITIG `outPastName=$758D` (Zeiger AUF
+   "startup") und `outLen=7` liefert** -- `outPastName` zeigt per
+   Definition IMMER hinter den gerade geparsten Namen, niemals davor.
+   Ein Aufruf, der `"dd"` parst, liefert zwangsläufig `outPastName=
+   $758D` (zufällig = Anfang von "startup") aber `outLen=2`; ein
+   Aufruf, der `"startup"` parst, liefert `outLen=7` aber `outPastName
+   =$7594` (hinter "startup"). Es gibt keine dritte Möglichkeit.
+
+**Das bestätigt Fortsetzung 16s Beweis nicht nur, sondern erklärt jetzt
+auch WARUM live exakt das gemessen wird, was gemessen wird** -- vor
+dem Fix (Alt-Semantik, `a1=$758A`=Anfang "dd") lieferte `$E140`
+zwangsläufig `outPastName=$758D` (Zeiger korrekt) + `outLen=2` (Länge
+von "dd", falsch); nach dem Fix (`a1=$758C`=Ende "dd") liefert
+`$E140` zwangsläufig `outPastName=$7594` (Zeiger falsch) + `outLen=7`
+(Länge korrekt). **Keine der beiden Semantiken kann funktionieren --
+das Problem liegt nicht in `outNameStart`s Formel, sondern darin, DASS
+RBF für den Vergleich zwei Werte aus EINEM `F$PrsNam`-Aufruf erwartet,
+die sich gegenseitig ausschließen.**
+
+### Ehrliche Einordnung nach mehreren Sitzungen intensiver Untersuchung
+
+Reales, unverändertes RBF funktioniert auf echten OS-9-Systemen --
+also KANN dieser Mechanismus dort nicht so ablaufen, wie hier
+gemessen. Die naheliegendsten verbleibenden Erklärungen:
+
+1. **`$E140` ist NICHT für den Vergleich gedacht** -- der eigentliche
+   Vergleichs-Setup-Mechanismus liegt an einer noch nicht gefundenen
+   dritten Stelle, und die beobachtete Übereinstimmung von `a0`/`d1`
+   mit den Compare-Registern bei jedem bisherigen Test war Zufall
+   durch dieselbe Registerkette, nicht Kausalität. (Erscheint nach
+   der jetzt vollständigen Nachrechnung UNWAHRSCHEINLICH, da die
+   Werte bei JEDEM Testlauf -- vor UND nach dem Fix -- exakt den
+   Vorhersagen entsprachen, aber nicht mit letzter Sicherheit
+   ausschließbar.)
+2. **Ein noch nicht gefundenes drittes Register/Feld** liefert die
+   fehlende Information (z. B. `a2`, das laut `68k_tech.pdf` an
+   anderer Stelle als "Directory entry pointer" auftaucht, oder ein
+   FD-internes Feld), das den Vergleich VOR der Längenprüfung
+   zusätzlich korrigiert -- dafür müsste der komplette Compare-Aufruf-
+   Kontext (`$E1x` Bereich, Fortsetzung 10s allererste Disassemblierung)
+   noch einmal mit ALLEN Registern (nicht nur a0/a1/d0/d1) neu
+   vermessen werden.
+3. **Ohne echten RBF-Assembler-Quelltext** (Microware-Eigentum, nicht
+   im Projekt vorhanden) bleibt die vollständige Auflösung dieses
+   Widerspruchs eine Blackbox-Reverse-Engineering-Aufgabe, die trotz
+   erheblichen, sorgfältig dokumentierten Aufwands über mehrere
+   Sitzungen hinweg nicht abschließend gelöst werden konnte.
+
+**Empfehlung für den nächsten Anlauf:** Punkt 2 zuerst prüfen (dritte
+Registerspur ergänzen, insbesondere `a2`/`d2`, beim Compare-Aufruf
+UND bei `$E140`s unmittelbarer Umgebung) -- das ist der einzige noch
+nicht vollständig ausgeschöpfte, konkret umsetzbare Weg. Alternativ:
+gezielt nach einer öffentlich verfügbaren RBF-Quelltext-Referenz
+suchen (auch außerhalb des Projekts), falls eine legale Quelle
+existiert.
+
+Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
