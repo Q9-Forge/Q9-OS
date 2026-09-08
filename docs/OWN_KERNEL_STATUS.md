@@ -2813,3 +2813,57 @@ Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
 Der `F$PrsNam`-Fix aus der vorigen Runde bleibt unangetastet gültig
 (committet) -- er behebt weiterhin einen echten, eigenständigen Bug,
 auch wenn er für DIESEN speziellen Testfall allein nicht ausreicht.
+
+## Fortsetzung 9: Korrektur der vorigen IOMan-Spur, ehrlicher Zwischenstand
+
+Die vorige Vermutung ("IOMan überspringt nur ein Zeichen statt `/dd/`")
+musste beim Versuch, sie weiter zu erhärten, **zurückgenommen** werden:
+
+- Byte-für-Byte-Abgleich (exakte 10-Byte-Signatur direkt im Kernel-
+  Binary `build/q9kernel` gesucht) zeigt zweifelsfrei: die Adresse
+  `$B6E8` (Quelle des `+1`-Zeigers) liegt NICHT in IOMan, sondern in
+  **unserem eigenen Kernel**, konkret in `Q9K_ProcFork`
+  (`q9kernel_firstproc.c`, kompiliert in `q9kernel_firstproc.r`).
+- `Q9K_ProcFork` implementiert `F$Fork` (Prozess-/Programmstart) — hat
+  mit der Verzeichnissuche nach `"startup"` inhaltlich nichts zu tun.
+  Die beobachtete Überschneidung war mit hoher Wahrscheinlichkeit
+  **Stack-Speicher-Wiederverwendung**: derselbe Stack-Steckplatz wird
+  zu unterschiedlichen Zeiten für unterschiedliche, voneinander
+  unabhängige Zwecke benutzt (einmal von `Q9K_ProcFork` beim Starten
+  des Testprogramms, einmal von RBFs eigenem Vergleich) — reiner
+  Zufallstreffer bei der Adresse, kein echter Datenfluss.
+
+### Was weiterhin gesichert ist
+
+- Die Schreibstelle `pc=$E150` für die Vergleichslänge `2` liegt
+  (korrekt nachgerechnet, `$E150 > $D2DC`) tatsächlich **innerhalb von
+  RBF** (Dateioffset `$E74`) — anders als zwischenzeitlich fälschlich
+  angenommen. Das ist also doch reales RBF-Verhalten.
+- Von dort direkt zurückverfolgt zu einem weiteren RBF-internen
+  `F$PrsNam`-Wrapperaufruf (`$E142`, ruft `$E2A2` -- RBFs eigene
+  zweite `F$PrsNam`-Aufrufstelle, Dateioffset `$FC6`).
+- Dessen Eingabe (`a0=$758A`) konnte bis zu einer Stelle
+  zurückverfolgt werden, die sich beim genaueren Hinsehen als
+  **kausal nicht zusammenhängend** (Stack-Wiederverwendung mit
+  `Q9K_ProcFork`) erwiesen hat -- die WIRKLICHE Quelle von `a0=$758A`
+  für DIESEN spezifischen RBF-internen Aufruf ist damit wieder offen.
+
+### Ehrliche Einordnung
+
+Diese letzte Teiluntersuchung ist in Widersprüche geraten (zwei
+verschiedene, ähnlich benannte Adressen -- `$E150` innerhalb RBF vs.
+`$B6E8`/`$B6FA` außerhalb -- wurden zwischenzeitlich versehentlich als
+derselbe Sachverhalt behandelt). Um weiteren Verwechslungen
+vorzubeugen: **jede neue Adresse muss einzeln gegen `$D2DC`
+(RBF-Anfang) geprüft werden, bevor ihr eine Bedeutung zugeschrieben
+wird** -- keine Abkürzungen mehr.
+
+**Nächster Schritt:** von `$E150`/`$E142` (beides zweifelsfrei RBF-
+intern) aus NEU zurückverfolgen, diesmal mit konsequenter
+Bereichsprüfung jeder einzelnen Zwischenadresse, um die wahre Quelle
+von `a0=$758A` (dem Eingabewert für RBFs zweiten `F$PrsNam`-Aufruf)
+zu finden.
+
+Der `F$PrsNam`-Fix aus den vorigen Runden bleibt unangetastet gültig.
+Alle Emulator-Diagnosen (inkl. der temporären `a3`-Ringpuffererweiterung)
+wieder vollständig zurückgesetzt.
