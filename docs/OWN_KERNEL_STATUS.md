@@ -3425,3 +3425,16 @@ was bislang nicht beruecksichtigt wurde.
 Alle Emulator-Diagnosen (`Q9_WATCH_ADDR`) wieder vollständig
 zurückgesetzt (keine Quelltextänderung diese Runde -- nur bereits
 committete Werkzeuge verwendet).
+
+### Anschlussfund: der Aufruf-Mechanismus selbst (noch kein Abschluss)
+
+`$C080`-`$C0D4` (per `Q9_DUMP_ADDR` gelesen und disassembliert, real
+IOMan-Code) ist die generische, callcode-indizierte Sprungtabellen-
+Dispatch-Routine, über die IOMan JEDEN Gerätetreiber-Entry-Point
+aufruft (Tabellen-Offset aus `$3c(a5)-$83`, verdoppelt, indiziert in
+eine Basis aus `$c(a0)+$30(a0)`) -- sie laeuft bei JEDEM `$D5B2`-Aufruf
+identisch durch und zeigt fuer sich allein nicht, ob/wo zwischen den
+beiden Aufrufen ein Rueckgabewert gelesen wird. Der eigentliche
+Aufrufer DIESER Dispatch-Routine (der zweimal hierher springt) ist
+noch nicht lokalisiert -- das ist die konkrete Fortsetzung fuer den
+naechsten Anlauf, mit dem im "Nächster Schritt" oben skizzierten Ziel.
