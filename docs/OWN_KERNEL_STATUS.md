@@ -2761,3 +2761,55 @@ Fehlfunktion, auch wenn der `$D8`-Symptomfall wegen des zweiten,
 noch offenen Bugs weiterhin auftritt.
 
 Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
+
+## Fortsetzung 8: Ursprung der falschen Vergleichslänge -- führt zu IOMan, nicht RBF
+
+Die Vergleichslänge (`2`, statt der benötigten `7` für `"startup"`) bis
+zu ihrem Ursprung zurückverfolgt (Speicher-Watch auf die Stack-Position,
+dann Ground-Truth-Bytes am schreibenden PC):
+
+- Die Länge (`d1=2`) stammt aus einer RBF-internen Hilfsroutine
+  (`bsr.w $e2a2`, innerhalb der laufenden Suche aufgerufen, NICHT über
+  `F$PrsNam`), deren Ergebnis in eine lokale, F$PrsNam-Ausgabe-artige
+  Struktur (SR/d0/d1/a0/a1 -- exakt das reale F$PrsNam-Ausgabeformat)
+  zwischengespeichert wird.
+- Deren EINGABE (`a0`) ist beim Aufruf `$758A` -- **wieder** der Zeiger
+  auf `"dd"`, nicht auf `"startup"` (`$758D`).
+- Zurückverfolgt bis zu dessen eigener Quelle: **nicht RBF**, sondern
+  eine ANDERE, tiefer im Speicher liegende Codeadresse (`$B6E8`,
+  außerhalb von RBFs Adressraum -- ein anderer, ebenfalls
+  unveränderter Microware-Modul, mit an Sicherheit grenzender
+  Wahrscheinlichkeit **IOMan**, erkennbar am andersartigen
+  Prozesskontext `a4=$19400` statt RBFs durchgehendem `a4=$7100`).
+- Dort: `a0` wird aus dem URSPRÜNGLICHEN, kompletten Pfadzeiger
+  (`$7589`, derselbe Zeiger, den auch der allererste `F$PrsNam`-Aufruf
+  als Eingabe bekam) berechnet, per simplem `+1` -- überspringt NUR
+  das eine führende `/`, landet bei `$758A` ("dd/startup" MINUS
+  Schrägstrich) -- NICHT beim eigentlichen Dateinamen `"startup"`
+  (`$758D`, hinter `/dd/`).
+
+### Einordnung
+
+Das ist jetzt eine Ebene TIEFER als der bereits gefixte `F$PrsNam`-Bug:
+**IOMan** (nicht RBF) berechnet den an RBF weiterzugebenden Namen/die
+Länge offenbar durch simples Überspringen des ERSTEN Zeichens, nicht
+durch korrektes Abtrennen des kompletten Geräte-Präfixes `/dd/`. Da
+IOMan ebenfalls reale, unveränderte Microware-Software ist, kann das
+kein "IOMan-Bug" im klassischen Sinn sein -- wahrscheinlicher: IOMan
+verlässt sich dabei auf einen Zustand/eine Information, die WIR ihm
+liefern müssen (z. B. "wie viele Zeichen hat der bereits erfolgreich
+angehängte Geräte-Präfix verbraucht", damit IOMan korrekt darüber
+hinaus zeigen kann) -- und dieser Zustand ist bei uns entweder nicht
+vorhanden oder falsch.
+
+**Nächster Schritt (noch offen, neue, tiefere Untersuchungsebene):**
+klären, welche Information IOMan an dieser Stelle (`$B6E8` ff.)
+tatsächlich benutzt, um die Präfixlänge zu bestimmen (vermutlich ein
+Rückgabewert/Zustand aus dem vorangegangenen `I$Attach`-Aufruf für
+`/dd`, den wir liefern) -- das ist eine neue, von der bisherigen
+RBF-Spur unabhängige Untersuchung in IOMans eigenem Code.
+
+Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
+Der `F$PrsNam`-Fix aus der vorigen Runde bleibt unangetastet gültig
+(committet) -- er behebt weiterhin einen echten, eigenständigen Bug,
+auch wenn er für DIESEN speziellen Testfall allein nicht ausreicht.
