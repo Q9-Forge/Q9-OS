@@ -2496,3 +2496,82 @@ wie oben) -- das ist der Aufruf, der bei JEDER Scan-Iteration
 (unabhängig von der Sektorgrenze) erfolgt, und damit ein besserer
 Kandidat für den eigentlichen "Eintrag lesen/vergleichen"-Kern als
 `efa8`.
+
+## GRUNDLEGENDE KORREKTUR: RBF_BASE war falsch -- $D2D2, nicht $E11A (2026-09-08, Fortsetzung 4)
+
+Beim Versuch, `$e522` (den nächsten Kandidaten) einer Datei-Position
+zuzuordnen, ergab sich ein Widerspruch: `$e522` deckte sich exakt mit
+der schon ganz am Anfang dieser Untersuchung gefundenen
+"$1250"-Sperr-/`F$GProcP`-Routine — aber NUR unter einer ANDEREN
+Basisadresse als der bisher verwendeten `$E11A`.
+
+**Direkt geprüft, zweifelsfrei:** Rohspeicher an `$D2D2` beginnt mit
+`4a fc 00 01 00 00 25 a6` — das ist `M$ID` (`$4AFC`) gefolgt von
+`M$Size=$25A6`, exakt die reale Dateigröße von `rbf.mod` (9638 Byte).
+**`$D2D2` ist die wahre Ladeadresse von RBF in diesem Testlauf, nicht
+`$E11A`.** Zusätzlich bestätigt: der reale Trap-Tracer (`Q9_TRAP_TRACE`)
+hatte schon vor Tagen `trap0 pc=$e298` für `F$PrsNam` protokolliert --
+das ist exakt `$D2D2+$FC6` (der `trap #0` bei Dateioffset `$FC6`,
+zweite `F$PrsNam`-Fundstelle) -- eine dritte, unabhängige Bestätigung.
+
+**Woher kam der Fehler?** Die frühere "Bestätigung" von `$E11A` (über
+den `F$PrsNam`-Rücksprung-PC `$E2B2` und einen Freeze-Treffer bei
+`$EFCC`) war ein Zufallstreffer: `$E11A` liegt selbst INNERHALB von
+RBFs Adressraum (`$D2D2` bis `$D2D2+$25A6=$F878`), bei Dateioffset
+`$E48`. Jede "Bestätigung", die auf `$E11A` als Basis aufbaute, hat
+deshalb auf eine andere, zufällig ebenfalls plausibel aussehende
+Codestelle gepasst -- nicht auf die eigentlich gemeinte.
+
+**Wichtig: alle Funde, die über `Q9_DUMP_ADDR` DIREKT an live bestätigten
+PCs gewonnen wurden (der Ansatz seit der Mitte dieser Untersuchung),
+bleiben davon unberührt und gültig** -- betroffen war nur die
+nachträgliche Umrechnung "Datei-Offset ↔ Live-PC" für die ganz frühen,
+rein statischen Funde (die ursprüngliche `$64e`/`$f90`/`$f7a`/`$1250`-
+Kette). Mit der korrigierten Basis decken sich diese jetzt aber
+vollständig mit den Live-Messungen:
+
+```
+Q9_COUNT_PC (korrigierte Basis $D2D2):
+  $d920 ($64e, Kapazitaetspruefung)      = 31 Treffer
+  $e184 ($eb2, Pruefung nach f7a)         = 31 Treffer
+  $e262 ($f90, Wrapper)                    = 31 Treffer
+  $e24c ($f7a, Ringpuffer-Vorschub)         = 30 Treffer
+  $e1ee ($f1c, Vergleich mit $D3)            =  1 Treffer
+  $e1f6 ($f24, setzt $D8)                     =  1 Treffer
+```
+
+Damit ist die **ursprüngliche Kapazitätsprüfungs-Kette
+($f90→$1250/$64e→$D3→$D8) tatsächlich der reale Mechanismus** -- exakt
+wie ganz am Anfang dieser Untersuchung vermutet, nur jetzt sauber
+bewiesen statt nur plausibel.
+
+### Neuer Fund: Segmentlisten-Auswertung live disassembliert (`ed3e`)
+
+`f90` ruft bedingt (`btst.b #1,$2a(a1)`) eine weitere Routine (`$1cf8`,
+live `$efca`) auf, die ihrerseits `$1a6c` (live `$ed3e`) aufruft.
+`$ed3e` ist -- Ground-Truth-Bytes, siehe Doku-Commit -- die
+**Segmentlisten-Auswertung**: sie liest direkt die 5-Byte-Einträge
+(3 Byte LSN + 2 Byte Größe, geshiftet um den Allokationseinheiten-Faktor
+`$6f(a1)`) aus dem FD-Puffer (`$2e(a1)+$10` ff., exakt das reale
+FD-Format, das wir schon vom rohen Disk-Sektor kennen) und sucht das
+Segment, das die aktuelle Scan-Position `$32(a1)` enthält.
+
+**Ergebnis der Auswertung für unser Verzeichnis:** das erste (und
+einzige benötigte) Segment beginnt bei LSN 66 mit einer Kapazität von
+`30 << Schichtfaktor` -- weit über den 960 benötigten Byte. Das
+Verzeichnis liegt also in EINEM einzigen, großen Segment, nicht in
+zwei getrennten -- frühere Vermutungen einer "zweiten Segment"-Suche
+sind damit hinfällig. Offen bleibt: wie/wo aus diesem Segment die
+tatsächlich zu lesende physische LSN für einen gegebenen `$32(a1)`-Wert
+berechnet und der eigentliche Sektor-Lesevorgang ausgelöst wird --
+das ist vermutlich die schon früher gefundene `$15e6`-Routine
+(LSN-Berechnung aus Segmentbasis + Offset), deren Aufrufer noch nicht
+zurückverfolgt wurde.
+
+**Nächster Schritt:** den Aufrufer von `$15e6` (jetzt mit der
+korrigierten Basis neu zu berechnen: `$D2D2+$15E6=$E8B8`) live
+zurückverfolgen und prüfen, ob/wann er für die zweite Sektorgrenze
+(Bytes 512-959) tatsächlich aufgerufen wird und ob der resultierende
+Disk-Lesevorgang (LSN 67) erfolgreich im Puffer landet.
+
+Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
