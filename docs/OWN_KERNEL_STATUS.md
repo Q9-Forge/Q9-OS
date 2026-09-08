@@ -2575,3 +2575,52 @@ zurückverfolgen und prüfen, ob/wann er für die zweite Sektorgrenze
 Disk-Lesevorgang (LSN 67) erfolgreich im Puffer landet.
 
 Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
+
+## Fortsetzung 5: Nachlade-Auslöser gefunden -- feuert nie, Verdacht wandert zu Interrupt-Rückmeldung
+
+Mit der korrigierten Basis (`$D2D2`) ließ sich der Sektorgrenzen-
+Mechanismus jetzt vollständig durchgehen:
+
+- `$f7a` (Ringpuffer-Vorschub, live `$e24c`, 30 Treffer) ruft bei
+  JEDER Sektorgrenze (`($32(a1)+$20) & $70(a1) == 0`) `$1cd6` auf --
+  das entspricht (korrigierte Basis) `$efa8`.
+- `$efca`/`$ed3e` (Segmentlisten-Auswertung) feuert dagegen nur **2x
+  insgesamt** (einmal pro `I$Open`) -- das ist korrekt: das Verzeichnis
+  liegt in einem einzigen Segment, eine erneute Segmentsuche ist nach
+  dem ersten Mal nicht nötig.
+- `$efa8` selbst wird 7x erreicht, nimmt darin aber **jedes Mal** den
+  Kurzschluss-Pfad (`bclr.b #0,$2a(a1); beq.b $efc2`) -- der bedingte
+  Aufruf von `$ef38` (dem letzten verbliebenen Kandidaten für die
+  eigentliche Leseauslösung) wird dabei **kein einziges Mal** erreicht
+  (`Q9_COUNT_PC`: `$ef38=0`, `$efbe`=0).
+
+**Das bedeutet: Der Code-Pfad, der bei einer Sektorgrenze tatsächlich
+einen neuen Lesevorgang auslösen würde, existiert -- wird aber nie
+ausgelöst, weil ein Flag-Bit (`Bit 0` von `$2a(a1)`) beim Prüfen immer
+schon gelöscht ist.**
+
+### Neue Arbeitshypothese
+
+Ein Flag-Bit, das "Lesevorgang wurde fertig gemeldet, bitte
+nachladen" (oder umgekehrt "Nachladen nötig") bedeuten könnte, wird nie
+gesetzt vorgefunden. Das passt zu einem klassischen OS-9-Muster:
+Plattenzugriffe sind **asynchron** -- ein Treiber löst den eigentlichen
+Transfer aus und ein Interrupt (bzw. dessen Handler) meldet später den
+Abschluss zurück, wobei genau ein solches Flag gesetzt wird. Trifft
+dieser Interrupt bei uns nie ein (oder wird er falsch/an der falschen
+Stelle quittiert), bliebe das Flag dauerhaft im "kein Nachladen nötig"-
+Zustand, obwohl in Wirklichkeit noch nie wirklich nachgeladen wurde --
+exakt das beobachtete Verhalten.
+
+Das würde die Untersuchung von der reinen RBF-Codeverfolgung weg und
+zurück zu einem Bereich lenken, der in diesem Projekt schon mehrfach
+Thema war: die Interrupt-Zustellung für den CF/IDE-Pfad (`Q9K_IRQDispatch`,
+`F$IRQ`, Polling-Tabelle -- s. frühere Abschnitte in diesem Dokument).
+
+**Nächster Schritt:** herausfinden, WER `Bit 0`/`Bit 1` von `$2a(a1)`
+überhaupt setzt (Speicher-Watch auf `a1+$2a`, ein Byte) -- falls dort
+gar kein Schreibzugriff außer den bekannten `bclr`-Stellen auftritt,
+ist das der Beweis, dass die erwartete Interrupt-/Abschluss-Meldung bei
+RBF nie ankommt.
+
+Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
