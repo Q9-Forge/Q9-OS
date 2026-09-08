@@ -4095,4 +4095,14 @@ gezielt nach einer öffentlich verfügbaren RBF-Quelltext-Referenz
 suchen (auch außerhalb des Projekts), falls eine legale Quelle
 existiert.
 
+**Nachtrag, noch in derselben Sitzung:** Empfehlungspunkt 2 (dritte
+Registerspur) sofort geprüft -- `a1`, `a2`, `d0`, `d2` am
+Vergleichspunkt (`$E208`) live mitgeschnitten:
+`d0=1 d1=7 d2=$42 a0=$7594 a1=$36310 a2=$35F10`. **Keines dieser
+zusätzlichen Register hält `$758D`** -- der korrekte Zeiger ist zu
+diesem Zeitpunkt in KEINEM der gängigen Register mehr vorhanden.
+Damit ist auch Empfehlungspunkt 2 ausgeschöpft; es bleiben nur noch
+Punkt 1 (E142s wahre Rolle liegt woanders) und Punkt 3 (echter
+RBF-Quelltext nötig) als plausible Erklärungen.
+
 Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
