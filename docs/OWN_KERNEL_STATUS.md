@@ -2314,3 +2314,141 @@ zurückgesetzt; die vollständige, ausgerichtete RBF-Disassemblierung
 liegt (aus Lizenzgründen — proprietärer Microware-Code, nur
 Kurzausschnitte hier im Dokument) ausschließlich im Job-Scratch, nicht
 im Repo.
+
+## Korrektur/Vertiefung zum Durchbruch: "zwei Sektoren zu spät" ist NICHT bewiesen (2026-09-08, Fortsetzung)
+
+Der Versuch, den vorigen Fund ("Verzeichnispuffer beginnt bei `OldBoot`,
+die ersten zwei Sektoren fehlen") bis zur konkreten Lese-Quelle
+zurückzuverfolgen, deckte einen Widerspruch auf, der die bisherige
+Interpretation in Frage stellt:
+
+**Neue reale Fakten (per `Q9_BOARD_CF_TRACE=1`, ein bereits vorhandenes,
+unverändert genutztes Diagnosewerkzeug in `Q9-Flux/src/devices/cf/cf.c`,
+sowie direkter Byte-Analyse des Referenz-Images):**
+
+- Der echte Boot-Sektor (LSN 0) liefert `DD.DIR = 65` (die LSN des
+  Wurzelverzeichnis-**Dateideskriptors**, nicht der Verzeichnisdaten
+  selbst) und `DD.LSNSize = 512`.
+- LSN 65 enthält tatsächlich einen FD-Sektor (Attribut-Byte `$BF`,
+  danach eine Segmentliste ab Offset `$10`): erstes Segment beginnt bei
+  LSN **66**.
+- Der reale Boot-Trace zeigt exakt die dazu passenden Lesevorgänge:
+  `lba=65` (2x), `lba=66`, `lba=67` — RBF liest also korrekt FD→Segment.
+- ABER: der Inhalt von LSN 66/67 (roh von der Disk gelesen: `.` als
+  erster Eintrag, danach etwas, das eher wie `.login` aussieht als wie
+  `..`) **stimmt nicht mit dem Pufferinhalt überein, den RBF laut dem
+  vorherigen Speicher-Watch tatsächlich durchsucht** (`OldBoot` ... `CPM`
+  ab Adresse `$36310`). Das sind zwei UNTERSCHIEDLICHE Dateninhalte.
+
+**Konsequenz:** Die vorige Schlussfolgerung ("RBF liest das Verzeichnis
+korrekt, nur zwei Sektoren zu spät") ist damit **nicht mehr haltbar in
+dieser einfachen Form** — der tatsächlich durchsuchte Puffer bei
+`$36310` scheint NICHT aus diesen (korrekten!) LSN-65/66/67-Lesevorgängen
+zu stammen. Wahrscheinlicher: der Puffer, auf den `$e(a1)` zeigt, enthält
+Speicherreste aus dem GROSSEN Bulk-Ladevorgang beim Boot (`lba=555489,
+count=72` — lädt Kernel+Module), die zufällig lesbar aussehende
+Verzeichnisnamen enthalten (nicht aus dem extrahierten `.mod`-Blob
+selbst, das wurde per Byte-Suche ausgeschlossen — die Namen stehen
+NICHT in `rbf.mod`/`cfide.mod`/`dd.mod`/`c0.mod`).
+
+**Bewertung:** Es ist damit weiterhin unklar, ob `$e(a1)` überhaupt
+korrekt auf einen frisch gelesenen Verzeichnispuffer zeigt, oder ob
+dort aus irgendeinem Grund eine STEHENGEBLIEBENE/falsche Adresse
+verwendet wird. Die vorherige Disassemblierungs-Ausrichtung im Bereich
+`$100`-`$200` (I$Attach-Fortsetzung) selbst erwies sich bei einer
+Live-Gegenprobe (`Q9_FREEZE_PC` bei `$e22a`/Bittest) ebenfalls als NICHT
+durchgängig verlässlich (ein direkt anschließender Sprung passte nicht
+zur linear disassemblierten Nachbarschaft) — vermutlich ein weiterer,
+noch nicht lokalisierter Ausrichtungsfehler in genau diesem
+Codeabschnitt.
+
+**Nächster Schritt (konkret, noch nicht begonnen):** herausfinden,
+WOHER `$e(a1)` seinen Wert bekommt (Speicher-Watch auf das Feld selbst,
+`a1+$0e`, mit `Q9_WATCH_FREEZE`), um den tatsächlichen Bezugspunkt
+zwischen den echten LSN-65/66/67-Lesevorgängen (korrekt!) und dem
+später durchsuchten Puffer bei `$36310` (Ursprung noch unklar)
+herzustellen.
+
+## Weitere Rückverfolgung: $2e(a1)-Puffer, echte FD-Felder, Nullfüll-Fallback (2026-09-08, Fortsetzung 2)
+
+Direkte Live-Byte-Dumps am tatsächlichen `pc` (per `Q9_DUMP_ADDR`, ohne
+jedes Ausrichtungsrisiko einer eigenständigen Disassemblierung — die
+Bytes stammen direkt aus dem laufenden Emulator) klären die Herkunft
+der beiden zuvor unklaren Werte vollständig:
+
+### `$36(a1) = $3C0` ist ECHT, kein Fehler
+
+`pc=$d6a2` (`move.l d0,$36(a1)`) übernimmt einen Wert, der aus
+`$8(a2)`/`$c(a2)` zusammengesetzt wird — `a2` zeigt dabei auf den real
+von Disk gelesenen FD-Sektor (LSN 65, `DD.DIR`). Bei genauer
+Nachrechnung ist das exakt die Interpretation der FD-Bytes 9-12 als
+32-Bit-Big-Endian-Wert (`FD.SIZ`, die reale Dateigröße) — bei unserem
+Referenz-Image `$000003C0` = 960 Byte. **Das Wurzelverzeichnis ist also
+wirklich 960 Byte groß, `$36(a1)` ist korrekt aus echten Disk-Daten
+abgeleitet, kein Bug.**
+
+### `$2e(a1)`-Puffer: frisch alloziert, aber nur 512 Byte
+
+`pc=$e3e2`-`$e3ec`: RBF fordert per echtem `F$SRqMem` (Callcode `$28`)
+`$c8(a1)` Byte an (gemessen: `$200` = 512 Byte, genau EIN Sektor bei
+`DD.LSNSize=512`) und legt den frischen Blockzeiger in `$2e(a1)` ab.
+`pc=$e41c`-`$e426`: ein Vertausch-Mechanismus tauscht `$e(a1)` und
+`$2e(a1)` (klassisches Doppelpuffer-Muster) — dadurch landet der
+FRISCH allozierte, aber nur 512 Byte große Block als aktiver
+Scan-Puffer.
+
+### Der eigentliche Verdacht: Scan überschreitet die 512-Byte-Pufferzone
+
+Die Schleife durchsucht laut vorigem Fund `$32(a1)` von `0` bis `$3C0`
+(960) — **das übersteigt die tatsächliche Puffergröße (512 Byte) um
+448 Byte.** Ein Speicher-Watch auf den kompletten Pufferbereich
+(`$36310`-`$366FF`, 1024 Byte) zeigt zusätzlich: kurz vor/während des
+Scans laufen **512 einzelne 1-Byte-Nullschreibzugriffe** von `pc=$fa0a`
+in genau diesen Bereich.
+
+`pc=$fa0a` selbst (Live-Bytes verifiziert) ist **keine Leseroutine**,
+sondern eine reine Füllschleife:
+```
+f9f0: bne.w  $fa04        * (Bedingung aus vorigem Lese-/Retry-Versuch)
+f9f4: subq.l #$1,d0        * Retry-Zaehler
+f9f6: bne.w  $f9e0         * -> erneuter Leseversuch
+f9fa: move.w #$f4,d1        * Retries erschoepft -> Fehler $F4
+f9fe: ori.b  #$1,ccr
+fa02: rts
+fa04: movea.l a5,a0          * Fallback-Pfad
+fa06: move.w #$1ff,d1         * 512 Durchlaeufe
+fa0a: move.b $0(a3),(a0)+     * denselben Quellbyte (a3 NICHT erhoeht!) 512x kopieren
+fa0e: dbra  d1,$fa0a
+```
+Das ist ein **Nullfüll-Fallback** (memset-artig, kopiert denselben
+Byte 512-mal), erreichbar entweder nach einem fehlgeschlagenen
+Lese-Retry oder als regulärer Pfad für einen bestimmten, noch nicht
+identifizierten Sonderfall (`bne.w $fa04`-Bedingung vor der Schleife
+noch nicht zurückverfolgt).
+
+### Einordnung (Stand jetzt, ehrlich unvollständig)
+
+Drei mögliche, noch nicht unterschiedene Erklärungen bleiben offen:
+
+1. Der (korrekte, real gemessene) zweite Sektor-Lesevorgang für LSN 67
+   schlägt in unserer CF-/Treiber-Emulation fehl bzw. wird nicht
+   fertig bestätigt, RBF fällt nach Retries auf den Nullfüll-Pfad
+   zurück — der Scan liest danach über den nur 512 Byte großen Puffer
+   hinaus in benachbarten, nicht dazugehörigen Speicher (dort liegen
+   zufällig lesbare Dateinamen aus dem Boot-Bulk-Ladevorgang).
+2. Der Nullfüll-Pfad ist reguläres RBF-Verhalten für einen anderen
+   Zweck (z. B. "Loch" im Segment, Sparse-Bereich) und wird hier durch
+   eine falsche Vorbedingung fälschlich ausgelöst.
+3. Es gibt einen bisher nicht gefundenen dritten Mechanismus, der den
+   Puffer zwischen Nullfüllung und Scan noch einmal umlenkt.
+
+**Konkreter nächster Schritt:** die Bedingung vor `$fa04` (der Sprung
+bei `f9f0: bne.w $fa04`) zurückverfolgen -- welcher Vergleich davor
+entscheidet "Nullfüllen statt lesen" -- sowie prüfen, ob der zweite
+Sektor-Lesebefehl (LSN 67) laut CF-Treiber-Emulation überhaupt jemals
+erfolgreich abgeschlossen/quittiert wird (`Q9_BOARD_CF_TRACE=1` zeigte
+ihn zwar als gestartet, aber nicht, ob RBF ihn als erfolgreich
+akzeptiert hat).
+
+Alle Emulator-Diagnosen (`Q9_DUMP_ADDR`, `Q9_WATCH_ADDR`) waren wieder
+nur temporär und sind vollständig zurückgesetzt.
