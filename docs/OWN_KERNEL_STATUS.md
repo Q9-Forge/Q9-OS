@@ -3835,3 +3835,53 @@ aber bei ECHTEM RBF-Assemblercode -- falls RBF selbst der Aufrufer ist
 `bsr`/`rts`-Konvention einhält).
 
 Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
+
+## Fortsetzung 20: RBF läuft NICHT unmittelbar vor dem zweiten Open-Aufruf -- Rekursions-Theorie widerlegt, echte Ursache weiter offen
+
+**Wichtige Korrektur:** die "RBF ruft sich selbst rekursiv auf"-Theorie
+(Fortsetzung 15/17/18) ist **widerlegt**. Live per `Q9_FREEZE_PC=0xBF1E`
+mit wachsendem `Q9_FREEZE_PC_N` den dritten (relevanten) Treffer
+isoliert und die volle 24576-Eintrag-Spur davor durchsucht: **RBF-Code
+(`$D2DA`-`$F876`) läuft dort NICHT ein einziges Mal** -- der letzte
+RBF-Befehl liegt tausende Instruktionen zuvor. Der zweite `Open`-Aufruf
+wird also NICHT von RBF direkt ausgelöst, sondern von IOMan/unserem
+Kernel, nachdem RBF laengst zurueckgekehrt ist.
+
+**Versuch, den echten "dd"-Open-Aufruf (Ebene 1) zu finden:** den
+Instruktions-Ringpuffer testweise von `24576` auf `200000` Einträge
+vergrößert (`Q9_DBG_TR_SIZE` in `m68krt.h`, temporär) -- selbst damit
+liegt der GENUINE "dd"-Open-Aufruf noch VOR dem Fensteranfang. Zwischen
+Ebene-1- und Ebene-2-Open liegen also **mehr als 200.000 Instruktionen**
+anderer Aktivität (mutmaßlich weitere, unabhängige Öffnungen wie
+`/term`, Modul-Nachladen usw.) -- mit reiner Ringpuffer-Vergrößerung
+nicht mehr praktikabel einzugrenzen.
+
+**Neuer, offener Befund:** Innerhalb des GROSSEN (200k) Fensters wurde
+trotzdem klar: der scheinbar "erste" `$D5B0`-Treffer in JEDEM bisher
+untersuchten Fenster hatte tatsächlich `a0≈$A9AD`-`$A9B0` (init-Modul-
+Bereich) -- **niemals den echten "dd"-Aufruf**. Das bedeutet: der
+wirkliche Ebene-1-Aufruf für `/dd/startup` liegt zeitlich noch weiter
+vorne im Boot, als bisher angenommen (nicht "kurz davor", sondern mit
+sehr viel unabhängiger Aktivität dazwischen).
+
+**Ehrliche Einordnung:** Fortsetzung 15-18 haben wertvolle Puzzleteile
+geliefert (Registerkonvention geklärt, P\$DIO als irrelevant
+ausgeschlossen, IOMan-Adressverschiebung korrigiert), aber die
+zentrale Frage ("wer baut den zweiten Parameterblock mit dem
+unveränderten Pfad auf, und warum") bleibt trotz erheblichen Aufwands
+ungeklärt. Reine Ringpuffer-Vergrößerung ist an ihre praktische Grenze
+gestoßen.
+
+**Empfehlung für den nächsten Anlauf:** statt weiter den Ringpuffer zu
+vergrößern, gezielt `Q9_WATCH_ADDR` auf das konkrete Feld `$20(a5)`
+DES ZWEITEN Aufrufs legen (`a5=$2D3B0`, also Adresse `$2D3D0`) OHNE
+Freeze, über den GESAMTEN Boot -- das zeigt (wie in Fortsetzung 14
+für die Vergleichslänge erfolgreich) alle SCHREIBZUGRIFFE auf genau
+diese Speicherzelle, unabhängig davon, wie weit der Schreibzeitpunkt
+zurückliegt (der 64-Eintrag-Watch-Ring ist dafür ausreichend, sofern
+nicht zu viele UNABHÄNGIGE Schreibzugriffe auf denselben Stack-Slot
+zwischenzeitlich erfolgen -- Vorsicht vor Stack-Wiederverwendung, s.
+Methodik-Lehre oben).
+
+Alle Emulator-Diagnosen (`Q9_DBG_TR_SIZE`-Vergrößerung, `a5`-Tracking)
+wieder vollständig zurückgesetzt.
