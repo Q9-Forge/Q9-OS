@@ -3777,3 +3777,61 @@ von `outPastName`, korrekt `$758D`, NICHT dem inzwischen als
 fehlerhaft erkannten `outNameStart`-Pfad über `$E074`).
 
 Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
+
+## Fortsetzung 19: offizielle Registerkonvention für Dateimanager-Einstiegspunkte gefunden -- Register-Rollen präzisiert, Rätsel bleibt
+
+**Aus `68k_tech.pdf`, Kapitel "File Manager Organization"** (Tabelle
+3-8, "Registers"): beim Aufruf einzelner Dateimanager-Routinen (Open,
+Create, Read, ...) gilt standardmäßig:
+
+| Register | Zeigt auf |
+|---|---|
+| `(a1)` | **Path descriptor** |
+| `(a4)` | Current process descriptor |
+| `(a5)` | User's register stack (Parameter -- wie im jeweiligen Systemaufruf beschrieben) |
+| `(a6)` | System global data area |
+
+**Präzisiert unsere bisherige Terminologie:** was wir bisher als
+"den Deskriptor" (`a5`, mit `$20(a5)`=Pfadname) bezeichnet haben, ist
+laut Doku eigentlich der **Parameterblock** ("User's register stack")
+-- **`a1` ist der eigentliche Pfad-Deskriptor** (die im Entstehen
+begriffene P\$Path-Struktur). Live-Inhalt an `a1` (`$21500`) geprüft:
+enthält u. a. `$03c0`/`$03c0` (960/960, die aus Fortsetzung 4 bekannten
+Segmentgrößen-Felder) -- **passt zur Identifikation als echte
+FD/Pfad-Deskriptor-Struktur**, bestätigt die Zuordnung.
+
+Damit bleibt die zentrale Beobachtung unverändert gültig (nur die
+Namen sind jetzt korrekt): **`a5` (der Parameterblock, vom Aufrufer
+auf dessen eigenem Stack aufgebaut) enthält bei BEIDEN
+`$D5B0`-Aufrufen denselben, unveränderten absoluten Pfad
+`$7589`.** Da laut "File Manager Organization" der Parameterblock
+**vom Aufrufer** aufgebaut wird, bestätigt das: **derjenige, der den
+zweiten `Open`-Aufruf auslöst, baut den Parameterblock erneut mit dem
+UNVERÄNDERTEN Originalpfad auf** -- ob das RBF selbst ist (das dann
+per echtem `bsr`/`jsr` in IOMans generischen
+Parameter-Marshalling-Code bei `$BF1E` hineinspringt) oder eine
+andere, noch nicht gefundene Stelle, bleibt die offene Frage.
+
+**Bestätigt außerdem:** `$D5B0` (Open) ist die EINZIGE RBF-Einsprung-
+adresse, die in der Nachbarschaft (`$D590`-`$D600`) angesprungen wird
+-- `Q9_COUNT_PC` zeigt keine Treffer für benachbarte Adressen, die
+`ChgDir` o. ä. sein könnten. Beide Aufrufe sind also zweifelsfrei
+`Open`, kein `ChgDir` dazwischen.
+
+**Nächster Schritt:** den tatsächlichen Aufrufer von `$BF1E`
+(IOMans Parameter-Marshalling-Einsprung) beim ZWEITEN Mal
+identifizieren -- diesmal mit `a1`(jetzt korrekt: Pfad-Deskriptor)
+UND `a5`(Parameterblock) beide im Blick behalten, da die bisherige
+Verwechslung (a0 fälschlich als "der Deskriptor" behandelt) frühere
+Rückverfolgungsversuche verzerrt haben könnte. `Q9_FREEZE_PC=0xBF1E`
+mit wachsendem `Q9_FREEZE_PC_N`, bei jedem Treffer `a5`+`$20(a5)`
+sowie den unmittelbaren Aufrufer-Kontext (Ringpuffer davor) prüfen,
+bis der ZWEITE, relevante Treffer (mit `a5`-Pfadname `$7589`)
+gefunden ist -- dann von DORT aus rückwärts zum echten `bsr`/`jsr`
+zurückverfolgen (nicht wie bisher über `a4`-Wertwechsel, s.
+Fortsetzung 18: das ist bei C-kompiliertem Code unzuverlässig, könnte
+aber bei ECHTEM RBF-Assemblercode -- falls RBF selbst der Aufrufer ist
+-- durchaus zuverlässig sein, da RBF vermutlich die klassische
+`bsr`/`rts`-Konvention einhält).
+
+Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
