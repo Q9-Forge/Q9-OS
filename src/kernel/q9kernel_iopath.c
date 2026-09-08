@@ -320,11 +320,17 @@ int Q9K_ProcRetPD(Q9_u32 dbtAddr, Q9_u16 num, Q9_u16 *outError)
  *     tst.b   d0            d0.b = Trennzeichen HINTER dem Namen
  *     cmpi.b  #$d,d0        scf akzeptiert 0, CR und Leerzeichen
  *     cmpi.b  #$20,d0
- *     movea.l a1,a0         a1 = Zeiger auf den Namensanfang
+ *     movea.l a1,a0         a1 = Zeiger HINTER das letzte Namenszeichen
  *
- * Vollstaendige Ausgabe (klassische OS-9-Konvention):
- *   a1    = erstes Zeichen des Namens
- *   a0    = hinter dem Namen (auf das Trennzeichen)
+ * Vollstaendige Ausgabe (ECHTE Microware-Konvention, nachgewiesen im
+ * OS-9 for 68K Processors Technical Manual, Anhang D, "F$PrsNam":
+ * "(a1) = Address of the last character of the name +1" -- NICHT der
+ * Namensanfang, wie ein frueherer Kommentar hier faelschlich annahm
+ * (2026-09-08 gefunden: dieser Fehlschluss war die eigentliche Ursache
+ * des $D8-Bugs bei "/dd/startup", s. docs/OWN_KERNEL_STATUS.md
+ * Fortsetzung 16 fuer die komplette Herleitung):
+ *   a1    = hinter dem letzten Namenszeichen (VOR einem evtl. Trenner)
+ *   a0    = hinter dem Namen UND einem evtl. '/'-Trenner
  *   d0.b  = das Trennzeichen selbst
  *   d1.w  = Namenslaenge
  *   Carry gesetzt + d1.w = E_BPNAM ($D7), wenn kein gueltiger Name folgt.
@@ -375,7 +381,19 @@ int Q9K_ProcPrsNam(Q9_u32 pathPtr, Q9_u32 *outNameStart, Q9_u32 *outPastName,
         return 0;
     }
 
-    *outNameStart = pathPtr + start;
+    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08, Fortsetzung 16): trotz
+     * seines Namens "outNameStart" liefert die reale Microware-F$PrsNam
+     * hier NICHT den Anfang des Namens, sondern die Adresse HINTER
+     * seinem letzten Zeichen (technical manual: "(a1) = Address of the
+     * last character of the name +1") -- also dieselbe Position wie
+     * *outPastName, nur OHNE einen folgenden Trenner zu ueberspringen.
+     * Der alte Code lieferte hier faelschlich den Namensanfang
+     * (`pathPtr + start`) -- dadurch trug RBFs eigener Code (der diesen
+     * Wert bei $E076 nach a0 uebernimmt und spaeter erneut an F$PrsNam
+     * weiterreicht) bei jedem zweiten Verzeichnis-Level wieder den
+     * Namen der VORIGEN Ebene weiter, nie den der naechsten -- die
+     * eigentliche Ursache des $D8-Fehlers bei "/dd/startup". */
+    *outNameStart = pathPtr + i;
     *outLen       = (Q9_u16)(i - start);
     *outDelim     = (Q9_u16)p[i];
 
@@ -525,7 +543,7 @@ void Q9K_SysRetPDImpl(void)
 /* Scratch-Bruecke fuer F$PrsNam, gleiches Muster wie ueberall. */
 #ifndef Q9K_PRSNAM_SCRATCH_PATH
 #define Q9K_PRSNAM_SCRATCH_PATH   0x13ECUL   /* Q9_u32, (a0) EIN  = Pfadname */
-#define Q9K_PRSNAM_SCRATCH_NAME   0x13F0UL   /* Q9_u32, (a1) AUS = Namensanfang */
+#define Q9K_PRSNAM_SCRATCH_NAME   0x13F0UL   /* Q9_u32, (a1) AUS = hinter dem letzten Namenszeichen (NICHT Namensanfang, s. Fix-Kommentar bei Q9K_ProcPrsNam) */
 #define Q9K_PRSNAM_SCRATCH_PAST   0x13F4UL   /* Q9_u32, (a0) AUS = hinter dem Namen */
 #define Q9K_PRSNAM_SCRATCH_LEN    0x13F8UL   /* Q9_u32, d1.w AUS = Laenge */
 #define Q9K_PRSNAM_SCRATCH_DELIM  0x13FCUL   /* Q9_u32, d0.b AUS = Trennzeichen */

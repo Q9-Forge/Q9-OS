@@ -190,7 +190,14 @@ int main(void)
 
         ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p1, &nameStart, &past, &len, &delim, &err);
         checkU32("F$PrsNam \"/term\" Erfolg", (Q9_u32)ok, 1);
-        checkU32("F$PrsNam \"/term\" Name beginnt bei 't'", nameStart, (Q9_u32)(unsigned long)(p1 + 1));
+        /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08, Fortsetzung 16):
+         * a1/outNameStart liefert laut Technical Manual ("Address of
+         * the last character of the name +1") NICHT den Namensanfang,
+         * sondern -- wie *outPastName -- das Ende, nur OHNE einen
+         * folgenden Trenner zu ueberspringen. Bei "/term" gibt es
+         * keinen Trenner (Trennzeichen ist NUL), deshalb sind hier
+         * a1 und a0 identisch. */
+        checkU32("F$PrsNam \"/term\" a1 hinter dem letzten Zeichen ('m'+1)", nameStart, (Q9_u32)(unsigned long)(p1 + 5));
         checkU32("F$PrsNam \"/term\" Laenge 4", (Q9_u32)len, 4);
         checkU32("F$PrsNam \"/term\" Trennzeichen 0", (Q9_u32)delim, 0);
         checkU32("F$PrsNam \"/term\" a0 hinter dem Namen", past, (Q9_u32)(unsigned long)(p1 + 5));
@@ -220,7 +227,9 @@ int main(void)
             int ok2 = Q9K_ProcPrsNam(past, &nameStart2, &past2, &len2, &delim2, &err2);
             checkU32("F$PrsNam Kettenaufruf liefert \"SYS\" (Laenge 3)", (Q9_u32)ok2, 1);
             checkU32("F$PrsNam Kettenaufruf Laenge 3", (Q9_u32)len2, 3);
-            checkU32("F$PrsNam Kettenaufruf Name beginnt bei 'S'", nameStart2, past);
+            /* a1 zeigt jetzt HINTER "SYS" (auf den '/' vor "motd"), NICHT
+             * mehr auf dessen Anfang, s. Fix-Kommentar oben. */
+            checkU32("F$PrsNam Kettenaufruf a1 hinter \"SYS\" (auf dem '/')", nameStart2, past + 3U);
         }
 
         ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p3, &nameStart, &past, &len, &delim, &err);
