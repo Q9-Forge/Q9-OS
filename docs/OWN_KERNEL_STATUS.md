@@ -3263,3 +3263,95 @@ jeweils per Freeze pruefen) zu finden. Reproduktion unveraendert:
 
 Alle Emulator-Diagnosen (`d1`/`a1`-Tracking) wieder vollständig
 zurückgesetzt (`git checkout`).
+
+## Fortsetzung 13: DURCHBRUCH -- der echte Namensvergleich live gefunden, Fortsetzung 12s Entwarnung war falsch (2026-09-08, dieselbe Session)
+
+**Fortsetzung 12 zurückgenommen:** die dortige Einschätzung ("`$E142`
+ist wahrscheinlich KEIN Bug") beruhte darauf, dass der zurückgegebene
+Zeiger `$758D` korrekt aussah -- die zugehörige LÄNGE wurde nicht
+weiterverfolgt. Jetzt live bis zur tatsächlichen Vergleichsinstruktion
+durchgetestet: **die Länge IST das Problem**, und `$E142` liefert
+sie falsch. Fortsetzung 10/11s ursprüngliche Einordnung war richtig.
+
+### Der echte Namensvergleich: `$E20A`, nicht `$D662`
+
+`$D662` (in Fortsetzung 10 fälschlich als "Vergleichsschleife"
+bezeichnet) ist tatsächlich FD-Feld-Initialisierung nach einem bereits
+gefundenen Treffer. Der ECHTE, byteweise, case-insensitive
+Namensvergleich (XOR-Muster `eor.b`/`andi.b #$df`, danach `andi.b #$7f`
+fürs Hochbit-Namensende -- exakt das aus Fortsetzung 7 erinnerte
+"kein XOR-Rest") sitzt bei `$E20A`:
+
+```
+00e20a: movem.l d0-d2/a0-a1, -(a7)
+00e20e: subq.w  #1, d1          ; d1 = Vergleichslaenge - 1
+00e210: move.b  (a0)+, d0       ; Suchname-Zeichen
+00e212: move.b  (a1)+, d2       ; Verzeichniseintrag-Zeichen
+00e214: eor.b   d2, d0
+00e216: andi.b  #$df, d0        ; Gross-/Kleinschreibung ignorieren
+00e21a: dbne    d1, $e210       ; Schleife
+00e21e: andi.b  #$7f, d0        ; Hochbit des letzten Namensbytes ausblenden
+00e222: bne.b   $e22c           ; Rest != 0 -> Fehltreffer
+00e224: subq.w  #1, d1
+00e226: bcc.b   $e22c           ; Laengen nicht exakt gleich -> Fehltreffer
+00e228: moveq   #0, d0          ; echter Volltreffer
+```
+
+Aufgerufen von `$e19e` (`bsr.b $e20a`), mit `a0 = $8(a7)` (einmalig
+beim ERSTEN Schleifendurchlauf gesetzt, s. `$e236`/`$e244`) und
+`d1 = $2(a7)` -- zwei GETRENNTE Stack-Felder derselben Schleifen-Ebene
+(nicht dieselben wie `$E0F0`s `$8(a7)`/`$10(a7)`, andere Aufruftiefe).
+
+### Live gemessen -- eindeutiger Beweis
+
+`Q9_FREEZE_PC=0xE20A Q9_FREEZE_PC_N=1` (erster von 30 Vergleichen,
+30 = 960 Byte Verzeichnis / 32 Byte pro Eintrag) plus `d1`/`a1`-Tracking:
+
+    pc=0000e20a d0=00000001 d1=00000002 a0=0000758d a1=00036310 a4=00007100 sp=0002d344
+
+**`a0=$758D` (korrekt, Beginn von "startup") -- aber `d1=2`, nicht 7.**
+Der Vergleich prüft also nur `'s','t'` gegen die ersten zwei Zeichen
+jedes Verzeichniseintrags, und die anschließende Längenprüfung
+(`subq.w #1,d1 ; bcc $e22c`) verwirft JEDEN Treffer, dessen Eintrag
+länger als 2 Zeichen ist -- **also auch den echten "startup"-Eintrag,
+bei allen 30 durchlaufenen Einträgen.** Genau das im allerersten
+ÜBERGABE-Befund vermutete Verhalten, nur jetzt direkt am Ort des
+Geschehens bewiesen statt indirekt erschlossen.
+
+### Der Kreis schließt sich zu Fortsetzung 10/11
+
+Diese `d1=2` stammt -- wie in Fortsetzung 10/11 gezeigt -- aus
+`$E142`s `F$PrsNam`-Aufruf mit `pathPtr=$758A` (statt `$758D`): das
+liefert `outPastName=$758D` (deshalb sieht `a0` korrekt aus) UND
+`outLen=2` (Länge von "dd", nicht "startup"). **Beide Werte
+(Zeiger UND Länge) stammen aus DEMSELBEN einen `F$PrsNam`-Aufruf --
+der Zeiger ist zufällig trotzdem richtig, die Länge nicht.** Fortsetzung
+10/11s Rückverfolgung (`$E076: movea.l a1,a0` verwirft `$758D` zugunsten
+von `outNameStart=$758A`, dieser Wert bleibt bis `$E0F0`s Snapshot
+unverändert) bleibt damit die gültige, jetzt vollständig bestätigte
+Erklärungskette für den kompletten `$D8`-Fehler.
+
+### Offen: was RBF an dieser Stelle eigentlich erwartet
+
+Real, unveraendertes RBF muss fuer echte OS-9-Installationen
+funktionieren -- die wahrscheinlichste Erklaerung: RBF erwartet, dass
+zwischen der `"dd"`-Ebene und der `"startup"`-Ebene ein WEITERER,
+separater `F$PrsNam`-Aufruf mit `pathPtr=$758D` steht (der `outLen=7`
+liefern wuerde), und `$E142`s Ergebnis ist eigentlich nur fuer die
+Zeiger-Verkettung gedacht, nicht fuer die Vergleichslaenge. Ob dieser
+dritte Aufruf fehlt, an der falschen Stelle landet, oder ob `$2(a7)`
+aus einer ganz anderen Quelle stammen sollte, ist die letzte offene
+Frage.
+
+**Nächster Schritt:** `Q9_WATCH_ADDR` auf die absolute Adresse setzen,
+die zum Zeitpunkt von `$e19a` (`move.w $2(a7),d1`) tatsaechlich
+`$2(a7)` entspricht (`sp` bei `$e19a` ist `$2D348`, also Adresse
+`$2D34A`), mit `Q9_WATCH_FREEZE=1`, um den SCHREIBENDEN Aufrufer zu
+finden -- das zeigt, ob die `2` direkt von `$E150`s Schreibvorgang
+durchgereicht wird (dann waere die noetige Korrektur: `$E142` mit
+`pathPtr=$758D` statt `$758A` aufzurufen -- vermutlich behebbar durch
+Anpassen des Zeigers, den `$E076` in `a0` legt) oder ob ein weiterer,
+noch unbekannter Zwischenschritt beteiligt ist.
+
+Alle Emulator-Diagnosen (`d1`/`a1`-Tracking) wieder vollständig
+zurückgesetzt (`git checkout`).
