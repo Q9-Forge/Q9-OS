@@ -2962,3 +2962,157 @@ zu finden.
 Der `F$PrsNam`-Fix aus den vorigen Runden bleibt unangetastet gültig.
 Alle Emulator-Diagnosen (inkl. der temporären `a3`-Ringpuffererweiterung)
 wieder vollständig zurückgesetzt.
+
+## Fortsetzung 10: wahre Quelle von a0=$758A gefunden -- keine Verunreinigung, sondern zweifach korrekt berechneter Wert; E142s eigentlicher Zweck bleibt offen (2026-09-08, neue Session nach Pause)
+
+**Neues Werkzeug: `Q9_FREEZE_A0`** (Ergänzung zu `Q9_FREEZE_PC`) -- friert
+nur ein, wenn PC **und** a0 gleichzeitig passen (analog `Q9_FREEZE_PC`/
+`Q9_FREEZE_PC_N` in `m68krt.c`, derselbe `getenv`-Mechanismus). Erspart
+das Erraten einer Trefferzahl, wenn dieselbe Adresse für kausal
+verschiedene Aufrufe durchlaufen wird -- genau das Problem, an dem
+Fortsetzung 8/9 gescheitert waren. Wie alle anderen Werkzeuge nach
+Gebrauch per `git checkout` zurückgesetzt; gehört ab jetzt zum
+"Bewährten Werkzeug-Set" oben.
+
+### Ausgangspunkt: RBF_BASE für den aktuellen Build neu verifiziert
+
+Kernel neu gebaut (Quelltext seit dem letzten Stand unverändert, Größe
+`0x37d4`), Testabbild nach dem dokumentierten Rezept neu erzeugt
+(`REF_TAIL_START=0x33d6 REF_TAIL_SPLIT=0x35d2`, Disk-Module aus der
+letzten Session weiterverwendet). Rohspeicher an `$D2DC` per
+`Q9_DUMP_ADDR` gelesen: `4a fc 00 01 00 00 25 a6` -- `M$ID` gefolgt von
+`M$Size=$25A6`, exakt `rbf.mod`s reale Größe. **`RBF_BASE=$D2DC`
+bestätigt**, wie am Ende der letzten Session vermutet.
+
+### Sauberer Freeze bei PC=$E142 UND a0=$758A
+
+Mit `Q9_TRACE_INSTR=1 Q9_FREEZE_PC=0xE142 Q9_FREEZE_A0=0x758A` lief der
+komplette 24576-Eintrag-Ring bis zu genau diesem Treffer (`sp=$2D348`,
+`a4=$00007100`). Per `Q9_COUNT_PC` nachträglich bestätigt: **`$E142`
+wird im gesamten Boot genau EINMAL erreicht** -- der gefrorene Treffer
+ist also zweifelsfrei der einzige, gesuchte Aufruf, keine Verwechslung
+mit einer anderen Ebene möglich (anders als in Fortsetzung 8/9
+befürchtet). Auffällig: `$E8E8` (die aus dem *alten* Dateioffset `$160C`
+unter der damaligen Session-Basis hochgerechnete Adresse) wird gar
+nicht erreicht -- die frühere Umrechnung war für den *jetzigen* Build
+nicht mehr gültig (erwartungsgemäß, da genau das der Kern der
+"Ladeadresse bei jedem Build neu bestimmen"-Lehre ist).
+
+### Rückverfolgung im Ring: doppelt unabhängig, nicht verunreinigt
+
+Erste Erscheinung von `a0=$758A` im 24576-Eintrag-Fenster: `pc=$B6F0`,
+`a4=$19400` (Prozesskontext, stimmt mit der Ready-Queue überein) --
+laut `Q9K_BootList`-Dump für diesen Lauf zweifelsfrei innerhalb von
+**IOMan** (`$AB76`-`$C192`). Live-Ground-Truth-Bytes an dieser Stelle
+(`Q9_DUMP_ADDR`) disassembliert:
+
+```
+00b6e4: movea.l $20(a5), a0      ; a0 = Pfadname aus dem Deskriptor
+00b6e8: cmpi.b  #$2f, (a0)       ; erstes Zeichen '/'?
+00b6ec: bne.b   $b6f0
+00b6ee: addq.l  #1, a0           ; GENAU EIN führender Trenner uebersprungen: $7589->$758A
+00b6f0: movea.l a7, a5           ; eigener Mini-Deskriptor auf dem Stack
+...
+00b6fa: move.l  a0, $20(a5)
+00b6fe: bsr.w   $b8cc            ; ECHTER F$PrsNam-Trap (via $3a4(a6)/D_SysDis-Trampolin,
+                                  ; dieselbe Konvention wie in RBFs eigenem Code)
+```
+
+Das ist **Standard-`I$Open`-Verhalten**, kein Bug: IOMan überspringt
+den einen führenden Trenner und ruft `F$PrsNam` für den Gerätenamen
+("dd") auf.
+
+Zweiter, unabhängiger Fund: RBFs **eigener Eintrittspunkt** live
+bestätigt bei `$D5B2` (Dateioffset `$2D6`), aufgerufen von IOMan bei
+`$C0D4` mit `a0 = $2D380` -- ein Zeiger auf einen STACK-Deskriptor,
+NICHT der rohe Pfadname. Kurz danach (`$DF94`→`$DF98`) dereferenziert
+RBF diesen Deskriptor selbst und lädt `a0 = $7589` -- der volle,
+unveränderte Pfadname MIT führendem Trenner (einen weniger als IOMans
+`$758A`!). **RBF parst also selbst, unabhängig von IOMan, noch einmal
+von vorn.**
+
+**Der Auflösungspunkt:** `Q9K_ProcPrsNam($7589)` überspringt den einen
+führenden Trenner (`outNameStart = $758A`) und liefert für den Namen
+"dd" (Länge 2, Trennzeichen `/`) `outPastName = $758D`. **`$758A` ist
+also exakt `outNameStart` von "dd" -- ein Wert, der bei JEDER korrekten
+Zerlegung dieses Pfadpräfixes entsteht, egal ob man (wie IOMan) bei
+`$7589` startet und einen Trenner überspringt, oder (wie RBF) denselben
+String parst.** Die frühere Fortsetzung-8/9-Frage "kommt das von IOMan,
+oder ist es Zufall?" war im Kern falsch gestellt -- es handelt sich
+nicht um eine Verunreinigung zwischen zwei Aufrufern, sondern um ein
+mathematisch notwendiges Zwischenergebnis, das an mehreren Stellen
+unabhängig entsteht. Fortsetzung 9s Rücknahme war also im Ergebnis
+richtig (keine IOMan-Verunreinigung), aber aus dem falschen Grund
+(vermeintliche Stack-Wiederverwendung mit `Q9K_ProcFork` -- diesmal mit
+sauberem Freeze zweifelsfrei ausgeschlossen, siehe oben).
+
+### Was der Aufruf bei $E142 mit diesem Wert tatsächlich anrichtet
+
+Weiter live verfolgt (Ground-Truth-Disassemblierung direkt ab dem
+bestätigten `$E142`):
+
+```
+00e142: bsr.w   $e2a2         ; = trap #0  -- ECHTER F$PrsNam-Syscall (kein RBF-Code mehr
+                               ;   danach, die Folgebytes sind OS-9-Inline-Callcode, s.
+                               ;   ÜBERGABE-Warnung zu Trap-Inline-Woertern)
+00e150: move.w  d1, $6(a7)     ; d1 = Laenge (=2) -- NUR in einen kurzlebigen CCR-Scratch-
+                               ;   Puffer kopiert, der bei $e164 wieder freigegeben wird,
+                               ;   OHNE je zurueckgelesen zu werden (Sackgasse!)
+...
+00e166: bcs.w   $e1f8
+00e16a: movem.l d2/a2, -(a7)
+00e16e: move.l  d1, d2         ; die WIRKLICH weiterverwendete Laenge: direkt aus dem
+                               ;   Register d1, unveraendert seit dem Trap-Ruecksprung
+00e170: lea.l   $e0(a1), a2    ; a2 = Kopierziel-Puffer
+00e174: clr.b   (a2, d2.w)     ; NUL-Byte bei Puffer+Laenge(=2) -- schneidet den Namen
+                               ;   auf 2 Zeichen ab, BEVOR die eigentliche Vergleichsschleife
+                               ;   (bsr $d662, per Live-Trace bereits als "startup"-Vergleich
+                               ;   bestaetigt) ihre Kopie bekommt
+```
+
+Damit ist die ursprüngliche ÜBERGABE-Vermutung im Kern bestätigt: **die
+Vergleichslänge 2 stammt exakt daher, dass `F$PrsNam` bei `$E142` mit
+`pathPtr=$758A` (Beginn von "dd") statt `$758D` (Beginn von "startup")
+aufgerufen wird** -- ab `$758A` liefert JEDE korrekte `F$PrsNam`-Parse
+zwangsläufig Länge 2 ("dd", terminiert durch den folgenden `/`),
+unabhängig davon, welche konkrete Quelle den Zeiger geliefert hat. Der
+eigentliche Fehler liegt also nicht in "welcher Aufrufer hat a0
+verunreinigt", sondern darin, **dass RBF für diesen zweiten,
+internen `F$PrsNam`-Aufruf einen Zeiger auf den BEGINN von Ebene 1
+("dd") verwendet, obwohl zu diesem Zeitpunkt bereits Ebene 2
+("startup") gescannt wird** -- derselbe `outNameStart`, den RBF (oder
+eine von uns bereitgestellte Struktur) offenbar nicht zwischen den
+beiden Ebenen aktualisiert.
+
+### Offen: WESSEN Feld RBF hier tatsächlich (wieder-)liest
+
+Nicht abschließend geklärt: ob RBF den Zeiger `$758A` erneut aus dem
+Deskriptor bei `$2D380`/`$DF98` liest (derselbe, den es schon für die
+GESAMTE Operation einmalig dereferenziert hat, s. o. -- dann müsste RBF
+diesen Deskriptor-Slot eigentlich selbst zwischen den Ebenen
+fortschreiben, tut es aber laut Messung nicht), oder ob eine ANDERE,
+noch nicht identifizierte Quelle (Stack-Slot `$8(a7)`/`$10(a7)` der
+Vergleichsroutine, s. Fortsetzung 7) hier hineinspielt. `Q9_COUNT_PC`
+zeigt `$D5B2` (RBFs Eintrittspunkt) **zweimal** pro Boot -- ob der
+zweite Treffer zur selben `/dd/startup`-Anfrage gehört (z. B. ein
+interner Retry) oder zu einer ganz anderen, späteren Anfrage, ist
+ebenfalls offen und sollte zuerst geklärt werden, bevor man tiefer in
+die Deskriptor-Frage einsteigt.
+
+**Nächster Schritt:** den zweiten `$D5B2`-Treffer einordnen (gehört er
+zu `/dd/startup`? per `Q9_FREEZE_PC=0xD5B2 Q9_FREEZE_PC_N=2` plus
+`Q9_TRACE_INSTR=1` pruefen, a0 am Eintritt notieren). Danach gezielt
+zwischen `$DF98` (Deskriptor-Dereferenzierung, a0 wird `$7589`) und
+`$E13E` (laedt `$10(a7)` fuer den `$E142`-Aufruf) den Code Schritt fuer
+Schritt disassemblieren -- diesmal mit Ground-Truth-Bytes an einem
+zweiten, garantiert live bestaetigten Anker (nicht nur an den beiden
+Enden) --, um die tatsaechliche Quelle von `$10(a7)` (Speicher- oder
+Registerpfad) zu finden. Testabbild fuer die Reproduktion:
+`Q9-Flux/local_images/OS9SYS.dbg10.hda` (mit dem aktuellen Kernel-Stand
+neu gebaut, RBF_BASE=$D2DC bestaetigt); volle Ringpuffer-Spur dieser
+Session gesichert unter
+`$CLAUDE_JOB_DIR/tmp/trace_full.txt` (24576 Eintraege, endet exakt bei
+`pc=$E142`).
+
+Alle Emulator-Diagnosen (`Q9_DUMP_ADDR`, `Q9_FREEZE_A0`) wieder
+vollständig zurückgesetzt (`git checkout`).
