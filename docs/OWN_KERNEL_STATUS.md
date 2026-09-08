@@ -17,9 +17,13 @@ Der Abschnitt "Was der Kernel heute kann" direkt darunter ist der Stand
 VOR der ganzen `F$Load`-Untersuchung — seither viel weiter gekommen
 (siehe unten). Die komplette, chronologische Messkette steht weiter
 unten im Dokument (ab `## Werkzeugkorrektur…`, dann `Fortsetzung 1`
-bis `Fortsetzung 14`) — das hier ist nur die Kurzfassung für den
+bis `Fortsetzung 16`) — das hier ist nur die Kurzfassung für den
 Wiedereinstieg. **Diese Übergabe ersetzt die vorherige vollständig**
-(zwei Arbeitssitzungen am selben Tag, 2026-09-08).
+(drei Arbeitssitzungen am selben Tag, 2026-09-08).
+
+**WICHTIG: Q9-Flux liegt jetzt unter `Q9-Forge/Q9-Flux-68k`**
+(umbenannt, gleiches Repo/Remote, wegen der parallelen x86-Portierung
+`Q9-Flux-x86`) — alle Pfade unten entsprechend anpassen.
 
 **Ausgangslage:** `F$Load`-Meilenstein — ein Testprozess soll
 `/dd/startup` öffnen (echte, unveränderte Microware-Module
@@ -29,46 +33,52 @@ gefunden), obwohl `"startup"` nachweislich im Verzeichnis existiert.
 **Bereits vollständig gelöst und committet:**
 1. **A4-Speicherkorruption behoben** — kein Absturz mehr, Boot läuft
    sauber durch.
-2. **`Q9K_ProcPrsNam`-Bugfix** (`outPastName` muss hinter dem Trenner
-   stehen, nicht auf ihm) — echter, verifizierter Fix, per Host-Test
-   UND live bestätigt.
+2. **`Q9K_ProcPrsNam`-Bugfix #1** (`outPastName` muss hinter dem
+   Trenner stehen, nicht auf ihm) — echter, verifizierter Fix.
+3. **`Q9K_ProcPrsNam`-Bugfix #2** (`outNameStart`/a1 muss laut echter
+   Microware-Doku HINTER dem Namen stehen, nicht an seinem Anfang) —
+   ebenfalls echter, dokumentiert nachgewiesener Fix (`400dfcd`), löst
+   `$D8` aber NICHT allein (s. u.).
 
 **Der `$D8`-Fehlermechanismus ist jetzt exakt bewiesen** (nicht mehr
-nur vermutet) — das war der Hauptfortschritt der zweiten Sitzung
-(Fortsetzung 10–14):
+nur vermutet), und ein zentraler, dokumentiert nachgewiesener Bug ist
+gefixt — trotzdem bleibt `$D8` bestehen, weil sich ein WIDERSPRUCH
+herausgestellt hat:
 
-- Der echte, byteweise Namensvergleich sitzt bei `pc=$E20A` (Ground-
-  Truth-Disassemblierung, XOR-Muster). Live am ersten von 30
-  Verzeichniseinträgen gemessen: `a0=$758D` (**korrekt** — Beginn von
-  `"startup"`), aber `d1=2` (**falsch** — sollte `7` sein). Die
-  Längenprüfung danach verwirft deshalb JEDEN Treffer, auch den
-  echten `"startup"`-Eintrag, bei allen 30 Einträgen.
-- **Per `Q9_WATCH_ADDR` lückenlos bewiesen** (nicht nur erschlossen):
-  `pc=$E150` schreibt die `2` direkt in die physische Speicherzelle
-  (`$2D34A`), die `$E19A` später als Vergleichslänge liest. Über den
-  gesamten Boot nur 51 Treffer auf diese Adresse, einer eindeutig.
-- Diese `2` stammt aus RBFs eigenem `F$PrsNam`-Aufruf bei `$E142` mit
-  `pathPtr=$758A` (statt `$758D`) — liefert `outPastName=$758D`
-  (deshalb sieht `a0` zufällig korrekt aus) UND `outLen=2` (Länge von
-  `"dd"`, nicht `"startup"`). Zeiger und Länge stammen aus DEMSELBEN
-  einen Aufruf.
-- `a0=$758A` selbst ist **keine Verunreinigung** zwischen Aufrufern
-  (frühere Fortsetzung-8/9-Theorien dazu zurückgenommen), sondern ein
-  legitim berechnetes Zwischenergebnis (`outNameStart` von `"dd"`),
-  das RBFs eigener Code bei `$E076` (`movea.l a1,a0`) bewusst über den
-  vorher korrekten `$758D` legt.
+- Der echte, byteweise Namensvergleich sitzt bei `pc=$E20A`/neu `$E208`
+  (Ground-Truth-Disassemblierung, XOR-Muster). Er braucht GLEICHZEITIG
+  `a0=$758D` (Zeiger auf Anfang von `"startup"`) UND `d1=7` (dessen
+  Länge).
+- **Vor dem Fix:** `a0` war korrekt (`$758D`), `d1` war falsch (`2`,
+  Länge von `"dd"`).
+- **Nach dem Fix** (live verifiziert): `d1` ist jetzt korrekt (`7`),
+  aber `a0` ist jetzt falsch (`$7594`, ZEIGT HINTER `"startup"`).
+- **Mathematisch bewiesen (Fortsetzung 16): beide können NICHT
+  gleichzeitig aus demselben einzelnen `F$PrsNam`-Aufruf bei
+  `$E142`/neu `$E140` stammen** — ein Aufruf, der `"dd"` parst,
+  liefert zwangsläufig den richtigen Zeiger (zufällig identisch mit
+  dem Anfang von `"startup"`) aber die falsche Länge; ein Aufruf, der
+  `"startup"` selbst parst, liefert die richtige Länge aber einen
+  Zeiger, der schon dahinter liegt.
 
-**Offener nächster Schritt — Ebene IOMan, nicht mehr RBF:** RBFs
-Eintrittspunkt `$D5B2` wird für `/dd/startup` **zweimal** aufgerufen
-(einmal je Pfadebene), aber **beide Male mit identischem, unverändertem
-Rohpfad `$7589`** (Deskriptor bei `$2D380`) — der Pfadzeiger wird
-zwischen den Aufrufen NICHT fortgeschrieben. Verdacht: IOMan (oder
-unser F$SSvc-Trap-Rückweg für RBFs Rückgabewert) müsste das tun,
-tut es aber nicht. Zuletzt zurückverfolgt bis `$BF20`/`$BF56`
-(`bsr.w $b6b0`) in IOMan, kurz vor dem zweiten `$D5B2`-Aufruf — noch
-NICHT geklärt, was `$B6B0` tut und ob/wo dort der Pfadzeiger für die
-zweite Ebene entstehen sollte. **Hier als Nächstes weitermachen**
-(Details und exakte Adressen: `Fortsetzung 14` unten).
+**Offener nächster Schritt:** klären, ob RBF `F$PrsNam` an dieser
+Stelle EIGENTLICH ZWEIMAL aufrufen sollte (einmal für den Zeiger,
+einmal für die Länge) und einer der beiden Aufrufe bei uns ausfällt,
+ODER ob die Vergleichslänge in einer korrekten Umgebung aus einer
+GANZ ANDEREN Quelle stammt als `$E150`s Schreibvorgang (der bei uns
+nur zufällig der letzte von 51 Schreibzugriffen auf diese
+Speicherzelle vor dem Lesen ist — nicht alle 51 wurden geprüft).
+**Konkret:** `Q9_COUNT_PC` auf die neue Adresse `$E140` legen (mit dem
+Fix könnte sich die Aufrufzahl geändert haben — vorher nur 1x
+insgesamt), und/oder die volle `Q9_WATCH_ADDR`-Trefferliste (51
+Einträge) noch einmal komplett durchsuchen. Details:
+`Fortsetzung 15`+`16` unten.
+
+**WICHTIG bei jedem neuen Kernel-Build:** RBF_BASE hat sich mit dem
+Fix bereits einmal verschoben (`$D2DC` → `$D2DA`, Kernel um 2 Byte
+kleiner) — bei JEDEM weiteren Build per `M$ID`-Sync-Wort neu
+bestimmen und ALLE unten genannten RBF-Adressen entsprechend
+verschieben.
 
 **Wichtigste Methodik-Lehre dieser Session** (mehrfach schmerzhaft
 gelernt, für den nächsten Anlauf verinnerlichen):
@@ -3496,3 +3506,140 @@ aber ein NEUES, noch unerschlossenes Feld -- vermutlich mehrere
 weitere Fortsetzungen wert, sinnvollerweise mit frischem Kopf statt
 am Ende einer bereits sehr langen Sitzung. Reproduktion unveraendert:
 `Q9-Flux/local_images/OS9SYS.dbg10.hda`, RBF_BASE=`$D2DC`.
+
+**Hinweis (nächste Session): Q9-Flux liegt jetzt unter
+`Q9-Forge/Q9-Flux-68k`** (umbenannt, gleiches Repo/Remote, wegen der
+parallelen x86-Portierung `Q9-Flux-x86`) -- Pfade in obigen
+Abschnitten entsprechend anpassen.
+
+## Fortsetzung 15: `$BDC0` als echter Aufrufer bestätigt -- Pfad bleibt trotzdem unverändert
+
+`$BF20`/`$BED4` (Fortsetzung 14) war NICHT der per-Ebene-Aufrufer --
+per `Q9_COUNT_PC` bestätigt: alle 3 Treffer davon sind entweder
+unrelated (IOMans eigene Konsolen-/init-Aktivität) oder liegen VOR
+dem ersten `/dd/startup`-relevanten `$D5B2`-Aufruf. Der tatsächliche
+Aufrufer des zweiten, relevanten `$D5B2`: **`$BDC0`** -- per
+lückenloser, ununterbrochener Live-Spur zweifelsfrei bestätigt
+(`a5`-Tracking ergänzt, `Q9_FREEZE_PC=0xD5B2 Q9_FREEZE_A0=0x2D380
+Q9_FREEZE_PC_N=2`, rückwärts bis zu einer `bsr.w $bdc0`-Stelle
+verfolgt, danach ohne Lücke bis `$D5B2` durchgetestet). `$BDC0` ruft
+INTERN ebenfalls `$BED4` (allokiert also eine EIGENE, neue
+Pfad-Deskriptor-Kopie) und danach `$C06E` (derselbe Geräte-Dispatch
+wie beim ersten Aufruf). **Auch hier: der Pfadname, den `$BED4` bei
+`$BF1C` aus `$20(a5)` liest, ist weiterhin `$7589`** (unveränderter
+Rohpfad) -- bestätigt an ZWEI unabhängigen Messpunkten (direkt bei
+`$BF20` und nochmal bei `$BF1C`).
+
+**Neuer Fund:** der Aufrufer von `$BDC0` ist selbst KEIN einfacher
+IOMan-Code, sondern läuft über einen Trap in UNSEREN EIGENEN Kernel
+(`pc=$7440`-`$7710`, weit unterhalb von IOMans Adressraum) -- eine
+Schleife, die den Moduldirectory-Namen "dd"/"rbf"/"cfide" nacheinander
+mit TyLang-Filtern `$0f00`/`$0d01`/`$0e01` sucht (per `d0`-Wert live
+bestätigt). Das ist die VOLLSTÄNDIGE Geräte/Treiberketten-Auflösung
+("dd" → Dateimanager "rbf" → Treiber "cfide") -- sie läuft für den
+zweiten Aufruf **komplett erneut**, nicht nur eine Pfad-Fortschreibung.
+Das spricht dafür, dass **RBF selbst** (nicht IOMans oberste
+Aufruf-Ebene) diesen zweiten Zugriff auslöst -- vermutlich um "dd" als
+Gerät für einen tieferen Lesezugriff erneut zu öffnen -- und dabei
+denselben, unveränderten Rohpfad weiterreicht, weil die Ebenen-Tiefe
+über ein ANDERES Feld (nicht die Pfadzeichenkette) getrackt werden
+sollte.
+
+Alle Emulator-Diagnosen (`a5`-Tracking) wieder vollständig
+zurückgesetzt.
+
+## Fortsetzung 16: DURCHBRUCH bei der Doku-Recherche -- echter Spec-Bug gefunden und gefixt, $D8 bleibt trotzdem (contradiction aufgedeckt)
+
+**Meilenstein:** `/Volumes/SSD1TB/projects/MWOS/DOC/PDF/68k_tech.pdf`
+(die echte "OS-9 for 68K Processors Technical Manual", per
+`pdftotext` durchsuchbar!) enthält die offizielle `F$PrsNam`-Spezifikation
+(Anhang D). Zitat, wortwörtlich:
+
+    Output
+    d0.b = Pathlist delimiter
+    d1.w = Length of pathlist element
+    (a0) = Pathlist pointer updated past the optional "/" character
+    (a1) = Address of the last character of the name +1
+
+**`(a1)` ist NICHT der Namensanfang** (wie unser Kopfkommentar und
+unsere Implementierung bisher annahmen), **sondern das Ende des
+Namens** (dieselbe Position wie `(a0)`, nur OHNE einen folgenden `/`
+zu überspringen). Ein echter, jetzt dokumentiert nachgewiesener Bug in
+`Q9K_ProcPrsNam` (`q9kernel_iopath.c`): `*outNameStart = pathPtr +
+start` (Namensanfang) statt `pathPtr + i` (Namensende). **Gefixt,
+Host-Regressionstest angepasst und verifiziert, alle 14
+Host-Testsuiten grün, committet** (`400dfcd`).
+
+### Live-Test des Fixes: Länge jetzt korrekt, aber ZEIGER dadurch falsch
+
+Neuen Kernel gebaut (Größe `$37d2`, RBF_BASE dadurch verschoben auf
+**`$D2DA`** -- bei jedem Build neu bestimmen, s. Methodik-Lehre oben!),
+Testabbild neu erzeugt (`OS9SYS.fix16.hda`), live geprüft:
+
+- Am ersten von weiterhin 30 Vergleichen (`pc=$E208`, die um `-2`
+  verschobene `$E20A`-Adresse): **`d1=7`** (korrekt! vorher `2`) --
+  **`a0=$7594`** (FALSCH -- zeigt jetzt HINTER `"startup"`, auf das
+  NUL-Byte, statt auf dessen Anfang `$758D`).
+- Ergebnis unverändert: weiterhin `$D8`, weiterhin alle 30 Einträge
+  ohne Treffer durchlaufen (`Q9_COUNT_PC` bestätigt: `$E208`=30x,
+  Fehlerpfad `$E1F6`=1x wie zuvor).
+
+### Die Ursache des Widerspruchs -- sauber hergeleitet
+
+`$E076`s `movea.l a1,a0` übernimmt jetzt (korrekt gemäß Manual)
+`$758C` (Ende von "dd", zeigt auf den `/`-Trenner vor "startup")
+statt vorher `$758A` (Anfang von "dd"). Dieser Wert fließt unverändert
+bis zum `F$PrsNam`-Aufruf bei (dem jetzt verschobenen) `$E140` durch
+und wird dort als `pathPtr` verwendet:
+
+- **Vorher** (`pathPtr=$758A` bzw. `$7589`, beide parsen "dd"):
+  `outPastName = $758D` (**korrekter Zeiger** -- Anfang von "startup"),
+  `outLen = 2` (**falsche Länge** -- Länge von "dd").
+- **Jetzt** (`pathPtr=$758C`, parst direkt "startup" selbst, da der
+  führende `/` übersprungen wird): `outPastName = $7594` (**falscher
+  Zeiger** -- ENDE von "startup"), `outLen = 7` (**korrekte Länge**).
+
+**Rechnerisch beweisbar: Zeiger UND Länge können NIE gleichzeitig aus
+EINEM einzigen `F$PrsNam`-Aufruf korrekt hervorgehen** -- ein Aufruf,
+der "dd" parst, liefert zwangsläufig den richtigen Zeiger (Anfang von
+"startup", weil das zufällig genau da ist, wo "dd" endet) aber die
+falsche Länge (die von "dd", nicht "startup"); ein Aufruf, der
+"startup" selbst parst, liefert zwangsläufig die richtige Länge aber
+einen Zeiger, der schon wieder HINTER "startup" liegt. **Das ist der
+eigentliche Webfehler**, nicht (nur) `outNameStart`s Formel.
+
+### Einordnung und nächster Schritt
+
+Reales, unverändertes RBF muss für ECHTE OS-9-Installationen
+funktionieren -- also MUSS es entweder (a) `F$PrsNam` **zweimal**
+aufrufen, einmal für den Zeiger (Eingabe "dd") und einmal für die
+Länge (Eingabe "startup", z. B. mit dem `$758C`/`$758D`-Zeiger als
+Eingabe), oder (b) die Vergleichslänge stammt in einer korrekten
+Umgebung aus einer GANZ ANDEREN Quelle als `$E150`s Schreibvorgang
+(der bei uns nur zufällig der letzte Schreibzugriff auf diese
+Speicherzelle vor dem Lesen ist, s. Fortsetzung 14s
+`Q9_WATCH_ADDR`-Fund -- **51 Treffer insgesamt, nicht alle geprüft**,
+möglich, dass ein ERWARTETER, korrekter späterer Schreibzugriff bei
+uns aus einem ANDEREN Grund ausbleibt und deshalb `$E150`s Wert
+"gewinnt").
+
+**Nächster Schritt:** klären, ob `$E142`/`$E140` innerhalb DIESES
+Aufrufs von RBF ein zweites Mal erreicht wird (`Q9_COUNT_PC` auf die
+NEUE Adresse `$E140` -- mit dem Fix könnte sich die Aufrufzahl
+geändert haben!) oder ob eine BISHER UNENTDECKTE zweite
+`F$PrsNam`-Aufrufstelle existiert, die "startup" separat parst.
+Alternativ: die volle `Q9_WATCH_ADDR`-Liste (51 Treffer) noch einmal
+komplett durchgehen (nicht nur den letzten Treffer vor dem Lesen) und
+prüfen, ob EIN früherer/späterer Treffer mit Wert `7` existiert, der
+in einer korrekten Umgebung eigentlich der maßgebliche sein sollte.
+
+**Zum Reproduzieren mit dem Fix:** Kernel neu bauen
+(`src/kernel/build.sh`), RBF_BASE ist jetzt `$D2DA` (nicht mehr
+`$D2DC`!), Testabbild `Q9-Flux-68k/local_images/OS9SYS.fix16.hda`
+bereits vorhanden. `$E20A` (alt) → `$E208` (neu), `$E1F8` (alt) →
+`$E1F6` (neu), `$E142` (alt) → `$E140` (neu) -- alle RBF-internen
+Adressen um `-2` verschoben.
+
+Alle Emulator-Diagnosen (`d1`/`a1`-Tracking) wieder vollständig
+zurückgesetzt. Der `Q9K_ProcPrsNam`-Fix selbst bleibt committet
+(`400dfcd`) -- echter Spec-Fix, auch wenn er `$D8` allein nicht löst.
