@@ -9,6 +9,101 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
+## ÜBERGABE (2026-09-08, Pause auf Nutzerwunsch — HIER ZUERST LESEN)
+
+**Branch für die aktuelle Arbeit: `fix/a4-aufruferabhaengig` (PR #13)**,
+NICHT der oben genannte `fix/ccr-error-signaling-flink-funlink`-Stand.
+Der Abschnitt "Was der Kernel heute kann" direkt darunter ist der Stand
+VOR dieser Session — die A4-Speicherkorruption ist seither vollständig
+behoben, und die Untersuchung ist danach viel weiter gekommen (siehe
+unten). Die komplette, chronologische Messkette steht weiter unten im
+Dokument (ab `## Werkzeugkorrektur…`) — das hier ist nur die
+Kurzfassung für den Wiedereinstieg.
+
+**Ausgangslage dieser Session:** `F$Load`-Meilenstein — ein Testprozess
+sollte `/dd/startup` öffnen (echte, unveränderte Microware-Module
+`rbf`/`cfide`/`dd`/`c0`). Scheiterte mit einem Illegal-Instruction-Absturz.
+
+**Erledigt in dieser Session (alles committet auf `fix/a4-aufruferabhaengig`):**
+1. **A4-Speicherkorruption vollständig behoben** (zwei unabhängige
+   Fundstellen in `Q9K_TrapDispatch` bzw. `Q9K_SysFPrsNam`) — kein
+   Absturz mehr, Boot läuft sauber durch.
+2. **Wahre Ursache von `$D8` bei `I$Open("/dd/startup")` gefunden**:
+   RBFs Verzeichnis-Namensvergleich (reale, unveränderte RBF-Logik)
+   verglich fälschlich gegen `"/startup"` (mit Schrägstrich) statt
+   `"startup"`, weil unser `F$PrsNam` (`Q9K_ProcPrsNam` in
+   `q9kernel_iopath.c`) den `outPastName`-Zeiger AUF den Pfadtrenner
+   setzte statt DAHINTER. **Echter Bugfix angewendet, committet,
+   per Host-Unit-Test UND live im Emulator verifiziert** — der
+   byteweise Namensvergleich findet jetzt tatsächlich einen Treffer
+   bei `"startup"` (`d0=0` nach der Vergleichsschleife).
+3. **Trotzdem weiterhin `$D8`** — ein ZWEITER, noch nicht gefundener
+   Bug: die Vergleichs**länge** bleibt bei `2` (Länge von `"dd"`)
+   statt `7` (Länge von `"startup"`), eine Sicherheitsprüfung verwirft
+   den eigentlich korrekten Treffer deshalb als bloßen Präfix-Treffer.
+
+**Offener nächster Schritt:** Ursprung der falschen Vergleichslänge
+(`2`) finden. Letzter gesicherter Stand: die Schreibstelle ist
+`pc=$E150` (Dateioffset `$E74`, **zweifelsfrei innerhalb von RBF**,
+`$D2DC` bis `$F878`), holt den Wert über RBFs eigenen zweiten
+`F$PrsNam`-Wrapperaufruf (`$E142`→`$E2A2`, Dateioffset `$FC6`). Dessen
+Eingabewert (`a0=$758A`, zeigt auf `"dd"` statt `"startup"`) — **dessen
+wahre Quelle ist NICHT gefunden**, eine Zwischenspur dahin
+(`Q9K_ProcFork`) war ein durch Stack-Wiederverwendung erzeugter
+Fehlschluss (s. "Fortsetzung 9" unten) und wurde zurückgenommen.
+
+**Wichtigste Methodik-Lehre dieser Session** (mehrfach schmerzhaft
+gelernt, für den nächsten Anlauf verinnerlichen):
+- **RBFs Ladeadresse ist `$D2DC`** in den aktuellen Testabbildern —
+  NICHT `$E11A`, wie ein Großteil dieser Session fälschlich annahm
+  (`$E11A` liegt zufällig selbst innerhalb von RBFs eigenem
+  Adressraum). Verifiziert per `M$ID`-Sync-Wort (`4a fc 00 01`) direkt
+  im Speicher — bei JEDEM neuen Kernel-Build zuerst neu bestimmen
+  (jede Größenänderung verschiebt RBF!). Analog für den eigenen
+  Kernel: Basis = `$D2DC` minus die reale Größe von
+  `src/kernel/build/q9kernel` (M$Size, Offset 4).
+- **Jede Adresse einzeln gegen `$D2DC` (RBF-Anfang) und die eigene
+  Kernelgröße prüfen**, bevor ihr eine Bedeutung zugeschrieben wird —
+  keine Abkürzungen, keine Verwechslungen ähnlich aussehender Werte.
+- **Reine Disassemblierung (auch mit `capstone`) ist nicht
+  vertrauenswürdig**, wenn sie nicht an einer live bestätigten Adresse
+  verankert ist (OS-9-Trap-Inline-Callcode-Wörter desynchronisieren
+  jeden linearen Scan) — Ground-Truth-Bytes IMMER per `Q9_DUMP_ADDR`
+  direkt an einem per `Q9_FREEZE_PC`/`Q9_COUNT_PC` bestätigten PC
+  lesen, nie aus einer eigenständigen Offline-Disassemblierung
+  übernehmen.
+- **Stack-Speicherplätze werden von KOMPLETT UNABHÄNGIGEN Aufrufen
+  wiederverwendet** — ein Speicher-Watch auf eine feste Stack-Adresse
+  kann mehrere, kausal unzusammenhängende Ereignisse zeigen. Immer
+  per Registerkontext (insbesondere `a4` als Prozesskontext-Indikator)
+  gegenprüfen, ob ein Treffer wirklich zum untersuchten Vorgang gehört.
+- Bewährtes Werkzeug-Set (alles temporär in `Q9-Flux/src/kernel/*.c`,
+  nach jeder Nutzung mit `git checkout` zurückgesetzt): `Q9_DUMP_ADDR`/
+  `Q9_DUMP_LEN` (Rohspeicher an fester Adresse), `Q9_WATCH_ADDR`/
+  `Q9_WATCH_LEN`/`Q9_WATCH_FREEZE` (Schreibzugriffs-Historie),
+  `Q9_FREEZE_PC`/`Q9_FREEZE_PC_N` + `Q9_TRACE_INSTR=1` (Instruktions-
+  Ringpuffer an einer bestimmten Stelle einfrieren, zeigt
+  `pc/d0/a0/a4/sp`, per Patch erweiterbar um weitere Register),
+  `Q9_COUNT_PC` (reine Trefferzählung, kommagetrennte Adressliste),
+  `Q9_BOARD_CF_TRACE=1` (echte Disk-Sektor-Lesezugriffe der
+  CF-Emulation, bereits fest eingebaut, kein Patch nötig). Dump-Hotkey
+  im laufenden Emulator: `Ctrl-^` (0x1E) schreibt
+  `Q9-Flux/local_images/q9dbg_dump.txt`, danach `Ctrl-]` (0x1D) zum
+  Beenden (s. `$CLAUDE_JOB_DIR/tmp/run_dump.exp` als Vorlage).
+
+**Zum Reproduzieren:** Testabbild-Rezept (unverändert seit Sessionbeginn)
+ganz unten in diesem Dokument bzw. in den `Fortsetzung`-Abschnitten —
+kurz: `cp -c OS9SYS.hda OS9SYS.<name>.hda`, dann
+`Q9_DISK_MODULES="<rbf.mod> <cfide.mod> <dd.mod> <c0.mod>" REF_TAIL_START=0x33d6 REF_TAIL_SPLIT=0x35d2 tools/mkbootfile.sh --disk <ref.boot> <image>`
+(die vier `.mod`-Dateien und `ref.boot` liegen im `$CLAUDE_JOB_DIR/tmp/`
+der vorigen Session — beim Neustart ggf. erneut aus
+`Q9-Flux/OS9Boot.noprot.test` extrahieren, s. Kopfkommentar
+`tools/mkbootfile.sh`).
+
+---
+
+---
+
 ## Was der Kernel heute kann
 
 ### Prozesse und Scheduling
