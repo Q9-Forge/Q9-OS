@@ -2624,3 +2624,58 @@ ist das der Beweis, dass die erwartete Interrupt-/Abschluss-Meldung bei
 RBF nie ankommt.
 
 Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
+
+## Fortsetzung 6: Bit 1 von $2a(a1) wird nachweislich NIE gesetzt
+
+Direkter Speicher-Watch auf `a1+$2a` (das komplette Flag-Byte, ein
+Byte) über den gesamten Testlauf zeigt alle 46 Schreibzugriffe im
+Klartext. Ergebnis: **keiner der beobachteten Werte (`$00, $08, $0c,
+$20, $28`) hat jemals Bit 0 (`$01`) oder Bit 1 (`$02`) gesetzt.**
+
+Das bestätigt endgültig: `efa8`s allererste Prüfung (`btst.b #1,$2a(a1)`)
+schlägt bei allen 7 Aufrufen sofort fehl (Bit 1 ist immer 0) — die
+komplette Nachlade-Logik in `efa8`/`ef38` ist für unseren Testfall
+**totes, nie ausgeführtes Code** (nicht nur "Bit 0 falsch", wie zuvor
+vermutet — schon die äußere Bedingung greift nie).
+
+Auffällig im selben Mitschnitt: ein klares Poll-Paar (`$ee60`/`$eec8`,
+abwechselnd Bit 5 setzend/löschend bei konstant gesetztem Bit 3) —
+sieht nach einer echten Hardware-Status-Warteschleife aus (z. B.
+"warte auf Controller bereit"), läuft mehrfach durch und endet sauber
+bei `$00` (kein Fehlerbit hängen geblieben). Diese Aktivität fällt
+zeitlich in den ERSTEN der beiden `I$Open`-Aufrufe (vermutlich Teil der
+Attach-/Verzeichnissuche für "dd" selbst, nicht der `startup`-Suche).
+
+### Offener Widerspruch (ehrlich benannt)
+
+Wenn Bit 1 nie gesetzt wird UND der reine Adress-Masken-Mechanismus
+(`$32(a1) AND $70(a1)`) den Puffer bei Überschreiten von 512 Byte
+einfach auf denselben, unveränderten 512-Byte-Inhalt zurückspiegeln
+würde, müssten die Einträge ab Offset `$220` dieselben Namen zeigen wie
+ab Offset `$20` (Wrap-Around). Tatsächlich beobachtet wurde aber
+**Nullen** ab ungefähr Offset `$1C0` (Eintrag 14) — weder ein Wrap
+noch echte neue Daten. Diese Diskrepanz ist NICHT aufgelöst.
+
+### Einordnung und Empfehlung
+
+Diese Untersuchung ist inzwischen so tief in proprietären,
+unkommentierten Microware-Binärcode vorgedrungen, dass weitere
+Fortschritte nur noch in sehr kleinen Schritten und mit hohem Aufwand pro
+Erkenntnis möglich sind (mehrere frühere Zwischenstände mussten schon
+korrigiert werden, zuletzt sogar die grundlegende Ladeadresse). Für den
+nächsten Anlauf empfiehlt sich einer von zwei Wegen:
+
+1. **Puffergröße/Layout nochmal nachmessen** -- ob `$c8(a1)` wirklich
+   512 ist oder ein anderer, bisher übersehener Wert, und ob die
+   "Nullen ab Eintrag 14" schlicht bedeuten, dass dort auf Disk
+   tatsächlich nichts steht (d. h. die REALEN Verzeichniseinträge auf
+   diesem Image enden bei Eintrag 13, und `startup` liegt an einer
+   ganz anderen Position/einem anderen Offset als angenommen -- dann
+   wäre wieder ein reiner Pfad-/Positionsfehler die Ursache, kein
+   Nachlade-Bug).
+2. **Vergleichsmessung** mit einem bekannt funktionierenden RBF-Setup
+   (falls verfügbar) oder gezielt die reale Microware-Dokumentation zu
+   diesem RBF-internen Puffer-/Segment-Mechanismus konsultieren, statt
+   ihn ausschließlich aus dem Binärcode zu rekonstruieren.
+
+Alle Emulator-Diagnosen wieder nur temporär, vollständig zurückgesetzt.
