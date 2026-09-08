@@ -3116,3 +3116,84 @@ Session gesichert unter
 
 Alle Emulator-Diagnosen (`Q9_DUMP_ADDR`, `Q9_FREEZE_A0`) wieder
 vollständig zurückgesetzt (`git checkout`).
+
+## Fortsetzung 11: $E076 wirft den korrekten Zeiger weg -- und Fortsetzung 7s Erfolgsmessung muss neu verifiziert werden (2026-09-08, dieselbe Session)
+
+**Zweiter `$D5B2`-Treffer eingeordnet:** derselbe Deskriptor
+(`a0=$2D380`), dieselbe Stack-Tiefe (`sp=$2D360` bei Eintritt) wie beim
+ersten Treffer -- IOMan ruft RBFs Eintrittspunkt also zweimal mit
+identischem Deskriptor auf. Wichtig fuer die Interpretation der
+bisherigen Funde: die in Fortsetzung 10 analysierte Spur (beginnend bei
+Zeile 15810 in `trace_full.txt`) ist -- da der 24576-Eintrag-Ring den
+ERSTEN `$D5B2`-Treffer bereits verdraengt hatte, bevor `$E142` einfror
+-- tatsaechlich schon der ZWEITE Aufruf. Kein Widerspruch zu
+Fortsetzung 10, nur eine Praezisierung.
+
+**Neue Werkzeug-Erweiterung: `a1` im Ringpuffer.** `q9_dbg_tr_a0`
+diente bisher als einziges Adressregister im Trace; `a1` fehlte (die
+Doku hatte das selbst als moegliche Erweiterung vorgesehen). Patch
+analog zu `a0` in `m68krt.h`/`m68krt.c`/`q9boardrun.c` (Feld
+`q9_dbg_tr_a1`, dritte Spalte im Dump). Nach Gebrauch zurueckgesetzt,
+Rezept hier fuer die Rekonstruktion.
+
+### Der eigentliche `$E062`-Aufruf -- und was RBF mit dessen Ergebnis macht
+
+Live mit `a1` mitgeschnitten: RBFs `$E062` (`bsr.w $e2a2` = `trap #0`)
+ist ein weiterer, bisher nicht dokumentierter `F$PrsNam`-Aufruf --
+zeitlich VOR `$E142`, mit `pathPtr=$7589` (dem vollen, unveraenderten
+Pfad "/dd/startup"). Der Trap-Ruecksprung liefert exakt die
+dokumentierte ABI: `a0 = outPastName = $758D` ("startup"-Anfang, s.
+`Q9K_PRSNAM_SCRATCH_PAST`), `a1 = outNameStart = $758A` ("dd"-Anfang,
+`Q9K_PRSNAM_SCRATCH_NAME`) -- **live bestaetigt bei `pc=$7A6A`
+(Ruecksprung im eigenen Kernel), also unser eigener `F$PrsNam`
+funktioniert hier nachweislich korrekt.**
+
+Direkt danach, in RBFs eigenem Code:
+
+```
+00e076: movea.l a1, a0     ; a0 := a1  -- WIRFT $758D weg, a0 wird $758A
+00e078: movea.l $c(a7), a1 ; a1 bekommt einen NEUEN Wert von der eigenen
+                            ;   Aufrufer-Stack-Ecke (nicht mehr der Name)
+```
+
+**Ab hier bleibt `a0` fuer den GESAMTEN Rest dieser RBF-Invocation
+`$758A` -- bis einschliesslich `$E142`.** Vollstaendig durchsucht
+(`grep` ueber die ganze `a1`-Spur zwischen zweitem `$D5B2` und `$E142`):
+`a0` und `a1` nehmen den Wert `$758D` **kein einziges Mal** wieder an.
+`$8(a7)`/`$10(a7)` bei `$E0F0` (die Fortsetzung 7 als "einmalig vor dem
+Scan abgelegter Vergleichs-Startzeiger" identifiziert hatte) werden
+beide direkt aus diesem `a0` gefuellt -- also ebenfalls `$758A`, nicht
+`$758D`.
+
+### Widerspruch zu Fortsetzung 7 -- ungeklärt, wer recht hat
+
+Das steht im Widerspruch zu Fortsetzung 7s Live-Messung ("Der
+Vergleichs-Startzeiger ist jetzt korrekt `$758D`"): wenn der
+Vergleich tatsaechlich bei `$758A` beginnt (`"dd/startup"`, erstes
+Zeichen `'d'`), muesste er gegen einen mit `'s'` beginnenden
+Verzeichniseintrag ("startup") sofort im ERSTEN Byte scheitern -- kein
+Treffer moeglich. Fortsetzung 7s Messung war eine echte
+`Q9_DUMP_ADDR`-Live-Messung, keine Vermutung -- vermutlich existiert
+also eine WEITERE, noch nicht gefundene Stelle, an der `$758D`
+zwischenzeitlich doch wieder hergestellt wird (z. B. ueber `d0`/`d1`
+oder eine Stack-Adresse ausserhalb von `a0`/`a1`, die dieser
+`a0`/`a1`-Trace naturgemaess nicht zeigt), BEVOR die eigentliche
+Vergleichsschleife (`bsr $d662` von `$E124`) beginnt.
+
+**Nächster Schritt:** Fortsetzung 7s Messung mit den jetzt verfuegbaren,
+praeziseren Werkzeugen (`Q9_FREEZE_A0`, `a1`-Tracking) FRISCH
+wiederholen -- konkret: `Q9_WATCH_ADDR` auf die tatsaechliche
+Speicheradresse legen, an der die Vergleichsschleife (`$d662`, ueber
+`$e124` aufgerufen) ihren Namens-Zeiger/Laenge herbekommt (vermutlich
+`$8(a7)`/`$2(a7)` EINER SPAETEREN Stack-Tiefe als bei `$E0F0`, da die
+eigentliche Suchschleife erst nach `$E124` beginnt und zwischen `$E0F0`
+und `$E124` noch einiges passiert, das hier noch nicht Zeile-fuer-Zeile
+durchleuchtet wurde). Ziel: die Stelle finden, an der `$758D`
+tatsaechlich (wieder) gesetzt wird, und diese mit `$E0F0`s
+`$758A`-Snapshot in Bezug setzen -- vermutlich zwei UNABHAENGIGE
+`F$PrsNam`-Ketten (eine fuer den Vergleich, korrekt; eine fuer
+`$E142`s Laengenberechnung, fehlerhaft), deren Trennung noch nicht
+verstanden ist.
+
+Alle Emulator-Diagnosen (`a1`-Tracking) wieder vollständig
+zurückgesetzt (`git checkout`).
