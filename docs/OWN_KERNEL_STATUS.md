@@ -3714,3 +3714,66 @@ bzw. `q9kernel_iopath.c`).
 Reproduktion: `Q9-Flux-68k/local_images/OS9SYS.fix16.hda`,
 RBF_BASE=`$D2DA` (mit dem `F$PrsNam`-Fix). Alle Emulator-Diagnosen
 wieder vollständig zurückgesetzt.
+
+## Fortsetzung 18: P$DIO-Offset exakt bestimmt -- spielt für unseren Fall aber GAR KEINE Rolle; Aufrufer bleibt offen
+
+**WICHTIG (IOMan-Adressen erneut verschoben):** mit dem `F$PrsNam`-Fix
+ist der Kernel 2 Byte kleiner geworden -- das verschiebt NICHT NUR
+RBF (`$D2DC`→`$D2DA`, bereits dokumentiert), sondern JEDES Modul, das
+in der Bootdatei DANACH kommt, also auch **IOMan** (`$AB76`→`$AB74`).
+Alle in Fortsetzung 14/15 genannten IOMan-Adressen (`$BF20`, `$BDC0`,
+`$BDC4`, `$BED4`, `$B6B0`, `$C080`, `$C06E` usw.) sind daher jetzt
+`-2`: `$BF1E`, `$BDBE`, `$BDC2`, `$BED2`, `$B6AE`, `$C07E`, `$C06C`.
+**Lehre bestätigt sich ein drittes Mal: bei JEDEM Kernel-Build ALLE
+nachfolgenden Modul-Basisadressen neu bestimmen, nicht nur RBF.**
+
+### P$DIO exakt lokalisiert
+
+Aus der echten Prozessdeskriptor-Struktur
+(`MWOS/OS9/SRC/DEFS/process.a`) Feld für Feld aufaddiert:
+**`P$DIO` liegt bei Offset `$148`** (328 dezimal) -- exakt die
+Adresse, die IOMans Code bei `$BF2A` (alt `$BF2C`) als einen von zwei
+Kandidaten verwendet (`$148(a4)` vs. `$158(a4)` = `P$DIO+ExecDir`,
+ausgewählt über ein Modus-Bit). Damit ist zweifelsfrei geklärt, WAS
+diese beiden Adressen sind.
+
+**Aber:** dieser gesamte Auswahl-Code (`$BF2A`-`$BF34`) wird nur
+erreicht, wenn der Pfad NICHT mit `/` beginnt (`$BF1E`:
+`cmpi.b #$2f,(a0); beq $bf42` -- bei führendem `/` wird DIREKT zu
+`$bf42` gesprungen, die P\$DIO-Auswahl komplett übersprungen). Da
+unser Pfad `/dd/startup` **immer** mit `/` beginnt, **wird P\$DIO für
+unseren Fall nie gelesen** -- die Frage "ist P\$DIO korrekt gesetzt"
+aus dem "Nächster Schritt" oben ist damit gegenstandslos. Bestätigt
+noch einmal (jetzt auf Registerebene, nicht nur aus der Doku-Regel):
+**die einzige denkbare Korrektur ist, dass der zweite Aufruf einen
+NICHT-absoluten Pfad bekommen muss.**
+
+### Aufrufer-Suche: a4 ist in diesem C-kompilierten Code KEIN verlässlicher Rückverfolgungs-Marker
+
+Versucht, den Aufrufer der `$74xx`-`$77xx`-Schleife (dreifache
+`F\$Link`-Suche "dd"/"rbf"/"cfide" in UNSEREM Kernel, s. Fortsetzung 15)
+über Wechsel von `a4` in RBF-/IOMan-Adressraum zu finden (Methode, die
+bei `Q9K_TrapDispatch`-Handlern zuverlässig funktioniert, weil dort
+a4 laut Konvention immer der Prozessdeskriptor ist). **Hier
+unzuverlässig:** unser von C nach 68k übersetzter Code nutzt `a4`
+einfach als weiteres Skalarregister für Zwischenwerte (u. a. Adressen
+wie `$1400`, `$1484`, `$18800`, `$E2A2`, die rein zufällig in
+RBF-/IOMan-Adressräume fallen) -- nur EIN Wert (`$BD9C`, unmittelbar
+vor der Rückkehr) ist tatsächlich eine Rücksprungadresse. Die
+Schleife selbst läuft komplett innerhalb unseres Kernels, ohne
+erkennbare Trap-Grenze davor im 24576-Eintrag-Fenster -- der
+eigentliche Aufrufer (RBF selbst per `trap #0`, oder IOMan) liegt
+außerhalb des aktuellen Beobachtungsfensters.
+
+**Nächster Schritt:** RBFs EIGENEN Code direkt NACH dem erfolgreichen
+"dd"-Verzeichniseintrag-Treffer (weiterverfolgen ab dem bereits
+bekannten `$D662`/neu `$D660`-Bereich, FD-Aufbau nach Treffer, s.
+Fortsetzung 10) disassemblieren -- dort, nicht in IOMan oder unserem
+Kernel, muss RBF selbst entscheiden, mit welchem Pfad/Parametern es
+den nächsten Ebene-Zugriff auslöst. Ziel: die Stelle finden, an der
+RBF (unverändert) den Pfadzeiger für den rekursiven Zugriff aus dem
+gefundenen Verzeichniseintrag berechnet (vermutlich unter Verwendung
+von `outPastName`, korrekt `$758D`, NICHT dem inzwischen als
+fehlerhaft erkannten `outNameStart`-Pfad über `$E074`).
+
+Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
