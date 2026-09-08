@@ -376,9 +376,22 @@ int Q9K_ProcPrsNam(Q9_u32 pathPtr, Q9_u32 *outNameStart, Q9_u32 *outPastName,
     }
 
     *outNameStart = pathPtr + start;
-    *outPastName  = pathPtr + i;
     *outLen       = (Q9_u16)(i - start);
     *outDelim     = (Q9_u16)p[i];
+
+    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08, "startup"-Verzeichnis-
+     * suche scheiterte trotz korrekt gefundenem Eintrag mit $D8): real
+     * per Live-Messung nachgewiesen (RBFs Namensvergleich benutzt
+     * *outPastName DIREKT als naechsten Suchnamen -- ohne selbst noch
+     * einen Trenner zu ueberspringen). *outPastName muss deshalb schon
+     * HINTER einem eventuellen '/'-Trenner stehen, nicht NUR hinter dem
+     * Namen selbst -- sonst vergleicht der Aufrufer beim naechsten
+     * Namen faelschlich gegen "/startup" (8 Byte, mit Schraegstrich)
+     * statt "startup" (7 Byte), was gegen JEDEN echten Verzeichnis-
+     * eintrag scheitert. Ein NUL-Trenner (Pfadende) wird NICHT
+     * uebersprungen -- sonst liefe outPastName ueber das Stringende
+     * hinaus. */
+    *outPastName = pathPtr + i + ((p[i] == '/') ? 1U : 0U);
     return 1;
 }
 
