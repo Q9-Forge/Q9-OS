@@ -9,84 +9,63 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-08, Pause auf Nutzerwunsch — HIER ZUERST LESEN)
+## ÜBERGABE (2026-09-08, vierte Arbeitssitzung — HIER ZUERST LESEN)
 
 **Branch für die aktuelle Arbeit: `fix/a4-aufruferabhaengig` (PR #13)**,
 NICHT der oben genannte `fix/ccr-error-signaling-flink-funlink`-Stand.
 Der Abschnitt "Was der Kernel heute kann" direkt darunter ist der Stand
-VOR der ganzen `F$Load`-Untersuchung — seither viel weiter gekommen
-(siehe unten). Die komplette, chronologische Messkette steht weiter
-unten im Dokument (ab `## Werkzeugkorrektur…`, dann `Fortsetzung 1`
-bis `Fortsetzung 16`) — das hier ist nur die Kurzfassung für den
-Wiedereinstieg. **Diese Übergabe ersetzt die vorherige vollständig**
-(drei Arbeitssitzungen am selben Tag, 2026-09-08).
+VOR der ganzen `F$Load`-Untersuchung. **Diese Übergabe ersetzt die
+vorherige vollständig** — die alte (Fortsetzung 1-23) endete in einer
+für endgültig gehaltenen Sackgasse ("blackbox-RE ausgeschöpft"), die
+sich in dieser vierten Sitzung als AUFLÖSBAR herausstellte (echter
+RBF-Quelltext war online auffindbar). Volle Kette: `Fortsetzung 1`
+bis `24` weiter unten im Dokument.
 
-**WICHTIG: Q9-Flux liegt jetzt unter `Q9-Forge/Q9-Flux-68k`**
-(umbenannt, gleiches Repo/Remote, wegen der parallelen x86-Portierung
-`Q9-Flux-x86`) — alle Pfade unten entsprechend anpassen.
+**WICHTIG: Q9-Flux liegt unter `Q9-Forge/Q9-Flux-68k`** (umbenannt,
+gleiches Repo/Remote, wegen der parallelen x86-Portierung
+`Q9-Flux-x86`).
 
-**Ausgangslage:** `F$Load`-Meilenstein — ein Testprozess soll
-`/dd/startup` öffnen (echte, unveränderte Microware-Module
-`rbf`/`cfide`/`dd`/`c0`). Scheitert mit `$D8` (E_PNNF, Pfad nicht
-gefunden), obwohl `"startup"` nachweislich im Verzeichnis existiert.
+**$D8-Wurzelursache BEHOBEN (Fortsetzung 24, dieser Fix):**
+`Q9K_ProcPrsNam`s `outPastName` (a0-Ausgabe von `F$PrsNam`) lieferte
+"hinter Name+Trenner" statt "Anfang des Namens" — echter RBF-
+Quelltext (SchDir/RBPNam, l2sources) bewies, dass RBF genau diesen
+a0-Wert als `F$CmpNam`-Vergleichszeiger braucht. Live bestätigt:
+`I$Open("/dd/startup")` liefert jetzt `d0=3` (echte Pfadnummer,
+kein Fehlercode) gegen den unveränderten Microware-RBF.
+
+**Aber: NEUER, nachgelagerter Absturz entdeckt**, der vorher nie
+erreichbar war (weil `$D8` immer schon vorher abbrach). Illegal-
+Instruction-Exception (Vektor 4) bei `PC`=Kernel-Offset `$3C5`, mitten
+in `bsr.w Q9K_DiagWriteD7` (Aufruf zum Drucken von `'['` nach
+erfolgreichem `I$Read`) — sieht nach einer um 1 Byte falschen
+Rücksprungadresse aus, vermutlich in `Q9K_DiagWriteD7`s eigener
+DUART-Busy-Wait-Logik (`q9kernel_entry.a`), noch NICHT untersucht.
+**Das ist die nächste Baustelle**, s. Fortsetzung 24 für alle
+Messdetails.
 
 **Bereits vollständig gelöst und committet:**
 1. **A4-Speicherkorruption behoben** — kein Absturz mehr, Boot läuft
    sauber durch.
 2. **`Q9K_ProcPrsNam`-Bugfix #1** (`outPastName` muss hinter dem
    Trenner stehen, nicht auf ihm) — echter, verifizierter Fix.
-3. **`Q9K_ProcPrsNam`-Bugfix #2** (`outNameStart`/a1 muss laut echter
-   Microware-Doku HINTER dem Namen stehen, nicht an seinem Anfang) —
-   ebenfalls echter, dokumentiert nachgewiesener Fix (`400dfcd`), löst
-   `$D8` aber NICHT allein (s. u.).
+3. **`Q9K_ProcPrsNam`-Bugfix #2** (`outNameStart`/a1 muss HINTER dem
+   Namen stehen, nicht an seinem Anfang) — echter, verifizierter Fix.
+4. **`Q9K_ProcPrsNam`-Bugfix #3, Fortsetzung 24** (`outPastName`/a0
+   muss der ANFANG des Namens sein, nicht "hinter Name+Trenner") —
+   der eigentliche `$D8`-Wurzelursachen-Fix, live gegen den
+   unveränderten RBF verifiziert (`I$Open` liefert jetzt `d0=3`).
 
-**Der `$D8`-Fehlermechanismus ist jetzt exakt bewiesen** (nicht mehr
-nur vermutet), und ein zentraler, dokumentiert nachgewiesener Bug ist
-gefixt — trotzdem bleibt `$D8` bestehen, weil sich ein WIDERSPRUCH
-herausgestellt hat:
-
-- Der echte, byteweise Namensvergleich sitzt bei `pc=$E20A`/neu `$E208`
-  (Ground-Truth-Disassemblierung, XOR-Muster). Er braucht GLEICHZEITIG
-  `a0=$758D` (Zeiger auf Anfang von `"startup"`) UND `d1=7` (dessen
-  Länge).
-- **Vor dem Fix:** `a0` war korrekt (`$758D`), `d1` war falsch (`2`,
-  Länge von `"dd"`).
-- **Nach dem Fix** (live verifiziert): `d1` ist jetzt korrekt (`7`),
-  aber `a0` ist jetzt falsch (`$7594`, ZEIGT HINTER `"startup"`).
-- **Mathematisch bewiesen (Fortsetzung 16): beide können NICHT
-  gleichzeitig aus demselben einzelnen `F$PrsNam`-Aufruf bei
-  `$E142`/neu `$E140` stammen** — ein Aufruf, der `"dd"` parst,
-  liefert zwangsläufig den richtigen Zeiger (zufällig identisch mit
-  dem Anfang von `"startup"`) aber die falsche Länge; ein Aufruf, der
-  `"startup"` selbst parst, liefert die richtige Länge aber einen
-  Zeiger, der schon dahinter liegt.
-
-**Offener nächster Schritt (Stand Fortsetzung 21, WICHTIG -- ersetzt
-den vorherigen "IOMan-Ebene"-Ansatz):** Fortsetzung 17-20s Suche nach
-"wer ruft `Open` ein zweites Mal auf" war eine falsch gestellte
-Frage -- es gibt nur EINEN `I$Open`-Aufruf (von unserem eigenen
-Testprozess), die zwei `$D5B0`-Treffer sind RBFs EIGENE interne
-Rekursion innerhalb dieses einen Aufrufs (bewiesen per neuem
-Sofort-Dump-Werkzeug, s. Fortsetzung 21). Die eigentliche, weiterhin
-gültige Frage ist wieder die aus Fortsetzung 16: **Zeiger UND Länge
-für RBFs Namensvergleich lassen sich nachweislich nicht beide korrekt
-aus einem einzigen `F$PrsNam`-Aufruf herleiten.** Nächster Schritt:
-RBFs Code zwischen dem ersten `F$PrsNam`-Aufruf (liefert korrekt
-`outPastName=$758D`) und `$E074`s `movea.l a1,a0` (wo der korrekte
-Wert verworfen wird) mit dem NEUEN Sofort-Dump-Werkzeug präzise
-durchgehen (Details: Fortsetzung 21 unten).
-
-~~Frühere, inzwischen widerlegte Zwischenhypothese (Fortsetzung 17-20,
-nur noch als Historie relevant):~~ aus der echten Doku (`68k_tech.pdf`,
-Kap. 3, "File Manager I/O Responsibilities") zitiert: *"Open and
-Create begin searching in this [aktuellen] directory when the
-caller's pathlist does NOT begin with a slash (/) character."* Diese
-Beobachtung bleibt sachlich richtig, war aber nicht der Schlüssel zum
-Bug, da es sich (s. o.) um RBFs eigene interne Rekursion handelt, nicht
-um zwei unabhängige `Open`-Aufrufe von außen. `P$DIO` bleibt trotzdem
-irrelevant für unseren Fall (Fortsetzung 18, absoluter Pfad
-übersprint diesen Code komplett). Details zur ganzen Kette:
-`Fortsetzung 15`–`21` unten.
+**Der in Fortsetzung 16 bewiesene "Widerspruch"** (Vergleichszeiger
+und -länge könnten angeblich nicht gleichzeitig aus einem einzigen
+`F$PrsNam`-Aufruf stammen) **war ein Artefakt der damals falschen
+`outPastName`-Formel, kein echter struktureller Widerspruch.** Echter
+RBF-Quelltext (Fortsetzung 24, `SchDir`/`RBPNam`) zeigt, dass RBF a0-
+und a1-Ausgabe von F$PrsNam für ZWEI GETRENNTE Zwecke nutzt (a0 =
+Vergleichszeiger, a1 = Zeiger für den nächsten Aufruf) — beide Werte
+kommen sehr wohl aus demselben einzelnen Aufruf, nur eben nicht so,
+wie hier ursprünglich angenommen. Details zur alten (mittlerweile
+überholten) Verwirrung: `Fortsetzung 10`–`23` unten, zur Auflösung
+`Fortsetzung 24`.
 
 **WICHTIG bei jedem neuen Kernel-Build:** RBF_BASE hat sich mit dem
 Fix bereits einmal verschoben (`$D2DC` → `$D2DA`, Kernel um 2 Byte
@@ -4140,3 +4119,122 @@ funktionierendes Referenzsystem mit ECHTEM Microware-Kernel zum
 Vergleich der exakt gleichen Speicherstellen, falls verfügbar).
 
 Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
+
+## Fortsetzung 24: Durchbruch -- echter RBF-Level-2-Quellcode gefunden, $D8-Wurzelursache tatsächlich behoben; neuer, nachgelagerter Absturz entdeckt (2026-09-08, neue Session)
+
+**Der in Fortsetzung 22/23 als "unauflösbar ohne echten RBF-Quelltext"
+dokumentierte Sackgassen-Befund war korrekt in der Diagnose, aber
+falsch in der Schlussfolgerung "nicht ohne echten Quelltext lösbar" --
+echter RBF-Quelltext war tatsächlich online auffindbar** (Level-2-
+Quellen bei `www.roug.org/havneholmen/retrocomputing/os/os9/l2sources/rbf`,
+6809, aber algorithmisch identisch zum 68K-Port). Der entscheidende
+Fund: `SchDir`/`RBPNam` zeigen unzweideutig, dass `F$PrsNam` GENAU
+EINMAL pro Verzeichnisebene aufgerufen wird und dabei GLEICHZEITIG
+zwei verschiedene Zeiger liefert, die RBF für ZWEI verschiedene
+Zwecke braucht:
+
+```
+RBPNam   os9  F$PrsNam        ; parse normal pathname
+         pshs x                ; X = a0-Ausgabe SOFORT sichern
+         bcc  RBPNam99         ; Erfolg -> X bleibt a0-Ausgabe
+...
+SchDir60 ... lbsr RBPNam
+         std  S.Delim,S        ; D (Trenner:Laenge) UNVERAENDERT von F$PrsNam
+         stx  S.PathPt,S       ; X = a0-Ausgabe -> spaeter VERGLEICHSZEIGER
+         sty  S.NextPt,S       ; Y = a1-Ausgabe -> spaeter NAECHSTER Eingabezeiger
+...
+SchDir80 ... ldx S.PathPt,S    ; Vergleichszeiger
+             ldb S.NameSz,S    ; (= D.b von ganz oben, NIE ueberschrieben)
+             os9 F$CmpNam
+```
+
+**Die Rollenverteilung, die Fortsetzung 16-23 verfehlt hatte:**
+`a0`-Ausgabe von `F$PrsNam` = **Anfang** des aktuellen Namens (hinter
+einem evtl. fuehrenden `/`, RBFs eigener Vergleichszeiger fuer
+`F$CmpNam`); `a1`-Ausgabe = **Ende** des Namens/Trennerposition (RBFs
+Zeiger fuer den NAECHSTEN `RBPNam`-Aufruf, RBF haengt den
+Trenner-Ueberspringschritt SELBST an, `leax 1,X`). Auch das offizielle
+Manual-Zitat ("`(a0)` = pathlist pointer updated past the optional
+`/` character") passt dazu -- war die ganze Zeit vorhanden, wurde in
+Fortsetzung 16 aber falsch auf `a1` statt `a0` bezogen.
+
+### Der eigentliche Bug: `outPastName`/a0, nicht `outNameStart`/a1
+
+`Q9K_ProcPrsNam` (`q9kernel_iopath.c`) lieferte in `*outPastName`
+(a0-Ausgabe) faelschlich "hinter Name UND Trenner" (`pathPtr + i +
+Trenner-Skip`) statt einfach `pathPtr + start` (Anfang des Namens).
+Fix (dieselbe Session):
+
+```c
+*outPastName = pathPtr + start;   /* a0: Namensanfang, s. echter RBF-Quellcode */
+```
+
+`*outNameStart` (a1-Ausgabe, `pathPtr + i`, Fix #2 aus einer
+frueheren Session) war dabei numerisch schon korrekt -- nur die
+Rollenbeschreibung im Kommentar war falsch begruendet. Host-Tests
+(`test_q9kernel_iopath.c`) entsprechend angepasst, inkl. Kettentest
+(naechster Eingabezeiger ist jetzt `nameStart + 1`, NICHT `past`).
+
+### Live-Beweis: der $D8-Widerspruch ist aufgelöst
+
+Kernel neu gebaut (RBF_BASE jetzt `$D2D2`, per `M$ID`-Sync-Wort im
+Ctrl-^-Dump bestätigt), Testabbild `OS9SYS.fix24.hda`. Die echte
+Vergleichsroutine im unveraenderten RBF-Modul per `capstone`
+GEFUNDEN (nicht mehr geraten) durch Byte-Mustersuche in `rbf.mod`
+selbst (`eor.b d2,d0` gefolgt vom bekannten XOR-Vergleichsmuster) --
+Modul-Offset `$f2e`, live also `$D2D2 + $f2e = $E200`:
+
+```
+Q9_FREEZE_PC=0xE200 Q9_FREEZE_PC_N=1 Q9_TRACE_INSTR=1 (erster von 30 Vergleichen):
+  pc=0000e200 d0=00000001 d1=00000007 a0=0000758d a1=00036310 a4=00007100 sp=0002d344
+```
+
+**`a0=$758D` (Anfang von "startup") UND `d1=7` (Länge von "startup")
+-- BEIDE Werte gleichzeitig korrekt.** Das ist exakt der Zustand, den
+Fortsetzung 16 als "aus einem einzigen `F$PrsNam`-Aufruf unmöglich"
+bewiesen hatte -- der Beweis war nicht falsch, nur bezogen auf die
+ALTE, falsche `outPastName`-Formel.
+
+**Bestätigt per `Q9_TRAP_TRACE=1 Q9_TRAP_TRACE_ALL=1`** (mit
+temporär `fflush()` nach jedem Trace-Schreibvorgang ergänzt, sonst
+gehen die letzten Zeilen bei einem Absturz/Kill verloren -- Patch
+wieder zurückgesetzt): der komplette `I$Open("/dd/startup")`-Aufruf
+zeigt genau ZWEI `F$PrsNam`-Aufrufe (`"dd"`, dann `"startup"`, keine
+dritte "Trenner-überspringen"-Runde wie in der 6809-Quelle vermutet)
+und endet mit
+
+    syscallret pc=000074a6 callcode=0084 a0=00007589 d0=00000003 d1=00000002 a2=0000f878
+
+**`d0=3` -- eine echte Pfadnummer, kein Fehlercode.** `I$Open`
+liefert damit zum ersten Mal überhaupt Erfolg für `/dd/startup`
+gegen den unveränderten Microware-RBF. Die `$D8`-Wurzelursache ist
+damit nachweislich behoben.
+
+### Neuer, nachgelagerter Fund: Absturz kurz NACH erfolgreichem Open+Read
+
+Die Konsolenausgabe zeigt trotzdem keinen Erfolg (`Fo...[...]`),
+sondern bricht nach `F` (Open-Test-Start) mit `E` (unser eigener
+`Q9K_ExcTrap`-Handler) ab, danach nur noch die parallele
+`TestProcB`-Endlosschleife. `Q9K_ExcTrap` zeichnet Vektor 4
+(Illegal Instruction) auf `PC=$74C5` auf, reproduzierbar.
+
+Per `capstone` direkt am gebauten `q9kernel`-Modul (nicht geraten --
+Trap-Inline-Wörter korrekt übersprungen, s. etablierte Methodik)
+lokalisiert: `$74C5` = Kernel-Offset `$3C5`, mitten in `bsr.w
+Q9K_DiagWriteD7` (Offset `$3C4`-`$3C7`, druckt `'['` nach
+erfolgreichem `I$Read`) -- die Fault-PC trifft exakt das ZWEITE Byte
+dieser 4-Byte-Instruktion. Das deutet auf eine falsch berechnete
+Rücksprungadresse (um 1 Byte versetzt) irgendwo in der Aufrufkette
+von `Q9K_DiagWriteD7` hin -- vermutlich in dessen eigener
+DUART-Busy-Wait-Logik, nicht im `F$PrsNam`/RBF-Pfad. Noch nicht
+untersucht.
+
+**Nächster Schritt (neue Baustelle, nicht mehr `$D8`):** Ursache des
+Off-by-one-Rücksprungs in/um `Q9K_DiagWriteD7` (`q9kernel_entry.a`)
+finden -- vermutlich unabhängig vom `F$PrsNam`-Fix, aber erst durch
+ihn erstmals erreichbar (vorher brach `I$Open` immer schon vorher mit
+`$D8` ab).
+
+Alle Emulator-Diagnosen (`m68krt.c`/`m68krt.h`/`q9boardrun.c`,
+inkl. `fflush`-Patch) wieder vollständig zurückgesetzt (`git
+checkout`).
