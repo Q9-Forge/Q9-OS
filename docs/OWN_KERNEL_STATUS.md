@@ -3885,3 +3885,111 @@ Methodik-Lehre oben).
 
 Alle Emulator-Diagnosen (`Q9_DBG_TR_SIZE`-Vergrößerung, `a5`-Tracking)
 wieder vollständig zurückgesetzt.
+
+### Werkzeug-Lücke gefunden (für den nächsten Anlauf zu bauen)
+
+Die empfohlene `Q9_WATCH_ADDR`-Prüfung auf `$20(a5)` des zweiten
+Aufrufs (`$2D3D0`) tatsächlich versucht: **2143 Schreibzugriffe
+insgesamt**, aber der 64-Eintrag-Ring zeigt nur die LETZTEN 64 --
+und die sind alle von einer spät im Boot laufenden, unabhängigen
+Aktivität (`pc=$75F2`, schreibt wiederholt `$D8`/`$0`, vermutlich
+Scheduler- oder Fehlerbehandlungs-Schleife NACH dem eigentlichen
+Testlauf). `Q9_WATCH_FREEZE` hilft hier NICHT: es stoppt nur die
+INSTRUKTIONS-Ringpuffer-Aufzeichnung (`q9_dbg_tr_frozen`), nicht die
+CPU selbst und nicht den separaten Schreibzugriffs-Ring
+(`q9_dbg_watch()` prüft `q9_dbg_tr_frozen` gar nicht ab) -- der Boot
+läuft nach dem Freeze-Zeitpunkt einfach weiter und überschreibt die
+relevanten frühen Treffer.
+
+**Fehlendes Werkzeug für den nächsten Anlauf:** eine Variante, die den
+Dump AUTOMATISCH schreibt, sobald `Q9_FREEZE_PC` das erste Mal
+zuschlägt (statt auf den manuellen `Ctrl-^`-Tastendruck ~20s später zu
+warten) -- würde dieses Problem grundsätzlich lösen (Watch-Ring exakt
+zum relevanten Zeitpunkt eingefroren, nicht Sekunden später). Ansatz:
+in `q9_dbg_instr_hook` (`m68krt.c`) beim ERSTEN Setzen von
+`q9_dbg_tr_frozen` direkt `dbg_dump_kernel_globals(board)` aufrufen
+(erfordert Zugriff auf den `q9_board_t*` -- ggf. über einen globalen
+Zeiger, der beim Board-Setup gesetzt wird, aehnlich wie `g_board` an
+anderen Stellen im Code bereits verwendet).
+
+## Fortsetzung 21: DURCHBRUCH -- "zweiter Open-Aufruf" war die falsche Fragestellung; Werkzeug gebaut UND erfolgreich benutzt
+
+**Das oben skizzierte Werkzeug wurde gebaut und funktioniert.** In
+`q9_dbg_instr_hook` (`m68krt.c`) direkt beim ersten Setzen von
+`q9_dbg_tr_frozen` einen sofortigen Datei-Dump des 64-Eintrag-
+Watch-Rings ergänzt (`local_images/q9dbg_watch_snapshot.txt`, aus den
+`m68krt.c`-eigenen Arrays, kein Board-Zugriff nötig) -- löst das in
+Fortsetzung 20 dokumentierte Problem vollständig.
+
+### `$20(a5)` ist einfach `R$a0` -- eine reine Kopie des Trap-Aufrufer-Registers
+
+Mit dem neuen Werkzeug den Schreibzugriff auf `$20(a5)` (`$2D3D0`)
+GENAU zum relevanten Zeitpunkt eingefangen: `pc=$76BA -> $2D3D0 schrieb
+$00007589`. Per Symbolkarte (`l68 -s=`) verortet: **`$76BA` liegt
+exakt in `Q9K_TrapCallExternal`** (`q9kernel_entry.a`) -- UNSERER
+EIGENEN, generischen Trap-Weiterleitungslogik. Quelltext gelesen:
+dieser Code baut den echten OS-9-"User Register Stack Image"-Rahmen
+(`R$d0`.."R$a6`, `process.a`-Layout) per `movem.l d0-d7/a0-a6,(sp)` --
+**`$20(sp)` = `R$a0` ist schlicht eine unveränderte Kopie des
+`a0`-Registers, das der TRAP-AUFRUFER selbst hatte.** Unser Code
+entscheidet hier nichts, er reicht nur ehrlich durch.
+
+### Der wahre Aufrufer: unser EIGENER Testprozess, EIN EINZIGER `I$Open`-Aufruf
+
+`Q9K_TrapCallerPC` (fester Ort `$13E8`, wird bei JEDEM Trap-Eintritt
+gesetzt) ebenso mit dem neuen Werkzeug beobachtet: der Aufrufer-PC
+unmittelbar vor dem `$2D3D0`-Schreibzugriff ist **`$74A4`** -- per
+Symbolkarte verortet: **liegt in `Q9K_TestProcA`, direkt bei der
+EINZIGEN `I\$Open`-Trap-Anweisung unseres Testprogramms**
+(`q9kernel_entry.a`, Kommentar "DIAGNOSE: Dateitest beginnt" ...
+`trap #0 / dc.w $0084`).
+
+**Das ändert die Fragestellung fundamental:** die vorherigen
+Fortsetzungen (17-20) suchten nach "wer ruft `Open` ein zweites Mal
+mit demselben Pfad auf" -- aber **es gibt nur EINEN einzigen,
+expliziten `I$Open`-Aufruf** in diesem ganzen Testlauf, ausgelöst
+von UNSEREM eigenen Testcode. Der vorher gefundene "Dreiklang-Test"
+(`F$Link` dreimal für "dd"/"rbf"/"cfide", Fortsetzung 15/18-20) ist
+**ebenfalls unser eigener Testcode** -- ein bewusster, separater
+Diagnose-Vorab-Check ("Vorprobe: findet unsere EIGENE Modulsuche den
+kompletten Dreiklang?", Kommentar direkt im Quelltext), der VOR dem
+eigentlichen `I$Open` läuft und mit ihm nichts zu tun hat außer der
+zeitlichen Nähe.
+
+**Damit war die ganze "wer baut den zweiten Parameterblock" Suche
+(Fortsetzung 15/17-20) eine falsch gestellte Frage.** Die zwei
+`$D5B0`-Treffer sind RBFs EIGENE interne Rekursion (Level 1 "dd",
+Level 2 "startup") INNERHALB dieses EINEN `I$Open`-Aufrufs -- die
+frühere "RBF läuft nicht direkt davor"-Beobachtung (Fortsetzung 20)
+täuschte, weil RBFs Rekursion zwangsläufig durch UNSERE Trap-
+Weiterleitung (`Q9K_TrapDispatch`/`Q9K_TrapCallExternal`) hindurch
+muss -- das UNTERBRICHT die reine RBF-PC-Kontinuität, ohne dass es
+sich um zwei unabhängige Open-Aufrufe handelt.
+
+### Zurück zur eigentlichen, jetzt wieder gültigen Frage (Fortsetzung 16)
+
+Damit ist die Untersuchung wieder genau dort, wo Fortsetzung 16 sie
+verlassen hat -- mit KLAREREM Verständnis: **innerhalb EINES `I$Open`-
+Aufrufs** ruft RBF `F\$PrsNam` erneut auf (`$E062`/neu `$E060`), um von
+Ebene 1 ("dd") zu Ebene 2 ("startup") zu wechseln -- und Zeiger UND
+Länge für den anschließenden Namensvergleich lassen sich nachweislich
+NICHT beide korrekt aus diesem einen Aufruf herleiten (mathematischer
+Beweis in Fortsetzung 16 bleibt vollständig gültig). Die Suche nach
+einem "zweiten Aufrufer" war unnötig -- der nächste Schritt ist wieder
+RBFs eigener Code direkt nach dem "dd"-Verzeichnistreffer, diesmal mit
+dem Wissen, dass alles innerhalb EINER `Q9K_TrapCallExternal`-
+Aufrufkette passiert.
+
+**Nächster Schritt:** RBFs Code zwischen `$E062`/neu `$E060` (dem
+ERSTEN `F$PrsNam`-Aufruf, liefert korrekt `outPastName=$758D`) und
+`$E0F0`/neu `$E0EE` (wo `a0` in `$8(a7)`/`$10(a7)` gesichert wird, s.
+Fortsetzung 10/13) noch einmal GENAU Zeile für Zeile durchgehen --
+mit dem NEUEN `Q9_DUMP_ADDR`/Sofort-Watch-Snapshot-Werkzeug sollte
+sich jetzt PRÄZISE finden lassen, wo `a0` von `$758D` (korrekt, direkt
+nach dem Trap) auf `$758A`/`$758C` (fehlerhaft, nach `$E074`s
+`movea.l a1,a0`) wechselt, und ob es EINEN Weg gibt, diesen Wechsel
+zu vermeiden oder zu kompensieren, OHNE RBF selbst zu verändern.
+
+Alle Emulator-Diagnosen (Sofort-Dump-Werkzeug) wieder vollständig
+zurückgesetzt -- das Werkzeug selbst (Code-Patch) ist dokumentiert
+und leicht rekonstruierbar (s. o., "Werkzeug-Lücke gefunden").
