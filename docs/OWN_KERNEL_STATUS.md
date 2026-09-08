@@ -61,21 +61,32 @@ herausgestellt hat:
   `"startup"` selbst parst, liefert die richtige Länge aber einen
   Zeiger, der schon dahinter liegt.
 
-**Offener nächster Schritt — jetzt architektonisch statt registerweise
-begründet (Fortsetzung 17):** aus der echten Doku (`68k_tech.pdf`,
+**Offener nächster Schritt (Stand Fortsetzung 21, WICHTIG -- ersetzt
+den vorherigen "IOMan-Ebene"-Ansatz):** Fortsetzung 17-20s Suche nach
+"wer ruft `Open` ein zweites Mal auf" war eine falsch gestellte
+Frage -- es gibt nur EINEN `I$Open`-Aufruf (von unserem eigenen
+Testprozess), die zwei `$D5B0`-Treffer sind RBFs EIGENE interne
+Rekursion innerhalb dieses einen Aufrufs (bewiesen per neuem
+Sofort-Dump-Werkzeug, s. Fortsetzung 21). Die eigentliche, weiterhin
+gültige Frage ist wieder die aus Fortsetzung 16: **Zeiger UND Länge
+für RBFs Namensvergleich lassen sich nachweislich nicht beide korrekt
+aus einem einzigen `F$PrsNam`-Aufruf herleiten.** Nächster Schritt:
+RBFs Code zwischen dem ersten `F$PrsNam`-Aufruf (liefert korrekt
+`outPastName=$758D`) und `$E074`s `movea.l a1,a0` (wo der korrekte
+Wert verworfen wird) mit dem NEUEN Sofort-Dump-Werkzeug präzise
+durchgehen (Details: Fortsetzung 21 unten).
+
+~~Frühere, inzwischen widerlegte Zwischenhypothese (Fortsetzung 17-20,
+nur noch als Historie relevant):~~ aus der echten Doku (`68k_tech.pdf`,
 Kap. 3, "File Manager I/O Responsibilities") zitiert: *"Open and
 Create begin searching in this [aktuellen] directory when the
-caller's pathlist does NOT begin with a slash (/) character."* Ein
-Pfad, der mit `/` beginnt, wird IMMER ab der Wurzel gesucht. Unser
-Pfad ist `/dd/startup` (absolut) — wenn RBF für die zweite Ebene
-intern denselben, unveränderten absoluten Pfad erneut verwendet, MUSS
-er zwangsläufig wieder ab der Wurzel suchen statt innerhalb von "dd".
-**Konkret zu klären:** wird `P$DIO` (Prozessdeskriptor-Feld, laut
-Doku von Chgdir gesetzt) nach dem ersten `$D5B2`-Aufruf korrekt auf
-"dd"s Verzeichnis gesetzt? Und wer genau (RBF selbst oder unser
-eigener Kernel) übergibt den zweiten, absoluten Pfad — Rücksprung-
-adresse `$BD9E` weiter zurückverfolgen. Details: `Fortsetzung 15`–`17`
-unten.
+caller's pathlist does NOT begin with a slash (/) character."* Diese
+Beobachtung bleibt sachlich richtig, war aber nicht der Schlüssel zum
+Bug, da es sich (s. o.) um RBFs eigene interne Rekursion handelt, nicht
+um zwei unabhängige `Open`-Aufrufe von außen. `P$DIO` bleibt trotzdem
+irrelevant für unseren Fall (Fortsetzung 18, absoluter Pfad
+übersprint diesen Code komplett). Details zur ganzen Kette:
+`Fortsetzung 15`–`21` unten.
 
 **WICHTIG bei jedem neuen Kernel-Build:** RBF_BASE hat sich mit dem
 Fix bereits einmal verschoben (`$D2DC` → `$D2DA`, Kernel um 2 Byte
