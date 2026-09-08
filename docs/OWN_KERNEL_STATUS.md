@@ -2452,3 +2452,47 @@ akzeptiert hat).
 
 Alle Emulator-Diagnosen (`Q9_DUMP_ADDR`, `Q9_WATCH_ADDR`) waren wieder
 nur temporär und sind vollständig zurückgesetzt.
+
+## Fortsetzung 3: Nachlademechanismus lokalisiert, aber falsch identifiziert -- Korrektur
+
+Der naheliegende Verdacht "`$fa0a`-Nullfüllung wird durch einen
+fehlschlagenden zweiten Sektor-Lesevorgang ausgelöst" wurde weiter
+zurückverfolgt. Live-Ground-Truth-Bytes (`Q9_DUMP_ADDR` direkt an
+bestätigten PCs, kein Disassemblierungsrisiko):
+
+- Die Bedingung vor der `$32(a1)`-Aktualisierungs-Instruktion (echte
+  Adresse `pc=$e25e`, per Probieren mehrerer Startoffsets sauber
+  ausgerichtet): `d1 = d1 AND $70(a1)` (Maske `$1FF`, passt zur
+  512-Byte-Puffergröße); ist das Ergebnis **Null** (Sektorgrenze
+  erreicht), wird `bsr.w $efa8` aufgerufen, sonst wird die Grenze
+  übersprungen.
+- `$efa8` wird während des Testlaufs nachweislich 7x erreicht
+  (`Q9_COUNT_PC`) — der Mechanismus feuert also.
+- **Korrektur:** `$efa8` selbst ist bei genauer Live-Disassemblierung
+  KEINE Leseroutine, sondern eine kleine Flag-Utility (`andi #$fe,ccr`
+  gefolgt von Bit-Tests/-Änderungen auf `$2a(a1)`, bedingt `bsr.w
+  $ef38`). Die vermutete Kausalkette "Sektorgrenze -> `efa8` liest
+  nach" ist damit **nicht bestätigt** — `efa8` ist offenbar nur ein
+  Nebeneffekt-Aufruf, nicht der eigentliche Lesevorgang.
+- Zusätzliche Beobachtung: der reale Diskinhalt von LSN 66 (direkt aus
+  dem Image gelesen) stimmt NICHT byteweise mit dem, was im
+  RBF-Arbeitspuffer an Position 0 steht — RBF wandelt den
+  On-Disk-Verzeichniseintrag offenbar in ein eigenes
+  Zwischenspeicherformat um, bevor er im Puffer landet. Ein direkter
+  Byte-für-Byte-Vergleich Disk-vs-Puffer ist deshalb NICHT ohne
+  Kenntnis dieses Zwischenformats aussagekräftig.
+
+**Ehrlicher Zwischenstand:** Der exakte Mechanismus, der bei
+Sektorgrenzen den nächsten Sektor tatsächlich nachlädt (falls das für
+unseren Fall überhaupt vorgesehen ist -- ggf. lädt RBF für kleine
+Verzeichnisse doch alles auf einmal, und die Leerstellen ab Eintrag 14
+sind uninitialisierter Rest eines zu klein bemessenen oder nur
+teilweise befüllten Puffers), ist noch nicht gefunden. Die naheliegende
+nächste Spur (`e522`, 32 Treffer -- einmal pro Scan-Durchlauf, deutlich
+öfter als `efa8`) wurde noch nicht untersucht.
+
+**Nächster Schritt:** `e522` live disassemblieren (Ground-Truth-Bytes,
+wie oben) -- das ist der Aufruf, der bei JEDER Scan-Iteration
+(unabhängig von der Sektorgrenze) erfolgt, und damit ein besserer
+Kandidat für den eigentlichen "Eintrag lesen/vergleichen"-Kern als
+`efa8`.
