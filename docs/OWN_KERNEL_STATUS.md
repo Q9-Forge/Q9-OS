@@ -3197,3 +3197,69 @@ verstanden ist.
 
 Alle Emulator-Diagnosen (`a1`-Tracking) wieder vollständig
 zurückgesetzt (`git checkout`).
+
+## Fortsetzung 12: E142s $758A war nie das Problem -- die Suche geht nach $E142 weiter, "$D8" tritt spaeter auf als bisher verfolgt (2026-09-08, dieselbe Session)
+
+**Wichtigste Korrektur dieser Runde:** alle bisherigen Freezes (Fortsetzung
+10/11) frorren GENAU BEI `$E142` ein -- alles danach war reine, NIE
+live verifizierte Vermutung ("meine eigene Disassemblierung ab `$E146`
+wurde faelschlich als Tatsache behandelt"). Frisch mit `Q9_FREEZE_PC`
+auf spaetere Adressen (`$E174`, `$E1F8`) eingefroren, um wirklich zu
+sehen, was passiert:
+
+### `$758A` fuehrt trotzdem zu `$758D` -- E142 ist wahrscheinlich KEIN Bug
+
+`Q9K_ProcPrsNam($758A)` (Eingabe "dd/startup", ohne fuehrenden Trenner)
+liefert **ebenfalls** `outPastName=$758D` -- rechnerisch zwangslaeufig,
+da "dd" mit oder ohne fuehrenden Trenner an derselben Stelle endet.
+Live bestaetigt (`pc=$e146`, direkt nach dem Trap-Ruecksprung):
+**`a0=$758D`, korrekt.** Die in Fortsetzung 10/11 als Bug eingeordnete
+"`$758A` statt `$758D`"-Beobachtung betraf nur den EINGABEWERT von
+`$E142`, nicht dessen Ausgabe -- und die Ausgabe ist fuer die
+nachfolgende Suche richtig. **`$E142` ist damit mit hoher
+Wahrscheinlichkeit KEIN Bug**, sondern RBFs (etwas umstaendlicher, aber
+funktionierender) Weg, den Zeiger fuer die naechste Pfadebene zu
+gewinnen. Fortsetzung 10/11 bleiben als Messungen gueltig, ihre
+BUG-Einordnung an dieser Stelle war voreilig.
+
+### Neuer Fund: der einzige `$E1F8`-Fehlerpfad liefert `$D3`, nicht `$D8`
+
+Von `$E142` aus weiterverfolgt: `$e174` (`lea.l $e0(a1),a2` /
+`clr.b (a2,d2.w)`) wird genau einmal erreicht, mit `a0=$758D` --
+passt. Der Code laeuft weiter durch `$e178`(`bsr $d39c`)→`$e180`
+(`bsr $e26c`)→`$e18e` (Schleifenkopf) und schliesslich (ueber
+`$e272`→ eine Positions-/Laengenpruefung bei `$d92a`-`$d94c`:
+`d2 = $36(a1) - $32(a1)`, verglichen gegen einen Stackwert) zu
+`$e1f8`. **Neu per `d1`-Register-Tracking (Erweiterung von `a1`,
+gleiches Muster) live gemessen: `d1=$000000D3` an diesem einzigen
+`$E1F8`-Treffer** -- ein ANDERER Fehlercode als der gesuchte `$D8`.
+Der `$d92a`-Mechanismus ist eine reine FD-Positions-/Bereichspruefung
+(vermutlich "ist noch mehr vom aktuellen Verzeichnispuffer da, oder
+muss nachgeladen werden") -- WEDER Namensvergleich noch die gesuchte
+`$D8`-Ursache.
+
+**Die Konsolenausgabe zeigt weiterhin `$D8`** (`f000000D8n` im
+Bootlog) -- der `$D3`-Fehler wird also von einem AEUSSEREN Mechanismus
+abgefangen/wiederholt (passt zum aus Fortsetzung 4/5 bekannten
+"Nachlademechanismus"), und der tatsaechliche `$D8` entsteht
+chronologisch SPAETER als alles bisher Verfolgte. Ein Scan von `d1` in
+der `$E1F8`-Spur nach `$D8` fand nur einen Zufallstreffer (`pc=$fa14`
+in CFIDE, `d0=$00123456` -- ein Fuellmuster/Testwert, `d1=$D8` dort
+rein numerischer Zufall, kein Fehlercode).
+
+**Neue Werkzeug-Erweiterung: `d1` im Ringpuffer** (gleiches Muster wie
+`a1`, Fortsetzung 11) -- gehoert ab jetzt zusammen mit `a1` zum
+Werkzeug-Set, beide muessen bei Bedarf neu gepatcht werden (git
+checkout nach Gebrauch, wie ueblich).
+
+**Nächster Schritt:** vom `$D3`-Fehler bei `$E1F8` aus WEITER
+verfolgen (`Q9_FREEZE_PC` auf die RTS-Rueckkehradresse dieses Aufrufs
+oder auf plausible "Nachlade"-Routinen wie die aus Fortsetzung 5
+bekannte Segmentlisten-Logik), um zu sehen, ob/wie der `$D3` in einen
+Retry-Versuch muendet, und DANN den naechsten `$D8`-Kandidaten
+(`Q9_COUNT_PC` auf mehrere Verdachtsadressen gleichzeitig, `d1`-Wert
+jeweils per Freeze pruefen) zu finden. Reproduktion unveraendert:
+`Q9-Flux/local_images/OS9SYS.dbg10.hda`, RBF_BASE=`$D2DC`.
+
+Alle Emulator-Diagnosen (`d1`/`a1`-Tracking) wieder vollständig
+zurückgesetzt (`git checkout`).
