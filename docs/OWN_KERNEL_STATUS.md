@@ -4106,3 +4106,37 @@ Punkt 1 (E142s wahre Rolle liegt woanders) und Punkt 3 (echter
 RBF-Quelltext nötig) als plausible Erklärungen.
 
 Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
+
+## Fortsetzung 23: letzte Blackbox-Ansätze ausgeschöpft -- Sackgasse bestätigt
+
+**Geprüft: gibt es weitere, bisher unentdeckte `F$PrsNam`-Aufrufe?**
+Die echte Trap-Instruktion selbst (`$E2A0`, wird von MEHREREN
+`bsr`-Stellen in RBF angesprungen) auf Gesamt-Trefferzahl geprüft:
+**genau 3 Treffer im ganzen Boot** -- exakt erklärt durch `$E060`
+(2×, davon 1× unrelated/init-Bereich) + `$E140` (1×). Keine versteckte
+vierte Aufrufstelle.
+
+**Geprüft: was passiert GENAU zwischen dem `$E140`-Rücksprung und dem
+Vergleich?** Lückenlos durchgetestet (volle Spur von `$E140` bis
+`$E208`). Dabei eine bisher unbeachtete Zwischenstation gefunden
+(`$E28E`-`$E29E`) -- **stellt sich aber bei genauer Disassemblierung
+als KOMPLETT UNABHÄNGIGE Hilfsfunktion heraus**: berechnet eine
+Pufferadresse rein aus FD-Feldern (`$e(a1) + ($32(a1) AND $70(a1))`,
+"Segmentbasis + aktuelle Position AND Maske") -- hat NICHTS mit dem
+Pfadnamen zu tun. Die schon vorher beobachtete Werte-Übereinstimmung
+war Zufall durch dieselbe Registerkette, keine kausale Verbindung zum
+Suchnamen.
+
+**Ergebnis:** Alle mit vertretbarem Aufwand erreichbaren Blackbox-
+Ansätze sind jetzt ausgeschöpft (dritte/vierte Registerspur, weitere
+Aufrufstellen, lückenlose Zwischenschritt-Analyse). Der in
+Fortsetzung 22 bewiesene strukturelle Widerspruch bleibt die
+endgültige Erkenntnis dieser Untersuchungslinie: **`$D8` bei
+`I$Open("/dd/startup")` lässt sich mit reinem Live-Tracing des
+unveränderten RBF-Binärcodes nicht weiter auflösen.** Eine
+vollständige Lösung würde entweder echten RBF-Quelltext oder eine
+grundlegend andere Herangehensweise erfordern (z. B. ein
+funktionierendes Referenzsystem mit ECHTEM Microware-Kernel zum
+Vergleich der exakt gleichen Speicherstellen, falls verfügbar).
+
+Alle Emulator-Diagnosen wieder vollständig zurückgesetzt.
