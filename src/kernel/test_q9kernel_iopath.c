@@ -190,46 +190,46 @@ int main(void)
 
         ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p1, &nameStart, &past, &len, &delim, &err);
         checkU32("F$PrsNam \"/term\" Erfolg", (Q9_u32)ok, 1);
-        /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08, Fortsetzung 16):
-         * a1/outNameStart liefert laut Technical Manual ("Address of
-         * the last character of the name +1") NICHT den Namensanfang,
-         * sondern -- wie *outPastName -- das Ende, nur OHNE einen
-         * folgenden Trenner zu ueberspringen. Bei "/term" gibt es
-         * keinen Trenner (Trennzeichen ist NUL), deshalb sind hier
-         * a1 und a0 identisch. */
+        /* Fortsetzung 24 (echter RBF-Quellcode SchDir/RBPNam, s.
+         * Kopfkommentar bei Q9K_ProcPrsNam): a1 = hinter dem letzten
+         * Namenszeichen (kein Trenner-Ueberspringen); a0 = Anfang des
+         * Namens (hinter einem evtl. fuehrenden '/'). Bei "/term" gibt
+         * es keinen Trenner (Trennzeichen ist NUL). */
         checkU32("F$PrsNam \"/term\" a1 hinter dem letzten Zeichen ('m'+1)", nameStart, (Q9_u32)(unsigned long)(p1 + 5));
         checkU32("F$PrsNam \"/term\" Laenge 4", (Q9_u32)len, 4);
         checkU32("F$PrsNam \"/term\" Trennzeichen 0", (Q9_u32)delim, 0);
-        checkU32("F$PrsNam \"/term\" a0 hinter dem Namen", past, (Q9_u32)(unsigned long)(p1 + 5));
+        checkU32("F$PrsNam \"/term\" a0 am Namensanfang (\"term\")", past, (Q9_u32)(unsigned long)(p1 + 1));
 
         ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p2, &nameStart, &past, &len, &delim, &err);
         checkU32("F$PrsNam \"/dd/SYS/motd\" liefert erstes Element", (Q9_u32)len, 2);
         checkU32("F$PrsNam \"/dd/...\" Trennzeichen '/'", (Q9_u32)delim, '/');
-        /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08): a0 muss HINTER dem
-         * Trenner stehen (p2+4, beim 'S' von "SYS"), nicht AUF ihm
-         * (p2+3) -- real per Live-Messung nachgewiesen, dass RBF diesen
-         * Zeiger direkt als naechsten Suchnamen weiterverwendet, ohne
-         * selbst noch einen Trenner zu ueberspringen. Mit dem alten
-         * Verhalten (a0 auf dem '/') verglich RBF beim naechsten Namen
-         * faelschlich gegen "/startup" statt "startup" -- das war die
+        /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08, Fortsetzung 24, durch
+         * echten RBF-Quellcode (SchDir/RBPNam) belegt): a0 muss der
+         * ANFANG des aktuellen Namens sein (p2+1, "dd") -- RBF sichert
+         * genau diesen Zeiger (`pshs x` direkt nach dem Trap) als seinen
+         * spaeteren F$CmpNam-Vergleichszeiger. Der fruehere Code lieferte
+         * hier faelschlich "hinter dem Trenner" (p2+4, schon fast beim
+         * naechsten Element) -- dadurch verglich RBF bei jeder zweiten
+         * Verzeichnisebene gegen eine zu weit vorgerueckte Adresse, die
          * wahre Ursache des $D8-Fehlers bei I$Open("/dd/startup"), s.
          * docs/OWN_KERNEL_STATUS.md. */
-        checkU32("F$PrsNam \"/dd/...\" a0 HINTER dem '/' (beim naechsten Namen)",
-                 past, (Q9_u32)(unsigned long)(p2 + 4));
+        checkU32("F$PrsNam \"/dd/...\" a0 am Namensanfang (\"dd\")",
+                 past, (Q9_u32)(unsigned long)(p2 + 1));
+        checkU32("F$PrsNam \"/dd/...\" a1 auf dem Trenner nach \"dd\"",
+                 nameStart, (Q9_u32)(unsigned long)(p2 + 3));
 
-        /* Kettentest: der zurueckgegebene a0-Zeiger muss sich OHNE
-         * weitere Anpassung direkt als naechster Eingabezeiger eignen
-         * (genau die Verkettung, die RBF laut obigem Fund tatsaechlich
-         * nutzt) und "SYS" liefern. */
+        /* Kettentest: RBF haengt den Trenner-Ueberspringschritt selbst an
+         * a1 an (`leax 1,X` auf S.NextPt) -- NICHT an a0, das ist nur der
+         * Vergleichszeiger fuer das AKTUELLE Element. Naechster
+         * Eingabezeiger ist also (a1)+1, nicht a0. */
         {
             Q9_u32 nameStart2 = 0, past2 = 0;
             Q9_u16 len2 = 0, delim2 = 0, err2 = 0;
-            int ok2 = Q9K_ProcPrsNam(past, &nameStart2, &past2, &len2, &delim2, &err2);
+            int ok2 = Q9K_ProcPrsNam(nameStart + 1U, &nameStart2, &past2, &len2, &delim2, &err2);
             checkU32("F$PrsNam Kettenaufruf liefert \"SYS\" (Laenge 3)", (Q9_u32)ok2, 1);
             checkU32("F$PrsNam Kettenaufruf Laenge 3", (Q9_u32)len2, 3);
-            /* a1 zeigt jetzt HINTER "SYS" (auf den '/' vor "motd"), NICHT
-             * mehr auf dessen Anfang, s. Fix-Kommentar oben. */
-            checkU32("F$PrsNam Kettenaufruf a1 hinter \"SYS\" (auf dem '/')", nameStart2, past + 3U);
+            checkU32("F$PrsNam Kettenaufruf a0 am Namensanfang (\"SYS\")", past2, nameStart + 1U);
+            checkU32("F$PrsNam Kettenaufruf a1 auf dem Trenner nach \"SYS\"", nameStart2, nameStart + 4U);
         }
 
         ok = Q9K_ProcPrsNam((Q9_u32)(unsigned long)p3, &nameStart, &past, &len, &delim, &err);
