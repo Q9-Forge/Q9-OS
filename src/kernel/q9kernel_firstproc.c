@@ -278,7 +278,7 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
  * "Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, cursor)") -- hier lokal dupliziert,
  * gebraucht fuer die Prozess-ID-Berechnung (s. Q9K_ProcFork). */
 #ifndef Q9K_PROCDESC_SIZE
-#define Q9K_PROCDESC_SIZE 0x200UL  /* deckt P$Path bis 0x1A8, s. q9kernel_tables.c */
+#define Q9K_PROCDESC_SIZE 0x400UL  /* = P$PrcBody (echte Groesse), s. q9kernel_tables.c */
 #endif
 #ifndef Q9K_PROCPOOL_BASE_ADDR
 #define Q9K_PROCPOOL_BASE_ADDR 0x1204UL

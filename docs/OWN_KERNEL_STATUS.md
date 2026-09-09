@@ -30,27 +30,29 @@ a0-Wert als `F$CmpNam`-Vergleichszeiger braucht. Live bestätigt:
 `I$Open("/dd/startup")` liefert jetzt `d0=3` (echte Pfadnummer,
 kein Fehlercode) gegen den unveränderten Microware-RBF.
 
-**Nachgelagerter Absturz analysiert, Fix aber NOCH NICHT gefunden
-(Fortsetzung 25+26, NICHT committet, aktueller Branch-Stand ist wieder
-sauber auf `9d5e26f`):** Illegal-Instruction-Absturz nach erfolgreichem
-`I$Open`+`I$Read` zurückgeführt auf `Q9K_TrapDispatch`s "Herkunfts-
-prüfung" (Eigen-/Fremdaufrufer), die A4 für die Prüfung selbst
-überschreibt und für Fremdaufrufer NIE wiederherstellt — RBF bekommt
-dadurch bei einem internen `F$SRqMem`-Aufruf unsere Kernel-Modulbasis
-statt seines echten A4-Werts und schreibt in unseren eigenen Code.
-**VIER Fixversuche, ALLE zu identischer Verschlechterung geführt**
-(globale Zelle; Stack-basiert; Stack-basiert + explizite A4-Init vor
-IOMans allererstem Einsprung; nur `Q9K_SysFSRqMem`s eigener Rückgabe-
-pfad chirurgisch geändert, Dispatcher unangetastet) — IOMans
-allererstes Konsolen-Open scheitert danach jedes Mal komplett (`Error
-$0000`), statt wie bisher erst später abzustürzen. Selbst der
-chirurgischste Versuch (der theoretisch NUR `F$SRqMem`-Aufrufer hätte
-betreffen dürfen) schlägt identisch fehl — der Bereich ist fragiler
-als angenommen, evtl. layoutempfindlich wie der historisch dokumentierte
-"14-NOP"-Bug. Alle vier Versuche zurückgesetzt. **Nächster Schritt (vor
-jedem weiteren Versuch!):** `ioman`/`scf` GENAU an der Stelle
-disassemblieren, die "can't open console device" ausgibt, statt weiter
-zu raten — Details in Fortsetzung 25+26.
+**Nachgelagerter Absturz BEHOBEN (Fortsetzung 27):** zwei kleine,
+unabhängige Ursachen — beide NICHT im Trap-Dispatcher, an dem sich fünf
+Versuche vergeblich abgearbeitet hatten:
+1. `Q9K_PROCDESC_SIZE` war `$200` (512 Byte), real sind es `$400` (1024,
+   = `P$PrcBody`, aus `process.a` Feld für Feld nachgerechnet). RBFs
+   völlig legitimer `P$Preempt`-Zugriff bei Offset `$3AC` lief dadurch
+   über das Deskriptorende hinaus. Mitgezogen: drei hartkodierte `>> 9`
+   in `q9kernel_procapi.c`, jetzt abgeleitete Konstante mit
+   Kompilierzeit-Kopplung.
+2. A4 war vor IOMans allererstem Einsprung (`jsr (a1)`) nie gesetzt —
+   IOMan bekam einen zufälligen Restwert statt des Prozessdeskriptors.
+   Ein `movea.l Q9_D_Proc,a4` davor genügt.
+
+**Ergebnis: `I$Open` UND `I$Read` auf `/dd/startup` laufen erstmals ohne
+Absturz durch**, das System läuft danach normal weiter, alle 14
+Host-Testsuiten grün.
+
+**Nächste Baustelle:** `I$Read` meldet Erfolg, überträgt aber noch keine
+Daten (Puffer bleibt auf Null, während die Datei real mit `echo "Excecute
+s…` beginnt). Ausserdem offen: warum IOMan/scf ausgerechnet unsere
+Modulbasis in A4 vertragen und jede "korrekte" A4-Bewahrung ihr
+Konsolen-Open bricht (Kontrollexperiment in Fortsetzung 27 zeigt: es
+liegt am Wert, nicht an der Codeform).
 
 **Bereits vollständig gelöst und committet:**
 1. **A4-Speicherkorruption behoben** — kein Absturz mehr, Boot läuft
@@ -4388,3 +4390,86 @@ echte Disassemblierung VOR weiterem Raten). `ioman.mod`/`scf.mod` als
 eigenständige Dateien liegen noch nicht im `$CLAUDE_JOB_DIR/tmp` dieses
 Jobs -- müssten aus `Q9-Flux-68k/OS9Boot.noprot.test` oder dem
 Referenz-Bootfile extrahiert werden (analog zu `rbf.mod` etc.).
+
+## Fortsetzung 27: GELÖST -- Prozessdeskriptor war halb so groß wie real, A4 vor IOMans Einsprung nie gesetzt; I$Open UND I$Read laufen erstmals durch (2026-09-09)
+
+**Der Absturz aus Fortsetzung 24 ist behoben.** Zwei kleine, unabhängige
+Ursachen — keine davon im Trap-Dispatcher, an dem sich fünf Versuche
+vergeblich abgearbeitet hatten.
+
+### Ursache 1: `Q9K_PROCDESC_SIZE` war 512 statt der realen 1024 Byte
+
+Der vollständige `Q9_TRAP_TRACE_ALL`-Mitschnitt zeigte, dass RBF
+`F$SRqMem` schon beim AUTOMATISCHEN Boot-Attach von `/dd` aufruft (nicht
+erst bei unserem Testprozess) — und die Spur exakt danach abbricht. Die
+RBF-Instruktion bei Modul-Offset `$1bd6` (`addq.l #1,$3ac(a4)`, mit
+passendem `subq.l` nach dem Aufruf) klammert einen internen Treiberaufruf
+ein. Offset `$3AC` ist im echten Layout **`P$Preempt`**
+("process level system-state pre-emption flag") — also völlig legitimes,
+dokumentiertes OS-9-Verhalten.
+
+Aus `MWOS/OS9/SRC/DEFS/process.a` Feld für Feld aufsummiert (org 0 ab
+`P$ID` bis `P$PrcBody`, mit `MemBlks=NumPaths=DefIOSiz=32`):
+**`P$PrcBody` = `$400` (1024 Byte)** — unser Deskriptor war exakt halb so
+groß, jeder `P$Preempt`-Zugriff lief also über sein Ende hinaus.
+
+Mitgezogen: in `q9kernel_procapi.c` steckte die Slot-Größe zusätzlich als
+drei hartkodierte `>> 9`/`<< 9`. Die sind jetzt durch EINE abgeleitete
+Konstante `Q9K_PROCDESC_SHIFT` plus Kompilierzeit-Kopplung ersetzt
+(negative Array-Größe bricht den Build, falls Shift und Größe je wieder
+auseinanderlaufen); dieselbe Kopplung im zugehörigen Host-Test, dessen
+Fake-Pool ebenfalls `0x200` hartkodiert hatte.
+
+### Ursache 2: A4 war beim allerersten Sprung nach IOMan nie initialisiert
+
+Vor `jsr (a1)` (IOMans `M$Exec`-Einsprung) wurde A4 nie gesetzt — IOMan
+bekam einen zufälligen Restwert aus unserem eigenen Bootstrap-Code (live
+gemessen `$7832`/`$7822`/…, je nach Lauf verschieden). Die reale
+OS-9-Konvention verlangt dort den aktuellen Prozessdeskriptor;
+`Q9_D_Proc` hält an dieser Stelle bereits einen gültigen ("Prozess 1"
+existiert vor dem ersten Modulaufruf, per Messung belegt). Ein
+`movea.l Q9_D_Proc,a4` davor genügt.
+
+### Ergebnis, live
+
+```
+RP012Hallo von Q9-OS!  O00000011H123F o[........] n AAAA…
+                                      ^ ^          ^
+                                      | |          nächster Test
+                                      | I$Read erfolgreich (8 Byte)
+                                      I$Open erfolgreich
+```
+
+**Kein `E` (Exception) mehr**, und das System läuft danach normal weiter
+(A/B-Scheduler-Schleife). Alle 14 Host-Testsuiten grün.
+
+### Warum die fünf Dispatcher-Versuche scheitern mussten
+
+Ein Kontrollexperiment hat den letzten offenen Punkt sauber getrennt:
+gleiche Stack-Bewegung wie der Fixversuch, aber A4-Wert unverändert
+(Modulbasis) → läuft fehlerfrei. Es liegt also am **Wert**, nicht an der
+Codeform. Der Kommentar in `Q9K_TrapDispatch` ("A4 bleibt dessen eigener
+Wert, unangetastet") bleibt damit sachlich falsch — die Herkunftsprüfung
+überschreibt A4 tatsächlich —, aber jeder Versuch, das zu "reparieren",
+bricht IOMans Konsolen-Open. Das ist jetzt als bewusste, begründete
+Nicht-Änderung im Code dokumentiert. **Offen bleibt:** warum IOMan/scf
+ausgerechnet unsere Modulbasis vertragen.
+
+### Nächste Baustelle
+
+`I$Read` meldet Erfolg, überträgt aber noch keine Daten: der Testpuffer
+enthält danach 8 Nullbytes, während `/dd/startup` real mit
+`echo "Excecute s…` beginnt (per `os9 copy` gegengeprüft). Der Lesepfad
+ist also noch nicht angeschlossen — deutlich kleineres Thema als der
+bisherige Absturz.
+
+### Werkzeug-Nachtrag: `os9 gen` fällt aus, Direktschreiben ersetzt es
+
+`os9 gen -b=` bricht seit heute mit *"is fragmented"* ab — auch bei
+frischen Klonen, weil das Master-Abbild zwischenzeitlich von außerhalb
+dieser Sitzung beschrieben wurde (Zeitstempel 12:44). Ersatz:
+`$CLAUDE_JOB_DIR/tmp/mkboot_direct.py` schreibt die Kette linear an die
+Boot-LSN aus dem Identification-Sektor und zieht den Längeneintrag mit
+(`0x15`-`0x17` LSN, `0x18`-`0x19` Länge, Sektorgröße 512) — exakt das in
+der Projektnotiz "Q9 Testimage-Bootkette" dokumentierte Verfahren, mit
+Größenprüfung gegen den belegten Bereich.
