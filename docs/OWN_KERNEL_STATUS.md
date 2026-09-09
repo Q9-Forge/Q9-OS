@@ -9,23 +9,20 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-08, vierte Arbeitssitzung — HIER ZUERST LESEN)
+## ÜBERGABE (2026-09-09, fünfte Arbeitssitzung — HIER ZUERST LESEN)
 
 **Branch für die aktuelle Arbeit: `fix/a4-aufruferabhaengig` (PR #13)**,
 NICHT der oben genannte `fix/ccr-error-signaling-flink-funlink`-Stand.
 Der Abschnitt "Was der Kernel heute kann" direkt darunter ist der Stand
 VOR der ganzen `F$Load`-Untersuchung. **Diese Übergabe ersetzt die
-vorherige vollständig** — die alte (Fortsetzung 1-23) endete in einer
-für endgültig gehaltenen Sackgasse ("blackbox-RE ausgeschöpft"), die
-sich in dieser vierten Sitzung als AUFLÖSBAR herausstellte (echter
-RBF-Quelltext war online auffindbar). Volle Kette: `Fortsetzung 1`
-bis `24` weiter unten im Dokument.
+vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `25` weiter
+unten im Dokument.
 
 **WICHTIG: Q9-Flux liegt unter `Q9-Forge/Q9-Flux-68k`** (umbenannt,
 gleiches Repo/Remote, wegen der parallelen x86-Portierung
 `Q9-Flux-x86`).
 
-**$D8-Wurzelursache BEHOBEN (Fortsetzung 24, dieser Fix):**
+**$D8-Wurzelursache BEHOBEN (Fortsetzung 24, committet als `7de5410`):**
 `Q9K_ProcPrsNam`s `outPastName` (a0-Ausgabe von `F$PrsNam`) lieferte
 "hinter Name+Trenner" statt "Anfang des Namens" — echter RBF-
 Quelltext (SchDir/RBPNam, l2sources) bewies, dass RBF genau diesen
@@ -33,15 +30,21 @@ a0-Wert als `F$CmpNam`-Vergleichszeiger braucht. Live bestätigt:
 `I$Open("/dd/startup")` liefert jetzt `d0=3` (echte Pfadnummer,
 kein Fehlercode) gegen den unveränderten Microware-RBF.
 
-**Aber: NEUER, nachgelagerter Absturz entdeckt**, der vorher nie
-erreichbar war (weil `$D8` immer schon vorher abbrach). Illegal-
-Instruction-Exception (Vektor 4) bei `PC`=Kernel-Offset `$3C5`, mitten
-in `bsr.w Q9K_DiagWriteD7` (Aufruf zum Drucken von `'['` nach
-erfolgreichem `I$Read`) — sieht nach einer um 1 Byte falschen
-Rücksprungadresse aus, vermutlich in `Q9K_DiagWriteD7`s eigener
-DUART-Busy-Wait-Logik (`q9kernel_entry.a`), noch NICHT untersucht.
-**Das ist die nächste Baustelle**, s. Fortsetzung 24 für alle
-Messdetails.
+**Nachgelagerter Absturz analysiert, Fix aber NOCH NICHT gefunden
+(Fortsetzung 25, NICHT committet, aktueller Branch-Stand ist wieder
+sauber auf `7de5410`):** Illegal-Instruction-Absturz nach erfolgreichem
+`I$Open`+`I$Read` zurückgeführt auf `Q9K_TrapDispatch`s "Herkunfts-
+prüfung" (Eigen-/Fremdaufrufer), die A4 für die Prüfung selbst
+überschreibt und für Fremdaufrufer NIE wiederherstellt — RBF bekommt
+dadurch bei einem internen `F$SRqMem`-Aufruf unsere Kernel-Modulbasis
+statt seines echten A4-Werts und schreibt in unseren eigenen Code.
+**Zwei Fixversuche (globale Zelle, dann Stack-basiert) beide zu
+massiver Verschlechterung geführt** — IOMans allererstes Konsolen-Open
+scheitert danach komplett (`Error $0000`), statt wie bisher erst
+später abzustürzen. Beide Versuche zurückgesetzt. **Nächster Schritt:**
+A4s tatsächlichen Wert bei scfs allererstem Trap (Konsolen-Open) LIVE
+MESSEN, bevor ein dritter Fixversuch unternommen wird — Details und
+Hypothese in Fortsetzung 25.
 
 **Bereits vollständig gelöst und committet:**
 1. **A4-Speicherkorruption behoben** — kein Absturz mehr, Boot läuft
@@ -4238,3 +4241,82 @@ ihn erstmals erreichbar (vorher brach `I$Open` immer schon vorher mit
 Alle Emulator-Diagnosen (`m68krt.c`/`m68krt.h`/`q9boardrun.c`,
 inkl. `fflush`-Patch) wieder vollständig zurückgesetzt (`git
 checkout`).
+
+## Fortsetzung 25: DiagWriteD7-Absturz auf A4-Herkunftspruefung zurueckgefuehrt -- Fix bricht Konsolen-Open, zwei Versuche verworfen (2026-09-08/09, neue Session)
+
+**Ausgangspunkt:** der in Fortsetzung 24 gefundene Illegal-Instruction-
+Absturz (PC=$74C5, mitten in `bsr.w Q9K_DiagWriteD7`) ist KEINE falsche
+Ruecksprungadresse, sondern echte Selbstmodifikation: Byte $74AF wird
+von $00 auf $01 veraendert (aus `bsr.w` wird `bsr.b +1`, landet mitten
+im Folgebefehl).
+
+### Wurzelursache gefunden: A4-Herkunftspruefung in Q9K_TrapDispatch
+
+Per `Q9_WATCH_ADDR=0x74AF` (Treffer-Liste) auf den Schreiber
+zurueckverfolgt: RBFs Code (Modul-Offset `$1bd6` im unveraenderten
+`rbf.mod`, `addq.l #1,$3ac(a4)`) schreibt dort -- WEIL `a4` bei diesem
+Aufruf faelschlich unsere eigene Kernel-Modulbasis (`$7100`) enthaelt
+statt eines echten Zeigers (`$7100+$3ac=$74ac`, exakt der beobachtete
+Fehlerort). Per `Q9_FREEZE_PC_N` ueber mehrere Treffer derselben
+Instruktion bestaetigt: `a4` wechselt zwischen `$19400` (echter
+Prozessdeskriptor) und `$7100` (unsere Modulbasis) je nach Aufrufkontext
+-- kein Zufall, sondern strukturell.
+
+Ursache in `Q9K_TrapDispatch`s "HERKUNFTSPRUEFUNG" (Kommentar "sechster
+A4-Anlauf", 2026-09-07) gefunden: `lea Q9K_ModuleStart(pc),a4 / suba.l
+#Q9K_ModuleHeaderSize,a4` ueberschreibt A4 fuer die Eigen-/Fremd-
+Pruefung selbst -- und NICHTS stellt den echten Aufrufer-Wert vor `bcc
+Q9K_TrapCallForeignCaller` wieder her, obwohl der dortige Kommentar
+("A4 bleibt dessen eigener Wert, unangetastet") genau das behauptet.
+Trifft ein Fremdaufrufer (RBF, ueber einen internen `F$SRqMem`-Trap
+waehrend seiner eigenen `I$Open`-Verarbeitung) auf diesen Pfad, bekommt
+er faelschlich unsere Modulbasis statt seines echten `a4` zurueck.
+
+### Zwei Fixversuche, BEIDE verworfen -- Konsolen-Open bricht komplett
+
+**Versuch 1:** echten Aufrufer-A4 in der bestehenden globalen Zelle
+`Q9K_TrapA4Save` rettten (vor der Pruefung sichern, im
+Fremdaufrufer-Zweig zurueckholen). **Ergebnis: massive Verschlechterung**
+-- IOMans allererstes `/term`-Konsolen-Open scheitert danach sofort
+mit `"ioman: can't open console device: Error $0000"` (vorher lief der
+Boot bis zu unserem eigenen Dateitest durch). Vermutung: `Q9K_TrapA4Save`
+ist eine EINZELNE, nicht wiedereintrittsfeste Zelle -- Traps
+schachteln sich (I$Open ruft selbst `F$SRqMem` per Trap auf, waehrend
+der aeussere Trap "in Arbeit" ist), der innere Aufruf ueberschreibt die
+Zelle, bevor der aeussere sie zurueckholt.
+
+**Versuch 2:** A4 stattdessen auf dem Stack retten (`move.l a4,-(sp)` /
+`movea.l (sp)+,a4`) -- naturgemaess wiedereintrittsfest, jede
+Verschachtelungsebene bekommt ihren eigenen Rettungsplatz.
+**Ergebnis: IDENTISCHER Fehler** ("Error $0000" beim Konsolen-Open,
+Byte-genau gleiches Log wie Versuch 1). Das widerlegt die
+Reentranz-Hypothese vollstaendig -- das Problem liegt NICHT an der Art
+der Zwischenspeicherung.
+
+### Der eigentliche Widerspruch (noch ungeloest)
+
+Beide Versuche beweisen: **"den echten Aufrufer-A4-Wert wiederherstellen"
+ist fuer den Konsolen-Open-Aufruf (scf) grundsaetzlich falsch**, nicht
+nur falsch implementiert -- unabhaengig von der Rettungsmethode. Gleich-
+zeitig beweist die urspruengliche Messung: **RBFs interner
+`F$SRqMem`-Aufruf braucht seinen echten A4-Wert, NICHT unsere
+Modulbasis** (sonst die beobachtete Speicherkorruption).
+
+Zwei scheinbar widerspruechliche Anforderungen an DENSELBEN Codepfad.
+Denkbare Erklaerung (noch nicht verifiziert): `scf`s eigener A4-Wert
+VOR dem allerersten Trap ist selbst schon undefiniert/Muell (ganz frueher
+Boot-Zeitpunkt, vor jeder Prozesserzeugung) -- unsere Modulbasis als
+Ersatzwert waere dann zufaellig "weniger kaputt" als das ECHTE,
+unbrauchbare Original. Noch NICHT geprueft: was `scf`s A4 tatsaechlich
+VOR seinem allerersten Trap enthaelt (per Live-Messung an der
+Herkunftspruefungs-Stelle, fuer GENAU diesen frühen Aufruf).
+
+**Beide Versuche zurueckgesetzt** (`git checkout`), Branch ist wieder
+exakt auf Commit `7de5410` (der F$PrsNam-Fix bleibt unangetastet
+gueltig). Kein Regressionsrisiko fuer den bereits erreichten Stand.
+
+**Naechster Schritt:** A4 an der Herkunftspruefungs-Stelle fuer scfs
+allerersten Trap (Konsolen-Open) live messen, BEVOR ein weiterer
+Fixversuch unternommen wird -- die beiden bisherigen Versuche waren
+zu blind (gleiche Behandlung fuer alle Fremdaufrufer angenommen, ohne
+vorher zu pruefen, ob das ueberhaupt plausibel ist).
