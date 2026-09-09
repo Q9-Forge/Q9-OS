@@ -31,20 +31,26 @@ a0-Wert als `F$CmpNam`-Vergleichszeiger braucht. Live bestätigt:
 kein Fehlercode) gegen den unveränderten Microware-RBF.
 
 **Nachgelagerter Absturz analysiert, Fix aber NOCH NICHT gefunden
-(Fortsetzung 25, NICHT committet, aktueller Branch-Stand ist wieder
-sauber auf `7de5410`):** Illegal-Instruction-Absturz nach erfolgreichem
+(Fortsetzung 25+26, NICHT committet, aktueller Branch-Stand ist wieder
+sauber auf `9d5e26f`):** Illegal-Instruction-Absturz nach erfolgreichem
 `I$Open`+`I$Read` zurückgeführt auf `Q9K_TrapDispatch`s "Herkunfts-
 prüfung" (Eigen-/Fremdaufrufer), die A4 für die Prüfung selbst
 überschreibt und für Fremdaufrufer NIE wiederherstellt — RBF bekommt
 dadurch bei einem internen `F$SRqMem`-Aufruf unsere Kernel-Modulbasis
 statt seines echten A4-Werts und schreibt in unseren eigenen Code.
-**Zwei Fixversuche (globale Zelle, dann Stack-basiert) beide zu
-massiver Verschlechterung geführt** — IOMans allererstes Konsolen-Open
-scheitert danach komplett (`Error $0000`), statt wie bisher erst
-später abzustürzen. Beide Versuche zurückgesetzt. **Nächster Schritt:**
-A4s tatsächlichen Wert bei scfs allererstem Trap (Konsolen-Open) LIVE
-MESSEN, bevor ein dritter Fixversuch unternommen wird — Details und
-Hypothese in Fortsetzung 25.
+**VIER Fixversuche, ALLE zu identischer Verschlechterung geführt**
+(globale Zelle; Stack-basiert; Stack-basiert + explizite A4-Init vor
+IOMans allererstem Einsprung; nur `Q9K_SysFSRqMem`s eigener Rückgabe-
+pfad chirurgisch geändert, Dispatcher unangetastet) — IOMans
+allererstes Konsolen-Open scheitert danach jedes Mal komplett (`Error
+$0000`), statt wie bisher erst später abzustürzen. Selbst der
+chirurgischste Versuch (der theoretisch NUR `F$SRqMem`-Aufrufer hätte
+betreffen dürfen) schlägt identisch fehl — der Bereich ist fragiler
+als angenommen, evtl. layoutempfindlich wie der historisch dokumentierte
+"14-NOP"-Bug. Alle vier Versuche zurückgesetzt. **Nächster Schritt (vor
+jedem weiteren Versuch!):** `ioman`/`scf` GENAU an der Stelle
+disassemblieren, die "can't open console device" ausgibt, statt weiter
+zu raten — Details in Fortsetzung 25+26.
 
 **Bereits vollständig gelöst und committet:**
 1. **A4-Speicherkorruption behoben** — kein Absturz mehr, Boot läuft
@@ -4320,3 +4326,65 @@ allerersten Trap (Konsolen-Open) live messen, BEVOR ein weiterer
 Fixversuch unternommen wird -- die beiden bisherigen Versuche waren
 zu blind (gleiche Behandlung fuer alle Fremdaufrufer angenommen, ohne
 vorher zu pruefen, ob das ueberhaupt plausibel ist).
+
+## Fortsetzung 26: Zwei weitere A4-Fixversuche, beide gescheitert -- Konsolen-Init-Bereich extrem fragil, vier Fehlschläge insgesamt (2026-09-09, dieselbe Session)
+
+Fortsetzung an Fortsetzung 25: Manual-Recherche ergab, dass sowohl
+`F$SRqMem` als auch `F$SSvc` laut Technical Manual **keinen**
+A4-Rückgabewert definieren ("Output" listet nur `d0`/`(a2)` bzw. gar
+nichts) -- A4 MÜSSTE also für Fremdaufrufer grundsätzlich unverändert
+bleiben, nicht neu gesetzt werden. Das würde Fortsetzung 25s ersten
+Fixversuch (A4 unverändert lassen) eigentlich bestätigen. Per Live-
+Messung an `Q9K_TrapDispatch`s Herkunftsprüfung zusätzlich
+herausgefunden: der ECHTE, ursprüngliche A4-Wert des Aufrufers ist bei
+IOMans allererstem Trap (`F$SSvc`, ganz am Boot-Anfang) selbst schon
+Müll (`$7832`/`$7822`/… -- je nach Lauf verschieden, aber immer eine
+Adresse INNERHALB unseres eigenen Kernels) -- **weil A4 vor dem
+allerersten Sprung nach IOMan (`jsr (a1)` in `q9kernel_entry.a`)
+niemals explizit gesetzt wird.** Per Live-Messung `Q9_D_Proc` hält an
+dieser Stelle aber bereits einen echten, gültigen Deskriptor (`$19400`).
+
+**Versuch 3 (kombiniert):** (a) A4 in `Q9K_TrapDispatch`s Fremdaufrufer-
+Zweig wiedereintrittsfest auf dem Stack retten (Fortsetzung 25s
+zweiter, verworfener Ansatz, hier erneut) UND (b) zusätzlich A4 VOR dem
+allerersten `jsr (a1)`-Sprung nach IOMan explizit auf `Q9_D_Proc`
+setzen (die fehlende Grundinitialisierung beheben). **Ergebnis:
+IDENTISCHER Fehlschlag** ("ioman: can't open console device: Error
+$0000", exakt wie in Fortsetzung 25). Die zusätzliche Initialisierung
+allein löst das Problem also nicht, UND die Kombination mit der
+Stack-Rettung bricht weiterhin.
+
+**Versuch 4 (maximal chirurgisch):** `Q9K_TrapDispatch` komplett
+UNANGETASTET gelassen (kein Risiko für andere Aufrufer) -- stattdessen
+NUR in `Q9K_SysFSRqMem`s eigenem Rückgabepfad (vor beiden `rts`,
+Erfolg und Fehlschlag) `A4` explizit auf `Q9_D_Proc` gesetzt, als
+Ersatz für den durch die Herkunftsprüfung ohnehin schon zerstörten
+Wert. **Ergebnis: IDENTISCHER Fehlschlag**, obwohl diese Änderung
+JEDEN anderen Aufrufer/Callcode gar nicht berühren sollte.
+
+### Schlussfolgerung: Bereich ist fragiler als angenommen
+
+Vier von vier Versuchen (Fortsetzung 25 + 26), so unterschiedlich sie
+auch waren (globale Zelle, Stack, `Q9_D_Proc` dispatcher-weit,
+`Q9_D_Proc` nur in einem einzigen Handler), scheitern am SELBEN
+Symptom. Das spricht gegen "A4-Semantik falsch gewählt" als alleinige
+Erklärung -- entweder ist der Konsolen-Init-Pfad auf eine Art
+zeitkritisch/layoutempfindlich, die selbst chirurgische Änderungen weit
+entfernter Funktionen durchschlagen lässt (ähnlich dem historisch
+dokumentierten "14-NOP-Bug" im Trap-Pfad, s. `Q9K_TrapDispatch`s
+Interrupt-Sperr-Kommentar), oder IOMans/scfs tatsächliche Erwartung an
+A4 an dieser Stelle unterscheidet sich von ALLEN vier hier probierten
+Hypothesen.
+
+**Alle vier Versuche zurückgesetzt**, Branch wieder exakt auf
+`9d5e26f`. Kein Regressionsrisiko für den `$D8`-Fix.
+
+**Empfehlung für den nächsten Anlauf:** kein fünfter Blindversuch mehr
+ohne vorherige Disassemblierung von `scf`/`ioman` GENAU an der Stelle,
+die "can't open console device" ausgibt (welches Feld wird tatsächlich
+geprüft, welcher Wert führt zum Fehlschlag?) -- dieselbe Methodik, die
+bei Fortsetzung 24 den `$D8`-Bug wirklich gelöst hat (echten Quelltext/
+echte Disassemblierung VOR weiterem Raten). `ioman.mod`/`scf.mod` als
+eigenständige Dateien liegen noch nicht im `$CLAUDE_JOB_DIR/tmp` dieses
+Jobs -- müssten aus `Q9-Flux-68k/OS9Boot.noprot.test` oder dem
+Referenz-Bootfile extrahiert werden (analog zu `rbf.mod` etc.).
