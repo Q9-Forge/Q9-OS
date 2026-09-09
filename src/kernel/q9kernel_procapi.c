@@ -37,8 +37,21 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PROCPOOL_COUNT_ADDR 0x1220UL
 #endif
 #ifndef Q9K_PROCDESC_SIZE
-#define Q9K_PROCDESC_SIZE 0x200UL
+#define Q9K_PROCDESC_SIZE 0x400UL
 #endif
+/* Schiebeweite statt Multiplikation/Division (kein 32-Bit-Helfer im
+ * fruehen Kernelpfad, s. Q9K_ProcLookup unten). FRUEHER waren hier drei
+ * hartkodierte "9" verstreut -- beim Vergroessern von 0x200 auf 0x400
+ * (2026-09-09, Fortsetzung 27) waeren sie beinahe stehengeblieben und
+ * haetten jede PID<->Slot-Umrechnung still halbiert. Deshalb jetzt EINE
+ * abgeleitete Konstante plus Kompilierzeit-Kopplung: passt der Shift
+ * nicht mehr zur Groesse, schlaegt der Build mit einer negativen
+ * Array-Groesse fehl (C89-tauglich, kein static_assert noetig). */
+#ifndef Q9K_PROCDESC_SHIFT
+#define Q9K_PROCDESC_SHIFT 10UL   /* 0x400 = 1 << 10 */
+#endif
+typedef char Q9K_ProcDescShiftMatchesSize[
+    ((1UL << Q9K_PROCDESC_SHIFT) == Q9K_PROCDESC_SIZE) ? 1 : -1];
 #ifndef Q9K_PROCDESC_STATE_OFF
 #define Q9K_PROCDESC_STATE_OFF 0x1DUL
 #endif
@@ -103,7 +116,7 @@ static int Q9K_ProcIsAllocated(Q9_u32 desc)
 }
 
 /* Prozess-ID -> belegter Pool-Slot, 0 bei ungueltiger oder freier ID.
- * Q9K_PROCDESC_SIZE ist bewusst eine Zweierpotenz (512), deshalb kein
+ * Q9K_PROCDESC_SIZE ist bewusst eine Zweierpotenz (1024), deshalb kein
  * 32-Bit-Multiplikationshelper im fruehen Kernelpfad erforderlich. */
 Q9_u32 Q9K_ProcLookup(Q9_u16 pid)
 {
@@ -114,7 +127,7 @@ Q9_u32 Q9K_ProcLookup(Q9_u16 pid)
     if (pid == 0 || (Q9_u32)pid > count || base == 0)
         return 0;
 
-    desc = base + (((Q9_u32)pid - 1UL) << 9); /* 0x200 = 1 << 9 */
+    desc = base + (((Q9_u32)pid - 1UL) << Q9K_PROCDESC_SHIFT);
     return Q9K_ProcIsAllocated(desc) ? desc : 0;
 }
 
@@ -132,11 +145,11 @@ Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc)
 
     delta = desc - base;
     if ((delta & (Q9K_PROCDESC_SIZE - 1UL)) != 0
-        || (delta >> 9) >= count
+        || (delta >> Q9K_PROCDESC_SHIFT) >= count
         || !Q9K_ProcIsAllocated(desc))
         return 0;
 
-    return (Q9_u16)((delta >> 9) + 1UL);
+    return (Q9_u16)((delta >> Q9K_PROCDESC_SHIFT) + 1UL);
 }
 
 void Q9K_SysGProcPImpl(void)
