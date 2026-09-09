@@ -1040,6 +1040,17 @@ Q9K_TestProcA:
         bcs     Q9K_TestIOManLinkFail
         movea.l a6,a5                        * eigenes a6 sichern
         movea.l #0,a6                          * reale Kernel-Global-Basis fuer IOMans eigenen Code
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-09, Fortsetzung 27, zweiter Teil
+* des A4-Fixes in Q9K_TrapDispatch): A4 wurde hier NIE gesetzt. IOMan
+* bekam beim Einsprung also einen zufaelligen Restwert aus unserem
+* eigenen Bootstrap-Code (live gemessen: $7832/$7822/... -- je nach Lauf
+* verschieden, immer eine Adresse in unserem Modul) statt der realen
+* OS-9-Konvention "a4 = aktueller Prozessdeskriptor". Solange der
+* Dispatcher A4 ohnehin ueberschrieb, fiel das nicht auf; sobald er ihn
+* korrekt BEWAHRT, wuerde IOMan den Muellwert dauerhaft weiterreichen.
+* Q9_D_Proc haelt hier bereits einen gueltigen Deskriptor (Prozess 1
+* existiert vor diesem ersten Modulaufruf -- per Live-Messung belegt).
+        movea.l Q9_D_Proc,a4                    * A4 = aktueller Prozessdeskriptor (echte Konvention)
         jsr     (a1)                             * IOMan-Einsprungpunkt (a1 = M$Exec, reale F$Link-Ausgabe)
         movea.l a5,a6                              * eigenes a6 unbedingt wiederherstellen
 
@@ -1653,6 +1664,31 @@ Q9K_TrapDispatch:
 * per Messung entdeckt: gelesener "M$Size"-Wert war offensichtlicher
 * Muell). Um Q9K_ModuleHeaderSize korrigiert zeigt a4 jetzt auf den
 * WAHREN Modulanfang (M$ID), "4(a4)" liest dort das echte M$Size-Feld.
+* WICHTIGE MESSUNG (2026-09-09, Fortsetzung 27) -- der Kommentar unten
+* ("A4 bleibt dessen eigener Wert, unangetastet") ist SACHLICH FALSCH:
+* die Pruefung hier ueberschreibt A4 mit unserer Modulbasis, und fuer
+* Fremdaufrufer stellt das niemand wieder her. Laut Technical Manual
+* definieren weder F$SRqMem noch F$SSvc einen A4-Rueckgabewert (Output
+* listet nur d0/a2 bzw. gar nichts), A4 MUESSTE also unveraendert
+* zurueckgehen.
+*
+* TROTZDEM NICHT "REPARIERT" -- und das ist Absicht: FUENF Versuche, A4
+* hier korrekt zu bewahren oder zu setzen (globale Zelle, Stack, auf
+* Q9_D_Proc setzen, nur in Q9K_SysFSRqMem, sowie stack-basiert plus
+* korrekter Deskriptorgroesse), brachen JEDES MAL IOMans allererstes
+* Konsolen-Open (`Error $0000`). Ein Kontrollexperiment mit identischer
+* Stack-Bewegung, aber unveraendertem A4-Wert lief dagegen sauber durch
+* -- es liegt also am WERT, nicht an der Codeform. Warum IOMan/scf
+* ausgerechnet unsere Modulbasis vertragen, ist noch ungeklaert.
+*
+* Der eigentliche Schaden (RBF klammert einen internen Treiberaufruf mit
+* "addq.l #1,$3ac(a4)"/"subq.l #1,$3ac(a4)"; Offset $3AC = P$Preempt im
+* echten Layout) ist stattdessen an zwei anderen Stellen behoben:
+* Q9K_PROCDESC_SIZE auf die echten 0x400 (q9kernel_tables.c) und A4 vor
+* IOMans allererstem Einsprung ueberhaupt erst initialisiert (s. "jsr
+* (a1)" weiter oben in dieser Datei). Damit laufen I$Open UND I$Read auf
+* /dd/startup erstmals sauber durch. Details: docs/OWN_KERNEL_STATUS.md
+* Fortsetzung 25-27.
         lea     Q9K_ModuleStart(pc),a4               * a4 = Ende des generierten Modulkopfs
         suba.l  #Q9K_ModuleHeaderSize,a4                * a4 = WAHRER Modulanfang (M$ID-Wort)
         move.l  Q9K_TrapCallerPC,d7
@@ -1664,10 +1700,10 @@ Q9K_TrapDispatch:
         bra     Q9K_TrapAfterCall
 Q9K_TrapCallForeignCaller:
 * Aufrufer liegt ausserhalb unseres Moduls (IOMan/File-Manager/Treiber) --
-* A4 bleibt dessen eigener Wert, unangetastet, kein Register/Stack-Kosten.
-* "jsr (a4)" wuerde A4 mit der Handler-Adresse ueberschreiben, deshalb
-* speicherindirekt ueber Opcode-Bytes (r68 kennt "jsr ([...])" nicht,
-* der 68030 die Adressierungsart aber sehr wohl).
+* A4 muss dessen eigener Wert sein (vom Stack zurueck, s. Fix oben).
+* "jsr (a4)" wuerde A4 zusaetzlich mit der Handler-Adresse ueberschreiben,
+* deshalb speicherindirekt ueber Opcode-Bytes (r68 kennt "jsr ([...])"
+* nicht, der 68030 die Adressierungsart aber sehr wohl).
         dc.w    $4ebb,$01f1                               * jsr ([Q9K_TrapHandlerScratch])
         dc.l    Q9K_TrapHandlerScratch
         bra     Q9K_TrapAfterCall

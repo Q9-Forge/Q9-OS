@@ -8,7 +8,13 @@
 #include <string.h>
 
 static unsigned char g_globals[0x400];
-static unsigned char g_pool[4 * 0x200];
+/* Vier Pool-Slots. Die Groesse MUSS >= 4 * Q9K_PROCDESC_SIZE sein; die
+ * Konstante selbst ist hier noch nicht sichtbar (sie kommt erst mit dem
+ * #include unten), deshalb der bewusst grosszuegige Literalwert plus die
+ * Kompilierzeit-Pruefung direkt nach dem Include. Frueher stand hier
+ * 4 * 0x200 -- beim Vergroessern des Deskriptors auf 0x400 (2026-09-09)
+ * fielen dadurch drei Tests still um genau einen halben Slot daneben. */
+static unsigned char g_pool[4 * 0x400];
 
 /* Auf dem 64-Bit-Host brauchen die Q9_u32-Felder getrennte Abstaende. */
 #define Q9_D_PROC                    ((unsigned long)(g_globals + 0x000))
@@ -25,6 +31,12 @@ static unsigned char g_pool[4 * 0x200];
 #define Q9K_ID_SCRATCH_SUCCESS        ((unsigned long)(g_globals + 0x180))
 
 #include "q9kernel_procapi.c"
+
+/* Kopplung des Fake-Pools an die echte Deskriptorgroesse: waechst
+ * Q9K_PROCDESC_SIZE ueber das hier reservierte Viertel hinaus, bricht der
+ * Build (negative Array-Groesse) statt still danebenzuliegen. */
+typedef char Q9K_TestPoolFitsFourSlots[
+    (sizeof(g_pool) >= 4 * Q9K_PROCDESC_SIZE) ? 1 : -1];
 
 static int failures;
 
@@ -43,8 +55,8 @@ int main(void)
 {
     Q9_u32 base = (Q9_u32)(unsigned long)g_pool;
     Q9_u32 first = base;
-    Q9_u32 second = base + 0x200UL;
-    Q9_u32 third = base + 0x400UL;
+    Q9_u32 second = base + Q9K_PROCDESC_SIZE;
+    Q9_u32 third = base + 2UL * Q9K_PROCDESC_SIZE;
 
     memset(g_globals, 0, sizeof(g_globals));
     memset(g_pool, 0, sizeof(g_pool));
