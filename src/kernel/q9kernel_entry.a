@@ -1201,6 +1201,30 @@ Q9K_TestHelloDone:
         bcs     Q9K_TestLoadFail
         moveq   #'l',d7                     * DIAGNOSE: F$Load erfolgreich (Modulzeiger/-groesse
         bsr     Q9K_DiagWriteD7              * per Moduldirectory-Dump pruefbar, s. Ctrl-^)
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-11): das per F$Load
+* geladene Modul jetzt auch wirklich AUSFUEHREN -- der eigentliche
+* Zweck des Meilensteins. "echo" steht jetzt (per F$VModul) korrekt im
+* Moduldirectory, ein normaler F$Fork("echo") sollte es darueber finden
+* (Q9K_ModDirLinkByName, laengst fuer hellosvc/forkchild bewaehrt).
+        clr.w   d0
+        clr.l   d1
+        clr.l   d2                          * Parametergroesse 0 -- kein argv
+        clr.w   d3
+        clr.w   d4
+        lea     Q9K_TestEchoName(pc),a0
+        suba.l  a1,a1
+        trap    #0
+        dc.w    3                           * F$Fork
+        bcs     Q9K_TestForkEchoFail
+        moveq   #'E',d7                     * DIAGNOSE: echo geforkt
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+Q9K_TestForkEchoFail:
+        moveq   #'e',d7                     * DIAGNOSE: F$Fork("echo") fehlgeschlagen, Code folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
         bra     Q9K_TestProcA_Loop
 Q9K_TestLoadFail:
         moveq   #'k',d7                     * DIAGNOSE: F$Load fehlgeschlagen, Code folgt
@@ -1277,6 +1301,10 @@ Q9K_TestWriteLen equ 17
 * F$Link("CMDS") statt F$Link("dd").
 Q9K_TestLoadName:
         dc.b    "/dd/CMDS/echo",0
+
+Q9K_TestEchoName:
+        dc.b    "echo",0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 
 Q9K_TestHelloName:
         dc.b    "hellosvc",0
