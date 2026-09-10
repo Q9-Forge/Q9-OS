@@ -9,31 +9,38 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-10/11, siebte Arbeitssitzung — HIER ZUERST LESEN)
+## ÜBERGABE (2026-09-11, achte Arbeitssitzung — HIER ZUERST LESEN)
 
 **Branch für die aktuelle Arbeit: `fix/a4-aufruferabhaengig` (PR #13)**,
 NICHT der oben genannte `fix/ccr-error-signaling-flink-funlink`-Stand.
 Der Abschnitt "Was der Kernel heute kann" direkt darunter ist der Stand
 VOR der ganzen `F$Load`-Untersuchung. **Diese Übergabe ersetzt die
-vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `29` weiter
+vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `30` weiter
 unten im Dokument.
 
-**NEU (2026-09-10/11, Fortsetzung 29): `F$VModul`/`F$SRqCMem`
-implementiert, echtes Kommandomodul lädt+validiert korrekt — aber
-IOMans `F$Load` meldet dem Aufrufer trotzdem einen Fehlschlag.**
-Ausgangspunkt war die Empfehlung aus Fortsetzung 28, vor dem
-`F$Load`-Meilenstein zu prüfen, ob `F$VModul` ($2e) und `F$SRqCMem`
-($5c) wirklich noch gebraucht werden — Antwort: ja, beide fehlten und
-wurden implementiert (echter Modul-CRC-24-Algorithmus dabei empirisch
-gegen sechs reale Module verifiziert, s. u.). Live bestätigt:
-`F$Load("/dd/CMDS/echo")` lädt das echte Kommandomodul, validiert Kopf
-UND CRC korrekt und trägt es mit exakt richtiger Größe ($C8E) ins
-Moduldirectory ein. **Offen bleibt:** der GESAMTE `F$Load`-Aufruf
-meldet dem Testcode trotzdem `E$MNF` — ein Rahmenversorgungsversuch
-(analog `F$SRqMem`/`F$AllPD`) änderte daran nichts und zeigte ein
-verdächtiges Folgesymptom, wurde deshalb wieder zurückgebaut statt auf
-Verdacht drinzubleiben. Alle 14 Host-Testsuiten weiterhin grün. Details
-inkl. drei Live-Läufen und der noch offenen nächsten Baustelle:
+**NEU (2026-09-11, Fortsetzung 30): `F$Load` LÄUFT VOLLSTÄNDIG DURCH —
+der `F$Load`-Meilenstein ist erreicht.** Das in Fortsetzung 29 offen
+gebliebene Rätsel (Modul lädt+validiert korrekt, GESAMTER `F$Load`-
+Aufruf meldet dem Aufrufer trotzdem `E$MNF`) ist gelöst: per Live-
+Registerspuren (Instruktionsring mit `Q9_FREEZE_PC`, erweitert um
+d1/d3/d4) direkt in IOMans `F$Load`-Wrapper nachgewiesen, dass dessen
+Code nach `F$VModul` ECHTE Modulheader-Offsets aus `(a2)` liest UND
+beschreibt (`+$0C` als Link-Zähler inkrementiert/dekrementiert, `+$12`
+als Typ/Sprache gelesen, `+$00` wird am Ende sein eigener Rückgabewert)
+— weder unser eigener 16-Byte-Verzeichnis-Slot noch der rohe
+Modulkopfzeiger (zwei nacheinander verworfene Zwischenversuche) passen
+dazu. Fix: `F$VModul` gibt jetzt einen eigenen, dafür reservierten
+20-Byte-Rückgabepuffer zurück (`Q9K_VMODUL_RETBUF`, `$1650`) mit den
+Feldern an genau den Offsets, die IOMan anfasst. Live bestätigt:
+`F$Load("/dd/CMDS/echo")` meldet Erfolg (kein `E$MNF` mehr), zweimal
+reproduziert. Alle 14 Host-Testsuiten weiterhin grün. Details inkl. der
+kompletten Forensik-Kette: `Fortsetzung 30`.
+
+**Fortsetzung 29 (2026-09-10/11, jetzt durch obiges abgeschlossen):**
+`F$VModul`/`F$SRqCMem` implementiert (Callcodes `$2e`/`$5c`, fehlten
+komplett), echter Modul-CRC-24-Algorithmus dabei empirisch gegen sechs
+reale Module verifiziert (Polynom `$800063`, Endwert muss `CRCCon`
+$800FE3 ergeben — steht nirgends als Code in der Doku). Details:
 `Fortsetzung 29`.
 
 **NEU (2026-09-10, Fortsetzung 28): `I$Read` liefert echte
@@ -4747,3 +4754,118 @@ committet.
    Rahmenversorgung auf?).
 3. Danach erst: `F$Load` tatsächlich zum Ausführen eines geladenen
    Programms nutzen (der ursprüngliche Zweck des ganzen Meilensteins).
+
+## Fortsetzung 30: GELÖST -- `F$Load` läuft vollständig durch (2026-09-11, autonome Nachtsitzung)
+
+Fortsetzung 29 endete mit einem Rätsel: `F$VModul` validiert das echte
+Kommandomodul `/dd/CMDS/echo` nachweislich korrekt (steht mit exakt
+richtiger Größe im Moduldirectory), aber der GESAMTE `F$Load`-Aufruf
+meldet dem Testcode trotzdem `E$MNF`. Diese Sitzung hat die Ursache
+gefunden und behoben.
+
+### Werkzeug-Erweiterung: Register in der Instruktionsspur
+
+Der bestehende Instruktionsring (`Q9_TRACE_INSTR=1` + `Q9_FREEZE_PC`,
+Q9-Flux `src/kernel/m68krt.c`) zeichnete bisher nur `pc/d0/a0/a4/sp`
+auf. Um `d1`/`d3`/`d4` an einer beliebigen eingefrorenen Stelle zu
+sehen, wurde die Spur um drei Felder erweitert (`q9_dbg_tr_d1/d3/d4`,
+`m68krt.h`/`m68krt.c`/`q9boardrun.c`) -- bleibt als permanente
+Werkzeug-Erweiterung bestehen (wie schon die A4/SP-Felder vorher),
+nicht zurückgebaut.
+
+### Die Diagnose-Kette
+
+**Schritt 1 -- Rücksprungadresse des `F$VModul`-Aufrufers.** Wie schon
+beim `F$Move`-Fund: Rücksprungadresse bei `(sp)` nach `$1730` legen,
+BEVOR irgendein Register angefasst wird. Ergebnis: `$0000B55C` --
+Modul-relativ zu IOMans HdrPtr exakt `ioman+$8BE`, passt zur bereits in
+Fortsetzung 11/`docs/kernel-walkthrough/11-programm-laden/` bekannten
+`F$Load`-Einsprungadresse `ioman+$6D6`.
+
+**Schritt 2 -- Mehrfachaufruf ausgeschlossen.** Vermutung: vielleicht
+ruft `F$Load`s "lies bis Fehler/EOF"-Schleife `F$VModul` ein zweites
+Mal für Restbytes nach dem echten Modul auf. Per Aufrufzähler +
+Groesse-rein/Fehler-raus-Log (bis zu 4 Slots ab `$1750`) widerlegt:
+**genau EIN Aufruf**, mit Erfolg. (Ein erster Versuch dieser Diagnose
+hatte selbst einen Bug -- benutzte `a0` als Rechenregister und
+überschrieb damit den echten Modulzeiger-Parameter, WOMIT `F$VModul`
+reproduzierbar fehlschlug. Eigene Diagnose-Bugs sind genauso real wie
+Kernel-Bugs; sofort per Kopfkommentar dokumentiert, dann korrigiert.)
+
+**Schritt 3 -- volle Disassemblierung von `ioman+$6D6` bis `$990`**
+(per capstone, `CS_ARCH_M68K`/`CS_MODE_M68K_000`, `ioman.mod` aus dem
+F$Load-Testkorpus). Zeigt den kompletten `F$Load`-Ablauf: Speichersuche
+zuerst (`bsr $124a`, scheitert erwartungsgemäß -- Modul noch nicht
+resident), Pfadauflösung + `I$Open` + `I$Read` von Platte, dann Aufruf
+von `F$VModul` (Slot `$b8/4=$2e`, exakt das Trampolin-Muster wie bei
+`F$Move`). NACH dem Aufruf (`ioman+$8be` ff.):
+`+$0C(a2)` wird mit `ADDQ.W` inkrementiert (Link-Zähler) und später mit
+`SUBQ.W` wieder dekrementiert; `ioman+$6de` liest `+$12(a0)` (a0=a2 zu
+diesem Zeitpunkt) als Wort UND `+$0C(a0)` als Langwort, das zu `a0`
+addiert wird -- Ergebnis dient als Namenszeiger für einen internen
+`F$Link`-Aufruf (Slot `$0/4=$00`, über `D_UsrDis` diesmal statt
+`D_SysDis`). Schließlich landet `+$00(a2)` im Stack-Frame an einer
+Stelle, die der Funktions-Epilog (`movem.l (a7)+,d0-d4/a0-a3/a5`) als
+NEUEN `a2`-Wert zurückgibt -- IOMans eigener `F$Load`-Rückgabewert.
+
+**Schritt 4 -- zwei verworfene Zwischenversuche, live widerlegt:**
+1. `(a2)` = unser eigener 16-Byte-Verzeichnis-Slot (ursprüngliche
+   Implementierung, Fortsetzung 29): `+$12` liegt AUSSERHALB unseres
+   Slots (endet bei `$0E`) -- Datenmüll aus dem Free-Pool-Nachbarn.
+2. `(a2)` = der validierte Modulkopfzeiger selbst (naheliegend, da
+   `+$12` beim echten Header zufällig `M$TypLang` ist): live per
+   Freeze bestätigt, dass IOMan dadurch `+$0C(a2)` als Link-Zähler
+   BEHANDELT UND BESCHREIBT -- beim echten Header ist `+$0C` aber
+   `M$Name` (der Namens-Offset)! Das `ADDQ.W`/`SUBQ.W` verschob dieses
+   Feld hin und her und beschädigte den Header. Symptom: `a0` enthielt
+   danach `$4AFC0001` -- die rohen ERSTEN 4 BYTE des Moduls, nicht
+   dessen Adresse (per `+$00(a2)`-Lesezugriff auf den -- durch die
+   `$0C`-Fehlinterpretation ausgelösten -- Header selbst erklärt).
+
+**Fix (Schritt 5):** `F$VModul` legt einen EIGENEN, nur dafür
+reservierten 20-Byte-Rückgabepuffer an (`Q9K_VMODUL_RETBUF`, `$1650`,
+fest/wiederverwendet -- muss nur bis unmittelbar nach der Rückkehr
+überleben) und gibt DESSEN Adresse zurück:
+- `+$00` (4): Modulkopfzeiger (wird IOMans eigener Rückgabewert)
+- `+$0C` (2): Platzhalter, verträgt beliebiges ADDQ/SUBQ (Endwert
+  irrelevant, wird nie wieder gelesen)
+- `+$12` (2): Kopie von `M$TypLang` aus dem Modulheader
+
+Der eigene 16-Byte-Verzeichnis-Slot wird weiterhin über
+`Q9K_ModDirAdd` angelegt (für spätere `F$Link`/`F$UnLink`-Suchen) --
+nur sein Zeiger geht nicht mehr nach außen.
+
+**Live bestätigt, zweimal reproduziert:**
+
+    RP012O0000001Hallo von Q9-OS!
+    1h000000DDl
+
+(`h000000DD` = `hellosvc`-Fork schlägt erwartungsgemäß fehl, da
+`hellosvc` für dieses Testabbild aus Platzgründen ausgeschlossen war,
+s.u.; `l` = **`F$Load` erfolgreich**, kein `k...DD` mehr). Moduldirectory
+zeigt `echo` weiterhin mit exakt korrekter Größe (`$C8E`) und
+`TyLang=0101`. Alle 14 Host-Testsuiten grün.
+
+### Werkzeug-Nachtrag: Testabbild-Größengrenze bestätigt weiterhin gültig
+
+Wie in Fortsetzung 29 dokumentiert: Kernel + `F$Load`-Testcode + die
+vier Disk-Module passen weiterhin nur OHNE `hellosvc` in die
+36864-Byte-Grenze des Testabbilds (`hellosvc` fehlte in ALLEN Läufen
+dieser Sitzung, deshalb `h000000DD`). Bleibt ein bekannter, dokumentierter
+Zustand dieses SPEZIFISCHEN Testabbilds -- der committete Quelltext ist
+unverändert vollständig (`hellosvc.a` selbst wurde nicht angefasst).
+
+### Nächste Schritte
+
+1. **Der `F$Load`-Meilenstein ist erreicht** -- der nächste sinnvolle
+   Schritt ist, ein geladenes Programm tatsächlich AUSZUFÜHREN (der
+   ursprüngliche Zweck: z. B. `echo` per `F$Fork` auf den per `F$Load`
+   gelieferten Einsprungpunkt (`a1`) starten und seine echte Ausgabe
+   sehen).
+2. Die Restplatz-Frage im Testabbild lösen (`os9 gen -b=` bleibt an
+   "is fragmented" gescheitert, auch auf frischen Klonen -- ein neues,
+   sauber formatiertes Testabbild von Grund auf wäre eine Möglichkeit).
+3. Die drei ursprünglich in IOMans Aufrufliste gefundenen, jetzt alle
+   implementierten Dienste (`F$RetPD`, `F$Move`, `F$VModul`,
+   `F$SRqCMem`) sind vollständig abgearbeitet -- keine offene
+   Restarbeit aus dieser Liste mehr.
