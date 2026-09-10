@@ -4922,11 +4922,26 @@ Absturz ist ein Bug in `echo`s EIGENER Fehlerbehandlung für genau
 diesen (bei echtem OS-9 vermutlich nie auftretenden) Fall, keiner in
 unserem Kernel.
 
+**Sofort direkt im Anschluss geprüft: reicht bloßes Laden?** Naheliegende
+Vermutung: vielleicht bedeutet "can't install csl" nur "F$Link(csl) fand
+nichts", weil `csl` schlicht nirgends geladen ist -- dann würde ein
+`F$Load("/dd/CMDS/csl")` VOR dem `F$Fork("echo")` schon reichen, ganz
+ohne neuen Kernel-Mechanismus. Live widerlegt: `csl` lädt über unseren
+längst funktionierenden `F$Load`-Pfad anstandslos (Diagnose-Marker `c`,
+48 KByte -- deutlich größer als alle bisher geladenen Testmodule, keine
+Größenprobleme) und steht danach im Moduldirectory -- **aber `echo`
+scheitert exakt genauso wie zuvor**, Wort für Wort dieselbe Meldung,
+derselbe Absturz-PC. Das bestätigt sauber: die Lücke ist wirklich die
+INSTALLATION (ein echter, noch unbekannter Kernelaufruf, der die
+Bibliothek in eine TRAP-#1–15-Vektortabelle einträgt), nicht bloß das
+Auffinden/Laden des Moduls.
+
 **Bewusst nicht weiterverfolgt in dieser Sitzung** -- eigenes,
-mehrstufiges Thema: TRAP-#1-15-Dispatch-Mechanismus verstehen und
-implementieren, `csl` selbst laden (48 KByte, deutlich größer als alle
-bisher geladenen Testmodule) und bei der Installationsroutine
-registrieren. Passender Startpunkt für eine eigene Sitzung.
+mehrstufiges Thema: die reale Installationsroutine (vermutlich in
+IOMan oder im csl-Modul selbst, per Disassemblierung zu finden, analog
+zur `F$Load`-Forensik dieser Nacht) sowie den TRAP-#1-15-Dispatch-
+Mechanismus selbst verstehen und implementieren. Passender Startpunkt
+für eine eigene Sitzung.
 
 **Nebenbefund:** ein Illegal-Instruction-Absturz in einem GEFORKTEN
 KINDPROZESS scheint auf Systemebene durchzuschlagen (kein sichtbarer
