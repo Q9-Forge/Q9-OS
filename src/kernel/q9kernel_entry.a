@@ -2033,6 +2033,49 @@ Q9K_SysFRetPD_Fail:
         ori     #1,ccr                          * Carry setzen -- Fehlschlag
         rts
 
+*******************************************************************************
+* Q9K_SysFMove -- TRAP-#0-Handler fuer F$Move (Callcode 0x38, 68k_tech.pdf
+* S. 466f). ECHT GEFUNDEN + GEFIXT (2026-09-10): RBFs eigene Kopierroutine
+* (Modul-Offset $C0-$D7, per Ruecksprungadressen-Forensik am unbelegten
+* Dispatch-Slot lokalisiert, s. docs/OWN_KERNEL_STATUS.md) ruft genau
+* diesen Dienst auf, um Dateidaten aus ihrem eigenen Puffer in den
+* Aufruferpuffer zu kopieren -- OHNE hinterher Carry/d1 zu pruefen. Bisher
+* lief der Aufruf in Q9K_SysUnimplemented: kein Fehler wurde sichtbar
+* (I$Read blieb "erfolgreich"), aber es wurde schlicht NICHTS kopiert,
+* der Zielpuffer blieb auf Null.
+*
+* IN:  d2.l = Bytezahl, (a0) = Quelle, (a2) = Ziel.
+* OUT: keine (laut Manual). Fehlerfall: Carry gesetzt, d1.w = Fehlercode.
+* "Low Bound First": bei ueberlappenden Bereichen richtungssicher kopieren
+* (a2 > a0 -> rueckwaerts, sonst vorwaerts) -- reine Byteschleife, Tempo
+* spielt fuer unseren Zweck keine Rolle.
+*
+* a0/a2/d2 werden trotz laut Manual undefiniertem OUT unangetastet
+* zurueckgegeben (kostet nichts, schont potentielle Aufrufer-Annahmen wie
+* die von F$Sleep schon einmal erlebte "a5==sp+8"-Falle).
+Q9K_SysFMove:
+        movem.l d0/a0/a2,-(sp)
+        move.l  d2,d0
+        beq     Q9K_SysFMoveDone
+        cmpa.l  a0,a2
+        bhi     Q9K_SysFMoveBack
+Q9K_SysFMoveFwd:
+        move.b  (a0)+,(a2)+
+        subq.l  #1,d0
+        bne     Q9K_SysFMoveFwd
+        bra     Q9K_SysFMoveDone
+Q9K_SysFMoveBack:
+        add.l   d2,a0
+        add.l   d2,a2
+Q9K_SysFMoveBackLoop:
+        move.b  -(a0),-(a2)
+        subq.l  #1,d0
+        bne     Q9K_SysFMoveBackLoop
+Q9K_SysFMoveDone:
+        movem.l (sp)+,d0/a0/a2
+        andi    #$fe,ccr                       * Carry loeschen -- Erfolg
+        rts
+
 * NACHSCHLAGEN, falls wieder gebraucht (2026-09-05): ein 'U' hier auszugeben
 * ("movem.l d0-d7/a0-a6,-(sp) / moveq #'U',d7 / bsr Q9K_DiagWriteD7 / movem.l
 * zurueck", VOR dem move.w unten) beantwortet die Frage, ob ueberhaupt ein
@@ -2040,6 +2083,19 @@ Q9K_SysFRetPD_Fail:
 * stillschweigend mit Carry zurueck und ist von einem echten Fehler des
 * Dienstes nicht zu unterscheiden. Damit wurde F$RetPD gefunden.
 Q9K_SysUnimplemented:
+* NACHSCHLAGEN, falls wieder gebraucht (2026-09-10, per F$Move-Fund): $1370
+* zeigt nur bei ECHTEM TRAP #0 den aktuellen Callcode -- ruft ein
+* Fremdmodul intern per Trampolin (rts-Trick, kein TRAP) in einen
+* unbelegten Slot, bleibt $1370 stehen (veraltet). Um den ECHTEN Callcode
+* zu finden: die Ruecksprungadresse liegt bei (sp), genau wie bei einem
+* normalen jsr; 8 Byte DAVOR steht beim Trampolin-Muster ("pea <ret>(pc)"
+* / "move.l disp(a3),-(a7)" / "movea.l disp2(a3),a3" / "rts") die
+* Verschiebung der ersten move.l -- das ist Callcode*4. Probe: "move.l
+* (sp),d5 / bsr Q9K_DiagWriteHex32" (Ruecksprungadresse) und "movea.l
+* (sp),a0 / clr.l d5 / move.w -8(a0),d5 / bsr Q9K_DiagWriteHex32"
+* (Verschiebung) VOR dem move.w unten, jeweils mit Registersicherung drum
+* herum. Damit wurde F$Move (Callcode 0x38) in RBFs Kopierroutine
+* (Modul-Offset $C0-$D7) gefunden -- s. docs/OWN_KERNEL_STATUS.md.
         move.w  #$00d0,d1                        * d1.w = E_UNKSVC (gleicher Wert wie Q9K_TrapUnknown)
         ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
