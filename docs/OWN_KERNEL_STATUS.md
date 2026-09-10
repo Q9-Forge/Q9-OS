@@ -9,14 +9,26 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-09, fünfte Arbeitssitzung — HIER ZUERST LESEN)
+## ÜBERGABE (2026-09-10, sechste Arbeitssitzung — HIER ZUERST LESEN)
 
 **Branch für die aktuelle Arbeit: `fix/a4-aufruferabhaengig` (PR #13)**,
 NICHT der oben genannte `fix/ccr-error-signaling-flink-funlink`-Stand.
 Der Abschnitt "Was der Kernel heute kann" direkt darunter ist der Stand
 VOR der ganzen `F$Load`-Untersuchung. **Diese Übergabe ersetzt die
-vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `25` weiter
+vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `28` weiter
 unten im Dokument.
+
+**NEU (2026-09-10, Fortsetzung 28): `I$Read` liefert jetzt echte
+Dateidaten.** Die in der letzten Übergabe offene "nächste Baustelle"
+(`I$Read` meldete Erfolg, der Puffer blieb aber leer) ist gelöst:
+`F$Move` (Callcode `0x38`) fehlte im Dispatch und lief in
+`Q9K_SysUnimplemented` — genau der Dienst, mit dem RBFs eigene
+Kopierroutine (Modul-Offset `$C0`–`$D7`) Dateidaten aus ihrem Puffer in
+den Aufruferpuffer kopiert, OHNE hinterher Carry/`d1` zu prüfen. Jetzt
+implementiert (`Q9K_SysFMove` in `q9kernel_entry.a`, Registrierung in
+`q9kernel_cinit.c`). Live bestätigt: `I$Read("/dd/startup")` liefert
+`echo "Ex` — die echten ersten 8 Byte der Datei. Alle 14
+Host-Testsuiten weiterhin grün. Details: `Fortsetzung 28`.
 
 **WICHTIG: Q9-Flux liegt unter `Q9-Forge/Q9-Flux-68k`** (umbenannt,
 gleiches Repo/Remote, wegen der parallelen x86-Portierung
@@ -4473,3 +4485,95 @@ Boot-LSN aus dem Identification-Sektor und zieht den Längeneintrag mit
 (`0x15`-`0x17` LSN, `0x18`-`0x19` Länge, Sektorgröße 512) — exakt das in
 der Projektnotiz "Q9 Testimage-Bootkette" dokumentierte Verfahren, mit
 Größenprüfung gegen den belegten Bereich.
+
+## Fortsetzung 28: GELÖST -- `F$Move` fehlte, `I$Read` liefert jetzt echte Dateidaten (2026-09-10, neue Session)
+
+Reproduziert per fertigem Rezept aus der vorigen Übergabe (Kernel neu
+gebaut, `mkboot_direct.py` mit den vier gesicherten Disk-Modulen aus
+dem Job-`tmp`, Testabbild frisch von `OS9SYS.dbg10.hda` geklont): exakt
+derselbe Stand wie zuletzt notiert --
+
+    o[........]n
+
+-- der Testpuffer nach `I$Read("/dd/startup", 8)` blieb auf acht
+Nullbytes, obwohl `d1` (per angehängter Diagnose geprüft) korrekt `8`
+zurückmeldete. Kein Absturz, kein Fehlercode -- der Kopiervorgang fand
+schlicht nicht statt.
+
+### Ursache gefunden: `F$Move` unregistriert, RBF prüft dessen Erfolg nicht
+
+`Q9K_SysUnimplemented` (bisher stumm: Carry+`E$UNKSVC`, sonst nichts)
+kurzzeitig um eine Ausgabe der Rücksprungadresse UND der im Aufrufer
+codierten Dispatch-Slot-Verschiebung erweitert (Technik: die
+Rücksprungadresse liegt bei `(sp)` genau wie bei einem normalen `jsr`;
+8 Byte davor steht beim Trampolin-Muster -- `pea <ret>(pc)` / `move.l
+disp(a3),-(a7)` / `movea.l disp2(a3),a3` / `rts` -- die Verschiebung der
+ersten `move.l`, und die ist `Callcode*4`; dieselbe Methode, mit der
+vorher schon `F$RetPD` gefunden wurde). Ergebnis: **derselbe Aufrufer**
+(Rücksprungadresse `$D3F2`) fragt sowohl während `I$Open` als auch
+während `I$Read` nach Slot-Verschiebung `$E0` = Callcode `$38` =
+**F$Move**.
+
+Die Rücksprungadresse liegt exakt im RBF-Modul (`HdrPtr=$D31A`,
+`Größe=$25A6`, per Moduldirectory-Dump ermittelt) bei Modul-Offset
+`$D8`. Ein Hexdump von `rbf.mod` an dieser Stelle bestätigt den
+kompletten Trampolin von Hand:
+
+    000000c0: 48e7 e0e0 2f0b 266e 03a4 487a 000c 2f2b
+    000000d0: 00e0 266b 04e0 4e75 265f 4cdf 0707 4e75
+
+`movem.l ...,-(sp)` / `move.l a3,-(sp)` / `movea.l $3a4(a6),a3`
+(D_SysDis) / `pea $d8(pc)` / `move.l $e0(a3),-(a7)` (**Callcode
+`$e0/4=$38`**) / `movea.l $4e0(a3),a3` / `rts` -- und ab Offset `$d8`
+(dem Rücksprungziel): `movea.l (a7)+,a3` / `movem.l (a7)+,...` / `rts`.
+**Kein einziger Test auf Carry oder `d1` dazwischen** -- RBF geht
+stillschweigend von Erfolg aus, genau wie beim echten Microware-Kernel
+üblich (F$Move gilt dort praktisch nie als fehlschlagend). Bei uns lief
+der Aufruf bisher in den Unimplemented-Stub: kein sichtbarer Fehler,
+aber auch keine kopierten Daten.
+
+Real-Konvention nachgeschlagen (`68k_tech.pdf`, S. 466f, "F$Move --
+Move Data (Low Bound First)"): IN `d2.l`=Bytezahl, `(a0)`=Quelle,
+`(a2)`=Ziel; OUT keine; bei überlappenden Bereichen richtungssicher
+kopieren (System-State-Dienst).
+
+### Fix: `Q9K_SysFMove` implementiert
+
+Neuer Handler in `q9kernel_entry.a` (Callcode `0x38`), reine
+Byteschleife mit Überlapp-Erkennung (`a2 > a0` → rückwärts, sonst
+vorwärts) -- Tempo ist für unseren Zweck irrelevant. `a0`/`a2`/`d2`
+werden trotz laut Manual undefiniertem OUT unangetastet
+zurückgegeben (kostet nichts, vermeidet die Klasse von Annahme-Fallen,
+die schon bei der verworfenen `F$Sleep`-Rahmenübernahme (`a5==sp+8`)
+echten Speicher zerstört hat). Registrierung in `q9kernel_cinit.c`
+analog zu `F$RetPD`, in `Q9_D_USRDIS` UND `Q9_D_SYSDIS`.
+
+**Live bestätigt:**
+
+    o[echo "Ex]n
+
+Der Testpuffer enthält jetzt exakt die ersten 8 Byte der echten Datei
+(`/dd/startup` beginnt mit `echo "Excecute s…`, per `os9 copy`
+gegengeprüft in der vorigen Session). Alle 14 Host-Testsuiten weiterhin
+grün.
+
+Die Diagnose-Erweiterungen (Bytezahl-Ausgabe im Testcode, Rücksprung-
+adress-Auswertung in `Q9K_SysUnimplemented`) wurden nach dem Fund
+wieder zurückgebaut; die Fundtechnik steht als Nachschlage-Kommentar
+direkt bei `Q9K_SysUnimplemented` im Quelltext (Stil wie beim
+`F$RetPD`-Fund).
+
+**WICHTIG bei jedem neuen Kernel-Build:** RBF_BASE hat sich mit diesem
+Fix wieder verschoben (Kernel um 14 Byte größer als beim `A4`-Fix aus
+Fortsetzung 27) -- vor jeder adressbasierten Messung per
+Moduldirectory-Dump (Ctrl-`^` im laufenden Emulator, `q9dbg_dump.txt`)
+oder `M$ID`-Sync-Wort neu bestimmen, nicht aus dieser Notiz übernehmen.
+
+**Nächste Schritte:** Der `F$Load`-Meilenstein selbst (RBF/CF-Treiber
+als echten Boot-Loader-Pfad statt Testcode nutzen) ist jetzt technisch
+nicht mehr durch fehlende Dienste blockiert -- die drei ursprünglich in
+IOMans Aufrufliste gefundenen, noch unregistrierten Dienste `F$VModul`
+(`$2e`), `F$SRqCMem` (`$5c`) und `F$RetPD` (`$31`, inzwischen
+implementiert) sollten vor dem nächsten größeren Schritt (Datei
+tatsächlich AUSFÜHREN, nicht nur lesen) daraufhin geprüft werden, ob
+sie im Ladepfad wirklich noch gebraucht werden.
