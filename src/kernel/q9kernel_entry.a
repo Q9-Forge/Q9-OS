@@ -342,6 +342,19 @@ Q9K_RetPDScratch_NumIn    equ $1620      * Q9_u32, d0.w EIN = Deskriptornummer
 Q9K_RetPDScratch_Error    equ $1624      * Q9_u32, d1.w AUS bei Fehler
 Q9K_RetPDScratch_Success  equ $1628      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 
+* F$VModul (Callcode $2e) -- Scratch-Bruecke fuer Q9K_SysVModulImpl
+* (q9kernel_moddir.c), direkt hinter den F$RetPD-Zellen.
+Q9K_VModulScratch_Hdr     equ $162C      * Q9_u32, (a0) EIN = Modulzeiger
+Q9K_VModulScratch_Size    equ $1630      * Q9_u32, d1.l EIN = Modulgroesse
+Q9K_VModulScratch_Entry   equ $1634      * Q9_u32, (a2) AUS = Verzeichniseintrag
+Q9K_VModulScratch_Error   equ $1638      * Q9_u32, d1.w AUS bei Fehler
+Q9K_VModulScratch_Success equ $163C      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+* Eigenes Frame-Scratch fuer F$SRqCMem (Callcode $5c) -- gleiche
+* Begruendung wie Q9K_SRqMemFrameScratch (s. dort), eigene Zelle, damit
+* ein verschachtelter Aufruf F$SRqMem/F$SRqCMem sich nicht gegenseitig
+* ueberschreibt.
+Q9K_SRqCMemFrameScratch   equ $1640      * Q9_u32, Rahmenbasis oder 0
+
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
 Q9K_TrapCallerPC          equ $13E8      * echte Ruecksprung-PC des Aufrufers (fuer Herkunftspruefung)
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
@@ -1165,105 +1178,36 @@ Q9K_TestHelloFail:
         bsr     Q9K_DiagWriteHex32
 Q9K_TestHelloDone:
 
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06, Abschnitt "F$Load"):
-* Nachweis, dass der Dateizugriff ueber RBF wirklich traegt. Vor F$Load muss
-* feststehen, dass I$Open/I$Read auf eine ECHTE Datei funktionieren -- sonst
-* baut man den Lader auf Sand.
-*
-* Konvention (68k_tech): I$Open  d0.b = Zugriffsmodus (1 = Lesen),
-* (a0) = Pfadname; zurueck d0.w = Pfadnummer, a0 hinter dem Namen.
-*        I$Read  d0.w = Pfadnummer, d1.l = Anzahl, (a0) = Puffer;
-* zurueck d1.l = tatsaechlich gelesen.
-* Ausgegeben werden Marker und die ersten acht Bytes der Datei.
-* Vorprobe: findet unsere EIGENE Modulsuche den kompletten "Dreiklang"?
-* IOMan braucht beim Open drei Module: den Geraetedeskriptor, den darin
-* genannten File-Manager und den Treiber. Faellt EINES aus, meldet der
-* Aufruf E_MNF -- und zwar ohne dass IOMans eigene E_MNF-Stelle je erreicht
-* wird (per Freeze geprueft), der Code kommt also aus einem Unterdienst.
-* Ausgegeben wird je Name ein Grossbuchstabe bei Erfolg, ein Kleinbuchstabe
-* plus Fehlercode sonst.
-        lea     Q9K_TestTriadNames(pc),a3
-        moveq   #'1',d3                     * Kennung des gerade geprueften Namens
-Q9K_TestTriadLoop:
-        tst.b   (a3)
-        beq     Q9K_TestTriadDone
-        clr.w   d0                          * Typ/Sprache beliebig
-        movea.l a3,a0
-        movem.l d3/a3,-(sp)
+* Der Dreiklang-Vorprobe-Test (F$Link auf "dd"/"rbf"/"cfide") UND der
+* schlichte Dateitest (I$Open/I$Read auf "/dd/startup") standen hier
+* frueher (2026-09-06 bis 2026-09-10) -- beide entfernt, nachdem sie ihren
+* Zweck erfuellt haben (F$Link/I$Open/I$Read/F$Move sind live verifiziert
+* und in docs/OWN_KERNEL_STATUS.md, Fortsetzung 27/28, dokumentiert UND
+* committet) und Platz fuer den F$Load-Test unten gebraucht wurde (feste
+* Groessengrenze der Testabbild-Bootkette, s. dort).
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-10, Abschnitt "F$Load"):
+* Nachweis, dass F$Load wirklich ein echtes Kommandomodul von Platte
+* laedt. "/CMDS/echo" ist ein echtes, kleines Kommandomodul auf dem
+* Testabbild (per os9-Toolshed geprueft: Modulgroesse $C8E, "Good CRC").
+* Konvention (68k_tech.pdf S. 462f): IN d0.b=Zugriffsmodus (1=Read_),
+* d1.l=Speicherfarbe (nur relevant, wenn Bit 7 von d0 gesetzt -- hier
+* nicht), (a0)=Pfadname. OUT (Erfolg): (a2)=Modulzeiger, (a1)=
+* Einsprungpunkt, Carry geloescht.
+        moveq   #1,d0                       * Read_ (Bit 7 nicht gesetzt -- d1/Farbe bleibt bewusst unbelegt)
+        lea     Q9K_TestLoadName(pc),a0
         trap    #0
-        dc.w    $0000                       * F$Link
-        movem.l (sp)+,d3/a3
-        bcs     Q9K_TestTriadFail
-        move.b  d3,d7                       * Ziffer = gefunden
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestTriadNext
-Q9K_TestTriadFail:
-        moveq   #'x',d7                     * DIAGNOSE: nicht gefunden
-        bsr     Q9K_DiagWriteD7
-        move.b  d3,d7
+        dc.w    $0001                       * F$Load
+        bcs     Q9K_TestLoadFail
+        moveq   #'l',d7                     * DIAGNOSE: F$Load erfolgreich (Modulzeiger/-groesse
+        bsr     Q9K_DiagWriteD7              * per Moduldirectory-Dump pruefbar, s. Ctrl-^)
+        bra     Q9K_TestProcA_Loop
+Q9K_TestLoadFail:
+        moveq   #'k',d7                     * DIAGNOSE: F$Load fehlgeschlagen, Code folgt
         bsr     Q9K_DiagWriteD7
         move.l  d1,d5
         bsr     Q9K_DiagWriteHex32
-Q9K_TestTriadNext:
-        addq.b  #1,d3
-Q9K_TestTriadSkip:
-        tst.b   (a3)+                        * bis hinter das NUL-Byte
-        bne     Q9K_TestTriadSkip
-        bra     Q9K_TestTriadLoop
-Q9K_TestTriadDone:
-
-        moveq   #'F',d7                     * DIAGNOSE: Dateitest beginnt
-        bsr     Q9K_DiagWriteD7
-        moveq   #1,d0                       * Modus 1 = Lesen
-        lea     Q9K_TestFileName(pc),a0
-        trap    #0
-        dc.w    $0084                       * I$Open
-        bcs     Q9K_TestFileOpenFail
-        move.w  d0,d4                       * Pfadnummer merken
-        moveq   #'o',d7                     * DIAGNOSE: geoeffnet
-        bsr     Q9K_DiagWriteD7
-
-        move.w  d4,d0
-        moveq   #8,d1
-        lea     Q9K_TestFileBuf(pc),a0
-        trap    #0
-        dc.w    $0089                       * I$Read
-        bcs     Q9K_TestFileReadFail
-        moveq   #'[',d7
-        bsr     Q9K_DiagWriteD7
-        lea     Q9K_TestFileBuf(pc),a1
-        moveq   #7,d6
-Q9K_TestFileShow:
-        move.b  (a1)+,d7
-        cmpi.b  #$20,d7
-        bcc     Q9K_TestFileShowChar
-        moveq   #'.',d7
-Q9K_TestFileShowChar:
-        bsr     Q9K_DiagWriteD7
-        dbra    d6,Q9K_TestFileShow
-        moveq   #']',d7
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestFileDone
-
-Q9K_TestFileOpenFail:
-* DIAGNOSE-HAKEN: als ERSTES eine sonst unbenutzte Zelle beschreiben. Ein
-* Schreib-Watch mit Freeze darauf (Q9_WATCH_ADDR=0x1700, Q9_WATCH_FREEZE=1)
-* haelt den Instruktions-Ring GENAU hier an -- er enthaelt dann noch den Weg,
-* auf dem der Fehler entstanden ist. Auf den Fehlerzweig selbst laesst sich
-* nicht triggern, ohne seine Laufzeitadresse zu kennen.
-        move.l  d1,$1700
-        moveq   #'f',d7                     * DIAGNOSE: I$Open fehlgeschlagen, Code folgt
-        bsr     Q9K_DiagWriteD7
-        move.l  d1,d5
-        bsr     Q9K_DiagWriteHex32
-        bra     Q9K_TestFileDone
-
-Q9K_TestFileReadFail:
-        moveq   #'g',d7                     * DIAGNOSE: I$Read fehlgeschlagen, Code folgt
-        bsr     Q9K_DiagWriteD7
-        move.l  d1,d5
-        bsr     Q9K_DiagWriteHex32
-Q9K_TestFileDone:
+        bra     Q9K_TestProcA_Loop
 
 * Der I$ReadLn-Test von hier ist entfernt (2026-09-06), nachdem er seinen
 * Zweck erfuellt hat: er machte den Lesepfad bis in den Treiber verfolgbar
@@ -1327,20 +1271,12 @@ Q9K_TestWriteText:
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 Q9K_TestWriteLen equ 17
 
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06) -- Pfadname und Puffer
-* fuer den Dateitest oben. "/dd" ist der Geraetedeskriptor aus dem Bootfile.
-* Namensliste fuer die Dreiklang-Probe: Deskriptor, File-Manager, Treiber.
-* Doppeltes NUL beendet die Liste.
-Q9K_TestTriadNames:
-        dc.b    "dd",0
-        dc.b    "rbf",0
-        dc.b    "cfide",0
-        dc.b    0
-        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
-Q9K_TestFileName:
-        dc.b    "/dd/startup",0
-Q9K_TestFileBuf:
-        dc.b    0,0,0,0,0,0,0,0
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-10): "/CMDS/echo" ohne
+* Geraetepraefix schlug mit E$MNF fehl -- das ERSTE Pfadsegment nach "/"
+* ist in OS-9 immer der Geraetedeskriptorname, IOMan versuchte also
+* F$Link("CMDS") statt F$Link("dd").
+Q9K_TestLoadName:
+        dc.b    "/dd/CMDS/echo",0
 
 Q9K_TestHelloName:
         dc.b    "hellosvc",0
@@ -2096,6 +2032,9 @@ Q9K_SysUnimplemented:
 * (Verschiebung) VOR dem move.w unten, jeweils mit Registersicherung drum
 * herum. Damit wurde F$Move (Callcode 0x38) in RBFs Kopierroutine
 * (Modul-Offset $C0-$D7) gefunden -- s. docs/OWN_KERNEL_STATUS.md.
+* LIVE GEPRUEFT (2026-09-10, F$Load-Ruecksprung-Suche): waehrend der
+* F$Load-Fehlschlagkette landet NICHTS hier -- der spaetere E$MNF stammt
+* also nicht aus einem fehlenden Kernel-Dienst.
         move.w  #$00d0,d1                        * d1.w = E_UNKSVC (gleicher Wert wie Q9K_TrapUnknown)
         ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
@@ -2987,6 +2926,121 @@ Q9K_SysFSRqMem_NoFrameOut:
 Q9K_SysFSRqMem_Fail:
         move.w  Q9K_SRqMemScratch_Error,d1
         ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
+* Q9K_SysFSRqCMem -- TRAP-#0-Handler fuer den echten F$SRqCMem-Callcode
+* (0x5c, 68k_tech.pdf S. 501f, echt per Read gelesen). IN d0.l=Bytezahl,
+* d1.w=Speicherfarbe/-typ (0=beliebig). OUT (Erfolg): d0.l=gewaehrte
+* Bytezahl, (a2)=Blockzeiger. Fehlschlag: Carry+d1.w.
+*
+* "F$SRqMem is equivalent to a F$SRqCMem request with a color of 0" (S.
+* 502) -- unser Kernel kennt ohnehin nur EINEN Speicherbereich (keine
+* "farbige"/typisierte Speicherverwaltung), deshalb hier wortwoertlich
+* dieselbe Logik wie Q9K_SysFSRqMem, d1 (Farbe) bleibt ungenutzt. Eigenes
+* Frame-Scratch (Q9K_SRqCMemFrameScratch), damit ein verschachtelter
+* Aufruf das laufende F$SRqMem nicht durcheinanderbringt -- exakt
+* dieselbe Rahmenerkennung/-versorgung wie dort, s. den ausfuehrlichen
+* Kopfkommentar bei Q9K_SysFSRqMem fuer die Herleitung.
+Q9K_SysFSRqCMem:
+        movem.l d0/a0,-(sp)
+        movea.l sp,a0
+        adda.l  #16,a0
+        cmpa.l  a0,a5
+        bne     Q9K_SysFSRqCMem_NoFrame
+        move.l  a5,Q9K_SRqCMemFrameScratch
+        bra     Q9K_SysFSRqCMem_FrameDone
+Q9K_SysFSRqCMem_NoFrame:
+        clr.l   Q9K_SRqCMemFrameScratch
+Q9K_SysFSRqCMem_FrameDone:
+        movem.l (sp)+,d0/a0
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_SRqMemScratch_SizeIn
+        bsr     Q9K_SysSRqMemImpl
+        movea.l (sp)+,a6
+
+        tst.w   Q9K_SRqMemScratch_Success
+        beq     Q9K_SysFSRqCMem_Fail
+
+        move.l  Q9K_SRqMemScratch_SizeOut,d0
+        movea.l Q9K_SRqMemScratch_Addr,a2
+        movem.l d1/a1,-(sp)
+        move.l  Q9K_SRqCMemFrameScratch,d1
+        beq     Q9K_SysFSRqCMem_NoFrameOut
+        movea.l d1,a1
+        move.l  d0,(a1)
+        move.l  a2,$28(a1)
+Q9K_SysFSRqCMem_NoFrameOut:
+        movem.l (sp)+,d1/a1
+        andi    #$fe,ccr
+        rts
+
+Q9K_SysFSRqCMem_Fail:
+        move.w  Q9K_SRqMemScratch_Error,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFVModul -- TRAP-#0-Handler fuer den echten F$VModul-Callcode
+* (0x2e, 68k_tech.pdf S. 532f). IN d0.l=Modulgruppen-ID (ungenutzt, s.
+* Q9K_ModDirValidateAndAdd), d1.l=Modulgroesse, (a0)=Modulzeiger. OUT
+* (Erfolg): (a2)=Verzeichniseintragszeiger, Carry geloescht. Fehlschlag:
+* Carry+d1.w.
+*
+* ECHTER BUG GEFUNDEN + BEHOBEN (2026-09-10): fehlte komplett (lief in
+* Q9K_SysUnimplemented) -- gefunden per Ruecksprungadressen-Forensik am
+* selben Muster, mit dem vorher schon F$Move gefunden wurde (s.
+* docs/OWN_KERNEL_STATUS.md); IOMans eigene F$Load-Implementierung
+* braucht ihn beim Laden eines neuen Moduls von Mass-Storage.
+*
+* NOCH KEINE 44-Byte-Rahmenversorgung: anders als bei F$SRqMem/F$AllPD
+* ist NICHT verifiziert, dass IOMans Aufrufer hier ebenfalls ueber das
+* colored-memory-Wrapper-Muster (a5==sp+8) geht -- ein blinder Nachbau
+* hat bei F$Sleep bereits einmal fremden Speicher zerstoert (s.
+* Kopfkommentar Q9K_SysFRetPD-Fund).
+*
+* LIVE GEPRUEFT (2026-09-10): F$VModul selbst arbeitet nachweislich
+* korrekt (das per F$Load geladene Testmodul "/dd/CMDS/echo" stand mit
+* richtiger Groesse UND korrekter CRC im eigenen Moduldirectory-Dump),
+* aber IOMans F$Load meldete dem AUFRUFER trotzdem E$MNF. Ein Versuch,
+* das wie F$SRqMem/F$AllPD per 44-Byte-Rahmen zu versorgen, hat daran
+* NICHTS geaendert UND ein verdaechtiges Folgesymptom gezeigt (ein
+* spaeterer F$Link-Aufruf mit erkennbar kaputten Parametern) -- deshalb
+* wieder zurueckgebaut, statt auf Verdacht drin zu bleiben. Die
+* eigentliche Ursache der Fehlermeldung an den Aufrufer ist damit noch
+* NICHT gefunden; naechster Schritt waere Ruecksprungadressen-Forensik
+* auf den Punkt, an dem IOMans F$Load selbst den Carry setzt (nicht
+* mehr auf einen fehlenden Kernel-Dienst -- das ist per Q9K_SysUnimple-
+* mented-Sonde bereits ausgeschlossen). Details, inklusive der drei
+* Live-Laeufe, die dahin gefuehrt haben: docs/OWN_KERNEL_STATUS.md.
+Q9K_SysFVModul:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  a0,Q9K_VModulScratch_Hdr
+        move.l  d1,Q9K_VModulScratch_Size
+        bsr     Q9K_SysVModulImpl
+        movea.l (sp)+,a6
+
+        tst.l   Q9K_VModulScratch_Success
+        beq     Q9K_SysFVModul_Fail
+
+        movea.l Q9K_VModulScratch_Entry,a2
+        andi    #$fe,ccr                        * Carry loeschen -- Erfolg
+        rts
+
+* NACHSCHLAGEN, falls wieder gebraucht (2026-09-10, per Groessen-Bug-Fund):
+* Groesse + erste/letzte 4 Byte des Modulzeigers ausgeben (vor dem
+* move.w unten: "movem.l d0-d7/a0-a6,-(sp) / moveq #'V',d7 / bsr
+* Q9K_DiagWriteD7 / move.l Q9K_VModulScratch_Size,d5 / bsr
+* Q9K_DiagWriteHex32 / ... / movem.l (sp)+,d0-d7/a0-a6") beantwortet,
+* ob der Aufrufer wirklich das VOLLSTAENDIGE, unverstuemmelte Modul
+* uebergibt. Damit wurde gefunden: IOMans F$Load-Mass-Storage-Pfad
+* uebergibt eine um 2 Byte zu grosse Groesse (s. Kopfkommentar
+* Q9K_ModDirValidateAndAdd, q9kernel_moddir.c).
+Q9K_SysFVModul_Fail:
+        move.w  Q9K_VModulScratch_Error+2,d1
+        ori     #1,ccr                           * Carry setzen -- Fehlschlag
         rts
 
 *******************************************************************************
