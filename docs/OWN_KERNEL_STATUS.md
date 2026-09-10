@@ -9,17 +9,35 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-10, sechste Arbeitssitzung — HIER ZUERST LESEN)
+## ÜBERGABE (2026-09-10/11, siebte Arbeitssitzung — HIER ZUERST LESEN)
 
 **Branch für die aktuelle Arbeit: `fix/a4-aufruferabhaengig` (PR #13)**,
 NICHT der oben genannte `fix/ccr-error-signaling-flink-funlink`-Stand.
 Der Abschnitt "Was der Kernel heute kann" direkt darunter ist der Stand
 VOR der ganzen `F$Load`-Untersuchung. **Diese Übergabe ersetzt die
-vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `28` weiter
+vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `29` weiter
 unten im Dokument.
 
-**NEU (2026-09-10, Fortsetzung 28): `I$Read` liefert jetzt echte
-Dateidaten.** Die in der letzten Übergabe offene "nächste Baustelle"
+**NEU (2026-09-10/11, Fortsetzung 29): `F$VModul`/`F$SRqCMem`
+implementiert, echtes Kommandomodul lädt+validiert korrekt — aber
+IOMans `F$Load` meldet dem Aufrufer trotzdem einen Fehlschlag.**
+Ausgangspunkt war die Empfehlung aus Fortsetzung 28, vor dem
+`F$Load`-Meilenstein zu prüfen, ob `F$VModul` ($2e) und `F$SRqCMem`
+($5c) wirklich noch gebraucht werden — Antwort: ja, beide fehlten und
+wurden implementiert (echter Modul-CRC-24-Algorithmus dabei empirisch
+gegen sechs reale Module verifiziert, s. u.). Live bestätigt:
+`F$Load("/dd/CMDS/echo")` lädt das echte Kommandomodul, validiert Kopf
+UND CRC korrekt und trägt es mit exakt richtiger Größe ($C8E) ins
+Moduldirectory ein. **Offen bleibt:** der GESAMTE `F$Load`-Aufruf
+meldet dem Testcode trotzdem `E$MNF` — ein Rahmenversorgungsversuch
+(analog `F$SRqMem`/`F$AllPD`) änderte daran nichts und zeigte ein
+verdächtiges Folgesymptom, wurde deshalb wieder zurückgebaut statt auf
+Verdacht drinzubleiben. Alle 14 Host-Testsuiten weiterhin grün. Details
+inkl. drei Live-Läufen und der noch offenen nächsten Baustelle:
+`Fortsetzung 29`.
+
+**NEU (2026-09-10, Fortsetzung 28): `I$Read` liefert echte
+Dateidaten.** Die in der vorigen Übergabe offene "nächste Baustelle"
 (`I$Read` meldete Erfolg, der Puffer blieb aber leer) ist gelöst:
 `F$Move` (Callcode `0x38`) fehlte im Dispatch und lief in
 `Q9K_SysUnimplemented` — genau der Dienst, mit dem RBFs eigene
@@ -4577,3 +4595,155 @@ IOMans Aufrufliste gefundenen, noch unregistrierten Dienste `F$VModul`
 implementiert) sollten vor dem nächsten größeren Schritt (Datei
 tatsächlich AUSFÜHREN, nicht nur lesen) daraufhin geprüft werden, ob
 sie im Ladepfad wirklich noch gebraucht werden.
+
+## Fortsetzung 29: `F$VModul`/`F$SRqCMem` implementiert -- Modul lädt+validiert korrekt, `F$Load` meldet dem Aufrufer trotzdem Fehlschlag (2026-09-10/11, neue Session)
+
+Ausgangspunkt: die am Ende von Fortsetzung 28 empfohlene Prüfung, ob
+`F$VModul` und `F$SRqCMem` im `F$Load`-Ladepfad wirklich noch gebraucht
+werden. Vorab per Moduldirectory-/Dispatch-Dump geklärt: **`F$Load`
+selbst ist bereits vollständig durch IOMan bereitgestellt** (Slot `$01`
+zeigt schon vor jedem eigenen Eingriff auf eine echte IOMan-Adresse,
+ebenso `$84`/`$89` für `I$Open`/`I$Read`) -- der eigene Kernel muss
+`F$Load` NICHT selbst implementieren, nur die Kernel-Primitive
+liefern, die IOMans eigene `F$Load`-Logik intern braucht.
+
+### `F$Move` allein reichte nicht -- `F$VModul` und `F$SRqCMem` fehlten noch
+
+Per Dispatch-Dump (erweiterte Slot-Liste in `q9boardrun.c`) bestätigt:
+`$2e` (`F$VModul`) und `$5c` (`F$SRqCMem`) zeigten beide noch auf
+`Q9K_SysUnimplemented`. Reale Konventionen aus `68k_tech.pdf` gelesen:
+
+- **`F$SRqCMem`** (S. 501f): IN `d0.l`=Bytezahl, `d1.w`=Speicherfarbe
+  (0=beliebig); OUT `d0.l`=gewährte Bytezahl, `(a2)`=Blockzeiger. Manual
+  selbst: *"F$SRqMem is equivalent to a F$SRqCMem request with a color
+  of 0"* -- unser Kernel kennt ohnehin nur einen Speicherbereich, daher
+  wortwörtlich dieselbe Logik wie das bereits vorhandene `F$SRqMem`
+  (`Q9K_SysSRqMemImpl` wiederverwendet), inklusive derselben 44-Byte-
+  Rahmenversorgung für Trampolin-Aufrufer (eigenes Frame-Scratch, damit
+  ein verschachtelter `F$SRqMem`/`F$SRqCMem`-Aufruf sich nicht
+  gegenseitig überschreibt).
+- **`F$VModul`** (S. 532f): IN `d0.l`=Modulgruppen-ID (ungenutzt),
+  `d1.l`=Modulgröße, `(a0)`=Modulzeiger; OUT `(a2)`=Verzeichnis-
+  eintragszeiger. Prüft Kopfparität UND CRC, trägt bei Erfolg ins
+  Moduldirectory ein.
+
+### Der Modul-CRC-24-Algorithmus war nirgends als Code dokumentiert -- empirisch gefunden
+
+Das Manual beschreibt nur in Worten, was `F$CRC` tut (Akkumulator -1,
+XOR mit jedem Byte, dann bitweise Polynomdivision), nennt aber weder
+das Polynom noch fertigen Code. `MWOS/OS9/SRC/DEFS/module.a` liefert
+immerhin den ERWARTETEN Endwert: `CRCCon = $00800FE3`. Per Python-
+Vorabtest (gleiche Methodik wie beim 24-Word-Kopfprüfsummen-Fund
+2026-08-18) gegen sechs echte, unveränderte Microware-Module (rbf/
+cfide/ioman/scf/dd/c0.mod aus diesem Testkorpus) durchprobiert:
+
+    init = 0xFFFFFF
+    für jedes Byte b: crc ^= (b << 16); dann 8×: crc = (crc&0x800000) ?
+        ((crc<<1) ^ 0x800063) & 0xFFFFFF : (crc<<1) & 0xFFFFFF
+
+Über das GESAMTE Modul (inklusive des CRC-Feldes selbst) ergeben alle
+sechs Module exakt `$800FE3` -- Polynom `$800063` damit als real
+verifiziert, nicht geraten. Implementiert als `Q9K_ModDirValidateAndAdd`
+(`q9kernel_moddir.c`), die bestehende `Q9K_ValidModuleHeader`/
+`Q9K_CheckSyncWord`-Infrastruktur (24-Word-Kopfprüfsumme, schon für
+`F$Link`s Boot-Scan vorhanden) und `Q9K_ModDirAdd` wiederverwendend.
+Reale Fehlercodes aus `funcs.a` ausgezählt (Anker `E$PthFul=$C8`,
+`E$UnkSvc=$D0`, `E$BPAddr=$D2`, `E$BPNam=$D7`, `E$MNF=$DD` -- alle
+bereits bekannt und bestätigt, Zählung damit verlässlich): `E$BMID`
+(`$CD`, Sync-Wort falsch), `E$BMHP` (`$EC`, Kopfprüfsumme falsch),
+`E$BMCRC` (`$E8`, Modul-CRC falsch).
+
+### Live-Lauf 1: `I$Open`/`I$Read` erneut bestätigt, `F$Move` per Rücksprungadressen-Forensik gefunden
+
+Reproduziert mit dem exakt gleichen Rezept wie Fortsetzung 28 (Kernel
+neu bauen, `mkboot_direct.py` mit den vier Disk-Modulen, Testabbild
+frisch von `OS9SYS.dbg10.hda` geklont) -- Ergebnis identisch zu vorher
+bestätigt, kein Rückschritt.
+
+### Live-Lauf 2: `F$VModul`/`F$SRqCMem` implementiert und gegen ein echtes Kommandomodul getestet
+
+Testcode erweitert um einen `F$Load("/CMDS/echo")`-Aufruf --
+`/CMDS/echo` ist ein echtes, kleines Kommandomodul auf dem Testabbild
+(per `os9 ident` geprüft: Größe `$C8E`, "Good CRC"). Erster Versuch
+scheiterte mit `E$MNF` (`$DD`) -- eigener Bug im Testpfad, nicht im
+Kernel: **das erste Pfadsegment nach `/` ist in OS-9 immer der
+Gerätedeskriptorname**, `/CMDS/echo` ohne Präfix ließ IOMan
+`F$Link("CMDS")` versuchen statt `F$Link("dd")`. Korrigiert auf
+`/dd/CMDS/echo`.
+
+Danach: `E$BMCRC` (`$E8`). Per angehängter Diagnose (Größe + erste/
+letzte 4 Byte des Modulzeigers ausgeben) gefunden: IOMan übergibt eine
+um **2 Byte zu große** Modulgröße (`$C90` statt der echten `$C8E`) --
+Ursache auf IOMan-Seite nicht weiterverfolgt (außerhalb der Kernel-
+Zuständigkeit), aber die falschen zwei Zusatzbyte ließen die
+CRC-Prüfung über den Rand des echten Moduls hinauslaufen und dadurch
+scheitern. **Fix:** `Q9K_ModDirValidateAndAdd` liest die reale
+Modulgröße nach bestandener Kopfprüfsumme aus dem Header selbst
+(`M$Size`, Offset `$04`) statt dem möglicherweise ungenauen Aufrufer-
+Parameter zu vertrauen -- der Wert ist zu diesem Zeitpunkt bereits
+durch die 24-Word-XOR-Prüfsumme abgesichert. Der Aufrufer-Parameter
+bleibt nur noch als Obergrenze für die Bounds-Prüfung der billigen
+Vorstufen in Gebrauch.
+
+**Danach live bestätigt:** das Testmodul steht mit `HdrPtr` (korrekte
+Adresse), `Größe=$C8E` (exakt richtig) und `TyLang=0101` im
+Moduldirectory -- `F$VModul` selbst arbeitet nachweislich vollständig
+korrekt.
+
+### Live-Lauf 3: `F$VModul` erfolgreich, `F$Load` meldet dem Aufrufer trotzdem Fehlschlag -- Ursache noch offen
+
+Trotz des korrekt eingetragenen Moduls meldet der GESAMTE
+`F$Load`-Aufruf dem Testcode `E$MNF` (`$DD`). Drei Ausschlüsse per
+gezielter Forensik:
+
+1. **Kein fehlender Kernel-Dienst.** Die Rücksprungadressen-Sonde in
+   `Q9K_SysUnimplemented` (dieselbe Technik, mit der `F$Move` gefunden
+   wurde) blieb während der gesamten `F$Load`-Fehlschlagkette stumm --
+   nichts landet dort.
+2. **Rahmenversorgung (analog `F$SRqMem`/`F$AllPD`) ändert nichts.**
+   Versuch: `(a2)` zusätzlich in den 44-Byte-Registerrahmen des
+   Trampolin-Aufrufers schreiben (`a5==sp+8`-Erkennung, exakt das
+   Muster von `F$SRqMem`). Live-Ergebnis identisch (weiterhin `E$MNF`,
+   Modul weiterhin korrekt im Directory) -- **kein nachgewiesener
+   Nutzen**, deshalb wieder zurückgebaut statt auf Verdacht drin zu
+   bleiben (Lehre aus dem `F$Sleep`-Vorfall: eine Rahmenerkennung ohne
+   bestätigten Rahmen kann fremden Speicher zerstören).
+3. **Verdächtiges Folgesymptom, nicht weiterverfolgt.** Mit der
+   Rahmenversorgung aktiv zeigte eine `Q9K_ModDirLinkByName`-Diagnose
+   (letzte Suchanfrage nach `$1710`/`$1714`) einen späteren `F$Link`-
+   artigen Aufruf mit erkennbar kaputten Parametern (Filter `$90A0` --
+   exakt eine Moduldirectory-Slot-Adresse, kein plausibler Typ/Sprache-
+   Filter; Name unlesbar). Ob das Symptom der Rahmenversorgung selbst
+   zuzuschreiben ist oder unabhängig vorher schon bestand, ist NICHT
+   geklärt -- nach dem Zurückbau nicht erneut geprüft.
+
+**Werkzeug-Nachtrag: Boot-Testabbild an einer harten Größengrenze.**
+`mkboot_direct.py` darf nur bis zur nächsten 512-Byte-Grenze der
+BISHERIGEN Bootdatei-Länge schreiben (aktuell 72 Sektoren = 36864 Byte
+ab LSN `$879E1`) -- `os9 gen -b=` als Ausweg bleibt weiterhin an
+"is fragmented" gescheitert (auch auf frischen Klonen: die
+Fragmentierung liegt im Master-Abbild selbst). Mit `F$VModul`/
+`F$SRqCMem` plus dem `F$Load`-Testcode reicht der Platz NICHT mehr für
+den kompletten Kernel plus `hellosvc` gleichzeitig -- für die Läufe
+dieser Sitzung wurde `hellosvc` deshalb aus `src/kernel/build/`
+entfernt, bevor `mkboot_direct.py` lief (Datei bleibt unverändert im
+Quelltext, nur aus DIESEM Testabbild ausgeschlossen). Bei jedem
+künftigen `F$Load`-Testlauf zuerst prüfen, ob beides gleichzeitig noch
+passt; wenn nicht, `hellosvc` erneut beiseiteschieben oder eine der
+beiden Testroutinen kürzen. Die früheren Dreiklang- und Dateitest-
+Testblöcke (F$Link auf "dd"/"rbf"/"cfide" bzw. I$Open/I$Read auf
+"/dd/startup") wurden entfernt, um Platz für den neuen `F$Load`-Test zu
+schaffen -- ihr Zweck war bereits erfüllt und in Fortsetzung 27/28
+committet.
+
+**Nächste Schritte:**
+1. Ursache der `F$Load`-Fehlermeldung an den Aufrufer finden --
+   Rücksprungadressen-Forensik auf den Punkt, an dem IOMans `F$Load`
+   selbst das Carry setzt (nicht mehr auf einen fehlenden Dienst, das
+   ist ausgeschlossen). Startpunkt: das Verhalten ist reproduzierbar
+   (`/dd/CMDS/echo` lädt immer korrekt, meldet aber immer `E$MNF`).
+2. Das verdächtige `F$Link`-Folgesymptom aus Live-Lauf 3 unabhängig
+   vom Rahmenversorgungsversuch nachprüfen (trat es auch OHNE
+   Rahmenversorgung auf?).
+3. Danach erst: `F$Load` tatsächlich zum Ausführen eines geladenen
+   Programms nutzen (der ursprüngliche Zweck des ganzen Meilensteins).
