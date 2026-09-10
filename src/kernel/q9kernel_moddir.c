@@ -97,6 +97,13 @@ extern int Q9K_ValidModuleHeader(const Q9_u8 *addr, Q9_u32 availableLen);
 #define Q9K_MODDIR_HEAD_ADDR 0x1238UL
 #endif
 
+/* F$VModul-Rueckgabepuffer (2026-09-11, s. Kopfkommentar
+ * Q9K_ModDirValidateAndAdd) -- 20 Byte, fest/wiederverwendet, freier
+ * Bereich hinter Q9K_SRqCMemFrameScratch ($1640, q9kernel_entry.a). */
+#ifndef Q9K_VMODUL_RETBUF
+#define Q9K_VMODUL_RETBUF 0x1650UL
+#endif
+
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 
@@ -464,10 +471,31 @@ Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr)
  * (hier als Parameter durchgereicht): (a0)=Modulzeiger, d1.l=Modulgroesse
  * (d0.l=Modulgruppen-ID wird laut Manual nur fuer eine spaetere,
  * gruppenbezogene Sonderbehandlung gebraucht -- unser Kernel kennt keine
- * "Modulgruppen", deshalb hier ungenutzt). OUT (Erfolg): Slot-Adresse
- * (unser eigener 16-Byte-Verzeichniseintrag, s. Kopfkommentar oben --
- * externe Aufrufer sehen dessen internes Layout nie, exakt wie bei
- * F$Link/F$UnLink). Rueckgabe 0 = Fehlschlag (*outError gesetzt).
+ * "Modulgruppen", deshalb hier ungenutzt). OUT (Erfolg): "Verzeichnis-
+ * eintragszeiger" -- s. u., ist bei uns der VALIDIERTE MODULKOPF SELBST,
+ * NICHT unser eigener 16-Byte-Slot. Rueckgabe 0 = Fehlschlag
+ * (*outError gesetzt).
+ *
+ * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, per Rueckspringadressen-
+ * Forensik in IOMans F$Load-Wrapper, s. docs/OWN_KERNEL_STATUS.md):
+ * anfangs wurde hier -- dem Kopfkommentar von F$Link/F$UnLink folgend
+ * ("Verzeichnis-internes Layout sehen externe Module nie") -- unser
+ * eigener 16-Byte-Slot zurueckgegeben. Live per Instruktionsspur
+ * nachgewiesen, dass IOMans F$Load-Wrapper (ioman+$6d6) DIREKT nach dem
+ * Aufruf zwei ECHTE Modulheader-Felder aus (a2) liest:
+ *     move.w $12(a0), d0      * $12 = M$TypLang (Q9K_MH_TYLANG)
+ *     adda.l $c(a0), a0       * $c  = M$Name-Offset (Q9K_MH_NAME)
+ * -- exakt die Standard-68K-Modulheader-Offsets, NICHT unser eigenes
+ * Slot-Layout (das bei $0E endet). Mit dem Slot-Zeiger las IOMan damit
+ * Datenmuell als "Modulname" und rief intern F$Link darauf auf, das
+ * folgerichtig E$MNF ($DD) meldete -- OBWOHL F$VModul selbst laengst
+ * erfolgreich validiert+eingetragen hatte. Anders als bei F$Link/
+ * F$UnLink (deren reale OUT-Konvention laut Manual "(a2) = Module
+ * pointer" ist -- das war schon vorher korrekt) verlangt F$VModul also
+ * TROTZ der Bezeichnung "Directory entry pointer" denselben echten
+ * Modulkopfzeiger. Fix: `hdr` zurueckgeben statt des Slots; der Slot
+ * bleibt intern (Q9K_ModDirAdd traegt ihn wie bisher ins Verzeichnis
+ * ein, nur sein Zeiger wird nicht mehr nach aussen gereicht).
  *
  * ECHTER BUG GEFUNDEN + BEHOBEN (2026-09-10): dieser Dienst fehlte
  * komplett (lief in Q9K_SysUnimplemented) -- IOMans eigene F$Load-
@@ -520,6 +548,7 @@ Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
     Q9_u32 crc;
     Q9_u32 i;
     Q9_u32 realSize;
+    Q9_u16 tyLang;
 
     *outError = 0;
 
@@ -540,6 +569,7 @@ Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
     realSize = Q9K_ReadU32BE(hdr + Q9K_MH_SIZE);
     if (realSize == 0 || realSize > size)
         realSize = size;
+    tyLang = Q9K_GetU16BE((Q9_u32)(unsigned long)hdr + Q9K_MH_TYLANG);
 
     crc = 0xFFFFFFUL;
     for (i = 0; i < realSize; i++) {
@@ -558,7 +588,46 @@ Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
         return 0;
     }
 
-    return Q9K_ModDirAdd(hdr);
+    /* Slot wird intern angelegt (Buchhaltung, F$Link/F$UnLink finden das
+     * Modul kuenftig darueber) -- Slot-Erschoepfung wird hier bewusst
+     * NICHT als Fehler behandelt: das validierte Modul ist uneinge-
+     * schraenkt benutzbar, es fehlt nur der Verzeichniseintrag fuer eine
+     * SPAETERE Namenssuche -- dafuer gibt es (noch) keinen eigenen, real
+     * belegten Fehlercode-Fall. */
+    (void)Q9K_ModDirAdd(hdr);
+
+    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, zweite Runde, per
+     * Instruktionsspur/Registerfreeze in IOMans F$Load-Wrapper): weder
+     * unser eigener 16-Byte-Slot NOCH der rohe Modulkopfzeiger sind das
+     * richtige (a2). IOMans Wrapper (ioman+$8f8 ff.) inkrementiert/
+     * dekrementiert `+$0C(a2)` als Link-Zaehler (live gemessen: ADDQ.W
+     * dann spaeter SUBQ.W) und liest `+$12(a2)` als Typ/Sprache-Wort --
+     * das sind FESTE Offsets eines ECHTEN Microware-Verzeichniseintrags,
+     * die weder mit unserem 16-Byte-Slot (endet bei $0E) noch mit dem
+     * Modulheader (dessen $0C/$12 M$Name/M$TypLang sind -- Schreiben
+     * DORT haette den Header selbst beschaedigt, live bestaetigt: `+$0C`
+     * als Kopfzeiger interpretiert korrumpierte M$Name) uebereinstimmen.
+     * Ausserdem liest derselbe Wrapper `+$00(a2)` und macht daraus am
+     * Ende SEINEN EIGENEN Rueckgabewert (a2) -- muss also der Modulkopf-
+     * zeiger sein, damit der AUFRUFER dieses Aufrufers (unser Testcode)
+     * am Ende einen sinnvollen Modulzeiger bekommt.
+     *
+     * Fix: ein eigener, NUR FUER DIESEN ZWECK reservierter 20-Byte-
+     * Rueckgabe-Puffer (Q9K_VMODUL_RETBUF, fest/wiederverwendet -- muss
+     * nur bis zum naechsten F$VModul-Aufruf ueberleben, IOMan liest ihn
+     * unmittelbar nach dem Rueckkehren):
+     *   +0x00 (4) Modulkopfzeiger (wird am Ende IOMans eigener
+     *             Rueckgabewert)
+     *   +0x0C (2) Link-Zaehler-Platzhalter (wird inkrementiert, dann im
+     *             selben Aufruf wieder dekrementiert -- Endwert 0,
+     *             daher als reiner Scratch ausreichend)
+     *   +0x12 (2) Typ/Sprache, Kopie aus dem Modulheader
+     * Weder unser eigener Slot noch der Modulkopf werden dadurch
+     * angetastet -- der Puffer liegt vollstaendig ausserhalb beider. */
+    Q9K_SetU32(Q9K_VMODUL_RETBUF + 0x00UL, (Q9_u32)(unsigned long)hdr);
+    Q9K_ModDirSetU16(Q9K_VMODUL_RETBUF + 0x0CUL, 0);
+    Q9K_ModDirSetU16(Q9K_VMODUL_RETBUF + 0x12UL, tyLang);
+    return (Q9_u32)Q9K_VMODUL_RETBUF;
 }
 
 /* Scratch-Bruecke fuer F$VModul, gleiches Muster wie ueberall in diesem
