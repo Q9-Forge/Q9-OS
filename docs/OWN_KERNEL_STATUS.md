@@ -15,10 +15,23 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 NICHT der oben genannte `fix/ccr-error-signaling-flink-funlink`-Stand.
 Der Abschnitt "Was der Kernel heute kann" direkt darunter ist der Stand
 VOR der ganzen `F$Load`-Untersuchung. **Diese Übergabe ersetzt die
-vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `30` weiter
+vorherige vollständig.** Volle Kette: `Fortsetzung 1` bis `31` weiter
 unten im Dokument.
 
-**NEU (2026-09-11, Fortsetzung 30): `F$Load` LÄUFT VOLLSTÄNDIG DURCH —
+**NEU (2026-09-11, Fortsetzung 31): geladenes Modul läuft wirklich —
+neue Baustelle "csl"-Trap-Library.** Direkt im Anschluss an Fortsetzung
+30 getestet: `F$Fork("echo")` auf das per `F$Load` geladene Modul
+findet es sofort (Moduldirectory korrekt) und startet einen echten
+Kindprozess, der ECHTEN Microware-Code ausführt — sichtbar an der
+authentischen Meldung `**** can't install csl ****` (die C-Runtime-
+Bibliothek "csl" ist ein TRAP-#1–15-Trap-Handler-Modul, ein bislang
+komplett unimplementierter Mechanismus, getrennt von unseren
+`TRAP #0`-Syscalls). `echo`s eigene Fehlerbehandlung für diesen Fall
+stürzt danach ab (Bug in `echo`, nicht im Kernel). Klarer, aber
+eigenständiger nächster Baustein für eine künftige Sitzung. Details:
+`Fortsetzung 31`.
+
+**Fortsetzung 30 (2026-09-11): `F$Load` LÄUFT VOLLSTÄNDIG DURCH —
 der `F$Load`-Meilenstein ist erreicht.** Das in Fortsetzung 29 offen
 gebliebene Rätsel (Modul lädt+validiert korrekt, GESAMTER `F$Load`-
 Aufruf meldet dem Aufrufer trotzdem `E$MNF`) ist gelöst: per Live-
@@ -4869,3 +4882,63 @@ unverändert vollständig (`hellosvc.a` selbst wurde nicht angefasst).
    implementierten Dienste (`F$RetPD`, `F$Move`, `F$VModul`,
    `F$SRqCMem`) sind vollständig abgearbeitet -- keine offene
    Restarbeit aus dieser Liste mehr.
+
+## Fortsetzung 31: das geladene Modul läuft wirklich -- neue Baustelle "csl"-Trap-Library (2026-09-11, direkt im Anschluss)
+
+Direkt nach dem `F$Load`-Erfolg getestet: geht der Meilenstein wirklich
+zu Ende, d. h. lässt sich das geladene Modul auch AUSFÜHREN? Testcode
+um `F$Fork("echo")` erweitert (Parametergröße 0 -- kein argv) direkt
+nach dem erfolgreichen `F$Load`.
+
+**Ergebnis: ja, mit Einschränkung.** `F$Fork` findet `echo` sofort über
+die längst bewährte `Q9K_ModDirLinkByName` (dieselbe Suche, die schon
+für `hellosvc`/`forkchild` funktioniert -- keine Änderung nötig, das
+korrekt eingetragene Moduldirectory aus Fortsetzung 30 reicht). Der
+Kindprozess startet und führt ECHTEN, unverändert aus dem Microware-
+Modul geladenen Code aus -- live sichtbar an einer eigenen,
+authentischen Fehlermeldung DES MODULS SELBST:
+
+    **** can't install csl ****
+
+"csl" ist die OS-9-C-Runtime-Bibliothek, mit der `echo` (ein normales,
+kompiliertes C-Programm) seine Standard-I/O/Speicherverwaltung
+initialisiert. Direkt im Anschluss stürzt der Kindprozess ab (Vektor 4,
+Illegal Instruction, `PC=$7031` -- liegt mitten in einer
+Text-Konstante des Moduls selbst, "...sed Me!SysBoot Used..." -- die
+eigene Fehlerbehandlung von `echo` springt dort offenbar auf einen nie
+initialisierten Funktionszeiger).
+
+**Warum das erwartbar ist, keine Regression:** `csl` (`MWOS/OS9/68000/
+CMDS/csl`, $BCEE = 48366 Byte) ist selbst ein reales OS-9-Modul, aber
+vom Typ **"Trap Hnlr" (Trap Handler/"ghost machine language trap
+library")** -- ein völlig anderer Mechanismus als die bisher
+implementierten `F$`/`I$`-Syscalls (`TRAP #0`). OS-9 reserviert
+`TRAP #1`-`#15` für genau solche installierbaren Trap-Bibliotheken
+(F$STrap/ähnliche Installationsroutine); unser Kernel kennt bisher
+AUSSCHLIESSLICH `TRAP #0`. `echo` versucht beim Start, sich bei dieser
+Bibliothek anzumelden, findet sie nicht (weder installiert noch
+überhaupt geladen) und meldet das korrekt selbst -- der NACHFOLGENDE
+Absturz ist ein Bug in `echo`s EIGENER Fehlerbehandlung für genau
+diesen (bei echtem OS-9 vermutlich nie auftretenden) Fall, keiner in
+unserem Kernel.
+
+**Bewusst nicht weiterverfolgt in dieser Sitzung** -- eigenes,
+mehrstufiges Thema: TRAP-#1-15-Dispatch-Mechanismus verstehen und
+implementieren, `csl` selbst laden (48 KByte, deutlich größer als alle
+bisher geladenen Testmodule) und bei der Installationsroutine
+registrieren. Passender Startpunkt für eine eigene Sitzung.
+
+**Nebenbefund:** ein Illegal-Instruction-Absturz in einem GEFORKTEN
+KINDPROZESS scheint auf Systemebene durchzuschlagen (kein sichtbarer
+"Kindprozess sauber beendet, Elternprozess läuft weiter"-Verhalten,
+Ctrl-^-Dump danach als "abgebrochen" markiert) -- unser Kernel hat noch
+keine Prozess-Isolation für CPU-Exceptions (ein fehlerhafter Kindprozess
+kann derzeit das gesamte System mitreißen, statt nur sich selbst zu
+beenden). Ebenfalls ein Thema für später, nicht für heute Nacht.
+
+Testcode (`Q9K_TestEchoName`, `F$Fork`-Aufruf) bleibt im Quelltext
+stehen -- markiert den aktuellen Stand der Untersuchung für die
+nächste Sitzung, analog zu allen anderen offenen `Fortsetzung`en in
+diesem Dokument. Alle 14 Host-Testsuiten weiterhin grün (der Absturz
+betrifft nur den emulierten Gastcode, nicht den Kernel-Quelltext oder
+dessen Host-Tests).
