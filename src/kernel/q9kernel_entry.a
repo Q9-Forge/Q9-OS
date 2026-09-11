@@ -3322,6 +3322,40 @@ Q9K_SysFTLink_Fail:
         rts
 
 *******************************************************************************
+* Q9K_SysFCCtl -- TRAP-#0-Handler fuer den echten F$CCtl-Callcode (0x5A,
+* "Cache Control", s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention
+* (68k_tech.pdf S. 379f, echt per Read gelesen): IN d0.l=gewuenschte
+* Cache-Operation (0 = beide Caches fluschen -- generischer Fall fuer
+* Nicht-Supergruppen-/User-Zustand-Prozesse; einzelne Bits 0/1/2/4/5/6
+* fuer praezise Kontrolle, nur fuer System-Zustand/Supergruppe reserviert,
+* sonst E$Param). OUT: keine. Fehlerfall: Carry gesetzt, d1.w=Fehlercode.
+*
+* Anlass (Fortsetzung 34, live per Callcode-Scratchzelle $1370 gefunden):
+* echo ruft dies ueber seine C-Laufzeit (csl) unmittelbar nach einem
+* erfolgreichen F$TLink auf -- reale, im Handbuch explizit beschriebene
+* Konvention ("flush the instruction cache by F$CCtl before executing
+* the new code" nach dem Laden/Linken neuen Codes, exakt der F$TLink-
+* Fall). Ohne Registrierung lief dieser Aufruf bisher auf
+* Q9K_SysUnimplemented (E$UnkSvc) -- kein Absturz an dieser Stelle
+* selbst, aber echos/csls eigene Behandlung eines unerwarteten
+* Fehlschlags ist nachweislich fragil (s. Kopfkommentar bei
+* Q9K_TestEchoName-Test, PC=$7031-Fund).
+*
+* Dieser Kernel emuliert keinen echten CPU-Cache (Q9-Flux-68k meldet
+* selbst "680x0: unhandled PFLUSH ... kein TLB" -- keine echte Cache-/
+* MMU-Hardware vorhanden) -- ein "Flush" ist auf diesem Ziel bedeutungslos.
+* Ehrliche, reale Implementierung fuer ein Ziel ohne Cache: immer Erfolg,
+* keine Wirkung (kein verstecktes Validierungs-Framework, gleiche
+* Begruendung wie bei F$SRtMem/F$SSvc oben). NICHT implementiert: die
+* dokumentierte E$Param-Pruefung reservierter Bits fuer den praezisen
+* (Supergruppe/System-Zustand-)Pfad -- dieser Kernel hat noch keine
+* echte User-/Supervisor-Prozesstrennung (s. an anderer Stelle
+* dokumentiert), jeder Aufrufer wird wie der generische Fall behandelt.
+Q9K_SysFCCtl:
+        andi    #$fe,ccr                        * Carry loeschen -- immer "Erfolg", kein echter Cache vorhanden
+        rts
+
+*******************************************************************************
 * Q9K_SysFSRtMem -- TRAP-#0-Handler fuer den echten F$SRtMem-Callcode
 * (0x29). Reale Konvention (68k_tech.pdf S. 505-506, echt per Read
 * gelesen): IN d0.l=zurueckzugebende Byte-Anzahl, (a2)=Blockadresse. OUT:
