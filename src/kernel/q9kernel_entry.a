@@ -1290,6 +1290,26 @@ Q9K_TestPathScanNext:
         move.l  a6,-(sp)
         movea.l #0,a6                              * reale Systemglobal-Basis fuer IOMans Handler
         move.w  d3,d0                               * d0.w = Pfadnummer
+* SICHERHEITSABSTAND (2026-09-11, Fortsetzung 37): RBF/SCF fuehren bei
+* JEDEM eigenen internen Treiberaufruf blind "addq.l/subq.l
+* #1,$3ac(a4)" aus (P$Preempt-Zaehler) -- mit a4 faelschlich auf UNSERE
+* Kernel-Modulbasis statt auf den echten Prozessdeskriptor gesetzt (seit
+* Fortsetzung 25 bekannter, bewusst nicht reparierter Bug: fuenf
+* Versuche, a4 dort richtigzustellen, brachen jedes Mal IOMans
+* Konsolen-Open). Reale Adresse = Modulbasis+$3ac -- ob das schadet,
+* haengt rein vom Kernel-LAYOUT ab (welcher eigene Code zufaellig dort
+* liegt), nicht von Interrupts/Timing (s. docs/OWN_KERNEL_STATUS.md,
+* Fortsetzung 37, fuer die vollstaendige Herleitung). Dieser Sprung
+* ueberspringt einen 12-Byte-Totraum, der Datei-Offset $3ac-$3af
+* (4 Byte, das eigentliche Angriffsziel) mit Rand auf beiden Seiten
+* abdeckt -- der Totraum darf beliebig kaputtgeschrieben werden, er wird
+* nie gelesen/ausgefuehrt. NUR ein Symptomschutz fuer den AKTUELLEN
+* Kernelbau: verschiebt sich der Code durch kuenftige Aenderungen,
+* verschiebt sich auch dieser Totraum mit -- die eigentliche Ursache
+* (A4-Herkunftspruefung) bleibt ungeloest.
+        bra.s   Q9K_TestWriteSafetyGapEnd
+        dc.w    0,0,0,0,0,0
+Q9K_TestWriteSafetyGapEnd:
         move.l  #Q9K_TestWriteLen,d1                 * d1.l = Bytezahl
         lea     Q9K_TestWriteText(pc),a0              * (a0) = Puffer
         trap    #0
