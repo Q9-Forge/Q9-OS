@@ -12,21 +12,33 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 ## ÜBERGABE (2026-09-11, elfte Arbeitssitzung — HIER ZUERST LESEN,
 ersetzt die Übergabe direkt darunter vollständig)
 
-**MEILENSTEIN: Der seit 2026-09-04 verfolgte "kernelgrößenabhängige
-Interrupt-Race"-Absturz ist behoben und live verifiziert.** Er war nie
-eine Race, sondern derselbe, bereits in Fortsetzung 25 (2026-09-08/09)
-gefundene und dort bewusst nicht reparierte A4-Herkunftsprüfung-Bug
-(RBF/SCF schreiben bei jedem eigenen internen Treiberaufruf blind auf
-`Modulbasis+$3ac`, weil A4 bei Fremdaufrufern fälschlich unsere
-Kernel-Modulbasis statt des echten Prozessdeskriptors ist — ob das
-schadet, hängt rein vom Kernel-Layout ab, nicht von Timing). Volle
-Herleitung (Instruktionsspur + Bytevergleich + Watchpoint) in
-**Fortsetzung 37**, der umgesetzte und zweifach live verifizierte Fix
-(12 Byte Totraum exakt an Datei-Offset `$3ac`-`$3af`, per `bra.s`
-übersprungen) in **Fortsetzung 38** — beide maßgeblich für diese
-Baustelle, nicht mehr die Ringpuffer-Diagnose der zehnten Sitzung
-weiter unten. Committet+gepusht: `6e5a4de` (Diagnose-Doku), `eb9c3ac`
-(Fix). Alle 15 Host-Testsuiten grün.
+**MEILENSTEIN: `M$IData`/`M$IRefs` (initialisierte globale/statische
+C-Daten) implementiert -- für `F$Fork` UND `F$TLink`, live verifiziert.**
+`echo` (echtes, gegen `csl` compiliertes C-Kommando) forkt jetzt
+erfolgreich UND läuft als aktiver Prozess weiter, statt sofort an
+uninitialisierten Zeigern abzustürzen. Volle Byte-Ebenen-Verifikation
+des Tabellenformats gegen `echo.mod`, Implementierung in
+`Q9K_ProcFork` (`q9kernel_firstproc.c`) und `Q9K_ProcTLink`
+(`q9kernel_traplink.c`, `csl.mod` hat selbst `M$IData`/`M$IRefs`), zwei
+neue Host-Testfälle (F5/F9) in **Fortsetzung 49**. Alle 15
+Host-Testsuiten grün.
+
+**Neuer, NICHT mehr in dieser Sitzung verfolgter Fund:** `echo` stürzt
+jetzt an einer NEUEN, unabhängigen Stelle ab (`Vektor 4`, `PC=$6c`) --
+laut Code-Kommentar in `Q9K_ExcTrap` (Commits vom 2026-09-03, lange VOR
+der A4-Herkunftsbug-Entdeckung) bereits früher auf `scf+$352`
+zurückgeführt (`ioman+$1560 -> scf+$190 -> scf+$1f4 -> scf+$352`).
+Zwei offene Hypothesen (dieselbe A4-Bug-Familie über einen neuen
+Aufrufpfad, ODER ein eigenständiger `scf`-Fehler) — Details und
+empfohlener erster Prüfschritt (`Q9_WATCH_ADDR=<q9kernel-Modulbasis>+
+$3ac`) in Fortsetzung 49.
+
+**Vorheriger Meilenstein (weiterhin gültig, unverändert stabil):** der
+seit 2026-09-04 verfolgte "kernelgrößenabhängige Interrupt-Race"-Absturz
+ist behoben (war die A4-Herkunftsprüfung-Bug aus Fortsetzung 25, Fix
+per 12 Byte Totraum an Datei-Offset `$3ac`-`$3af`, Fortsetzung 37/38).
+Nach BEIDEN Fortsetzung-49-Änderungen erneut per Byte-Dump geprüft:
+Sicherheitsabstand sitzt weiterhin exakt richtig.
 
 **WICHTIG — das ist nur Symptomschutz, keine echte Lösung:** die
 A4-Herkunftsprüfung in `Q9K_TrapDispatch` bleibt fehlerhaft. Jede
@@ -37,12 +49,10 @@ unerklärlichen Absturz mit Vektor 4 IMMER ZUERST `Q9_WATCH_ADDR=
 <Modulbasis+$3ac>` prüfen (Methodik in Fortsetzung 37), bevor eine neue
 Ursachenjagd beginnt.
 
-**Nächster inhaltlicher Schritt:** mit dem jetzt stabil laufenden
-System den `F$TLink(13,"csl")`/`echo`-Test aus Fortsetzung 34 erneut
-versuchen — der war zuletzt an genau diesem Absturz gescheitert
-(Fortsetzung 36), bevor er den `F$TLink`-Testpunkt erreichte. Für eine
-echte, dauerhafte Lösung bleibt außerdem der in Fortsetzung 37
-skizzierte sechste Fixversuch an der A4-Herkunftsprüfung selbst offen.
+**Nächster inhaltlicher Schritt:** den neuen `PC=$6c`/`scf+$352`-Absturz
+aus Fortsetzung 49 untersuchen (Watchpoint-Check zuerst, s. o.) — eine
+eigenständige, klar umrissene Baustelle, die bewusst NICHT mehr am Ende
+dieser bereits sehr langen Sitzung begonnen wurde.
 
 ---
 
@@ -6497,3 +6507,146 @@ Alle 15 Host-Testsuiten gruen. Committet+gepusht. Testdateien
 Testadress-Umleitungen erweitert (echte kleine absolute Adressen sind
 auf dem 64-Bit-Testhost keine gueltigen Zeiger, gleiche Konvention wie
 ueberall in diesen Tests).
+
+## Fortsetzung 49: `M$IData`/`M$IRefs` implementiert (F$Fork UND F$TLink) -- live verifiziert, neue eigenstaendige Baustelle dahinter gefunden (2026-09-11, elfte Sitzung, Fortsetzung nach "ok mach weiter")
+
+**Byte-Ebenen-Verifikation des Tabellenformats gegen `echo.mod` (VOR jeder
+Implementierung, wie in Fortsetzung 48 angekuendigt):**
+
+```
+M$IData ($40=$c26, $44=$c66 in echo.mod):
+  EIN Eintrag: Zieloffset=$734, Anzahl=$38 (56 Byte Nutzlast) --
+  Ende der Nutzlast trifft EXAKT auf den Beginn von M$IRefs ($c66).
+  M$IData hat also KEINEN eigenen Endemarker: die Tabelle laeuft bis
+  zum Beginn von M$IRefs.
+
+M$IRefs ($c66): GENAU ZWEI Gruppen, je durch MS=0/Anzahl=0 beendet:
+  Gruppe 1 (8 Eintraege): Versaetze $744,$748,$74c,$750,$754,$758,$75c,$73c
+  Gruppe 2 (2 Eintraege): Versaetze $734,$738
+  Danach 4 Byte Rest ("0040fdde") -- passt zur reelen OS-9-Modul-CRC
+  (letzte 3 Byte des Moduls + 1 Fuellbyte), NICHT Teil der Tabelle.
+```
+
+Die in Gruppe 1 genannten Versaetze zeigen auf Werte, die per
+`M$IData` gerade als $1f0-$30a kopiert wurden -- viel zu klein fuer
+Datenversaetze (`M$Mem`=$76c waere zwar auch groesser), aber eindeutig
+als MODULRELATIVE KODEVERSAETZE erkennbar (der komplette Rest der
+kopierten Nutzlast -- inkl. zweier `4ef9 00000000`-"jmp.l $0"-Befehle
+weiter hinten, s. u. -- ergibt zusammen ein klassisches
+Compiler-generiertes Sprung-/Funktionszeiger-Vtable-Muster). Gruppe 2
+zeigt auf die ERSTEN beiden kopierten Langworte ($44, $6c4) -- deutlich
+kleiner, plausible DATENVERSAETZE. **Schlussfolgerung (durch das
+Ergebnis des Livetests weiter unten bestaetigt):** Gruppe 1 = Kodezeiger
+(Korrektur: `alterWert + hdrAddr`), Gruppe 2 = Datenzeiger (Korrektur:
+`alterWert + Datenbereichsbasis`) -- exakt die im Handbuchtext erwaehnte
+Unterscheidung, hier erstmals konkret bestaetigt.
+
+**Implementierung:**
+
+- `Q9K_ApplyInitializedData(hdrAddr, block)` in `q9kernel_firstproc.c`
+  (aufgerufen aus `Q9K_ProcFork`, unmittelbar nachdem `block`
+  feststeht): kopiert `M$IData` byteweise in den neuen Datenbereich,
+  wendet danach `M$IRefs` an (Gruppe 1 -> `+hdrAddr`, Gruppe 2 ->
+  `+block`). Fuer Module OHNE `M$IData`/`M$IRefs` (`hellosvc`,
+  `forkchild`, beide Felder 0) exakt kein Verhaltensunterschied.
+- **Wichtiger Host-Test-Fallstrick, gefunden beim ersten Testlauf:**
+  wie schon bei `Q9K_SetFrameReg` MUSS die Relozierung byteweise
+  erfolgen (`Q9K_GetU8`/`Q9K_SetU8`), NICHT ueber das normale
+  `Q9K_GetU32`/`Q9K_SetU32` (8 statt 4 Byte breit auf diesem
+  64-Bit-Testhost) -- bei den hier typischerweise nur 4 Byte
+  auseinanderliegenden `M$IRefs`-Versaetzen haette das sonst
+  Nachbarfelder ueberschrieben. Neuer Testfall F5 in
+  `test_q9kernel_firstproc.c` (eigenes, kleines Tabellenpaar,
+  1:1-Format-Nachbau) verifiziert Kopie UND beide Relozierungsarten.
+  Zweiter Fallstrick: `fakeHdr` in der bestehenden F1-F4-Testumgebung
+  war nur `[0x40]` Byte gross -- da `Q9K_ProcFork` jetzt IMMER auch
+  `M$IData`/`M$IRefs` (Offset `$40`/`$44`) liest, waere das ein
+  Lesezugriff hinter dem Arrayende gewesen; auf `[0x48]` vergroessert
+  (per `memset` ohnehin genullt, also unveraendertes Verhalten fuer
+  F1-F4).
+
+**Live getestet (erster Lauf, NUR `Q9K_ProcFork`-Seite):** `echo` forkt
+jetzt erfolgreich (`E`), OHNE dass zuvor `csl` erneut installiert werden
+musste -- deutlich weiter als in Fortsetzung 48. `D_Proc` im
+Diagnose-Dump zeigt `echo`s eigenen, per `F$Fork` erzeugten Deskriptor
+als AKTIV laufend (`P$State='a'`), kein sofortiger Absturz mehr.
+
+**Neuer Fund NOCH WAEHREND dieser Sitzung, per Diagnose-Dump:** ein
+`Q9K_ExcTrap`-Eintrag mit Vektor 4 (Illegal Instruction), `PC=$6c`,
+`A3=echo`s Headerzeiger, `A6=echo`s Datenbereich -- klassisches Muster
+eines Sprungs durch einen NICHT relozierten Zeiger. Direkt geprueft:
+**`csl.mod` hat SELBST nicht-null `M$IData`/`M$IRefs`
+(`$afa0`/`$bb08`)** -- unser `F$TLink` (`Q9K_ProcTLink`,
+`q9kernel_traplink.c`) hat das bisher VOLLSTAENDIG ignoriert, obwohl
+`Q9K_ProcTLink` bereits einen passenden, individuellen statischen
+Speicherbereich fuer die Bibliothek bereitstellt (`staticPtr`, aus
+`Q9K_ProcSRqMem`, wird spaeter als `a6` an `M$Init` uebergeben -- exakt
+dieselbe Rolle wie `block`/`a6` bei `Q9K_ProcFork`). Deshalb `Q9K_
+ApplyInitializedData` (identische Logik, EIGENSTAENDIG dupliziert nach
+etablierter Konvention -- keine gemeinsamen Header) auch in
+`q9kernel_traplink.c` ergaenzt und direkt nach der `Q9K_ProcSRqMem`-
+Zuteilung in `Q9K_ProcTLink` aufgerufen (nur wenn `size!=0`, s.
+Kopfkommentar). Neuer Testfall F9 in `test_q9kernel_traplink.c` (echter,
+dereferenzierbarer Host-Zeiger als `staticPtr` -- ANDERS als F5/F6 dort,
+die `staticPtr` nur als reinen Wert vergleichen, nie hineinschreiben).
+
+**Live getestet (zweiter Lauf, BEIDE Seiten):** identischer Ablauf bis
+`F$TLink`/`F$Fork` (`lcPtE`), danach ABERMALS derselbe Absturz --
+byteidentisch (`PC=$6c`, `A3`, `A6`, `A1`, `A2` alle exakt gleich wie im
+ersten Lauf, nur `D0`/`SR` minimal anders). **Das bedeutet: dieser
+zweite Absturz ist NICHT durch fehlende `M$IData`/`M$IRefs`-Anwendung
+verursacht** (die jetzt fuer `csl` ebenfalls laeuft) -- er liegt an
+anderer Stelle. Aufklaerung durch genaues Lesen des `E`-Zeichens im
+Ausgabestrom: es gibt ZWEI Quellen fuer `'E'` in `q9kernel_entry.a`,
+nicht nur "echo geforkt" (Zeile ~1479) -- `Q9K_ExcTrap` selbst schreibt
+NACH dem Sichern aller Diagnosedaten EBENFALLS ein `'E'` (Zeile ~1075),
+bevor es in `Q9K_ExcTrapSpin` (`bra Q9K_ExcTrapSpin`, reine Endlos-
+schleife) haengen bleibt. Die beobachtete Zeichenkette `lcPtE AAA BBBB...
+E AAAA...` ist also: Haupt-/Bootprozess forkt `echo` erfolgreich (`E`),
+faellt in seine eigene `TestProcA`-Idle-Schleife (`A`), `TestProcB`
+laeuft parallel (`B`) -- UNTERDESSEN stuerzt `echo` selbst (dritter
+Prozess) bei einem echten Konsolen-E/A-Aufruf ab (`E` von
+`Q9K_ExcTrap`), haengt fortan reglos in `Q9K_ExcTrapSpin`, waehrend der
+Scheduler `TestProcA`/`TestProcB` per Timer-Interrupt weiter bedient
+(deshalb endlos weitere `A`/`B` NACH dem zweiten `E`).
+
+**Ursache des `PC=$6c`-Absturzes selbst NICHT neu -- bereits am
+2026-09-03 (Commits `2c2a24d`/`341b9ac`, weit VOR dieser gesamten
+`echo`/`csl`-Baustelle UND vor der A4-Herkunftsbug-Entdeckung in
+Fortsetzung 25) per Stack-Backtrace-Erweiterung in `Q9K_ExcTrap`
+untersucht:** der Kommentar dort haelt woertlich fest, dass genau dieses
+Muster (`PC=$6c`) frueher auf `scf+$352` zurueckgefuehrt wurde, per
+rekonstruiertem Aufrufpfad `ioman+$1560 -> scf+$190 -> scf+$1f4 ->
+scf+$352`. Das ist also ein SEIT LANGEM bekannter, aber nie behobener
+Absturz irgendwo in der `scf`-Treiberkette (Konsolen-Ein-/Ausgabe) --
+`echo` ist damit vermutlich das ERSTE Testmodul dieses Kernels, das
+tatsaechlich eine echte, ausgewachsene Konsolenoperation ausloest (statt
+der bisherigen, sehr gezielten `I$Write`/`I$ReadLn`-Einzeltests), und
+trifft dabei auf eine seit neun Sitzungen unangetastete Baustelle.
+
+**Zwei offene Hypothesen fuer eine Folgesitzung, NICHT unterschieden:**
+1. Es ist die eine, seit Fortsetzung 25/37/38 bekannte
+   A4-Herkunftsbug-Familie, nur diesmal ueber einen anderen Aufrufpfad
+   (nicht RBFs `P$Preempt`-Semaphor, sondern ein aehnliches Muster
+   irgendwo in `scf`) -- ERSTER PRUEFSCHRITT laut ÜBERGABE-Methodik:
+   `Q9_WATCH_ADDR=<q9kernel-Modulbasis>+$3ac` setzen und erneut laufen
+   lassen.
+2. Es ist ein eigenstaendiger, unabhaengiger Fehler in der
+   `scf`-Treiberimplementierung dieses Kernels, der bisher nie
+   ausgeloest wurde, weil nie ein Testfall so weit kam.
+
+**Alle 15 Host-Testsuiten gruen** (neue Faelle: F5 in
+`test_q9kernel_firstproc.c`, F9 in `test_q9kernel_traplink.c`). Kernel
+neu gebaut, Sicherheitsabstand aus Fortsetzung 38 (Datei-Offset
+`$3ac`-`$3af`, s. ÜBERGABE oben) NACH BEIDEN Aenderungen explizit per
+Byte-Dump erneut geprueft und weiterhin exakt an der richtigen Stelle
+(unveraendert durch die zusaetzliche `Q9K_ApplyInitializedData`-Groesse
+in `q9kernel_firstproc.c`, da deren Linker-Platzierung nicht vor dem
+geschuetzten Bereich in `q9kernel_entry.a` liegt).
+
+**Fuer die naechste Sitzung:** mit der oben genannten
+`Q9_WATCH_ADDR`-Pruefung ansetzen, um zwischen den beiden Hypothesen zu
+unterscheiden -- die eigentliche `M$IData`/`M$IRefs`-Baustelle dieser
+Sitzung ist damit vollstaendig abgeschlossen und verifiziert, der neue
+Fund ist bewusst NICHT mehr "nebenbei" am Ende dieser bereits sehr
+langen Sitzung angegangen worden.
