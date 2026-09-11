@@ -6277,3 +6277,40 @@ Bugfix, wird diese Baustelle hier bewusst BEENDET** -- der Hauptauftrag
 dieser Sitzung (Interrupt-Race-Fix) ist geloest und verifiziert, diese
 `echo`-Nebenbaustelle ist jetzt so praezise wie moeglich fuer eine
 gezielte Folgesitzung dokumentiert.
+
+## Fortsetzung 45: `M$Init`-Registerrettung gefixt (echter, eigenstaendiger Bug) -- behebt den `echo`-Absturz NICHT, bestaetigt Fortsetzung 44s Architekturhypothese (2026-09-11, elfte Sitzung, Abschluss)
+
+**Echter Bug gefunden + gefixt:** `csl+$50` (`M$Init`, per Disassemblierung
+direkt gelesen) liest nachweislich `d1-d5`/`a3`/`a4` DES URSPRUENGLICHEN
+AUFRUFERS (matcht die im Handbuch dokumentierte `TrapInit`-Konvention,
+"Passed: d0-d7 = caller's registers, a0-a5 = caller's registers").
+`Q9K_SysFTLink` rettete bisher nur `a6` um den internen `bsr
+Q9K_SysTLinkImpl`-Aufruf (eine normale C-Funktion, die alle anderen
+Register frei als Arbeitsregister benutzt) -- gefixt per `movem.l
+d1-d7/a3-a5,-(sp)` vor und `movem.l (sp)+,d1-d7/a3-a5` nach dem
+internen Aufruf (`a0`/`a1`/`a2` bekommen ohnehin bewusst neue,
+dokumentierte Werte fuer `M$Init`).
+
+**Live getestet: der `echo`-Absturz tritt BYTE-IDENTISCH weiter auf**
+(exakt derselbe Registersatz wie vor dem Fix). Das bestaetigt die in
+Fortsetzung 44 aufgestellte Hypothese unabhaengig: die problematische
+Adressberechnung (`jsr -$78a0(a6)` in `echo.mod` selbst, ca. 68 Byte
+neben dem wahren `csl`-Ziel) ist eine FEST EINKOMPILIERTE KONSTANTE in
+`echo.mod`, ausgewertet gegen `echo`s EIGENES `a6` -- das bereits bei
+`F$Fork` (lange VOR `F$TLink`/`M$Init`) gesetzt wird. `M$Init`s
+Register haben damit auf DIESEN spezifischen Absturz gar keinen
+Einfluss; der gefixte Register-Bug ist trotzdem real und bleibt
+behalten (spec-konform, korrekt fuer kuenftige/andere Trap-Bibliotheken
+und den Fall, dass `M$Init` seine Eingaben tatsaechlich braucht).
+
+**Fazit dieser Baustelle fuer heute:** der `echo`-Absturz ist mit
+hoher Sicherheit eine Adressraum-/Linking-Annahme, die `echo.mod`
+beim urspruenglichen Kompilieren ueber die relative Lage von `echo`s
+eigenem Datenbereich zu `csl` traf -- eine Annahme, die generisches,
+dynamisches `F$TLink`-Laden nicht automatisch erfuellt. Eine echte
+Loesung wuerde vermutlich bedeuten, `csl` (oder `echo`s Speicherblock)
+gezielt an einer Adresse zu platzieren, die diese fest einkompilierte
+Beziehung wiederherstellt -- ein groesseres, eigenstaendiges Vorhaben,
+kein kleiner Bugfix mehr.
+
+Committet+gepusht. Alle 15 Host-Testsuiten gruen.
