@@ -98,6 +98,25 @@ int Q9K_ProcSRqMem(unsigned long requestedSize, unsigned long *outAddr, unsigned
     return g_srqmemReturn;
 }
 
+/* EXPERIMENT (2026-09-11, Fortsetzung 48) -- Stub fuer
+ * Q9K_ExperimentalCombinedAlloc, real in q9kernel_arena.c. Kein
+ * bestehender Testfall ruft die neue Funktion auf (sie wird nur aus
+ * dem Kernel-eigenen Testcode heraus genutzt) -- der Stub existiert
+ * NUR, damit die Datei ueberhaupt linkt. */
+static unsigned long g_allocMemReturn = 0;
+unsigned long Q9K_AllocMem(unsigned long requestedSize)
+{
+    (void)requestedSize;
+    return g_allocMemReturn;
+}
+
+/* Echte, kleine absolute Adressen waeren auf diesem Testhost keine
+ * gueltigen Zeiger -- gleiche Grosszuegigkeits-Begruendung wie alle
+ * anderen Redefinitionen oben. */
+#define Q9K_COMB_MODDIR_HEAD         ((unsigned long)(g_fakeGlobals + 0x1400))
+#define Q9K_COMB_SCRATCH_RESULT      ((unsigned long)(g_fakeGlobals + 0x1440))
+#define Q9K_COMB_FORK_BLOCK_OVERRIDE ((unsigned long)(g_fakeGlobals + 0x1480))
+
 #include "q9kernel_traplink.c"
 
 static int g_failures = 0;

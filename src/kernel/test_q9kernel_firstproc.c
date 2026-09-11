@@ -126,6 +126,11 @@ unsigned long Q9K_ModDirUnlinkByHeader(unsigned long hdrAddr)
     return 0;
 }
 
+/* EXPERIMENT (2026-09-11, Fortsetzung 48) -- gleiche Grosszuegigkeits-
+ * Begruendung wie alle anderen Redefinitionen oben: echte, kleine
+ * absolute Adresse waere auf diesem Testhost kein gueltiger Zeiger. */
+#define Q9K_FORK_BLOCK_OVERRIDE ((unsigned long)(g_fakeGlobals + 0x100))
+
 #include "q9kernel_firstproc.c"
 
 /* Schreibt einen 32-Bit-Wert Big-Endian in buf -- fuer den Aufbau eines
@@ -314,6 +319,13 @@ int main(void)
         buildFreeList(forkPoolBase, Q9K_PROCDESC_SIZE, 2, Q9K_PROCPOOL_FREE_ADDR);
         Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, forkPoolBase);
         Q9K_SetU32(Q9_D_PROC, 0);
+        /* EXPERIMENT (Fortsetzung 48): g_fakeGlobals wurde weiter oben
+         * bewusst mit 0xCC gefuellt (deckt fehlende Null-Initialisierung
+         * auf) -- im echten Emulator wird dieser Bereich beim Boot per
+         * Q9K_ZeroRange genullt, hier muss der Test das fuer die neue
+         * Zelle selbst nachholen, sonst haelt Q9K_ProcFork den 0xCC-Muell
+         * faelschlich fuer einen gesetzten Override. */
+        Q9K_SetU32(Q9K_FORK_BLOCK_OVERRIDE, 0);
 
         memset(fakeHdr, 0, sizeof(fakeHdr));
         putBE32(fakeHdr, 0x30, 0x40);   /* M$Exec = 0x40 (fiktiv, keine echte Code-Adresse noetig) */

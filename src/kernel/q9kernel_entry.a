@@ -1424,6 +1424,17 @@ Q9K_TestHelloDone:
         bcs     Q9K_TestCslDone              * Fehlschlag: keine Diagnose (Platzgrund), einfach weiter
         moveq   #'c',d7                     * DIAGNOSE: csl geladen
         bsr     Q9K_DiagWriteD7
+* EXPERIMENT (2026-09-11, Fortsetzung 48, dritter Anlauf -- s.
+* Kopfkommentar Q9K_ExperimentalCombinedAlloc, q9kernel_traplink.c):
+* csl in eine EINZIGE, garantiert freie Kombi-Allokation kopieren, die
+* GLEICHZEITIG echos kuenftigen Prozessblock reserviert -- kein Raten,
+* keine Ueberlappungsmoeglichkeit.
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_ExperimentalCombinedAlloc
+        movea.l (sp)+,a6
+        moveq   #'P',d7                     * DIAGNOSE: Kombi-Allokations-Experiment durchlaufen
+        bsr     Q9K_DiagWriteD7
 Q9K_TestCslDone:
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (Fortsetzung 33, "F$TLink kontrolliert

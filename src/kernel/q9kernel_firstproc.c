@@ -290,6 +290,12 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_E_MEMFUL  0x00CFU   /* Process Memory Full */
 #define Q9K_E_PRCFUL  0x00E5U   /* Process Table Full */
 
+/* EXPERIMENT (2026-09-11, Fortsetzung 48) -- s. Kommentar bei der
+ * Verwendungsstelle in Q9K_ProcFork weiter unten. */
+#ifndef Q9K_FORK_BLOCK_OVERRIDE
+#define Q9K_FORK_BLOCK_OVERRIDE 0x16F0UL
+#endif
+
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
@@ -531,7 +537,22 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
 
     totalSize = dataSize + stackSize + addMem + paramSize; /* s. Kopfkommentar */
 
-    block = Q9K_AllocMem(totalSize);
+    /* EXPERIMENT (2026-09-11, Fortsetzung 48 -- Nachfolger von
+     * Fortsetzung 46/47, s. docs/OWN_KERNEL_STATUS.md fuer die volle
+     * Architekturbegruendung): optionaler, selbstloeschender Adress-
+     * Override fuer GENAU den naechsten F$Fork. Normalfall (0 = nicht
+     * gesetzt) ist fuer JEDEN bestehenden Aufrufer VOELLIG unveraendert
+     * -- nur wenn Q9K_ExperimentalCombinedAlloc (q9kernel_traplink.c)
+     * vorher explizit eine kombinierte Allokation fuer csl+diesen
+     * Prozess reserviert hat, wird HIER die vorreservierte Adresse
+     * verwendet statt einer neuen, moeglicherweise ueberlappenden
+     * Q9K_AllocMem-Allokation. */
+    if (Q9K_GetU32(Q9K_FORK_BLOCK_OVERRIDE) != 0) {
+        block = Q9K_GetU32(Q9K_FORK_BLOCK_OVERRIDE);
+        Q9K_SetU32(Q9K_FORK_BLOCK_OVERRIDE, 0UL);   /* self-clearing -- gilt nur fuer DIESEN einen Fork */
+    } else {
+        block = Q9K_AllocMem(totalSize);
+    }
     if (block == 0) {
         Q9K_ModDirUnlinkByHeader(hdrAddr); /* Link-Zaehler wieder zuruecknehmen -- Fork bricht ab */
         *outError = (Q9_u16)Q9K_E_MEMFUL;

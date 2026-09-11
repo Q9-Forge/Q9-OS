@@ -232,3 +232,131 @@ void Q9K_SysTLinkImpl(void)
         Q9K_SetU32(Q9K_TLINK_SCRATCH_SUCCESS, 0UL);
     }
 }
+
+/* ***************************************************************
+ * EXPERIMENT (2026-09-11, Fortsetzung 48) -- dritter Anlauf, ersetzt
+ * die in Fortsetzung 46 (nachtraeglich verschieben -- brach die schon
+ * laufende F$TLink-Registrierung) und Fortsetzung 47 (vorab an eine
+ * VORHERGESAGTE Adresse legen -- ueberlappte mit echos eigenem, bereits
+ * geladenem Modul) verworfenen Ansaetze.
+ *
+ * Diesmal KEINE Vorhersage/Nachtraeglichkeit: EINE einzige, kombinierte
+ * Q9K_AllocMem-Allokation reserviert csl UND echos kuenftigen
+ * Prozessblock gemeinsam, garantiert ueberlappungsfrei mit ALLEM
+ * anderen (der Allocator selbst buergt dafuer -- keine Pruefung gegen
+ * die Moduldirectory noetig, keine Kollisionsmoeglichkeit MEHR, weil
+ * nichts anderes zwischen dieser Allokation und ihrer Nutzung
+ * dazwischenkommen kann).
+ *
+ * Layout der Allokation (Groesse = $E33C + echos Speicherbedarf):
+ *   [combinedBlock .. combinedBlock+cslModSize)   -- csl-Kopie
+ *   [combinedBlock+cslModSize .. combinedBlock+$E33C)  -- bewusster Leerraum
+ *   [combinedBlock+$E33C .. Ende)                 -- echos kuenftiger
+ *                                                     Prozessblock (A6)
+ * Die Konstante $E33C ist die in Fortsetzung 42/44 hergeleitete
+ * Differenz "echos A6 minus benoetigte csl-Basis" -- fest fuer DIESE
+ * eine echo.mod/csl.mod-Kombination, keine allgemeine Konstante.
+ *
+ * Q9K_FORK_BLOCK_OVERRIDE (q9kernel_firstproc.c) sorgt dafuer, dass der
+ * NAECHSTE F$Fork (hier: fuer "echo") exakt combinedBlock+$E33C statt
+ * einer neuen Q9K_AllocMem-Allokation bekommt.
+ * *************************************************************** */
+#ifndef Q9K_COMB_MODDIR_HEAD
+#define Q9K_COMB_MODDIR_HEAD    0x1238UL
+#endif
+#define Q9K_COMB_MODDIR_NEXT_OFF   0x00UL
+#define Q9K_COMB_MODDIR_HDRPTR_OFF 0x04UL
+#define Q9K_COMB_MH_NAME  0x0CUL
+#define Q9K_COMB_MH_SIZE  0x04UL
+#define Q9K_COMB_MH_MEM   0x38UL
+#define Q9K_COMB_MH_STACK 0x3CUL
+#define Q9K_COMB_CSL_A6_DELTA 0xE33CUL
+
+#ifndef Q9K_COMB_SCRATCH_RESULT
+#define Q9K_COMB_SCRATCH_RESULT 0x16E4UL   /* Q9_u32, AUS -- 0=ok, sonst Fehlercode */
+#endif
+
+/* = Q9K_FORK_BLOCK_OVERRIDE (q9kernel_firstproc.c) -- lokal dupliziert,
+ * gleiche Konvention wie ueberall in diesem Kernel (keine Cross-File-
+ * Konstante). MUSS mit dem dortigen Wert uebereinstimmen. */
+#ifndef Q9K_COMB_FORK_BLOCK_OVERRIDE
+#define Q9K_COMB_FORK_BLOCK_OVERRIDE 0x16F0UL
+#endif
+
+extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);   /* q9kernel_arena.c */
+
+static Q9_u8 Q9K_CombGetU8(Q9_u32 addr) { return *(volatile Q9_u8 *)addr; }
+static void  Q9K_CombSetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = value; }
+
+static void Q9K_CombFindModule4(const char *name4, Q9_u32 *outSlot, Q9_u32 *outHdr)
+{
+    Q9_u32 slot = Q9K_GetU32(Q9K_COMB_MODDIR_HEAD);
+
+    *outSlot = 0;
+    *outHdr = 0;
+    while (slot != 0) {
+        Q9_u32 hdrAddr = Q9K_GetU32(slot + Q9K_COMB_MODDIR_HDRPTR_OFF);
+        Q9_u32 nameOff = Q9K_TLinkReadU32BE(hdrAddr + Q9K_COMB_MH_NAME);
+        Q9_u32 modSize = Q9K_TLinkReadU32BE(hdrAddr + Q9K_COMB_MH_SIZE);
+
+        if (nameOff < modSize) {
+            Q9_u32 np = hdrAddr + nameOff;
+            if ((Q9K_CombGetU8(np)     & 0x7FU) == (Q9_u8)name4[0] &&
+                (Q9K_CombGetU8(np + 1) & 0x7FU) == (Q9_u8)name4[1] &&
+                (Q9K_CombGetU8(np + 2) & 0x7FU) == (Q9_u8)name4[2] &&
+                (Q9K_CombGetU8(np + 3) & 0x7FU) == (Q9_u8)name4[3]) {
+                *outSlot = slot;
+                *outHdr = hdrAddr;
+                return;
+            }
+        }
+        slot = Q9K_GetU32(slot + Q9K_COMB_MODDIR_NEXT_OFF);
+    }
+}
+
+void Q9K_ExperimentalCombinedAlloc(void)
+{
+    Q9_u32 cslSlot, cslHdr, echoSlot, echoHdr;
+
+    Q9K_CombFindModule4("csl\0", &cslSlot, &cslHdr);   /* 4. Byte wird eh maskiert, "csl"+Fuellbyte passt */
+    if (cslSlot == 0) { Q9K_SetU32(Q9K_COMB_SCRATCH_RESULT, 1UL); return; }
+
+    Q9K_CombFindModule4("echo", &echoSlot, &echoHdr);
+    if (echoSlot == 0) { Q9K_SetU32(Q9K_COMB_SCRATCH_RESULT, 2UL); return; }
+
+    {
+        Q9_u32 cslModSize = Q9K_TLinkReadU32BE(cslHdr + Q9K_COMB_MH_SIZE);
+        Q9_u32 echoMem    = Q9K_TLinkReadU32BE(echoHdr + Q9K_COMB_MH_MEM);
+        Q9_u32 echoStack  = Q9K_TLinkReadU32BE(echoHdr + Q9K_COMB_MH_STACK);
+        Q9_u32 echoNeeded = echoMem + echoStack;   /* addMem=0, paramSize=0 -- unser Testaufruf */
+        Q9_u32 combinedSize = Q9K_COMB_CSL_A6_DELTA + echoNeeded;
+        Q9_u32 combinedBlock;
+
+        if (cslModSize >= Q9K_COMB_CSL_A6_DELTA) {
+            Q9K_SetU32(Q9K_COMB_SCRATCH_RESULT, 4UL);  /* csl passt nicht mehr vor echos A6 -- Konstante pruefen */
+            return;
+        }
+
+        combinedBlock = Q9K_AllocMem(combinedSize);
+        if (combinedBlock == 0) {
+            Q9K_SetU32(Q9K_COMB_SCRATCH_RESULT, 5UL);
+            return;
+        }
+
+        {
+            Q9_u32 oldCslBase = cslHdr;
+            Q9_u32 i;
+
+            /* Kopierrichtung: combinedBlock ist eine BRANDNEUE, exklusive
+             * Allokation -- kein Ueberlappungsrisiko mit oldCslBase, also
+             * genuegt eine einfache Vorwaertskopie (kein memmove-Aufwand
+             * wie in Fortsetzung 46 noetig). */
+            for (i = 0; i < cslModSize; i++)
+                Q9K_CombSetU8(combinedBlock + i, Q9K_CombGetU8(oldCslBase + i));
+
+            Q9K_SetU32(cslSlot + Q9K_COMB_MODDIR_HDRPTR_OFF, combinedBlock);
+            Q9K_SetU32(Q9K_COMB_FORK_BLOCK_OVERRIDE, combinedBlock + Q9K_COMB_CSL_A6_DELTA);
+            Q9K_SetU32(Q9K_COMB_SCRATCH_RESULT, 0UL);
+        }
+    }
+}
