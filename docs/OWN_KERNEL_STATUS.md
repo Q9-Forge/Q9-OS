@@ -4957,3 +4957,154 @@ nächste Sitzung, analog zu allen anderen offenen `Fortsetzung`en in
 diesem Dokument. Alle 14 Host-Testsuiten weiterhin grün (der Absturz
 betrifft nur den emulierten Gastcode, nicht den Kernel-Quelltext oder
 dessen Host-Tests).
+
+## Fortsetzung 32: `F$TLink` implementiert (Code-vollständig,
+host-getestet) -- Live-Nachweis gegen `echo`/`csl` weiterhin durch
+einen VORBESTEHENDEN, bereits in Fortsetzung 27 dokumentierten
+Race blockiert (2026-09-11, direkte Fortsetzung derselben Nacht)
+
+**Auftrag:** auf Nachfrage, wie aufwendig `F$TLink`/TRAP-#1-15-Support
+wäre, Einschätzung gegeben (moderat, gut dokumentiert, vergleichbar mit
+`F$VModul`/`F$SRqCMem`) -- direkt im Anschluss beauftragt ("ja bitte,
+leg los").
+
+### Forensik: `echo` benutzt TRAP #13 mit Namen "csl", NICHT `T$Math`=15
+
+Vor der Implementierung erst nachgeprüft, WELCHE Trap-Nummer/Namen
+`echo` wirklich benutzt, statt vom oberflächlich ähnlichen `T$Math`=15
+auszugehen: `echo.mod`/`csl.mod` aus dem alten Testabbild extrahiert,
+per Capstone disassembliert. Fund bei Modul-Offset `0x79a` (über eine
+gemeinsame Hilfsroutine ab `0x770`): echtes `trap #13` plus Namenszeiger
+auf `"csl"`. Zusätzlich in `echo`s eigener `M$Excpt`-Fallback-Routine
+exakt die Vektor→Trap-Nummer-Rechnung gefunden, die auch unser
+`Q9K_TCallDispatch` benutzt (`subi.w #$80,d0 / asr.w #2,d0`) -- guter
+Beleg, dass die reale Konvention (68k_tech.pdf Kapitel 5) richtig
+verstanden wurde.
+
+### Implementierung
+
+* `src/q9moduleheader.h`: zwei neue Offset-Konstanten `Q9_MH68K_INIT`
+  ($48, M$Init) und `Q9_MH68K_TERM` ($4C, M$Term, laut Handbuch nie vom
+  Kernel aufgerufen) -- beide `[HANDBUCH]`, nicht per Disassemblierung
+  verifiziert.
+* `src/kernel/q9kernel_traplink.c` (neu): reine Buchhaltungslogik für
+  `F$TLink` (Callcode `0x21`) -- Trap-Nummer prüfen (1-15), pro-Prozess-
+  Trap-Tabellen-Slot auf Kollision prüfen (E$ModBsy), Modul per
+  `Q9K_ModDirLinkByName` linken (E$MNF bei Fehlschlag, bewusst KEIN
+  F$Load-Fallback, s. Kopfkommentar dort), M$Exec/M$Init-Einsprünge aus
+  dem Header lesen, bei Bedarf statischen Speicher per
+  `Q9K_ProcSRqMem` anfordern (Aufrufer-Override d1.l hat Vorrang vor
+  M$Mem), Trap-Tabellen-Slot füllen. Der eigentliche Fremdaufruf von
+  M$Init (spezieller, von M$Init selbst konsumierter Stack-Rahmen)
+  bleibt bewusst der Assemblerseite vorbehalten.
+* Neue, eigene pro-Prozess-Trap-Tabelle (KEINE OS-9-Entsprechung): 15
+  Einträge à 12 Byte (Modulzeiger/Ausführungs-Einsprung/statischer
+  Speicherzeiger) bei Deskriptor-Offset `Q9K_PROCDESC_TRAPTBL_OFF`
+  ($1CC, direkt hinter `Q9K_PROCDESC_ENTRYPC_OFF`).
+* `q9kernel_entry.a`: `Q9K_SysFTLink` (TRAP #0, Callcode `0x21`) baut
+  den echten, von M$Init per `movem.l (a7),a6 / addq.l #8,a7 / rts`
+  konsumierten 12-Byte-Rahmen und springt (kein `jsr`) hinein.
+  `Q9K_TCallDispatch` (neu, Ziel für TRAP #1-15) berechnet die
+  Trap-Nummer aus dem Format/Vektor-Wort, schlägt den Slot in der
+  Trap-Tabelle des aktuellen Prozesses nach, baut den TrapEnt-Rahmen
+  (Rücksprung-PC/Vektor#/Funktionscode/Aufrufer-a6) und springt in
+  M$Exec; ist nichts installiert, fällt der Pfad auf `Q9K_ExcTrap`
+  zurück (generische Diagnose/Halt, s. u.).
+* `q9kernel_exctable.c`: Vektoren 33-47 (TRAP #1-15) auf
+  `Q9K_TCallDispatch` verdrahtet, gleiches Muster wie zuvor Vektor 32.
+* `q9kernel_cinit.c`: `Q9K_SysFTLink` unter Callcode `0x21` in
+  USRDIS/SYSDIS registriert.
+* Neuer Host-Test `test_q9kernel_traplink.c` (8 Testfälle: Erfolg ohne/
+  mit statischem Speicher, Aufrufer-Override vor M$Mem, Parameterfehler,
+  Slot-Kollision, Modul-nicht-gefunden, Speicheranforderung
+  fehlgeschlagen, Bruecke `Q9K_SysTLinkImpl`) -- **alle jetzt 15
+  Host-Testsuiten grün** (vorher 14). Gleicher bekannter Host-Stolperstein
+  wie in `test_q9kernel_tables.c`/`firstproc.c` erneut angetroffen und
+  gleich gelöst: `Q9_u32` ist auf diesem 64-Bit-Testhost 8 statt 4 Byte
+  breit, die drei fest 4 Byte auseinanderliegenden Trap-Tabellen-Felder
+  müssen deshalb testseitig als reine 4-Byte-Werte zurückgelesen werden
+  statt per `Q9K_GetU32`; zusätzlich mussten zwei Vergleiche auf die
+  unteren 32 Bit maskiert werden, weil ein echter 64-Bit-Hostzeiger
+  (`g_fakeModule`) über das hinausgeht, was ein reales 32-Bit-Feld
+  überhaupt fassen könnte.
+
+### Live-Verifikation: durch denselben vorbestehenden Race blockiert wie in Fortsetzung 27 angekündigt
+
+**Neues, größeres Testabbild nötig:** Das alte, aus `OS9SYS.dbg10.hda`
+geklonte Testabbild hat eine feste Bootregion-Obergrenze von 36448 Byte
+(`DD_BSZ`) -- der neue, um `F$TLink`/`Q9K_TCallDispatch` gewachsene
+Kernel (Bootdatei jetzt 37974 Byte) passt darauf nicht mehr, UND das
+Abbild ist chronisch fragmentiert (`os9 gen -b=` schlägt bei jeder
+Änderung mit "is fragmented" fehl). **Neues, wiederholbares Rezept**
+etabliert (gilt für alle künftigen Sitzungen mit diesem Testkernel):
+
+1. `os9 format -q -k -nQ9TEST -bs512 -l32768 -c32 <image>` -- OHNE
+   `-e`. Ohne `-e` legt `os9 format` nur ein winziges (~16 KByte)
+   Datei-Fragment an (die volle 16-MByte-Größe steht zwar im
+   Identification-Sektor, das Hostdateisystem materialisiert sie aber
+   erst bei tatsächlichem Schreibzugriff). **Falle, live erlebt:** `-e`
+   ("format entire disk") erzeugt sofort ein volles 16-MByte-Abbild --
+   genau DAMIT bootet der emulierte CompactFlash-Treiber nicht mehr
+   sauber durch (endlose `B`-Zeichenflut direkt nach dem Treiber-Banner,
+   noch vor jeder eigenen Kernel-Ausgabe; per Bisektion bestätigt: tritt
+   unabhängig von der genauen Sektorzahl auf, auch bei nachträglichem
+   `truncate` auf volle Größe -- eindeutig an "Datei von Anfang an voll
+   materialisiert" gekoppelt, nicht an der Sektorzahl selbst). Ursache
+   im Emulator/CF-Treiber nicht weiter verfolgt, nur die auslösende
+   Bedingung vermieden.
+2. `tools/mkbootfile.sh --disk <ref.boot> <image>` NUR auf dem noch
+   leeren Abbild -- `os9 gen -b=` scheitert reproduzierbar mit "is
+   fragmented", sobald vorher schon andere Dateien (CMDS/echo, CMDS/csl)
+   angelegt wurden, selbst nach Löschen einer alten Bootdatei.
+3. Erst DANACH `os9 makdir`/`os9 copy` für `/CMDS/echo`/`/CMDS/csl`,
+   `os9 attr -e` danach (s. `[[q9-toolshed-execute-bit-bug]]`).
+
+Mit diesem Rezept bootet das Abbild wieder sauber bis zum bekannten
+`I$Write`-Erfolg ("Hallo von Q9-OS!").
+
+**Der in Fortsetzung 27 bereits als bekannt vermerkte, Modulgrößen-
+abhängige Folgefehler (Vektor 4 kurz nach `I$Write`, vor der
+Diagnose-Marke `O`) besteht weiterhin** -- diesmal in einer ANDEREN
+Erscheinungsform: statt einer Illegal-Instruction-Exception auf
+Datenbytes wird jetzt (reproduzierbar auf dem byte-identischen,
+37974-Byte-Kernel) unmittelbar nach `I$Write` ein echtes `trap #n`
+ausgeführt, das über `Q9K_TCallDispatch` läuft, dort keinen
+installierten Trap-Slot findet und nach `Q9K_ExcTrap` durchfällt
+(Diagnose-Zeichen `E`); danach folgt eine endlose, nicht durch die
+übliche Testverzögerung getaktete Zeichenflut (`B`), die nicht zu
+`Q9K_TestProcB` (das würde sichtbar VERZÖGERT ausgeben) passt -- die
+genaue Quelle dieser Zeichen ist NICHT geklärt. Interpretation: es
+handelt sich um denselben, seit 2026-09-04 bekannten, zeitpunkt-/
+layoutabhängigen Race (mutmaßlich ein durch `Q9K_TimerIRQHandler`
+oder eine unmaskierte Unterbrechung zwischen zwei Syscalls verursachter
+Rücksprung an eine falsche, aber zufällig gültige Adresse) -- nur dass
+er diesmal auf Bytes trifft, die zufällig als `trap #n` decodieren,
+statt auf eine ungültige Bytefolge. Ein erster, kleiner
+Zeitversatz-Versuch (Entfernen von 6 Byte Diagnosecode) hatte den
+Absturz-PC vorher nur geringfügig verschoben, nicht behoben; ein
+größerer, gezielter Versuch (48 NOP vor `Q9K_TestProcA`, bewusst
+außerhalb der A4-Dispatch-Mechanik platziert) wurde in dieser Sitzung
+gebaut, LIVE GETESTET und **ergebnislos wieder entfernt** -- er
+verschob das Symptom nur erneut (führte reproduzierbar in dieselbe
+`B`-Endlosschleife), löste die eigentliche Ursache nicht.
+
+**Fazit dieser Sitzung:** `F$TLink` ist code-vollständig und durch den
+neuen Host-Test abgedeckt, aber der End-zu-Ende-Nachweis gegen echtes
+`echo`+`csl` bleibt weiterhin durch denselben vorbestehenden Race
+blockiert, der schon in Fortsetzung 27 als offenes Thema vermerkt
+wurde -- er ist NICHT durch die `F$TLink`-Änderungen verursacht
+(gleiches Verhalten bei identischer Kernelgröße vor und nach den hier
+beschriebenen Änderungen bestätigt), sondern lag schon vorher da und
+wird durch mehr Code im Kernel nur früher/anders sichtbar. Zeitversatz-
+Experimente (Bytes verschieben, in der Hoffnung das Race-Fenster zu
+verfehlen) sind als Lösungsweg widerlegt -- der nächste Schritt braucht
+eine echte Ursachenanalyse (wahrscheinlichster Verdächtiger:
+`Q9K_TimerIRQHandler`s Registersicherung auf dem STACK DES
+UNTERBROCHENEN PROZESSES, kombiniert mit dem C-Aufruf von
+`Q9K_SchedReschedule` auf demselben Stack -- oder die fünf Autovektor-
+Ebenen, die laut `q9kernel_exctable.c`-Kommentar weiterhin bewusst auf
+dem generischen Halt-Handler bleiben, falls dort doch schon echte
+Hardware unterbrechen kann), keine weiteren Bisektions-Rateversuche.
+Alle 15 Host-Testsuiten grün (der Race betrifft ausschließlich den
+emulierten Boot-Test, nicht den Kernel-Quelltext oder dessen
+Host-Tests).

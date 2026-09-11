@@ -90,6 +90,7 @@ static void Q9K_ExcDefault(void)
  * gedacht) -- hier nur die ADRESSE gebraucht, fuer den Tabelleneintrag. */
 extern void Q9K_ExcTrap(void);   /* q9kernel_entry.a, s. Kommentar bei defaultHandler */
 extern void Q9K_TrapDispatch(void);
+extern void Q9K_TCallDispatch(void);   /* q9kernel_entry.a, TRAP #1-15 (F$TLink-Trap-Bibliotheken) */
 
 /* q9kernel_entry.a -- setzt VBR (movec, privilegiert, in C nicht
  * ausdrueckbar). ECHTER BUG GEFUNDEN (2026-08-21, per Diagnose-Ausgabe):
@@ -332,6 +333,19 @@ Q9_u32 Q9K_BuildExcTable(void)
     {
         Q9K_ExcHandler *trapSlot = (Q9K_ExcHandler *)(tableBase + 32 * sizeof(Q9K_ExcHandler));
         *trapSlot = Q9K_TrapDispatch;
+    }
+
+    /* NACHTRAG 2026-09-11 (Abschnitt "F$TLink/User Trap Handlers"):
+     * Vektoren 33-47 (TRAP #1-15, "tcall N,Funktion") auf den echten
+     * Trap-Bibliotheks-Dispatcher umbiegen -- gleiches Vorgehen wie
+     * eben bei Vektor 32, nur als Schleife ueber alle 15 Vektoren statt
+     * eines einzelnen Eintrags. */
+    {
+        unsigned int v;
+        for (v = 33; v <= 47; v++) {
+            Q9K_ExcHandler *tcallSlot = (Q9K_ExcHandler *)(tableBase + v * sizeof(Q9K_ExcHandler));
+            *tcallSlot = Q9K_TCallDispatch;
+        }
     }
 
     /* NACHTRAG 2026-08-21 (Abschnitt "Scheduler"): Vektor 30 (Autovector

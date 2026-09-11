@@ -355,6 +355,29 @@ Q9K_VModulScratch_Success equ $163C      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 * ueberschreibt.
 Q9K_SRqCMemFrameScratch   equ $1640      * Q9_u32, Rahmenbasis oder 0
 
+* F$TLink (Callcode $21) -- Scratch-Bruecke fuer Q9K_SysTLinkImpl
+* (q9kernel_traplink.c), freier Bereich hinter Q9K_VMODUL_RETBUF
+* ($1650-$1663, q9kernel_moddir.c).
+Q9K_TLinkScratch_TrapNum   equ $1690     * Q9_u32, d0.w EIN
+Q9K_TLinkScratch_MemOvr    equ $1694     * Q9_u32, d1.l EIN
+Q9K_TLinkScratch_NamePtr   equ $1698     * Q9_u32, (a0) EIN
+Q9K_TLinkScratch_PastName  equ $169C     * Q9_u32, (a0) AUS
+Q9K_TLinkScratch_ModPtr    equ $16A0     * Q9_u32, (a2) AUS
+Q9K_TLinkScratch_ExecEntry equ $16A4     * Q9_u32, (a1) AUS
+Q9K_TLinkScratch_InitEntry equ $16A8     * Q9_u32, AUS -- nur fuer den M$Init-Sprung
+Q9K_TLinkScratch_StaticPtr equ $16AC     * Q9_u32, AUS -- wird a6 beim M$Init-Aufruf
+Q9K_TLinkScratch_Error     equ $16B0     * Q9_u32, d1.w AUS bei Fehler
+Q9K_TLinkScratch_Success   equ $16B4     * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+
+* Q9K_TCallDispatch (TRAP #1-15, s. dort) -- eigene Scratch-Zellen,
+* freier Bereich direkt dahinter.
+Q9K_TCallScratch_TrapNum   equ $16C0     * Q9_u32
+Q9K_TCallScratch_ModPtr    equ $16C4     * Q9_u32
+Q9K_TCallScratch_ExecEntry equ $16C8     * Q9_u32
+Q9K_TCallScratch_StaticPtr equ $16CC     * Q9_u32
+Q9K_TCallScratch_RetPC     equ $16D0     * Q9_u32
+Q9K_PROCDESC_TRAPTBL_OFF   equ $1CC      * s. q9kernel_traplink.c Kopfkommentar, 15x12 Byte
+
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
 Q9K_TrapCallerPC          equ $13E8      * echte Ruecksprung-PC des Aufrufers (fuer Herkunftspruefung)
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
@@ -861,6 +884,95 @@ _stklimit:
 * Inhalt, deshalb hier 16 explizite Nullen statt einer Reservierung.
 Q9K_CRuntimeData:
         dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+*******************************************************************************
+* Q9K_TCallDispatch -- gemeinsamer Handler fuer TRAP #1 bis #15 (Vektoren
+* 33-47, "User Trap"-Instruktionen -- "tcall N,Funktion" = "trap #N" +
+* "dc.w Funktion", s. F$TLink/Kapitel 5 "User Trap Handlers",
+* 68k_tech.pdf S. 163ff, echt per Read gelesen). Anders als
+* Q9K_TrapDispatch (TRAP #0, unsere eigene F$/I$-Syscall-Tabelle) geht
+* es hier NICHT um unsere eigenen Handler, sondern um ECHTE, per
+* F$TLink installierte fremde Trap-Bibliotheken (z.B. "csl") -- die
+* reale Aufrufkonvention ("TrapEnt", Kapitel 5) unterscheidet sich
+* komplett von unserer eigenen F$-Konvention: d0-d7/a0-a5 werden dem
+* Trap-Handler UNVERAENDERT durchgereicht (eine CPU-Exception ruehrt
+* normale Register nicht an, kein Registerschutz noetig), stattdessen
+* baut der Kernel einen winzigen 12-Byte-Rahmen (Ruecksprung-PC,
+* Vektor#, Funktionscode, Aufrufer-a6) auf, den der Trap-Handler SELBST
+* konsumiert -- reale Rueckkehr per "rts", NICHT "rte".
+*
+* Vektor -> Trap-Nummer: Format/Vektor-Wort im Hardware-Frame ist
+* (Format<<12)|(Vektor*4); fuer TRAP #n ist Vektor=32+n, also
+* Format/Vektor-Wort = $80+4n (n=(Wort-$80)/4) -- exakt dieselbe
+* Rechnung, die echo.mod SELBST in seiner eigenen M$Excpt-Routine
+* benutzt (per Disassemblierung bestaetigt, s. docs/OWN_KERNEL_STATUS.md).
+*
+* Trap-Tabelle: pro Prozess, s. q9kernel_traplink.c
+* Q9K_PROCDESC_TRAPTBL_OFF ($1CC, 15 Eintraege a 12 Byte: Modulzeiger/
+* Ausfuehrungs-Einsprung/statischer Speicherzeiger). Ist fuer diesen
+* Vektor NICHTS installiert, wird (noch) NICHT auf M$Excpt (Kapitel-5-
+* "Lazy Install"-Fallback) weitergeleitet -- Q9K_ExcTrap (genereller
+* Halt/Diagnose) dient bis dahin als Ausweich. Echtes TODO.
+*
+* Weil die reale Rueckkehr per "rts" statt "rte" erfolgt, wird der
+* urspruengliche 8-Byte-Hardware-Rahmen HIER manuell verworfen (addq.l
+* #8,sp) statt per RTE konsumiert -- unser eigener 12-Byte-TrapEnt-
+* Rahmen tritt an seine Stelle. Das SR/CCR bleibt dabei LEBEND
+* unveraendert (keine echte User-/Supervisor-Trennung in diesem Kernel,
+* s. an anderer Stelle dokumentiert) -- der Trap-Handler signalisiert
+* Erfolg/Fehlschlag direkt ueber das lebende CCR, das der Aufrufer nach
+* der Rueckkehr per "bcs" auswertet, exakt wie bei einem echten
+* Systemaufruf.
+Q9K_TCallDispatch:
+        move.l  d0,-(sp)
+        move.l  a4,-(sp)
+        move.w  14(sp),d0                   * Format/Vektor-Wort aus dem Original-Frame (jetzt bei sp+8+6)
+        subi.w  #$80,d0
+        asr.w   #2,d0                        * d0.w = Trap-Nummer (1-15)
+        ext.l   d0
+        move.l  d0,Q9K_TCallScratch_TrapNum
+        subq.l  #1,d0
+        mulu    #12,d0
+        movea.l Q9_D_Proc,a4
+        adda.l  #Q9K_PROCDESC_TRAPTBL_OFF,a4
+        adda.l  d0,a4                        * a4 = Slot-Adresse in der Trap-Tabelle
+        move.l  (a4),d0                      * d0 = Modulzeiger (0 = nicht installiert)
+        beq     Q9K_TCallNotInstalled
+        move.l  d0,Q9K_TCallScratch_ModPtr
+        move.l  4(a4),Q9K_TCallScratch_ExecEntry
+        move.l  8(a4),Q9K_TCallScratch_StaticPtr
+        movea.l (sp)+,a4                     * a4 unveraendert zurueck (echtes Aufrufer-Register)
+        move.l  (sp)+,d0                      * ebenso d0
+
+* Urspruenglicher Hardware-Rahmen jetzt wieder unangetastet bei (sp):
+* SR(2)/PC(4)/FMT(2). Ruecksprung muss hinter das Funktionscode-Wort
+* zeigen (das liegt direkt im Code hinter der TRAP-Instruktion, gleiche
+* Konvention wie Q9K_TrapDispatch fuer TRAP #0).
+        move.l  2(sp),Q9K_TCallScratch_RetPC
+        addq.l  #2,Q9K_TCallScratch_RetPC
+        addq.l  #8,sp                         * Hardware-Rahmen verwerfen (s. Kopfkommentar)
+
+* TrapEnt-Rahmen aufbauen (Kapitel 5, S. 172f): von HOCH nach NIEDRIG
+* also in dieser Reihenfolge pushen: Ruecksprung-PC, Vektor#,
+* Funktionscode, Aufrufer-a6.
+        move.l  Q9K_TCallScratch_RetPC,-(sp)
+        move.w  Q9K_TCallScratch_TrapNum,d0
+        addi.w  #32,d0                        * echte Vektornummer (ADDQ erlaubt nur 1-8)
+        move.w  d0,-(sp)
+        movea.l Q9K_TCallScratch_RetPC,a4
+        move.w  -2(a4),d0                     * Funktionscode -- lag direkt vor RetPC im Code
+        move.w  d0,-(sp)
+        move.l  a6,-(sp)                       * Aufrufer-a6 (bis hierher unveraendert)
+
+        movea.l Q9K_TCallScratch_StaticPtr,a6
+        movea.l Q9K_TCallScratch_ExecEntry,a4
+        jmp     (a4)                            * echter Trap-Handler -- KEIN jsr, s. Kopfkommentar
+
+Q9K_TCallNotInstalled:
+        movea.l (sp)+,a4
+        move.l  (sp)+,d0
+        bra     Q9K_ExcTrap
+
 * Q9K_ExcTrap -- generischer Exception-Einstieg (2026-09-02).
 * Ersetzt den bisherigen Default Q9K_ExcDefault aus q9kernel_exctable.c.
 * Grund: jener ist eine C-Funktion, und der Compiler stellt ihr einen
@@ -1142,8 +1254,6 @@ Q9K_TestPathScanNext:
 * selbst ist davon unberuehrt.
         moveq   #'O',d7                     * DIAGNOSE: I$Write ohne Fehler zurueck
         bsr     Q9K_DiagWriteD7
-        move.l  d1,d5                         * d1.l = geschriebene Bytes
-        bsr     Q9K_DiagWriteHex32
 
 * MEILENSTEIN-TEST (2026-09-04): ein ECHTES Programm starten. hellosvc
 * (s. hellosvc.a) ist ein eigenstaendiges OS-9-Programmmodul, das seine
@@ -3083,6 +3193,76 @@ Q9K_SysFVModul:
 * Q9K_ModDirValidateAndAdd, q9kernel_moddir.c).
 Q9K_SysFVModul_Fail:
         move.w  Q9K_VModulScratch_Error+2,d1
+        ori     #1,ccr                           * Carry setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
+* Q9K_SysFTLink -- TRAP-#0-Handler fuer den echten F$TLink-Callcode
+* (0x21, "Install User Trap Handler Module", 68k_tech.pdf S. 524f UND
+* Kapitel 5 "User Trap Handlers" mit vollstaendigem Beispielcode, echt
+* per Read gelesen). IN: d0.w=Trap-Nummer (1-15), d1.l=optionale
+* Speichergroesse (0=Vorgabe aus M$Mem), (a0)=Modulname. OUT (Erfolg):
+* (a0)=hinter den Namen, (a1)=Trap-Ausfuehrungs-Einsprung,
+* (a2)=Trap-Modulzeiger, Carry geloescht. OUT (Fehlschlag): Carry
+* gesetzt, d1.w=Fehlercode.
+*
+* Anlass (2026-09-11): ein per F$Load geladenes echtes Kommandomodul
+* ("/dd/CMDS/echo") per F$Fork ausgefuehrt, laeuft echten Microware-Code
+* und versucht F$TLink(13,"csl") -- scheitert bisher mit "**** can't
+* install csl ****", weil dieser Dienst komplett fehlte (per
+* Byte-Muster-Forensik direkt in echo.mod gefunden: trap 13, Name
+* "csl", s. docs/OWN_KERNEL_STATUS.md).
+*
+* Die eigentliche Buchhaltung (Modul finden, statischen Speicher
+* anfordern, in der pro-Prozess-Trap-Tabelle eintragen) macht
+* Q9K_ProcTLink (q9kernel_traplink.c) -- hier bleibt nur noch der ECHTE
+* Fremdaufruf von M$Init (Offset $48 im Trap-Modulkopf), GENAU EINMAL,
+* mit dem in Kapitel 5 ("TrapInit") dokumentierten Spezialrahmen:
+*     +8  Ruecksprung-PC
+*     +4  0000 0000 (Fuellwortpaar)
+*     +0  Aufrufer-a6
+* M$Init verbraucht diesen Rahmen SELBST per "movem.l (a7),a6 /
+* addq.l #8,a7 / rts" -- deshalb hier bewusst "jmp", kein "jsr" (sonst
+* laege eine ZUSAETZLICHE Ruecksprungadresse im Rahmen, die M$Init nie
+* erwartet, exakt dieselbe Lehre wie beim F$Move-Trampolin anderer
+* Module).
+Q9K_SysFTLink:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_TLinkScratch_TrapNum
+        move.l  d1,Q9K_TLinkScratch_MemOvr
+        move.l  a0,Q9K_TLinkScratch_NamePtr
+        bsr     Q9K_SysTLinkImpl
+        movea.l (sp)+,a6
+
+        tst.l   Q9K_TLinkScratch_Success
+        beq     Q9K_SysFTLink_Fail
+
+        movea.l Q9K_TLinkScratch_InitEntry,a4
+        tst.l   Q9K_TLinkScratch_InitEntry
+        beq     Q9K_SysFTLink_NoInit             * kein M$Init -- selten, aber laut Manual erlaubt
+
+        pea     Q9K_SysFTLink_AfterInit(pc)       * Rahmen: Ruecksprung-PC (liegt am Ende bei +8)
+        clr.l   -(sp)                              * Rahmen: Fuellwortpaar 0000/0000 (bei +4)
+        move.l  a6,-(sp)                            * Rahmen: Aufrufer-a6 (bei +0, oben)
+        movea.l Q9K_TLinkScratch_StaticPtr,a6        * a6 = frische statische Speicherzelle
+        movea.l Q9K_TLinkScratch_PastName,a0         * a0 = Name, hinter den Namen aktualisiert
+        movea.l Q9K_TLinkScratch_ExecEntry,a1        * a1 = Ausfuehrungs-Einsprung
+        movea.l Q9K_TLinkScratch_ModPtr,a2           * a2 = Modulzeiger
+        jmp     (a4)                                  * M$Init -- KEIN jsr, s.o.
+Q9K_SysFTLink_AfterInit:
+        andi    #$fe,ccr                            * Carry loeschen -- Erfolg (a0/a1/a2 unveraendert von M$Init erwartet)
+        rts
+
+Q9K_SysFTLink_NoInit:
+        movea.l Q9K_TLinkScratch_PastName,a0
+        movea.l Q9K_TLinkScratch_ExecEntry,a1
+        movea.l Q9K_TLinkScratch_ModPtr,a2
+        andi    #$fe,ccr
+        rts
+
+Q9K_SysFTLink_Fail:
+        move.w  Q9K_TLinkScratch_Error+2,d1
         ori     #1,ccr                           * Carry setzen -- Fehlschlag
         rts
 
