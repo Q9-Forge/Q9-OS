@@ -35,20 +35,24 @@ SCRATCH_*`. Fix: Tabelle auf 12 Einträge verkleinert (endet bei
 `$15F0`, vor der ersten echten Nachbarzelle `$1600`). Live verifiziert:
 der `PC=$7002`-Absturz tritt nicht mehr auf.
 
-**Vierter Fund (Vektor 10, `PC≈$4e25e`) TEILWEISE aufgeklärt, ECHTE
-URSACHE OFFEN (Fortsetzung 53):** kein Sprung durch einen Nullzeiger --
-die Adressrechnung des zweiten `jsr -$78a0(a6)`-Aufrufs (Fortsetzung
-51) stimmt exakt, aber die Zielzelle in `echo`s eigenem `M$IData`-
-Bereich enthält keinen gültigen `jmp.l` mehr. Per `Q9_WATCH_ADDR`
-gefunden: `echo`s eigener Code beschreibt diese Zelle nachweislich
-MEHRFACH zur Laufzeit (kein einmaliger Lazy-Binding-Stub, wie in
-Fortsetzung 51 angenommen) — Verdacht auf eine Interrupt-mitten-in-
-nicht-atomarer-Mehrbyte-Aktualisierung-Situation (bekanntes Muster
-aus Fortsetzung 37/38). Zusätzlich: Blockadressen sind zwischen
-Boot-Läufen desselben Abbilds NICHT exakt reproduzierbar (Timing-
-Nichtdeterminismus) — künftige Untersuchungen müssen Adressen aus dem
-JEWEILS selben Lauf gewinnen. Bewusst NICHT weiter verfolgt, konkreter
-Plan für eine Folgesitzung in Fortsetzung 53.
+**Vierter Fund (Vektor 10, `PC=$4e25e`) EINGEGRENZT, ECHTE URSACHE
+NOCH OFFEN (Fortsetzung 53 + Nachtrag):** kein Sprung durch einen
+Nullzeiger — die Adressrechnung des zweiten `jsr -$78a0(a6)`-Aufrufs
+(Fortsetzung 51) stimmt exakt (dreifach reproduzierbar: `PC=$4e25e`,
+`A6=$5567f`, byteidentisch über drei unabhängige, unveränderte
+Boot-Läufe). Die Zielzelle in `echo`s eigenem `M$IData`-Bereich enthält
+zur Laufzeit aber keinen gültigen `jmp.l`-Stub mehr. **Die Kopier-
+schleife (`Q9K_ApplyInitializedData`, `q9kernel_firstproc.c`) selbst
+wurde Instruktion für Instruktion gegen den kompilierten Maschinencode
+geprüft und ist NACHWEISLICH KORREKT** — sie kopiert exakt den
+falschen Wert, der schon VORHER an dieser Stelle in `echo`s geladenem
+Modulabbild im RAM steht (33 Byte Versatz gegenüber der Datei, an
+GENAU der `M$IData`-Startadresse). Verdacht: Speicherkorruption
+zwischen `F$Load` und `F$Fork` (am ehesten `F$Load` selbst oder
+`F$VModul`s CRC-Prüfung), NICHT ein Fehler in der `M$IData`/`M$IRefs`-
+Anwendung. Bewusst NICHT weiter verfolgt (sechster eigenständiger Fund
+dieser sehr langen Sitzung) — konkreter Plan (Modulabbild VOR jedem
+Kopiervorgang gegen die Datei vergleichen) in Fortsetzung 53.
 
 **Vorheriger Meilenstein (weiterhin gültig, unverändert stabil):** der
 seit 2026-09-04 verfolgte "kernelgrößenabhängige Interrupt-Race"-Absturz
@@ -7032,3 +7036,58 @@ IRQ-Dispatch-Kopfkommentar in `q9kernel_entry.a`).
 
 Keine Codeaenderung in dieser Fortsetzung -- reine Diagnose. Alle 15
 Host-Testsuiten unveraendert gruen, Repo sauber auf Commit `6b29d32`.
+
+### Nachtrag (direkter Anschluss, "ok weiter"): Adressen sind DOCH reproduzierbar -- der eigentliche Fund ist praeziser als gedacht
+
+Die oben vermutete Timing-Nichtdeterminismus-Erklaerung war ZU
+VORSCHNELL: ein sauberer, WIEDERHOLTER Test (drei separate Boots
+desselben frischen Abbilds, davon zwei OHNE jede Instrumentierung)
+zeigt exakt dieselbe Absturzadresse (`PC=$4e25e`, `A6=$5567f`) --
+byteidentisch. Die fruehere Abweichung (`$4d67f` vs. `$4d6a0`) kam
+offenbar davon, dass die Watch-Instrumentierung selbst (jeder
+Speicherzugriff wird zusaetzlich geprueft) das Timing GENUG
+verschiebt, um eine andere Allokationsreihenfolge zu erzeugen --
+NICHT von echter, instrumentierungsfreier Nichtdeterminism. Fuer
+zukuenftige Untersuchungen: Adressen aus einem UNINSTRUMENTIERTEN Lauf
+gewinnen, dann in einem ZWEITEN, GLEICH GEBOOTETEN Lauf gezielt
+beobachten -- funktioniert zuverlaessig (dreimal bestaetigt).
+
+**Die Kopierschleife selbst ist NACHWEISLICH FREI VON BUGS** -- der
+komplette Maschinencode von `Q9K_ApplyInitializedData`s `M$IData`-
+Kopierschleife (`q9kernel_firstproc.c`, kompiliert nach
+`q9kernel` Datei-Offset `$9266`-`$92da`) wurde Instruktion fuer
+Instruktion gegen den C-Quelltext geprueft: `dstOff`/`count` werden
+korrekt byteweise big-endian aus dem Modulkopf gelesen, Ziel- UND
+Quelladresse verwenden denselben Schleifenindex, die aeussere
+"while (p < end)"-Schleife ist exakt nachgebildet. Kein Diskrepanzpunkt
+gefunden.
+
+**Trotzdem beobachtet:** die Kopierschleife schreibt am Ende (Index
+`i=44`, Zieladresse `block+$760`, GENAU die Stelle, auf die `echo`s
+`jsr -$78a0(a6)` spaeter zeigt) den Wert `$f0` -- auf der Festplatte
+(`echo.mod`, frisch aus der Datei gelesen, NICHT aus altem
+Sitzungs-Gedaechtnis rekonstruiert) steht an dieser Stelle aber `$4e`
+(Beginn von `4ef9 00000000`, dem erwarteten "jmp.l"-Stub). `$f0` ist
+stattdessen der Wert, der laut Datei an `M$IData`-Index 11 (Datenoffset
+`$73f`) steht.
+
+**Da die Kopierschleife selbst korrekt ist, MUSS `echo`s eigenes,
+GELADENES Modulabbild im RAM zum Zeitpunkt des Kopierens bereits von
+der Datei abweichen** -- ein 33-Byte-Versatz (`$21`) an GENAU der
+Stelle, wo `M$IData` beginnt, ist auffaellig regelmaessig (derselbe
+Betrag wie die urspruenglich als "Nichtdeterminismus" fehlgedeutete
+Abweichung). Das deutet auf eine ECHTE Speicherkorruption VOR dem Fork
+hin -- am ehesten waehrend `F$Load` (Laden von Diskette) oder
+`F$VModul` (CRC-Pruefung), NICHT auf einen Fehler in der M$IData/
+M$IRefs-Anwendung selbst.
+
+**Fuer eine Folgesitzung, konkret:** in EINEM Lauf `Q9_WATCH_ADDR` auf
+`echo`s KOMPLETTES, GELADENES Modulabbild setzen (`hdrAddr` bis
+`hdrAddr+Groesse`, aus dem Moduldirectory-Dump bekannt) UND VOR jedem
+Kopiervorgang (also VOR `F$Fork`) einen Kontroll-Hexdump von
+`hdrAddr+$0c26` (`M$IData`) gegen die Datei vergleichen, um zu
+bestaetigen, ob die Abweichung schon beim `F$Load` entsteht oder erst
+danach (z.B. durch `F$VModul`s CRC-Berechnung, die denselben
+Speicherbereich liest) hinzukommt.
+
+Keine Codeaenderung. Alle 15 Host-Testsuiten weiterhin gruen.
