@@ -23,15 +23,23 @@ des Tabellenformats gegen `echo.mod`, Implementierung in
 neue Host-Testfälle (F5/F9) in **Fortsetzung 49**. Alle 15
 Host-Testsuiten grün.
 
-**Neuer, NICHT mehr in dieser Sitzung verfolgter Fund:** `echo` stürzt
-jetzt an einer NEUEN, unabhängigen Stelle ab (`Vektor 4`, `PC=$6c`) --
-laut Code-Kommentar in `Q9K_ExcTrap` (Commits vom 2026-09-03, lange VOR
-der A4-Herkunftsbug-Entdeckung) bereits früher auf `scf+$352`
-zurückgeführt (`ioman+$1560 -> scf+$190 -> scf+$1f4 -> scf+$352`).
-Zwei offene Hypothesen (dieselbe A4-Bug-Familie über einen neuen
-Aufrufpfad, ODER ein eigenständiger `scf`-Fehler) — Details und
-empfohlener erster Prüfschritt (`Q9_WATCH_ADDR=<q9kernel-Modulbasis>+
-$3ac`) in Fortsetzung 49.
+**`PC=$6c`-Absturz VOLLSTÄNDIG aufgeklärt (Fortsetzung 50):** NICHT die
+A4-Herkunftsbug-Familie (geprüft und verworfen — die schlägt zwar
+weiterhin über `scf` zu, bleibt aber durch den Fortsetzung-38-Totraum
+folgenlos). Echte Ursache: `echo` benutzt neben dem bekannten
+`jsr -$78a0(a6)` (Fortsetzung 48) einen WEITEREN, negativen
+a6-Offset (`move.l d0,-$789e(a6)`) zum SCHREIBEN — die
+Fortsetzung-48-Kombi-Allokation behandelt den GESAMTEN Bereich vor
+`echo`s a6 fälschlich als reine `csl`-Codekopie, wodurch dieser
+Schreibzugriff `csl`s echten Funktionsprolog (die Registermaske des
+einleitenden `movem.l`) mitten im Betrieb überschreibt und den
+späteren `rts` auf eine korrumpierte Adresse springen lässt. Reale
+Microware-Konvention vermutlich: ein von `csl`s `M$Init` gefüllter,
+PRO-PROZESS-EIGENER Bereich (Sprungtabelle + Scratch-Zellen), nicht
+`csl`s gemeinsamer Code. Echte Lösung braucht einen neuen
+Speicher-Layout-Entwurf (Schwierigkeitsgrad wie Fortsetzung 46-48) —
+bewusst NICHT mehr in dieser bereits sehr langen Sitzung begonnen,
+konkrete nächste Schritte in Fortsetzung 50.
 
 **Vorheriger Meilenstein (weiterhin gültig, unverändert stabil):** der
 seit 2026-09-04 verfolgte "kernelgrößenabhängige Interrupt-Race"-Absturz
@@ -6650,3 +6658,109 @@ unterscheiden -- die eigentliche `M$IData`/`M$IRefs`-Baustelle dieser
 Sitzung ist damit vollstaendig abgeschlossen und verifiziert, der neue
 Fund ist bewusst NICHT mehr "nebenbei" am Ende dieser bereits sehr
 langen Sitzung angegangen worden.
+
+## Fortsetzung 50: `PC=$6c`-Absturz VOLLSTAENDIG aufgeklaert -- echte Architekturluecke in der Fortsetzung-48-Kombi-Allokation gefunden (2026-09-11, elfte Sitzung, direkter Anschluss an Fortsetzung 49, auf "ok mach weiter")
+
+**Hypothese 1 aus Fortsetzung 49 GEPRUEFT und VERWORFEN:**
+`Q9_WATCH_ADDR=<q9kernel-Modulbasis>+$3ac` zeigt: die alte
+A4-Herkunftsbug-Familie (P$Preempt-Muster, `addq.l/subq.l #1,$3ac(a4)`)
+schlaegt tatsaechlich WEITERHIN zu (PC=$fa7c/$fa98 in `scf`, alternierend
+Werte 1/2) -- aber GENAU an dieser Stelle greift der Fortsetzung-38-Fix
+(Totraum), der Schreibzugriff bleibt folgenlos. Die A4-Bug-Familie ist
+also weiterhin aktiv, aber NICHT die Ursache des NEUEN Absturzes.
+
+**Direkte Ursachenermittlung per `Q9_TRACE_INSTR=1`:** dieser Kernel
+friert die Instruktionsspur automatisch ein, sobald `PC<$1000` wird
+(bereits vorhandener Mechanismus in `m68krt.c`, extra fuer genau diesen
+Fall gebaut) -- kein `Q9_FREEZE_PC` noetig. Die letzten Eintraege zeigen:
+der Sprung nach `PC=0` (der ueber ein paar Nullwoerter hinweg bis
+`PC=$6c` "krabbelt" und dort auf ein echtes Illegal-Opcode-Muster
+trifft) ist KEIN `jsr`/`jmp` durch einen Nullzeiger, sondern ein
+**`rts` bei `csl+$6b74`** (Ende der Funktion, auf die `echo`s
+`jsr -$78a0(a6)` korrekt zeigt -- der Fortsetzung-48-Fix selbst
+funktioniert also weiterhin einwandfrei) mit einer korrumpierten
+Ruecksprungadresse.
+
+**Genaue Ursache gefunden per gezieltem `Q9_WATCH_ADDR` auf die
+betroffenen Befehlsbytes selbst** (`csl+$6a9c`, der Funktionsprolog
+`movem.l d1/d6-d7/a0,-(a7)`):
+1. Erster Treffer (PC in unserem eigenen Kernel, `Q9K_ExperimentalCombinedAlloc`s
+   Kopierschleife): schreibt die vier Bytes `48 e7 43 80` -- die
+   ECHTEN, unveraenderten Opcode-Bytes des Prologs. Die Kombi-Allokation
+   kopiert `csl` also byte-genau korrekt.
+2. Zweiter Treffer, VIEL SPAETER, PC in `echo` selbst (`echo+$7c2`):
+   schreibt vier Bytes `00 04 b0 f6` GENAU auf die Adresse der
+   Registermaske (`csl+$6a9e`) -- ueberschreibt die Maske `$4380`
+   (4 Register: A0,D6,D7,D1, macht `movem` zu einem
+   16-Byte-Stack-Push) mit `$0004` (NUR Register A5, 4 Byte) und
+   korrumpiert dabei zusaetzlich die ersten 2 Byte der naechsten
+   Instruktion. Musashis eigene `movem`-Logik (`m68k_in.c`,
+   Quellcode gegengeprueft, nicht nur vermutet) bestaetigt exakt
+   dieses Verhalten fuer beide Maskenwerte -- **kein Emulatorbug**,
+   reine Speicherkorruption durch unseren eigenen Kernel/`echo`s
+   Code.
+
+**Die schreibende Instruktion in `echo.mod` disassembliert (nach
+Ausrichtungspruefung ueber einen unabhaengigen `beq.b`-Sprung auf
+dieselbe Adresse, s. Fussnote):** `echo+$7c2` ist
+`move.l d0,-$789e(a6)` -- STRUKTURELL IDENTISCH zu den beiden bereits
+bekannten `echo`-eigenen a6-relativen Zugriffen (`jsr -$78a0(a6)` aus
+Fortsetzung 44/48, `move.l -$78cc(a6),d0` aus Fortsetzung 48). Ziel-
+adresse: `a6 - $789e` = `(combinedBlock+$E33C) - $789e` =
+`combinedBlock + $6A9E` = GENAU 2 Byte hinter `csl`s Funktionsanfang,
+also mitten in der Registermaske.
+
+**Architektureinordnung (der eigentliche Fund dieser Fortsetzung):**
+`echo` benutzt MEHRERE verschiedene, fest einkompilierte NEGATIVE
+a6-Offsets fuer VERSCHIEDENE Zwecke:
+- `-$78a0(a6)`: ruft eine ECHTE `csl`-Funktion auf (per Fortsetzung 48
+  korrekt geloest).
+- `-$78cc(a6)`: liest einen Zeiger (Fortsetzung 48, urspruenglicher
+  Absturzfund).
+- `-$789e(a6)`: SCHREIBT einen Wert (NEU, dieser Fortsetzung).
+
+Die Fortsetzung-48-Kombi-Allokation (`Q9K_ExperimentalCombinedAlloc`)
+geht implizit davon aus, dass der GESAMTE Bereich `[a6-$E33C, a6)`
+eine reine KOPIE von `csl`s Code ist -- das erklaert zufaellig genau
+den EINEN beobachteten Aufruf (`-$78a0`), zerstoert aber `csl`s
+Code, sobald `echo` (wie hier) versucht, in denselben Bereich zu
+SCHREIBEN. Die reale Microware-Konvention ist vermutlich: dieser
+Bereich ist ein PRO-PROZESS-EIGENER, von `csl`s `M$Init` bei der
+Installation gefuellter Bereich (Sprungtabelle + Scratch-Zellen fuer
+genau diesen einen Aufrufer) -- NICHT `csl`s gemeinsamer Code direkt.
+Das deckt sich mit dem laengst bekannten, aber bisher nicht weiter
+verfolgten Table-D-9-Hinweis ("a6 ... biased by $8000") UND mit den
+beiden bereits in Fortsetzung 48 in `echo`s eigenem `M$IData`
+gefundenen, nie relozierten `4ef9 00000000`-("jmp.l $0")-Stubs
+(Datenoffset `$760`/`$764`) -- das sind vermutlich GENAU die
+Sprungtabellen-Eintraege, die `csl`s `M$Init` mit echten Adressen in
+diesen pro-Prozess-Bereich haette eintragen muessen.
+
+**Bewusst NICHT in dieser (bereits sehr langen) Sitzung angegangen:**
+eine echte Loesung braucht einen neuen Speicher-Layout-Entwurf (ein
+eigener, per `M$Init` gefuellter pro-Prozess-`csl`-Bereich statt einer
+blossen Codekopie) -- vom selben Schwierigkeitsgrad wie die
+3-Anlauf-Adressbeziehungsfrage aus Fortsetzung 46-48. Fuer eine
+Folgesitzung empfohlen:
+1. `68k_tech.pdf`, Abschnitt zu `M$Init`/Trap-Bibliotheken, gezielt auf
+   Hinweise zu einem "per-caller private area" oder aehnlichem pruefen
+   (das bisher implementierte `M$Init` behandelt nur die
+   TrapInit-Registeruebergabe, s. Fortsetzung 44/45 -- nicht, WAS
+   `M$Init` mit einem solchen Bereich tut).
+2. `csl.mod`s eigenen `M$Init`-Code (`csl+$50`, bereits einmal
+   disassembliert, s. Fortsetzung 44) daraufhin lesen, ob er
+   irgendeinen Bereich VOR dem uebergebenen `a6` beschreibt/erwartet.
+3. Erst danach `Q9K_ExperimentalCombinedAlloc` neu entwerfen.
+
+Keine Codeaenderung in dieser Fortsetzung -- reine Diagnose, alle 15
+Host-Testsuiten unveraendert gruen, Repo sauber auf Commit `3847561`.
+
+**Fussnote (Ausrichtungsverifikation):** `echo.mod` enthaelt an
+zahlreichen Stellen die OS-9-Konvention "trap #0 / dc.w <Funktionscode>"
+-- der Funktionscode ist ein DATENWORT, kein Code, capstone (und jeder
+andere Disassembler ohne dieses Sonderwissen) dekodiert beim linearen
+Durchlauf ab einer falsch geratenen Startadresse deshalb leicht falsch
+ausgerichteten Folgecode. Verifiziert wurde die Ausrichtung von
+`echo+$7c2` deshalb NICHT per linearem Vorwaertslauf, sondern
+gegenlaeufig: ein `beq.b`-Sprung bei `echo+$7a2` zeigt UNABHAENGIG exakt
+auf `echo+$7c2` -- ein Sprungziel MUSS ein echter Befehlsanfang sein.
