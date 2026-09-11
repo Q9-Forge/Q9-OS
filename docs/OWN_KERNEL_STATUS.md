@@ -5350,3 +5350,69 @@ Startpunkt Modul-Offset `$82A`).
 Alle 15 Host-Testsuiten grün (keine neue Testdatei nötig -- `Q9K_SysFCCtl`
 ist reines Assembler ohne eigene C-Logik, gleiches Muster wie andere
 triviale Wrapper in dieser Datei).
+
+## Fortsetzung 36: `Q9K_TCallDispatch` verletzte die reale TrapEnt-
+Konvention zweifach (ECHTE BUGS, GEFIXT) -- UND ein präziser neuer Fund
+zur allgemeinen Race (2026-09-11, direkte Fortsetzung derselben Sitzung)
+
+### Zwei echte, spec-verifizierte Bugs in `Q9K_TCallDispatch`
+
+Beim erneuten Nachlesen der TrapEnt-Konvention (68k_tech.pdf S. 172f,
+auf der Suche nach dem `$6C`-Absturz aus Fortsetzung 34/35) wörtlich:
+*"Passed: d0-d7 = caller's registers, a0-a5 = caller's registers"* --
+ALLE müssen unverändert beim Trap-Handler ankommen. Zwei Verstöße
+gefunden:
+
+1. **d0 verloren:** Die bisherige Fassung benutzte d0 nach der
+   Aufrufer-Registerwiederherstellung noch zweimal als eigenes
+   Rechenregister (Vektorwort, dann Funktionscode), ohne d0 vor dem
+   Sprung in den Handler nochmal zurückzugeben -- der Aufrufer verlor
+   sein eigenes d0 dauerhaft. Fix: Vektorwort/Funktionscode werden jetzt
+   VOR der Registerwiederherstellung in zwei neue Speicherzellen
+   (`Q9K_TCallScratch_VectorWord`/`_FuncCode`) vorausberechnet, danach
+   bleiben d0/a4 bis zum Handler-Sprung unangetastet.
+2. **a4 verloren:** `movea.l ExecEntry,a4 / jmp (a4)` verletzte dieselbe
+   Konvention ein zweites Mal -- a4 gehört zu "a0-a5". Fix: derselbe
+   registerlose "Adresse pushen, RTS springt hin"-Trampolin, der in
+   diesem Kernel bereits für `Q9K_TrapExtInvoke` etabliert ist (dort aus
+   demselben Grund: kein freies Register für das Sprungziel übrig, wenn
+   ALLE Aufrufer-Register erhalten bleiben müssen).
+
+Beide sind spec-verifizierte, echte Korrektheitsfehler, unabhängig davon,
+ob sie die konkrete Ursache des `$6C`-Absturzes waren -- jeder reale
+Trap-Handler, der sich auf ein unverändertes d0 oder a4 verlässt (eine
+plausible, gängige Konvention für interne Dispatch-Tabellen, exakt wie
+sie im Handbuch selbst für den Sprung IN eine Funktion beispielhaft
+gezeigt wird), hätte bisher garantiert falsche Werte bekommen.
+
+### Live-Verifikation gegen `echo`/`csl`: durch dieselbe Race blockiert,
+aber ein präziser neuer Fund
+
+Der Live-Test nach diesem Fix traf erneut auf die seit Fortsetzung 32
+bekannte, kernelgrößenabhängige Race -- diesmal SOGAR VOR dem
+`F$TLink`-Testpunkt (der `Q9K_TCallDispatch`-Fix selbst also in diesem
+Lauf gar nicht durchlaufen). Der Absturz-PC (`$74b4`) lieferte aber einen
+ungewöhnlich präzisen neuen Hinweis: er liegt EXAKT auf dem
+`dc.w $008a`-Funktionscode-Wort, das im eigenen Testcode direkt hinter
+der `trap #0`-Instruktion für `I$Write` steht. Das bedeutet: die
+Rücksprungadresse im Exception-Frame stand noch auf dem Wert VOR
+`Q9K_TrapDispatch`s eigener `addq.l #2,38(sp)`-Korrektur (die genau
+dieses Funktionscode-Wort überspringen soll) -- als sei diese Korrektur
+irgendwo zwischen ihrer Ausführung und dem finalen `rte` wieder verloren
+gegangen. Plausibelster Verdächtiger: `Q9K_TrapCallExternal`s eigener,
+mehrfach dokumentiert fragiler Rückweg (liest/schreibt gezielte
+Stack-Offsets, sperrt Interrupts erst NACH dem ersten CCR-Rettungsschritt)
+-- eine ZUSAETZLICHE, bisher nicht gefundene Verschachtelungslücke dort
+ist naheliegend, aber NICHT bewiesen.
+
+**Bewusst NICHT versucht:** ein Blindfix an `Q9K_TrapCallExternal` ohne
+weitere Live-Instrumentierung -- dieser Pfad wurde bereits dreimal real
+gefixt (CCR-Verlust, A4-Konvention, Herkunftsprüfung) und verträgt keinen
+ungeprüften vierten Eingriff. Der nächste, sauber benannte Startpunkt für
+eine Folgesitzung: Ringpuffer-Instrumentierung (Fortsetzung 33) gezielt
+um Einträge AN `Q9K_TrapCallExternal`s Rückweg selbst erweitern (nicht
+nur an Timer/`Q9K_IRQDispatch`), um zu sehen, ob ein Interrupt GENAU
+dort einschlägt.
+
+Alle 15 Host-Testsuiten grün. `Q9K_TCallDispatch`-Fix committet -- real,
+spec-verifiziert, unabhängig vom noch offenen Race-Fund wertvoll.
