@@ -9,8 +9,30 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-11, zehnte Arbeitssitzung — HIER ZUERST LESEN,
+## ÜBERGABE (2026-09-11, elfte Arbeitssitzung — HIER ZUERST LESEN,
 ersetzt die Übergabe direkt darunter vollständig)
+
+**DURCHBRUCH: Die "kernelgrößenabhängige Interrupt-Race" (seit
+2026-09-04 verfolgt) ist KEINE Race — sie ist derselbe, bereits in
+Fortsetzung 25 (2026-09-08/09) gefundene und dort bewusst nicht
+reparierte A4-Herkunftsprüfung-Bug.** Volle Herleitung, Beweiskette
+(Instruktionsspur + Bytevergleich + Watchpoint) und der empfohlene,
+risikoarme nächste Fix-Ansatz stehen in **Fortsetzung 37** weiter unten
+— das ist jetzt die maßgebliche, aktuelle Quelle für diese Baustelle,
+nicht mehr die Ringpuffer-Diagnose der zehnten Sitzung weiter unten.
+Kurzfassung: RBF/SCF schreiben bei jedem eigenen
+internen Treiberaufruf blind auf `Modulbasis+$3ac` (weil A4 bei
+Fremdaufrufern fälschlich unsere Kernel-Modulbasis statt des echten
+Prozessdeskriptors ist) — ob das schadet, hängt nur davon ab, welcher
+eigene Code an genau diesem Datei-Offset liegt. **Nächster Schritt:**
+an Datei-Offset `$3ac`-`$3af` im eigenen Modul einen festen,
+harmlosen Sicherheitsabstand einbauen (NICHT die A4-Prüfung selbst
+anfassen — fünf frühere Versuche daran sind an IOMans Konsolen-Open
+gescheitert, s. Fortsetzung 25/27).
+
+---
+
+## ÜBERGABE (2026-09-11, zehnte Arbeitssitzung — historisch, s. oben)
 
 **Auftrag dieser Sitzung:** Fortsetzung 33s konkreten nächsten Schritt
 umsetzen — die Ringpuffer-Instrumentierung um zwei Messpunkte an
@@ -5665,3 +5687,150 @@ dort einschlägt.
 
 Alle 15 Host-Testsuiten grün. `Q9K_TCallDispatch`-Fix committet -- real,
 spec-verifiziert, unabhängig vom noch offenen Race-Fund wertvoll.
+
+## Fortsetzung 37: DURCHBRUCH -- die "kernelgroessenabhaengige Interrupt-
+Race" ist KEINE Race, sondern derselbe A4-Herkunftspruefung-Bug aus
+Fortsetzung 25, jetzt vollstaendig erklaert (2026-09-11, elfte
+Arbeitssitzung)
+
+**Auftrag:** Fortsetzung 37 (Übergabe "zehnte Sitzung") weiterverfolgen
+-- sechster Messpunkt/Musashi-Trace-Hook fuer die Interrupt-Race, wie
+dort vorgeschlagen.
+
+**Es brauchte keinen neuen Musashi-Hook.** Die im Projekt bereits
+vorhandene Instruktionsspur-Infrastruktur (`Q9_TRACE_INSTR=1`,
+`Q9_FREEZE_PC`, `m68krt.c`) reichte, kombiniert mit dem ebenfalls
+bereits vorhandenen Schreibzugriffs-Watch (`Q9_WATCH_ADDR`/`_LEN`).
+
+### Schritt 1: Instruktionsspur eingefroren exakt am Absturz-PC
+
+`Q9_TRACE_INSTR=1 Q9_FREEZE_PC=0x74b4` (der seit Fortsetzung 36 bekannte
+Absturz-PC) zeigt die letzten Instruktionen VOR dem Crash lueckenlos:
+```
+pc=000074a8 d0=00000000              * move.l #$11,d1 (Q9K_TestWriteLen)
+pc=000074ae d0=00000000 d1=00000011  * lea Q9K_TestWriteText(pc),a0
+pc=000074b4 d0=00000000 a0=ff9c0c41  * <- Crash-PC, a0 ist GARBAGE
+```
+**Zwischen `$74ae` und `$74b4` fehlt der komplette `trap #0`-Befehl bei
+`$74b2` in der Spur -- er wird nie als eigene Instruktion ausgefuehrt.**
+Das bestaetigt und praezisiert den Fund der zehnten Sitzung
+(„erreicht `Q9K_TrapDispatch` nie") auf Instruktionsebene.
+
+### Schritt 2: Byte-Vergleich Laufzeit vs. gebautes Modul -- EIN BIT
+
+`Code um den PC` aus dem Crash-Dump zeigt Byte `$74ae`=`41 fb`. Der
+frisch gebaute, unveraenderte `q9kernel` enthaelt an derselben
+Modul-Datei-Position (`$74ae - $7100 = $3ae`) aber `41 fa`:
+```
+xxd -s $((0x74ae-0x7100)) build/q9kernel
+000003ae: 41fa 0124 4e40 008a ...
+```
+**`$74ae` ist zur Laufzeit von `$fa` auf `$fb` veraendert worden -- ein
+einzelnes Bit.** `41fa`=`lea (d16,PC),a0` (harmloses PC-relatives LEA,
+so wie es der Quelltext auch vorsieht), `41fb`=`lea (bd,PC,Xn),a0` im
+"Full Extension Format" mit einer laut Motorola-Spezifikation
+RESERVIERTEN I/IS-Bitkombination -- Musashi decodiert das nicht wie ein
+normales 4-Byte-LEA, sondern liest zusaetzliche (nicht vorhandene)
+Extension-Words, wodurch der Instruktionsstrom ab hier komplett
+verschiebt und der eigentliche `trap #0` bei `$74b2` nie als solcher
+gesehen wird -- **das ist die vollstaendige Erklaerung fuer "warum
+verschluckt Musashi den trap"**, ohne dass im Emulator irgendetwas
+kaputt ist: er bekommt schlicht keinen gueltigen Opcode mehr serviert.
+
+### Schritt 3: Watchpoint auf `$74ae` findet den Schreiber -- und es ist Fortsetzung 25s Bug
+
+`Q9_WATCH_ADDR=0x74ae Q9_WATCH_LEN=2 Q9_WATCH_FREEZE=1`, Treffer-Liste:
+```
+#31507/31508  pc=fe000d66 -> $74ae/$74af schreibt 41/fa   (CF-Bootloader, initialer Load -- korrekt)
+#625377       pc=0000cc22 -> $74ac schreibt 0x001141fb (4 Byte)   [innerhalb scf.mod]
+#625390       pc=0000d176 -> $74ac schreibt 0x001141fa (4 Byte)   [innerhalb scf.mod]
+#625396       pc=0000caa2 -> $74ac schreibt 0x001141fb (4 Byte)   [innerhalb scf.mod]
+#628400       pc=0000f5f8 -> $74ac schreibt 0x001141fc (4 Byte)   [innerhalb rbf.mod]
+#629079       pc=0000f614 -> $74ac schreibt 0x001141fb (4 Byte)   [innerhalb rbf.mod]
+... (weitere sieben, gleiches Muster)
+```
+Die geschriebenen 32-Bit-Werte sind **immer** `0x001141fX` -- das ist
+schlicht der ORIGINALWERT an `$74ac` (`00 11 41 fa`, die oberen zwei
+Byte sind die Immediate-Haelfte von `move.l #$11,d1` direkt davor,
+korrekt und unveraendert), **um genau 1 erhoeht bzw. erniedrigt.**
+
+**Das ist exakt `addq.l #1,$3ac(a4)` / `subq.l #1,$3ac(a4)` aus RBF/
+SCF -- der in Fortsetzung 25 (2026-09-08/09) bereits gefundene und
+dort namentlich benannte P$Preempt-Zaehler-Inkrement/Dekrement**, den
+RBF und SCF bei JEDEM internen Treiberaufruf (z. B. einem eigenen
+`F$SRqMem` waehrend ihrer eigenen `I$Open`/`I$Write`-Verarbeitung)
+routinemaessig ausfuehren. Fortsetzung 25 hatte den Mechanismus exakt
+beschrieben ("`a4` enthaelt faelschlich unsere eigene
+Kernel-Modulbasis `$7100` statt eines echten Zeigers,
+`$7100+$3ac=$74ac`, exakt der beobachtete Fehlerort") -- **nur wurde
+damals ein ANDERER Absturz (`Q9K_DiagWriteD7`, `$74C5` bei einer
+frueheren Kernelgroesse) durch denselben Mechanismus verursacht.** Die
+Wurzelursache selbst (`Q9K_TrapDispatch`s A4-Herkunftspruefung
+ueberschreibt A4 fuer Fremdaufrufer mit der eigenen Modulbasis statt
+mit dem echten Aufruferwert) ist seit Fortsetzung 25 UNVERAENDERT im
+Kernel -- **fuenf Reparaturversuche wurden verworfen, weil sie
+IOMans Konsolen-Open brachen** (s. Fortsetzung 25/27).
+
+### Fazit: die "Interrupt-Race" seit 2026-09-04 ist derselbe Bug, nicht neu
+
+Was ueber sieben Sitzungen als "kernelgroessenabhaengige Race" verfolgt
+wurde, ist in Wahrheit: **RBF/SCF schreiben bei JEDEM internen
+Treiberaufruf blind auf die feste Adresse `Modulbasis+$3ac`** (weil A4
+dabei faelschlich die Modulbasis ist). Ob das schadet, haengt nur davon
+ab, WELCHER Code des eigenen Kernels GENAU an Datei-Offset `$3ac`-`$3af`
+liegt -- eine reine Frage der Kernelgroesse/des Layouts, KEINE
+Zeitfrage. Das erklaert:
+- **"kernelgroessenabhaengig":** jede Codeaenderung verschiebt, was an
+  `$3ac` landet -- mal Fuellbyte/Datenmuell (folgenlos), mal wie hier
+  ein aktives Opcode-Byte (fatal).
+- **Warum kein Interrupt im X/A-Ringpuffer-Fenster auftauchte (diese
+  Sitzung, vor diesem Fund) und warum `Q9K_TrapDispatch` nie erreicht
+  wird (zehnte Sitzung):** der fragliche `trap #0`-Aufruf selbst wird
+  nie sauber erreicht, weil das vorausgehende LEA bereits VORHER (durch
+  einen voellig unabhaengigen, nicht-interrupt-getriebenen Ablauf --
+  RBF/SCFs eigene, ganz normale interne Aufrufe) kaputtgeschrieben
+  wurde. Es gibt keine Verschachtelung von Interrupt und Trap-Rueckweg
+  zu finden, weil das gar nicht die Ursache ist.
+- **Warum fruehere Reparaturversuche an `Q9K_TrapCallExternal`/
+  `Q9K_TrapDispatch` nichts brachten:** sie aenderten alle etwas AN der
+  Symptomstelle (Rueckweg/PC-Korrektur), nicht an der URSACHE (A4-Wert
+  bei Fremdaufrufer-Pruefung).
+
+### Empfohlener naechster Schritt -- BEWUSST NICHT die A4-Pruefung selbst anfassen
+
+Fuenf direkte Reparaturversuche an der A4-Herkunftspruefung sind bereits
+gescheitert (brechen IOMans Konsolen-Open aus nicht verstandenem Grund,
+s. Fortsetzung 25/27). **Neuer, risikoaermerer Ansatz, der diese fragile
+Logik unangetastet laesst:** da der Schreibort IMMER exakt
+`Modulbasis+$3ac` ist (deterministisch, kein Zufall), genuegt es, an
+GENAU dieser festen Datei-Position im eigenen Modul (`q9kernel_entry.a`,
+Datei-Offset `$3ac`-`$3af` relativ zum wahren Modulanfang, s.
+`Q9K_ModuleHeaderSize`) vier harmlose, nie ausgefuehrte/nie gelesene
+Fuellbytes zu platzieren (z. B. ein eigens benanntes `ds.l 1`-Feld oder
+gezielte `nop`-Fuellung mit Sicherheitsabstand), sodass ein blindes
+`addq.l #1`/`subq.l #1` dort niemals mehr etwas Kritisches trifft --
+unabhaengig davon, ob/wann RBF oder SCF dorthin schreiben. Das behebt
+das SYMPTOM zuverlaessig, OHNE die eigentliche (bereits fuenfmal an
+IOMan gescheiterte) A4-Semantik zu veraendern. Konkret zu pruefen: was
+aktuell bei `q9kernel_entry.a`-Quelltextposition entsprechend
+Datei-Offset `$3ac` steht (in dieser Sitzung war es exakt die zweite
+Haelfte von `move.l #$11,d1` plus der Anfang des folgenden `lea`) und
+ob sich davor/danach ein 4-Byte-Sicherheitsabstand einfuegen laesst,
+ohne andere Offsets/Sprungziele zu verschieben (Neuvermessung per `l68
+-s` noetig, s. `Q9K_ModuleHeaderSize`-Lehre).
+
+**Langfristig sauberer, aber aufwendiger:** die A4-Herkunftspruefung
+doch richtig loesen -- jetzt mit einem NEUEN, bisher nicht probierten
+Werkzeug: da der Schreibort nachweislich IMMER exakt bekannt ist
+(`Modulbasis+$3ac`), liesse sich ein sechster Fixversuch diesmal GEZIELT
+per `Q9_WATCH_ADDR=<Modulbasis+0x3ac>` waehrend der Konsolen-Open-Sequenz
+beobachten, um zu sehen, WAS an der A4-Pruefung sich fuer IOMan aendert,
+wenn A4 korrekt gesetzt wird -- die bisherigen fuenf Versuche massen das
+Symptom ("Error $0000") nie mit derselben Watch-Praezision nach.
+
+Alle 15 Host-Testsuiten weiterhin gruen (reine Diagnose, keine
+Quelltextaenderung in dieser Sitzung). Instrumentierung aus der zehnten
+Sitzung (`Q9K_RaceRing`, Commit `475b549`) unveraendert im Repo
+belassen -- sie war fuer diesen Fund nicht mehr noetig (Instruktionsspur
++ Watchpoint reichten), schadet aber auch nicht und dokumentiert den
+fruaeheren, nicht falschen (nur unvollstaendigen) Ermittlungsstand.
