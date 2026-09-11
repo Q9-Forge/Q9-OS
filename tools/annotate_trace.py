@@ -119,8 +119,17 @@ class ModuleMap:
         return None
 
 
-CALL_MNEMONICS = {"jsr", "bsr"}
-RET_MNEMONICS = {"rts", "rte"}
+def is_call(mnem):
+    # Capstone haengt bei bsr/jmp/jsr manchmal ein Groessen-Suffix an das
+    # Mnemonic selbst an (z.B. "bsr.l", nicht "bsr" im op_str) -- ECHTER
+    # BUG in einer frueheren Fassung dieses Werkzeugs: "bsr" wurde per
+    # exaktem Vergleich gesucht und JEDES "bsr.l"/"bsr.w"/"bsr.b" dadurch
+    # komplett uebersehen. Immer per Praefix pruefen, nie exakt.
+    return mnem.startswith("jsr") or mnem.startswith("bsr")
+
+
+def is_return(mnem):
+    return mnem.startswith("rts") or mnem.startswith("rte")
 
 
 def main():
@@ -190,10 +199,10 @@ def main():
         label = mm.annotate(pc)
         annotated.append((i, e, label, mnem, ops))
 
-        if mnem in CALL_MNEMONICS and insn:
+        if is_call(mnem) and insn:
             ret_addr = pc + insn.size
             call_stack.append((ret_addr, sp, i))
-        elif mnem in RET_MNEMONICS:
+        elif is_return(mnem):
             is_disguised_jump = False
             if i > 0:
                 prev = annotated[i - 1]
