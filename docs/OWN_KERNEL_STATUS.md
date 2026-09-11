@@ -6314,3 +6314,60 @@ Beziehung wiederherstellt -- ein groesseres, eigenstaendiges Vorhaben,
 kein kleiner Bugfix mehr.
 
 Committet+gepusht. Alle 15 Host-Testsuiten gruen.
+
+## Fortsetzung 46: Relokations-Experiment versucht -- verworfen, zeigt warum "nachtraeglich verschieben" nicht funktioniert (2026-09-11, elfte Sitzung, Abschluss)
+
+**Idee:** `csl` NACH dem normalen Laden per Bytekopie an die Adresse
+verschieben, die `echo`s fest einkompilierte Konstante (`jsr
+-$78a0(a6)`, s. Fortsetzung 44) tatsaechlich braucht -- kein Redesign
+der Speicherzuteilung, nur ein gezielter, nachtraeglicher Fix fuer
+DIESE eine Kombination. Rechnerisch exakt hergeleitet: `csl` muesste
+fuer `echo`s aktuelles `A6` bei `csl_base + $44` (68 Byte spaeter)
+laden. Als C-Funktion implementiert (`Q9K_ExperimentalRelocateCsl`,
+`q9kernel_traplink.c`): Moduldirectory-Eintrag verschieben, Bytekopie
+(memmove-artig fuer den ueberlappenden Bereich), Trap-Tabellen-
+Eintraege (ModPtr/ExecEntry) in BEIDEN betroffenen Prozessen
+(eigenem Testprozess und `echo`, das die Registrierung per `F$Fork`
+geerbt hat) um denselben Versatz nachziehen.
+
+**Ergebnis: echte Regression, nicht nur "hilft nicht".** Nach dem
+Experiment verschwand sogar die vorher zuverlaessig funktionierende
+`F$TLink`-Erfolgskette (`lctE`) komplett -- `echo` fiel zurueck in
+seinen URALTEN, aus Fortsetzung 31 bekannten Fehlerpfad ("can't
+install csl", Absturz bei `PC=$7031`, A6=0). Auch eine Interrupt-Sperre
+um die komplette Relokation (Verdacht: Scheduler schaltet waehrend der
+48-KB-Kopie auf das frisch geforkte `echo` um und trifft es halb
+verschoben an) behob das NICHT -- der Fehler liegt tiefer.
+
+**Lehre, warum "nachtraeglich verschieben" grundsaetzlich fragil ist:**
+zum Zeitpunkt der Verschiebung existieren bereits ZWEI unabhaengige
+Kopien der Trap-Tabellen-Registrierung (eigener Testprozess UND `echo`,
+durch Vererbung bei `F$Fork` getrennt) -- und moeglicherweise weitere,
+hier nicht bedachte Referenzen auf die ALTE `csl`-Adresse (z. B. in
+`csl`s eigenem, bereits initialisiertem statischem Speicher, der beim
+`M$Init`-Aufruf VOR der Verschiebung Werte relativ zur ALTEN
+Codeadresse abgelegt haben koennte). Jede uebersehene Referenz macht
+das Ergebnis inkonsistent. **Experiment vollstaendig zurueckgesetzt**
+(`git checkout`), Repo wieder exakt auf dem verifizierten, funktionierenden
+Stand von Commit `4a21cd8`.
+
+### Einordnung fuer eine echte Folgesitzung
+
+Eine tragfaehige Loesung muesste `csl` VOR dem ersten `F$TLink`-Aufruf
+an der richtigen Adresse laden (nicht nachtraeglich verschieben) --
+das heisst vermutlich: `csl` beim Systemstart (oder spaetestens beim
+allerersten `F$Load("csl")`) gezielt an eine Adresse legen, die aus dem
+A6-Wert des ANFORDERNDEN Prozesses berechnet wird, BEVOR irgendeine
+Registrierung/Initialisierung stattfindet. Das ist ein eigenstaendiges
+Architektur-Vorhaben (Aenderung an `F$Load`s bzw. `F$TLink`s
+Speicherzuteilung selbst, nicht nur ein nachtraeglicher Patch) und
+sollte in einer eigenen, dafuer vorgesehenen Sitzung angegangen werden
+-- nicht als schneller Versuch am Ende einer bereits sehr langen
+Sitzung.
+
+**Damit ist die `echo`/`csl`-Baustelle nach bestem Wissen dieser
+Sitzung vollstaendig dokumentiert** (Fortsetzung 34, 37-46). Alle 15
+Host-Testsuiten gruen, keine Codeaenderung im Repo aus diesem
+Experiment (vollstaendig zurueckgesetzt). Der Hauptauftrag der Sitzung
+(Interrupt-Race-Fix, Commits `6e5a4de`-`4a21cd8`) bleibt geloest und
+verifiziert.
