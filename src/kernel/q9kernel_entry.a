@@ -3446,6 +3446,17 @@ Q9K_SysFVModul_Fail:
 * erwartet, exakt dieselbe Lehre wie beim F$Move-Trampolin anderer
 * Module).
 Q9K_SysFTLink:
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, Fortsetzung 45, per echtem
+* Lesen von csl+$50 = M$Init): M$Init liest nachweislich d1-d5/a3/a4
+* des URSPRUENGLICHEN Aufrufers (68k_tech.pdf, TrapInit-Konvention
+* "Passed: d0-d7 = caller's registers, a0-a5 = caller's registers") --
+* bisher wurde nur a6 um den internen "bsr Q9K_SysTLinkImpl"-Aufruf
+* geschuetzt, alle anderen blieben Q9K_SysTLinkImpls (normale C-
+* Funktion) Arbeitsregistern schutzlos ausgeliefert. Rettung deckt
+* grosszuegig d1-d7/a3-a5 ab (a0/a1/a2/a6 bekommen ohnehin bewusst neue,
+* dokumentierte Werte fuer M$Init, s. unten -- KEIN Aufrufer-Wert dort
+* noetig).
+        movem.l d1-d7/a3-a5,-(sp)
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_TLinkScratch_TrapNum
@@ -3453,6 +3464,7 @@ Q9K_SysFTLink:
         move.l  a0,Q9K_TLinkScratch_NamePtr
         bsr     Q9K_SysTLinkImpl
         movea.l (sp)+,a6
+        movem.l (sp)+,d1-d7/a3-a5
 
         tst.l   Q9K_TLinkScratch_Success
         beq     Q9K_SysFTLink_Fail
