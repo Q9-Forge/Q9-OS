@@ -409,6 +409,26 @@ Q9K_ExcInfo_A1            equ $144044    * Langwort, A1 beim Eintritt
 Q9K_ExcInfo_A2            equ $144048    * a2/a3/a4 (12 Byte)
 Q9K_ExcInfo_D0            equ $144054    * d0-d7 (32 Byte)
 Q9K_ExcInfo_Stack         equ $144080    * 64 Byte Stackinhalt ab SP
+* Q9K_RaceRing -- TEMPORAERE Ringpuffer-Instrumentierung (2026-09-11,
+* zehnte Arbeitssitzung, Fortsetzung von Fortsetzung 33/36) zur
+* Lokalisierung der seit 2026-09-04 bekannten Interrupt-Race. Gleiches
+* Prinzip wie Fortsetzung 33 (Marker+geretteter PC pro Eintrag, feste
+* RAM-Adresse weit oberhalb der genullten Kernel-Globals, s. Lehre dort
+* zu niedrigen Adressen), aber diesmal ZUSAETZLICH an zwei neuen
+* Punkten: Anfang von Q9K_TrapCallExternal (Marker $58='X') und direkt
+* VOR dem "rte" in Q9K_TrapAfterCall (Marker $41='A', der PC-Wert, der
+* GLEICH per RTE zurueckgegeben wird -- korrekt waere er IMMER >
+* Q9K_TrapCallerPC, weil addq.l #2 ihn hinter das Funktionscode-Wort
+* korrigiert hat). Ziel: sehen, ob ein Timer/IRQ-Log-Eintrag zeitlich
+* GENAU zwischen einem 'X'- und dem zugehoerigen 'A'-Eintrag liegt.
+* Jeder Eintrag 8 Byte (Marker.l/PC.l), 64 Slots = 512 Byte, danach ein
+* 4-Byte laufender Index (kein Modulo beim Schreiben noetig -- Lesen
+* maskiert beim Dump). NICHT dauerhaft: nach Gebrauch wieder per
+* "git checkout" entfernen, s. docs/OWN_KERNEL_STATUS.md.
+Q9K_RaceRingBase          equ $1440C0
+Q9K_RaceRingSlots         equ 8192
+Q9K_RaceRingEntSz         equ 8
+Q9K_RaceRingIdx           equ $1540C0    * Base + Slots*EntSz (8192*8=$10000), Literal wegen r68
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -1697,6 +1717,19 @@ Q9K_TimerActivate:
 * oben zum gemeinsamen Fake-Rahmen-Mechanismus).
 Q9K_TimerIRQHandler:
         movem.l d0-d7/a0-a6,-(sp)              * kompletten Registersatz des unterbrochenen Prozesses sichern
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben): d0-d2/a0 sind hier
+* frei benutzbar -- ihre echten Werte liegen bereits gesichert im
+* movem-Bereich auf dem Stack, unberuehrt von den folgenden Zeilen.
+        move.l  62(sp),d1                        * geretteter PC (60 Byte movem + 2 Byte SR-Wort)
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        moveq   #30,d0                            * Marker = Timer-Vektor
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
         movea.l Q9_D_Proc,a0                    * a0 = aktueller Prozessdeskriptor
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * dessen SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
 
@@ -1776,6 +1809,30 @@ Q9K_TrapDispatch:
 * NUR TEMPORAER (2026-09-01, I$Open-Folgeschritt-Suche): letzten
 * Funktionscode an feste Debug-Adresse schreiben.
         move.w  d7,($1370).w
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben), fuenfter Messpunkt
+* (2026-09-11, gezielt fuer den Fall "Absturz-PC landet auf dem
+* Funktionscode-Wort OHNE zugehoerigen X-Marker" -- deutet auf einen
+* Fehler VOR der externen/internen Verzweigung hin). Marker=$5400+
+* Funktionscode, PC=a4 (ROH, noch VOR der addq.l-Korrektur). d0-d2/a0
+* sind hier NOCH LEBENDE Aufrufer-Register -- erst "movem.l (sp),
+* d2-d7/a3-a5" weiter unten holt d2-d7/a3-a5 zurueck, d0/d1/a0-a2 werden
+* NIE gesichert -- deshalb hier explizit per movem retten/wiederherstellen.
+* a4/d7 bleiben unberuehrt, der Aufrufer (Rest dieser Routine) braucht sie
+* unveraendert weiter.
+        movem.l d0-d2/a0,-(sp)
+        move.w  d7,d1
+        andi.l  #$ff,d1
+        or.l    #$5400,d1
+        move.l  a4,d0                       * PC, roh, vor der Korrektur
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                     * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        move.l  d1,(a0)
+        move.l  d0,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
+        movem.l (sp)+,d0-d2/a0
         addq.l  #2,38(sp)                   * geretteten PC im Frame um 2 erhoehen (hinter das Funktionscode-Wort)
         cmp.w   #256,d7
         bcc     Q9K_TrapUnknown
@@ -1905,6 +1962,23 @@ Q9K_TrapCallExternal:
 * "movem" kann A7 nicht mitschreiben, der Slot wird separat gesetzt;
 * ebenso SR/PC/Format, die aus dem Hardware-Exception-Frame stammen
 * (SP zeigt beim Eintritt hierher genau darauf).
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben), Marker $58='X' =
+* Anfang externer Aufruf. d0-d2/a0 sind hier laut Konvention frei
+* (Handler-Ergebnisregister, noch nicht belegt); a4 (Aufrufer-A4) bleibt
+* unangetastet. PC kommt aus dem noch reinen Hardware-Frame (2(sp) --
+* bereits per addq.l #2 im TrapDispatch korrigiert).
+        movem.l d0-d2/a0,-(sp)
+        move.l  18(sp),d1                        * PC (Frame jetzt 16 Byte tiefer)
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        moveq   #$58,d0
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
+        movem.l (sp)+,d0-d2/a0
         lea     -72(sp),sp                      * Platz fuer den R$-Rahmen
         movem.l d0-d7/a0-a6,(sp)                 * R$d0..R$a6 (60 Byte, aufsteigend)
         move.l  sp,$3c(sp)
@@ -2063,6 +2137,25 @@ Q9K_TrapAfterCall:
         or.w    d0,6(sp)                       * echtes CCR einsetzen
         move.l  (sp)+,d0                        * d0 wiederherstellen
         addq.l  #2,sp                            * CCR-Wort verwerfen -- sp zeigt auf den Frame
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben), Marker $41='A' =
+* Ende, unmittelbar VOR dem RTE. d0 traegt hier den ECHTEN Rueckgabewert
+* des Handlers (z.B. F$SRqMems gewaehrte Byte-Anzahl) -- deshalb per
+* movem VOLLSTAENDIG gerettet/wiederhergestellt, nicht nur "frei"
+* angenommen. Das lebende CCR wird von "andi.l"/"addq.l" unten zwar
+* veraendert, das ist HIER folgenlos: RTE laedt SR ausschliesslich aus
+* dem Frame (bereits oben per "or.w d0,6(sp)" endgueltig gesetzt).
+        movem.l d0-d2/a0,-(sp)
+        move.l  18(sp),d1                        * PC, der GLEICH per RTE zurueckgegeben wird
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        moveq   #$41,d0
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
+        movem.l (sp)+,d0-d2/a0
         rte
 
 Q9K_TrapUnknown:
@@ -2899,6 +2992,19 @@ Q9K_IRQDispatch:
         move.w  66(sp),d0                      * Format-/Vektor-Wort (60 + 6)
         andi.l  #$00000fff,d0
         lsr.l   #2,d0                            * d0 = eigene Vektornummer
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben). d0 (Vektornummer)
+* bleibt danach unveraendert -- die Subroutine unten liest ihn nur,
+* d1/d2/a0 sind hier noch frei (die Tabellenschleife belegt sie erst
+* weiter unten neu).
+        move.l  62(sp),d1                        * geretteter PC
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
 * AUTOVEKTOR-SONDERFALL (2026-09-03): bei den Vektoren 25-31 (Autovektor
 * Level 1-7) sagt die Vektornummer NICHTS ueber die Quelle -- sie nennt nur
 * den Interruptpegel. Genau dafuer fuehrt OS-9 ueberhaupt eine Polling-
