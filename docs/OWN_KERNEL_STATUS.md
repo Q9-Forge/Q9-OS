@@ -5901,3 +5901,19 @@ laufendem, stabilem System jetzt den `F$TLink(13,"csl")`/`echo`-Test
 aus Fortsetzung 34 erneut versuchen -- der war zuletzt an genau diesem
 Absturz gescheitert (Fortsetzung 36), bevor er den `F$TLink`-Testpunkt
 ueberhaupt erreichte.
+
+## Fortsetzung 39: F$TLink/echo-Kette nach dem Fix erneut bestaetigt -- naechste Baustelle ist wieder erreichbar (2026-09-11, elfte Sitzung, direkte Fortsetzung)
+
+Mit dem Fix aus Fortsetzung 38 lief der `echo`/`csl`-Test aus
+Fortsetzung 34 erneut: Konsole zeigt `...Hallo aus einem echten
+Programm!` (hellosvc, wie in Fortsetzung 38), danach **`lctE`** --
+`F$Load(echo)` ✓, `F$Load(csl)` ✓, `F$TLink(13,"csl")` ✓, `F$Fork(echo)`
+✓, exakt die in Fortsetzung 34 als Meilenstein verifizierte Kette.
+`echo` laeuft danach bis zur DORT bereits dokumentierten, separaten
+"Fund 3"-Absturzstelle (Vektor 4, `PC=$0000006C`, `A4=$FFFFFFFE`,
+diesmal `A6=$0004d6a0`/`SP=$0004e9dc` -- andere Adressen als 2026-09-11
+Fortsetzung 34, weil andere Kernelgroesse, aber gleiches Muster:
+uninitialisiertes A4). **Kein neuer Bug, kein Rueckfall** -- die
+bekannte naechste Baustelle (Disassemblierung von `echo.mod`
+Modul-Offset `$82A`, s. Fortsetzung 34 Fund 3) ist damit wieder
+reproduzierbar erreichbar und wartet weiterhin auf eine Folgesitzung.
