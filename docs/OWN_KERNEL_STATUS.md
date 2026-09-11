@@ -12,23 +12,37 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 ## ÜBERGABE (2026-09-11, elfte Arbeitssitzung — HIER ZUERST LESEN,
 ersetzt die Übergabe direkt darunter vollständig)
 
-**DURCHBRUCH: Die "kernelgrößenabhängige Interrupt-Race" (seit
-2026-09-04 verfolgt) ist KEINE Race — sie ist derselbe, bereits in
-Fortsetzung 25 (2026-09-08/09) gefundene und dort bewusst nicht
-reparierte A4-Herkunftsprüfung-Bug.** Volle Herleitung, Beweiskette
-(Instruktionsspur + Bytevergleich + Watchpoint) und der empfohlene,
-risikoarme nächste Fix-Ansatz stehen in **Fortsetzung 37** weiter unten
-— das ist jetzt die maßgebliche, aktuelle Quelle für diese Baustelle,
-nicht mehr die Ringpuffer-Diagnose der zehnten Sitzung weiter unten.
-Kurzfassung: RBF/SCF schreiben bei jedem eigenen
-internen Treiberaufruf blind auf `Modulbasis+$3ac` (weil A4 bei
-Fremdaufrufern fälschlich unsere Kernel-Modulbasis statt des echten
-Prozessdeskriptors ist) — ob das schadet, hängt nur davon ab, welcher
-eigene Code an genau diesem Datei-Offset liegt. **Nächster Schritt:**
-an Datei-Offset `$3ac`-`$3af` im eigenen Modul einen festen,
-harmlosen Sicherheitsabstand einbauen (NICHT die A4-Prüfung selbst
-anfassen — fünf frühere Versuche daran sind an IOMans Konsolen-Open
-gescheitert, s. Fortsetzung 25/27).
+**MEILENSTEIN: Der seit 2026-09-04 verfolgte "kernelgrößenabhängige
+Interrupt-Race"-Absturz ist behoben und live verifiziert.** Er war nie
+eine Race, sondern derselbe, bereits in Fortsetzung 25 (2026-09-08/09)
+gefundene und dort bewusst nicht reparierte A4-Herkunftsprüfung-Bug
+(RBF/SCF schreiben bei jedem eigenen internen Treiberaufruf blind auf
+`Modulbasis+$3ac`, weil A4 bei Fremdaufrufern fälschlich unsere
+Kernel-Modulbasis statt des echten Prozessdeskriptors ist — ob das
+schadet, hängt rein vom Kernel-Layout ab, nicht von Timing). Volle
+Herleitung (Instruktionsspur + Bytevergleich + Watchpoint) in
+**Fortsetzung 37**, der umgesetzte und zweifach live verifizierte Fix
+(12 Byte Totraum exakt an Datei-Offset `$3ac`-`$3af`, per `bra.s`
+übersprungen) in **Fortsetzung 38** — beide maßgeblich für diese
+Baustelle, nicht mehr die Ringpuffer-Diagnose der zehnten Sitzung
+weiter unten. Committet+gepusht: `6e5a4de` (Diagnose-Doku), `eb9c3ac`
+(Fix). Alle 15 Host-Testsuiten grün.
+
+**WICHTIG — das ist nur Symptomschutz, keine echte Lösung:** die
+A4-Herkunftsprüfung in `Q9K_TrapDispatch` bleibt fehlerhaft. Jede
+künftige Codeänderung VOR der geschützten Stelle im Modul kann den
+Totraum verschieben und ein ANDERES, ungeschütztes Offset dem
+blinden Schreibzugriff aussetzen — bei einem neuen, scheinbar
+unerklärlichen Absturz mit Vektor 4 IMMER ZUERST `Q9_WATCH_ADDR=
+<Modulbasis+$3ac>` prüfen (Methodik in Fortsetzung 37), bevor eine neue
+Ursachenjagd beginnt.
+
+**Nächster inhaltlicher Schritt:** mit dem jetzt stabil laufenden
+System den `F$TLink(13,"csl")`/`echo`-Test aus Fortsetzung 34 erneut
+versuchen — der war zuletzt an genau diesem Absturz gescheitert
+(Fortsetzung 36), bevor er den `F$TLink`-Testpunkt erreichte. Für eine
+echte, dauerhafte Lösung bleibt außerdem der in Fortsetzung 37
+skizzierte sechste Fixversuch an der A4-Herkunftsprüfung selbst offen.
 
 ---
 
@@ -5834,3 +5848,56 @@ Sitzung (`Q9K_RaceRing`, Commit `475b549`) unveraendert im Repo
 belassen -- sie war fuer diesen Fund nicht mehr noetig (Instruktionsspur
 + Watchpoint reichten), schadet aber auch nicht und dokumentiert den
 fruaeheren, nicht falschen (nur unvollstaendigen) Ermittlungsstand.
+
+## Fortsetzung 38: Sicherheitsabstand umgesetzt und live verifiziert -- MEILENSTEIN, Absturz weg (2026-09-11, elfte Sitzung, direkte Fortsetzung)
+
+**Umgesetzt:** der in Fortsetzung 37 empfohlene, risikoarme Fix. 12 Byte
+Totraum (per `bra.s` uebersprungen, nie gelesen/ausgefuehrt) exakt an
+Datei-Offset `$3ac`-`$3af` in `q9kernel_entry.a` eingefuegt (unmittelbar
+vor `move.l #Q9K_TestWriteLen,d1` im eigenen I$Write-Testcode, wo dieses
+Offset im aktuellen Kernelbau zufaellig lag). Per `xxd` am gebauten
+`q9kernel` verifiziert: Offset `$3ac`-`$3af` ist jetzt reiner Nullraum,
+das vorher dort liegende LEA-Opcode-Wort ist sicher nach `$3bc`
+verschoben.
+
+**Live verifiziert, ZWEI unabhaengige Laeufe, byte-identisches
+Ergebnis:**
+```
+RP012OHallo von Q9-OS!HHallo aus einem echten Programm!
+kAAAA...BBBB...AAAA...BBBB...  (stabile Scheduler-Schleife, kein Absturz)
+```
+`Q9K_ExcTrap`-Mitschrift beide Male `Vektor=0` (keine Exception). Der
+seit 2026-09-04 verfolgte Absturz (`PC=$74b4`) tritt nicht mehr auf --
+`I$Write` liefert die Testnachricht erfolgreich, `hellosvc` wird
+erfolgreich geforkt und laeuft als ECHTES Programm bis zu seinem
+eigenen `I$WritLn`+`F$Exit`, danach laeuft der Scheduler stabil im
+A/B-Testprozesspaar weiter ueber die volle Testdauer (20s).
+
+**Committet und gepusht** (`eb9c3ac`, `fix/a4-aufruferabhaengig`, PR
+#13). Alle 15 Host-Testsuiten gruen.
+
+**Ausdruecklich NICHT geloest:** die eigentliche A4-Herkunftspruefung
+in `Q9K_TrapDispatch` bleibt fehlerhaft (RBF/SCF schreiben weiterhin
+blind auf `Modulbasis+$3ac`, das ist nur noch folgenlos, weil dort
+jetzt Totraum liegt). **Jede kuenftige Codeaenderung VOR dieser Stelle
+im Modul kann den Totraum wieder verschieben und ein ANDERES,
+ungeschuetztes Offset dem Schreibzugriff aussetzen** -- das ist kein
+theoretisches Risiko, sondern exakt der Mechanismus, der diesen
+Absturz elf Sitzungen lang als "Race" erscheinen liess. Bei einem
+NEUEN, scheinbar unerklaerlichen Absturz mit Vektor 4 (Illegal
+Instruction) an einer neuen Adresse: SOFORT `Q9_WATCH_ADDR=<Modulbasis
++ $3ac>` pruefen, bevor eine neue Ursachenjagd beginnt -- s. Fortsetzung
+37 fuer die vollstaendige Methodik (Instruktionsspur + Bytevergleich
+Laufzeit/gebautes-Modul + Watchpoint).
+
+**Fuer eine echte, dauerhafte Loesung** (statt des reinen
+Symptomschutzes) bleibt der in Fortsetzung 37 skizzierte sechste
+Fixversuch an der A4-Herkunftspruefung selbst offen -- diesmal mit
+`Q9_WATCH_ADDR` gezielt beobachtbar, was genau bei IOMans Konsolen-Open
+kaputtgeht, wenn A4 dort korrekt gesetzt wird.
+
+**Naechster inhaltlicher Schritt (unabhaengig von diesem Bug):** mit
+laufendem, stabilem System jetzt den `F$TLink(13,"csl")`/`echo`-Test
+aus Fortsetzung 34 erneut versuchen -- der war zuletzt an genau diesem
+Absturz gescheitert (Fortsetzung 36), bevor er den `F$TLink`-Testpunkt
+ueberhaupt erreichte.
