@@ -265,6 +265,20 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #ifndef Q9K_MH_STACK
 #define Q9K_MH_STACK 0x3CUL
 #endif
+/* NACHTRAG (2026-09-11, Fortsetzung 49) -- M$IData/M$IRefs, 68k_tech.pdf
+ * Table 1-8. Beide 0 = Modul hat keine initialisierten globalen/
+ * statischen Daten (z.B. hellosvc/forkchild) -- der bisherige Code
+ * bleibt fuer diese Module unveraendert (Datenbereich bleibt wie immer
+ * ungenullt/Speichermuell, s. Q9K_AllocMem-Kopfkommentar). ECHTE C-
+ * Programme wie "echo" (uebersetzt gegen csl) haben beide gesetzt --
+ * s. ausfuehrliche Byte-Ebenen-Verifikation gegen echo.mod in
+ * docs/OWN_KERNEL_STATUS.md, Fortsetzung 49. */
+#ifndef Q9K_MH_IDATA
+#define Q9K_MH_IDATA 0x40UL
+#endif
+#ifndef Q9K_MH_IREFS
+#define Q9K_MH_IREFS 0x44UL
+#endif
 
 /* Q9_D_PROC -- s. q9kernel_sched.c (dortselbe Definition, lokal
  * dupliziert). Nur fuer die Prioritaets-Vererbung gebraucht (s.
@@ -311,6 +325,15 @@ static Q9_u32 Q9K_ReadHdrU32BE(Q9_u32 addr)
 {
     const Q9_u8 *p = (const Q9_u8 *)addr;
     return ((Q9_u32)p[0] << 24) | ((Q9_u32)p[1] << 16) | ((Q9_u32)p[2] << 8) | (Q9_u32)p[3];
+}
+
+/* Wie Q9K_ReadHdrU32BE, nur 16 Bit -- gebraucht fuer M$IRefs (Table 1-8:
+ * MS-Wort/Anzahl-Wort/Adressversatz-Woerter, s. Q9K_ApplyInitializedData
+ * unten). */
+static Q9_u16 Q9K_ReadHdrU16BE(Q9_u32 addr)
+{
+    const Q9_u8 *p = (const Q9_u8 *)addr;
+    return (Q9_u16)(((Q9_u32)p[0] << 8) | (Q9_u32)p[1]);
 }
 
 /* Schreibt value in Register regIndex des 60-Byte-Registersatz-Bereichs
@@ -499,6 +522,119 @@ Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority)
  * Rueckgabe: Prozess-ID (Pool-Slot-Index, s. Kopfkommentar zur eigenen
  * PID-Konvention weiter unten) oder 0 bei Fehlschlag, *outError dann
  * gesetzt. */
+
+/* NACHTRAG (2026-09-11, Fortsetzung 49) -- M$IData/M$IRefs (68k_tech.pdf
+ * Table 1-8). Bisher wurde der neue Datenbereich eines geforkten
+ * Prozesses NIE initialisiert (Q9K_AllocMem liefert unveraendertes
+ * Speichermuell aus einer frueheren Belegung, s. Kopfkommentar dort) --
+ * fuer reinen Assembler-Code (forkchild.a, kein M$IData) unschaedlich,
+ * fuer ECHTE compilierte C-Programme (z.B. "echo", uebersetzt gegen
+ * csl) fatal: die C-Laufzeit erwartet dort ihre initialisierten
+ * globalen/statischen Variablen -- inklusive einer kleinen, vom Compiler
+ * erzeugten Sprungtabelle mit Zeigern auf Code UND auf weitere Daten.
+ *
+ * FORMAT, per Byte-Dump von echo.mod GEGEN das Manual verifiziert (s.
+ * docs/OWN_KERNEL_STATUS.md, Fortsetzung 49 -- NICHT geraten):
+ *
+ *   M$IData (Modulkopf-Offset $40, 0 = keine Tabelle vorhanden):
+ *     Folge von Eintraegen bis zum Erreichen von M$IRefs (KEIN eigener
+ *     Endemarker -- die beiden Tabellen liegen im Modul unmittelbar
+ *     hintereinander, ihr gemeinsamer Uebergang IST die Terminierung):
+ *       +0  Datenbereich-Versatz (4 Byte)  -- Ziel: block + Versatz
+ *       +4  Anzahl Bytes N (4 Byte)
+ *       +8  N Bytes, woertlich an obiges Ziel zu kopieren
+ *     (echo.mod hat genau EINEN solchen Eintrag: Versatz $734, N=$38 --
+ *     dessen Ende [N-Byte-Nutzlast] trifft exakt auf M$IRefs' Start.)
+ *
+ *   M$IRefs (Modulkopf-Offset $44, 0 = keine Tabelle vorhanden):
+ *     GENAU ZWEI Gruppen hintereinander (Manual: Code- und Datenzeiger
+ *     werden unterschiedlich behandelt -- zwei Gruppen sind die
+ *     natuerliche Kodierung dafuer), jede Gruppe:
+ *       +0  MS-Wort (2 Byte, bei allen bisher gesehenen Werten 0 --
+ *           Bedeutung sonst unbekannt, wird gelesen und verworfen)
+ *       +2  Anzahl Eintraege M (2 Byte)
+ *       +4  M Woerter (je 2 Byte): Datenbereich-Versatz eines bereits
+ *           per M$IData kopierten 32-Bit-Zeigerfeldes
+ *       danach ein Terminierungspaar MS=0/Anzahl=0 (2+2 Byte)
+ *     Erste Gruppe = KODEZEIGER (an jedem genannten Versatz steht ein
+ *     modulrelativer Kodeversatz -- Zielwert = alter Wert + hdrAddr).
+ *     Zweite Gruppe = DATENZEIGER (an jedem genannten Versatz steht ein
+ *     datenbereichsrelativer Versatz -- Zielwert = alter Wert + block).
+ *     (echo.mod: Gruppe 1 hat 8 Eintraege, alle im Bereich $1f0-$30a --
+ *     zu klein/passend fuer Kodeversaetze in einem <3,2-KB-Modul, zu
+ *     klein fuer M$Mem=$76c waeren sie zwar auch, aber Gruppe 2 belegt
+ *     genau die ERSTEN beiden 32-Bit-Felder der kopierten Nutzlast
+ *     [$734,$738] mit Werten $44/$6c4 -- beides plausible Datenversaetze,
+ *     WEIT unter M$Mem=$76c, waehrend $2a8-$30a als Datenversaetze zwar
+ *     auch passen wuerden, aber als Kodeversaetze eindeutiger sind, da
+ *     sie in einem <3,2-KB-Modul liegen UND aus einem <2-KB-Kopfbereich
+ *     [M$Exec=$4e] heraus sinnvolle Sprungziele waeren.)
+ *
+ * Trailing Bytes nach der zweiten Terminierung (bei echo.mod 4 Byte)
+ * werden NICHT gelesen -- vermutlich die reale OS-9-Modul-CRC (letzte 3
+ * Byte des Moduls) plus ein Fuellbyte; da die Anzahl der Gruppen fest
+ * (zwei) ist, muss danach ohnehin nichts mehr gelesen werden. */
+static void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
+{
+    Q9_u32 idataOff = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_IDATA);
+    Q9_u32 irefsOff = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_IREFS);
+    Q9_u32 p, end;
+    Q9_u32 group;
+    Q9_u32 relocBase;
+
+    if (idataOff == 0 && irefsOff == 0)
+        return;   /* Normalfall fuer reinen Assembler-Code -- unveraendert */
+
+    /* M$IData kopieren -- laeuft bis zum Beginn von M$IRefs (s.
+     * Kopfkommentar: kein eigener Endemarker noetig/vorhanden). */
+    if (idataOff != 0) {
+        p = hdrAddr + idataOff;
+        end = hdrAddr + irefsOff;
+        while (p < end) {
+            Q9_u32 dstOff = Q9K_ReadHdrU32BE(p);
+            Q9_u32 count  = Q9K_ReadHdrU32BE(p + 4);
+            Q9_u32 i;
+            for (i = 0; i < count; i++)
+                Q9K_SetU8(block + dstOff + i, Q9K_GetU8(p + 8 + i));
+            p += 8 + count;
+        }
+    }
+
+    /* M$IRefs anwenden -- genau zwei Gruppen (Kodezeiger, dann
+     * Datenzeiger), s. Kopfkommentar. */
+    if (irefsOff != 0) {
+        p = hdrAddr + irefsOff;
+        for (group = 0; group < 2; group++) {
+            Q9_u32 count;
+            Q9_u32 j;
+
+            (void)Q9K_ReadHdrU16BE(p);        /* MS-Wort -- bisher immer 0, verworfen */
+            count = Q9K_ReadHdrU16BE(p + 2);
+            p += 4;
+            relocBase = (group == 0) ? hdrAddr : block;
+            for (j = 0; j < count; j++) {
+                Q9_u32 fieldOff = Q9K_ReadHdrU16BE(p);
+                Q9_u32 fieldAddr = block + fieldOff;
+                Q9_u32 newVal;
+                p += 2;
+                /* ABSICHTLICH byteweise wie Q9K_SetFrameReg/Q9K_ReadHdrU32BE
+                 * -- NICHT Q9K_GetU32/Q9K_SetU32 (native Zeiger-Breite, auf
+                 * DIESEM 64-Bit-Testhost 8 statt 4 Byte, s. dortigen
+                 * Kopfkommentar). Bei eng benachbarten M$IRefs-Versaetzen
+                 * (hier real nur 4 Byte auseinander) wuerde das sonst
+                 * Nachbarfelder ueberschreiben -- exakt der schon zweimal
+                 * dokumentierte Fund (Q9K_SetFrameReg, test_q9kernel_*.c). */
+                newVal = Q9K_ReadHdrU32BE(fieldAddr) + relocBase;
+                Q9K_SetU8(fieldAddr + 0, (Q9_u8)(newVal >> 24));
+                Q9K_SetU8(fieldAddr + 1, (Q9_u8)(newVal >> 16));
+                Q9K_SetU8(fieldAddr + 2, (Q9_u8)(newVal >> 8));
+                Q9K_SetU8(fieldAddr + 3, (Q9_u8)newVal);
+            }
+            p += 4;   /* Terminierungspaar MS=0/Anzahl=0 der Gruppe ueberspringen */
+        }
+    }
+}
+
 Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
                      Q9_u32 namePtr, Q9_u32 paramPtr, Q9_u16 priorityIn,
                      Q9_u16 *outError)
@@ -558,6 +694,16 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
         *outError = (Q9_u16)Q9K_E_MEMFUL;
         return 0;
     }
+
+    /* NACHTRAG 2026-09-11 (Fortsetzung 49): M$IData/M$IRefs -- s.
+     * ausfuehrlichen Kopfkommentar bei Q9K_ApplyInitializedData oben.
+     * Muss VOR jeder weiteren Verwendung von "block" als Datenbereich
+     * laufen (hier: unmittelbar nachdem block feststeht, vor Deskriptor-
+     * Aufbau/Parameterkopie -- Reihenfolge zu diesen beiden ist egal, da
+     * unabhaengige Speicherbereiche/Felder betroffen sind). Fuer Module
+     * ohne M$IData/M$IRefs (hellosvc/forkchild, beide Felder 0) exakt
+     * kein Verhaltensunterschied (frueher Ruecksprung in der Funktion). */
+    Q9K_ApplyInitializedData(hdrAddr, block);
 
     desc = Q9K_ProcPoolAlloc();
     if (desc == 0) {

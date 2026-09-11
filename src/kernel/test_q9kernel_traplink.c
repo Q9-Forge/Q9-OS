@@ -170,6 +170,25 @@ static void setModuleField(unsigned long fieldOff, unsigned long value)
     p[3] = (unsigned char)value;
 }
 
+/* NACHTRAG 2026-09-11 (Fortsetzung 49) -- fuer den M$IRefs-Testaufbau
+ * (F9, s. u.): dort sind MS-Wort/Anzahl/Versatz je 16 Bit breit. */
+static void putBE16(unsigned long addr, unsigned value)
+{
+    unsigned char *p = (unsigned char *)addr;
+    p[0] = (unsigned char)(value >> 8);
+    p[1] = (unsigned char)value;
+}
+
+/* Grossgeschriebenes Big-Endian-Lesen -- Gegenstueck zu setModuleField/
+ * putBE16, gebraucht um die von Q9K_ApplyInitializedData relozierten
+ * Werte im Zielspeicher zu pruefen. */
+static unsigned long getBE32(unsigned long addr)
+{
+    const unsigned char *p = (const unsigned char *)addr;
+    return ((unsigned long)p[0] << 24) | ((unsigned long)p[1] << 16) |
+           ((unsigned long)p[2] << 8) | (unsigned long)p[3];
+}
+
 static void resetAll(void)
 {
     memset(g_fakeGlobals, 0, sizeof(g_fakeGlobals));
@@ -365,6 +384,64 @@ int main(void)
         checkU32("F8b: zweiter Aufruf auf belegtem Slot -> Fehlschlag",
                  *(unsigned long *)Q9K_TLINK_SCRATCH_SUCCESS, 0);
         checkU32("F8b: E$ModBsy ($D1)", *(unsigned long *)Q9K_TLINK_SCRATCH_ERROR, 0x00D1UL);
+    }
+
+    /* Fall 9 (NACHTRAG 2026-09-11, Fortsetzung 49): M$IData/M$IRefs des
+     * Trap-Moduls selbst -- gleicher Tabellenaufbau wie F5 in
+     * test_q9kernel_firstproc.c (dort ausfuehrlicher Kommentar zum
+     * Format), hier gegen den ECHTEN staticPtr aus Q9K_ProcSRqMem
+     * geprueft (NICHT wie F5/F6 oben ein reiner Wertevergleich mit einer
+     * kleinen erfundenen Zahl -- diesmal wird tatsaechlich hineingeschrieben,
+     * braucht deshalb einen ECHTEN, dereferenzierbaren Host-Zeiger als
+     * g_srqmemOutAddr). Layout in g_fakeModule (256 Byte, reicht):
+     *   M$IData @ $60: Zieloffset $10, Anzahl 8, Nutzlast [5, 3]
+     *   M$IRefs @ $70: Gruppe 1 (Kode) Versatz $14, Gruppe 2 (Daten)
+     *                  Versatz $10 -- je mit eigenem Terminator. */
+    {
+        unsigned long staticMem = (unsigned long)(g_fakeGlobals + 0x2800);   /* echter, freier Bereich */
+        unsigned long relocatedData, relocatedCode;
+
+        resetAll();
+        setModuleField(Q9K_MH_EXEC, 0x40UL);
+        setModuleField(Q9K_MH_MEM, 0x40UL);   /* 64 -- reicht fuer Datenoffset $10/$14 */
+        setModuleField(Q9K_MH_INIT, 0x50UL);
+        setModuleField(Q9K_MH_IDATA, 0x60UL);
+        setModuleField(Q9K_MH_IREFS, 0x70UL);
+        setModuleField(0x60UL, 0x10UL);    /* IData-Eintrag: Zieloffset $10 */
+        setModuleField(0x64UL, 8UL);       /* IData-Eintrag: Anzahl Bytes = 8 */
+        setModuleField(0x68UL, 5UL);       /* Nutzlast[0] -- spaeter Datenzeiger */
+        setModuleField(0x6CUL, 3UL);       /* Nutzlast[4] -- spaeter Kodezeiger */
+        putBE16((unsigned long)g_fakeModule + 0x70UL, 0);      /* Gruppe 1 (Kode): MS = 0 */
+        putBE16((unsigned long)g_fakeModule + 0x72UL, 1);      /* Gruppe 1: Anzahl = 1 */
+        putBE16((unsigned long)g_fakeModule + 0x74UL, 0x14);   /* Gruppe 1: Versatz $14 */
+        putBE16((unsigned long)g_fakeModule + 0x76UL, 0);      /* Gruppe 1: Terminator MS = 0 */
+        putBE16((unsigned long)g_fakeModule + 0x78UL, 0);      /* Gruppe 1: Terminator Anzahl = 0 */
+        putBE16((unsigned long)g_fakeModule + 0x7AUL, 0);      /* Gruppe 2 (Daten): MS = 0 */
+        putBE16((unsigned long)g_fakeModule + 0x7CUL, 1);      /* Gruppe 2: Anzahl = 1 */
+        putBE16((unsigned long)g_fakeModule + 0x7EUL, 0x10);   /* Gruppe 2: Versatz $10 */
+        putBE16((unsigned long)g_fakeModule + 0x80UL, 0);      /* Gruppe 2: Terminator MS = 0 */
+        putBE16((unsigned long)g_fakeModule + 0x82UL, 0);      /* Gruppe 2: Terminator Anzahl = 0 */
+        g_modDirHdr = (unsigned long)g_fakeModule;
+        g_srqmemReturn = 1;
+        g_srqmemOutAddr = staticMem;
+        g_srqmemOutSize = 0x40UL;
+
+        ok = Q9K_ProcTLink(5UL, 0UL, (unsigned long)(g_fakeGlobals + 0x1000),
+                            &pastName, &modPtr, &execEntry, &initEntry, &staticPtr, &err);
+        checkU32("F9: Erfolg", (unsigned long)ok, 1);
+        checkU32("F9: staticPtr == Q9K_ProcSRqMem-Ergebnis", staticPtr, staticMem);
+
+        relocatedData = getBE32(staticMem + 0x10);
+        relocatedCode = getBE32(staticMem + 0x14);
+        /* Erwartungswerte bewusst auf 32 Bit gekappt (unsigned int) --
+         * Q9K_ApplyInitializedData schreibt die relozierten Werte
+         * byteweise (NUR 4 Byte), auf DIESEM 64-Bit-Testhost also nicht
+         * rundreisefaehig mit dem vollen Host-Zeiger, s. gleiche
+         * Begruendung in test_q9kernel_firstproc.c (F5). */
+        checkU32("F9: M\\$IData kopiert UND per M\\$IRefs (Datenzeiger-Gruppe) reloziert (5+staticPtr)",
+                 relocatedData, (unsigned long)(unsigned int)(5UL + staticMem));
+        checkU32("F9: M\\$IData kopiert UND per M\\$IRefs (Kodezeiger-Gruppe) reloziert (3+hdrAddr)",
+                 relocatedCode, (unsigned long)(unsigned int)(3UL + (unsigned long)g_fakeModule));
     }
 
     if (g_failures == 0) {

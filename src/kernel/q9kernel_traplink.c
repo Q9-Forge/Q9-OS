@@ -76,6 +76,13 @@ extern int    Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outS
 #define Q9K_MH_EXEC   0x30UL
 #define Q9K_MH_MEM    0x38UL
 #define Q9K_MH_INIT   0x48UL
+/* NACHTRAG (2026-09-11, Fortsetzung 49) -- s. ausfuehrliche Begruendung
+ * bei Q9K_ApplyInitializedData unten: "csl" (wie jedes echte, compilierte
+ * C-Modul) hat SELBST initialisierte globale/statische Daten, die bisher
+ * NIRGENDS angewendet wurden (Q9K_ProcFork deckt nur GEFORKTE Prozesse
+ * ab, F$TLink lief bisher komplett daran vorbei). */
+#define Q9K_MH_IDATA  0x40UL
+#define Q9K_MH_IREFS  0x44UL
 
 /* Kernel-Global D_Proc -- echte, verifizierte Adresse (s. jede andere
  * Datei dieses Kernels, die den aktuellen Prozessdeskriptor braucht). */
@@ -98,6 +105,8 @@ extern int    Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outS
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
+static Q9_u8  Q9K_GetU8(Q9_u32 addr) { return *(volatile Q9_u8 *)addr; }
+static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = value; }
 
 /* Byteweises Big-Endian-Lesen eines Langworts -- gleiche Begruendung wie
  * ueberall (Host-Test laeuft little-endian, Ziel big-endian). */
@@ -106,6 +115,83 @@ static Q9_u32 Q9K_TLinkReadU32BE(Q9_u32 addr)
     const volatile Q9_u8 *p = (const volatile Q9_u8 *)addr;
     return ((Q9_u32)p[0] << 24) | ((Q9_u32)p[1] << 16) |
            ((Q9_u32)p[2] << 8)  | (Q9_u32)p[3];
+}
+
+/* Wie Q9K_TLinkReadU32BE, nur 16 Bit -- fuer M$IRefs (s.
+ * Q9K_ApplyInitializedData unten). */
+static Q9_u16 Q9K_TLinkReadU16BE(Q9_u32 addr)
+{
+    const volatile Q9_u8 *p = (const volatile Q9_u8 *)addr;
+    return (Q9_u16)(((Q9_u32)p[0] << 8) | (Q9_u32)p[1]);
+}
+
+/* NACHTRAG (2026-09-11, Fortsetzung 49) -- M$IData/M$IRefs (68k_tech.pdf
+ * Table 1-8), 1:1 dieselbe Logik wie Q9K_ApplyInitializedData in
+ * q9kernel_firstproc.c (dort ausfuehrlicher Kopfkommentar samt Byte-
+ * Ebenen-Verifikation gegen echo.mod) -- HIER EIGENSTAENDIG DUPLIZIERT
+ * (gleiche, im ganzen Kernel etablierte Konvention: keine gemeinsamen
+ * Header fuer interne Offsets/Helfer, s. Kopfkommentar dort).
+ *
+ * Anlass: NICHT nur GEFORKTE Prozesse (Q9K_ProcFork) brauchen das --
+ * "csl" selbst (M$IData=$afa0, M$IRefs=$bb08 im real vermessenen
+ * csl.mod) hat GENAU DIESELBEN zwei Felder, aber F$TLink lief bisher
+ * komplett daran vorbei. Live beobachtet (2026-09-11): nach erfolgreichem
+ * F$TLink+F$Fork stuerzt "echo" beim ERSTEN echten Aufruf einer
+ * "csl"-Funktion mit Vektor 4 (Illegal Instruction) bei einer winzigen
+ * PC-Adresse ab ($6c) -- klassisches Symptom eines Sprungs durch einen
+ * NICHT relozierten (weil nie initialisierten) Zeiger, genau wie beim
+ * juengst geloesten "echo"-eigenen Fall, nur diesmal in "csl"s EIGENEM,
+ * von F$TLink bereitgestelltem statischem Speicher (staticPtr, s.
+ * Q9K_ProcTLink -- wird spaeter als a6 an M$Init uebergeben, exakt die
+ * Rolle, die "block"/a6 bei Q9K_ProcFork spielt). */
+static void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
+{
+    Q9_u32 idataOff = Q9K_TLinkReadU32BE(hdrAddr + Q9K_MH_IDATA);
+    Q9_u32 irefsOff = Q9K_TLinkReadU32BE(hdrAddr + Q9K_MH_IREFS);
+    Q9_u32 p, end;
+    Q9_u32 group;
+    Q9_u32 relocBase;
+
+    if (idataOff == 0 && irefsOff == 0)
+        return;   /* kein initialisierter Speicher deklariert -- unveraendert */
+
+    if (idataOff != 0) {
+        p = hdrAddr + idataOff;
+        end = hdrAddr + irefsOff;
+        while (p < end) {
+            Q9_u32 dstOff = Q9K_TLinkReadU32BE(p);
+            Q9_u32 count  = Q9K_TLinkReadU32BE(p + 4);
+            Q9_u32 i;
+            for (i = 0; i < count; i++)
+                Q9K_SetU8(block + dstOff + i, Q9K_GetU8(p + 8 + i));
+            p += 8 + count;
+        }
+    }
+
+    if (irefsOff != 0) {
+        p = hdrAddr + irefsOff;
+        for (group = 0; group < 2; group++) {
+            Q9_u32 count;
+            Q9_u32 j;
+
+            (void)Q9K_TLinkReadU16BE(p);      /* MS-Wort -- bisher immer 0, verworfen */
+            count = Q9K_TLinkReadU16BE(p + 2);
+            p += 4;
+            relocBase = (group == 0) ? hdrAddr : block;
+            for (j = 0; j < count; j++) {
+                Q9_u32 fieldOff = Q9K_TLinkReadU16BE(p);
+                Q9_u32 fieldAddr = block + fieldOff;
+                Q9_u32 newVal;
+                p += 2;
+                newVal = Q9K_TLinkReadU32BE(fieldAddr) + relocBase;
+                Q9K_SetU8(fieldAddr + 0, (Q9_u8)(newVal >> 24));
+                Q9K_SetU8(fieldAddr + 1, (Q9_u8)(newVal >> 16));
+                Q9K_SetU8(fieldAddr + 2, (Q9_u8)(newVal >> 8));
+                Q9K_SetU8(fieldAddr + 3, (Q9_u8)newVal);
+            }
+            p += 4;   /* Terminierungspaar MS=0/Anzahl=0 der Gruppe ueberspringen */
+        }
+    }
 }
 
 /* Real belegte Fehlercodes (MWOS/OS9/SRC/DEFS/funcs.a, per E$UnkSvc/
@@ -184,6 +270,12 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
             *outError = memErr;
             return 0;
         }
+        /* NACHTRAG 2026-09-11 (Fortsetzung 49): M$IData/M$IRefs des
+         * Trap-Moduls selbst anwenden -- s. ausfuehrlichen Kopfkommentar
+         * bei Q9K_ApplyInitializedData oben. NUR wenn wirklich eigener
+         * Speicher bereitgestellt wurde (staticPtr!=0, s. "size==0"-Fall
+         * oben) -- ohne eigenen Speicher gibt es kein Ziel zum Kopieren. */
+        Q9K_ApplyInitializedData(hdr, staticPtr);
     }
     *outStaticPtr = staticPtr;
 

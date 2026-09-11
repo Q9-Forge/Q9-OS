@@ -159,6 +159,15 @@ static void putBE32(unsigned char *buf, unsigned long addr, unsigned long value)
     p[3] = (unsigned char)value;
 }
 
+/* NACHTRAG 2026-09-11 (Fortsetzung 49) -- fuer den M$IRefs-Testaufbau
+ * (F5, s. u.): dort sind alle Woerter [MS/Anzahl/Versatz] 16 Bit breit. */
+static void putBE16(unsigned char *buf, unsigned long addr, unsigned value)
+{
+    unsigned char *p = buf + addr;
+    p[0] = (unsigned char)(value >> 8);
+    p[1] = (unsigned char)value;
+}
+
 static int failures = 0;
 
 static void checkU32(const char *label, Q9_u32 got, Q9_u32 want)
@@ -309,7 +318,13 @@ int main(void)
     {
         static unsigned char forkPool[2 * Q9K_PROCDESC_SIZE]; /* nur 2 Slots -- absichtlich knapp fuer Fall F5 */
         Q9_u32 forkPoolBase = (Q9_u32)(unsigned long)forkPool;
-        static unsigned char fakeHdr[0x40];           /* echter, byte-genauer Fake-Modulkopf */
+        /* NACHTRAG 2026-09-11 (Fortsetzung 49): 0x40 -> 0x48 vergroessert
+         * -- Q9K_ProcFork liest jetzt IMMER auch M$IData/M$IRefs (Offset
+         * $40/$44, s. Q9K_ApplyInitializedData), sonst Lesezugriff hinter
+         * dem Ende dieses Arrays. memset unten haelt beide Felder auf 0
+         * (= "keine Tabelle vorhanden"), aendert also am Verhalten der
+         * bestehenden Faelle F1-F4 nichts. */
+        static unsigned char fakeHdr[0x48];           /* echter, byte-genauer Fake-Modulkopf */
         static unsigned char fakeParam[4] = { 0x11, 0x22, 0x33, 0x44 };
         Q9_u16 error;
         Q9_u32 pid1, pid2;
@@ -483,6 +498,89 @@ int main(void)
                      (Q9_u32)(g_freeMemCalls == freeCallsBefore + 1), 1);
             checkU32("F4: Rueckgabe verwendet die exakte Fork-Gesamtgroesse",
                      g_freeMemLastSize, 16 + 256);
+        }
+
+        /* Fall F5 (NACHTRAG 2026-09-11, Fortsetzung 49): M$IData/M$IRefs
+         * -- eigener, frischer Pool (F1/F2 haben den obigen erschoepft),
+         * eigener Fake-Modulkopf MIT echtem M$IData/M$IRefs-Tabellenpaar,
+         * Layout/Format 1:1 aus der Byte-Ebenen-Verifikation gegen
+         * echo.mod uebernommen (s. docs/OWN_KERNEL_STATUS.md,
+         * Fortsetzung 49 -- 2 Woerter Nutzdaten statt 14, aber gleiche
+         * Struktur: EIN M$IData-Eintrag, dann GENAU zwei M$IRefs-Gruppen
+         * [Kode-, dann Datenzeiger]):
+         *
+         *   M$IData (Kopfoffset $50): Zieloffset $10, Anzahl 8,
+         *     Nutzlast [datenoffset+0]=5 ("Datenzeigerwert", noch
+         *     unreloziert), [datenoffset+4]=3 ("Kodezeigerwert", noch
+         *     unreloziert) -- endet exakt bei $60, dort beginnt M$IRefs.
+         *   M$IRefs (Kopfoffset $60):
+         *     Gruppe 1 (Kode):  MS=0, Anzahl=1, Versatz $14, Terminator.
+         *     Gruppe 2 (Daten): MS=0, Anzahl=1, Versatz $10, Terminator.
+         *
+         * Erwartung nach Q9K_ProcFork: Datenbereich+$10 == 5+block
+         * (Datenzeiger-Relozierung), Datenbereich+$14 == 3+hdrAddr
+         * (Kodezeiger-Relozierung). */
+        {
+            static unsigned char forkPool5[Q9K_PROCDESC_SIZE];
+            Q9_u32 forkPoolBase5 = (Q9_u32)(unsigned long)forkPool5;
+            static unsigned char fakeHdr5[0x80];
+            Q9_u32 pid5;
+            unsigned long realBlock5;   /* s. Kommentar unten -- ECHTER Host-Zeiger, nicht der gekappte a6-Wert */
+            Q9_u32 relocatedData, relocatedCode;
+
+            memset(forkPool5, 0, sizeof(forkPool5));
+            buildFreeList(forkPoolBase5, Q9K_PROCDESC_SIZE, 1, Q9K_PROCPOOL_FREE_ADDR);
+            Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, forkPoolBase5);
+            Q9K_SetU32(Q9_D_PROC, 0);
+
+            memset(fakeHdr5, 0, sizeof(fakeHdr5));
+            putBE32(fakeHdr5, 0x30, 0x20);   /* M$Exec = 0x20 (fiktiv) */
+            putBE32(fakeHdr5, 0x38, 0x40);   /* M$Mem  = 64 -- reicht fuer Datenoffset $10/$14 */
+            putBE32(fakeHdr5, 0x3C, 256);    /* M$Stack = 256 */
+            putBE32(fakeHdr5, 0x40, 0x50);   /* M$IData = $50 */
+            putBE32(fakeHdr5, 0x44, 0x60);   /* M$IRefs = $60 */
+            putBE32(fakeHdr5, 0x50, 0x10);   /* IData-Eintrag: Zieloffset $10 */
+            putBE32(fakeHdr5, 0x54, 8);      /* IData-Eintrag: Anzahl Bytes = 8 */
+            putBE32(fakeHdr5, 0x58, 5);      /* Nutzlast[0] -- spaeter Datenzeiger */
+            putBE32(fakeHdr5, 0x5C, 3);      /* Nutzlast[4] -- spaeter Kodezeiger */
+            putBE16(fakeHdr5, 0x60, 0);      /* Gruppe 1 (Kode): MS = 0 */
+            putBE16(fakeHdr5, 0x62, 1);      /* Gruppe 1: Anzahl = 1 */
+            putBE16(fakeHdr5, 0x64, 0x14);   /* Gruppe 1: Versatz $14 (Kodezeigerfeld) */
+            putBE16(fakeHdr5, 0x66, 0);      /* Gruppe 1: Terminator MS = 0 */
+            putBE16(fakeHdr5, 0x68, 0);      /* Gruppe 1: Terminator Anzahl = 0 */
+            putBE16(fakeHdr5, 0x6A, 0);      /* Gruppe 2 (Daten): MS = 0 */
+            putBE16(fakeHdr5, 0x6C, 1);      /* Gruppe 2: Anzahl = 1 */
+            putBE16(fakeHdr5, 0x6E, 0x10);   /* Gruppe 2: Versatz $10 (Datenzeigerfeld) */
+            putBE16(fakeHdr5, 0x70, 0);      /* Gruppe 2: Terminator MS = 0 */
+            putBE16(fakeHdr5, 0x72, 0);      /* Gruppe 2: Terminator Anzahl = 0 */
+            g_stubModDirHdr = (unsigned long)fakeHdr5;
+
+            /* WICHTIG (gleiches Host-Limit wie bei F1 oben, "a5val ...
+             * zeigt auf DIESEM 64-Bit-Testhost ins Leere"): der ECHTE
+             * Blockzeiger darf NICHT ueber das per Q9K_SetFrameReg
+             * bewusst auf 32 Bit gekappte a6-Register zurueckgelesen
+             * werden (waere kein gueltiger Host-Zeiger mehr). Stattdessen
+             * wird er hier UNABHAENGIG, direkt aus dem bekannten
+             * deterministischen Verhalten des Fake-Bump-Allocators
+             * (Q9K_AllocMem oben: naechste Rueckgabe == g_fakePool +
+             * aktueller g_fakePoolNext-Stand) VOR dem Aufruf berechnet. */
+            realBlock5 = (unsigned long)(g_fakePool + g_fakePoolNext);
+
+            pid5 = Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 1, &error);
+            checkU32("Q9K_ProcFork() F5: liefert eine Prozess-ID != 0", (Q9_u32)(pid5 != 0), 1);
+
+            relocatedData = (Q9_u32)getBE32(realBlock5 + 0x10);
+            relocatedCode = (Q9_u32)getBE32(realBlock5 + 0x14);
+            /* Erwartungswerte bewusst auf 32 Bit GEKAPPT (unsigned int) --
+             * gleiche Begruendung wie bei den a3/PC-Pruefungen in F1 oben:
+             * Q9K_ApplyInitializedData schreibt die relozierten Werte
+             * byteweise (NUR 4 Byte, s. dortigen Kopfkommentar), auf DIESEM
+             * 64-Bit-Testhost also nicht rundreisefaehig mit dem vollen
+             * Host-Zeiger. */
+            checkU32("F5: M$IData wurde kopiert UND per M$IRefs (Datenzeiger-Gruppe) reloziert (5+block)",
+                     relocatedData, (Q9_u32)(unsigned int)(5 + realBlock5));
+            checkU32("F5: M$IData wurde kopiert UND per M$IRefs (Kodezeiger-Gruppe) reloziert (3+hdrAddr)",
+                     relocatedCode, (Q9_u32)(unsigned int)(3 + (unsigned long)fakeHdr5));
         }
     }
 
