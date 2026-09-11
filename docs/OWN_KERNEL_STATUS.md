@@ -5917,3 +5917,75 @@ uninitialisiertes A4). **Kein neuer Bug, kein Rueckfall** -- die
 bekannte naechste Baustelle (Disassemblierung von `echo.mod`
 Modul-Offset `$82A`, s. Fortsetzung 34 Fund 3) ist damit wieder
 reproduzierbar erreichbar und wartet weiterhin auf eine Folgesitzung.
+
+## Fortsetzung 40: `echo`-Absturz (Fund 3) naeher eingegrenzt -- KEINE Speichererschoepfung, sondern deterministischer Stack-Rahmen-Fehler an fester Aufruftiefe (2026-09-11, elfte Sitzung, direkte Fortsetzung)
+
+**Auftrag:** die in Fortsetzung 39 bestaetigte, separate naechste Baustelle
+(`echo`-Absturz `PC=$6C`, `A4=$FFFFFFFE`, aus Fortsetzung 34 Fund 3)
+weiterverfolgen.
+
+### Fund 1: Rueckverfolgung fuehrt zu `csl`, nicht zu `echo.mod`
+
+Instruktionsspur (`Q9_FREEZE_PC=0x6c`) zeigt: der Absturz ist ein `rts`
+in `csl` (Modul-Offset `$6b74`, Datei csl.mod per `xxd`/`capstone`
+gegengeprueft -- ein sauberes, unauffaelliges C-Funktionsende
+`movem.l (a7)+,d1/d6-d7/a0` + `rts`), das eine auf dem Stack liegende
+Ruecksprungadresse von `$00000000` vorfindet statt eines echten
+Zeigers -- die CPU laeuft daraufhin ab Adresse 0 als Pseudocode los und
+trifft nach ca. `$6c` Byte auf ein tatsaechlich ungueltiges Opcode-Wort.
+`A4=$FFFFFFFE` erwies sich als bereits VOR diesem Aufruf gesetzter,
+unveraenderter Wert (durchlaeuft unseren `Q9K_TrapCallForeignCaller`-
+Pfad unangetastet, wie beabsichtigt) -- wahrscheinlich csl-intern
+genutzt, NICHT die Ursache des Absturzes selbst.
+
+### Fund 2: Watchpoint auf die betroffene Stack-Adresse
+
+`Q9_WATCH_ADDR` auf die genullte Stack-Adresse zeigt zwei Schreiber:
+1. `pc=$9010..$902a` (in `q9kernel`) baut dort byteweise `$0000136c`
+   auf -- sieht nach einer plausiblen Ruecksprungadresse aus, aber
+   `$136c` selbst liegt mitten in unseren KERNEL-SCRATCHZELLEN
+   (`Q9K_IOpenScratch_*`-Bereich), kein echter `csl`-Codepunkt.
+2. `pc=$3ed3e` (in `echo.mod`, Modul-Offset `$82e` -- direkt der
+   `movem.l d2-d7/a0-a2,-(a7)`-Prolog der in Fortsetzung 34/37/39
+   bereits identifizierten Funktion bei `$82A`) ueberschreibt denselben
+   Platz kurz danach mit `0`.
+
+### Fund 3 (WICHTIG, widerlegt die naheliegendste Hypothese): KEINE Speichererschoepfung
+
+Verdacht "echo.mod eigenes `M\$Stack` (nur 3072 Byte, per Header
+`$3c` gelesen) reicht nicht, sobald `csl` mitlaeuft" testweise
+gezielt geprueft: `F\$Fork("echo")` im eigenen Testcode testweise mit
+16 KB zusaetzlichem Speicher (`d1=$4000` statt `0`) aufgerufen,
+neu gebaut, live getestet.
+
+**Ergebnis: der Absturz tritt BYTE-IDENTISCH auf** -- exakt derselbe
+Registersatz (`D0-D7`, `A4=$FFFFFFFE`, `A6`), NUR die absoluten
+Adressen (`SP`, die Ziel-Stackadresse `$136c`->`$536c` etc.) sind exakt
+um die hinzugefuegten `$4000` Byte verschoben. **Das schliesst
+Speichererschoepfung aus:** waere der Stack schlicht zu klein, haette
+mehr Speicher den Absturz verzoegert/verschoben (andere Aufruftiefe)
+oder behoben -- stattdessen passiert er an GENAU derselben logischen
+Stelle, unabhaengig von der verfuegbaren Reserve. Experiment
+zurueckgesetzt (`clr.l d1` wiederhergestellt), keine Aenderung im Repo.
+
+### Einordnung und naechster Schritt
+
+Der Fehler ist ein **deterministischer Stack-Rahmen-Fehler an fester
+Aufruftiefe** (vermutlich ein Push/Pop-Ungleichgewicht irgendwo in der
+`tcall`/`F$TLink`-Aufrufkette zwischen `echo`, `csl` und unserem
+Kernel -- eine feste Anzahl Aufrufe balanciert sich falsch aus, bis
+irgendwann ein fremder Frame ueberschrieben wird), KEINE
+Kapazitaetsfrage. Naechster, konkret benannter Schritt fuer eine
+Folgesitzung: die vollstaendige Aufrufkette von `F$Fork("echo")` bis
+zum Absturz per Instruktionsspur auf SP-BALANCE hin durchgehen (SP-Wert
+bei jedem `bsr`/`jsr`/`rts` protokollieren, nicht nur bei Traps) --
+gesucht ist die EINE Stelle, an der ein `bsr`/`jsr` ohne passendes
+`rts`/`addq.l sp` bilanziert wird oder umgekehrt. Da `Q9K_TCallDispatch`
+in Fortsetzung 36 bereits zwei echte TrapEnt-Konventionsverletzungen
+gefixt bekam, aber NIE live gegen genau diesen Ablauf verifiziert
+wurde (dort dokumentiert: "Noch NICHT live gegen echos eigenen tcall
+13,X-Aufruf nachverfolgt"), ist das der naheliegendste erste
+Verdachtsort.
+
+Alle 15 Host-Testsuiten weiterhin gruen. Keine Codeaenderung aus
+dieser Fortsetzung im Repo (Experiment vollstaendig zurueckgesetzt).
