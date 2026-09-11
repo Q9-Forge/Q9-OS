@@ -12,34 +12,28 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 ## ÜBERGABE (2026-09-11, elfte Arbeitssitzung — HIER ZUERST LESEN,
 ersetzt die Übergabe direkt darunter vollständig)
 
-**MEILENSTEIN: `M$IData`/`M$IRefs` (initialisierte globale/statische
-C-Daten) implementiert -- für `F$Fork` UND `F$TLink`, live verifiziert.**
-`echo` (echtes, gegen `csl` compiliertes C-Kommando) forkt jetzt
-erfolgreich UND läuft als aktiver Prozess weiter, statt sofort an
-uninitialisierten Zeigern abzustürzen. Volle Byte-Ebenen-Verifikation
-des Tabellenformats gegen `echo.mod`, Implementierung in
-`Q9K_ProcFork` (`q9kernel_firstproc.c`) und `Q9K_ProcTLink`
-(`q9kernel_traplink.c`, `csl.mod` hat selbst `M$IData`/`M$IRefs`), zwei
-neue Host-Testfälle (F5/F9) in **Fortsetzung 49**. Alle 15
-Host-Testsuiten grün.
+**MEILENSTEIN: `M$IData`/`M$IRefs` implementiert (Fortsetzung 49) UND
+die gesamte `echo`/`csl`-Adressbeziehungssaga seit Fortsetzung 44 auf
+EINE einzige, im Handbuch woertlich belegte Ursache zurueckgefuehrt +
+behoben (Fortsetzung 51): A6 fehlte der dokumentierte `$8000`-Bias**
+(68k_tech.pdf Table 2-6/D-7: "(a6) is always biased by $8000 ... the
+linker biases all data references by -$8000"). `Q9K_ProcFork` setzt
+jetzt `a6 = block + $8000`; die kunstvolle Fortsetzung-48-Kombi-
+Allokation (`Q9K_ExperimentalCombinedAlloc`) ist dadurch ueberfluessig
+geworden und VOLLSTAENDIG entfernt. `echo` erreicht live wieder alle
+vier Meilensteine (Load/csl geladen/F$TLink/F$Fork), diesmal ohne den
+Fortsetzung-50-Absturz. Alle 15 Host-Testsuiten grün.
 
-**`PC=$6c`-Absturz VOLLSTÄNDIG aufgeklärt (Fortsetzung 50):** NICHT die
-A4-Herkunftsbug-Familie (geprüft und verworfen — die schlägt zwar
-weiterhin über `scf` zu, bleibt aber durch den Fortsetzung-38-Totraum
-folgenlos). Echte Ursache: `echo` benutzt neben dem bekannten
-`jsr -$78a0(a6)` (Fortsetzung 48) einen WEITEREN, negativen
-a6-Offset (`move.l d0,-$789e(a6)`) zum SCHREIBEN — die
-Fortsetzung-48-Kombi-Allokation behandelt den GESAMTEN Bereich vor
-`echo`s a6 fälschlich als reine `csl`-Codekopie, wodurch dieser
-Schreibzugriff `csl`s echten Funktionsprolog (die Registermaske des
-einleitenden `movem.l`) mitten im Betrieb überschreibt und den
-späteren `rts` auf eine korrumpierte Adresse springen lässt. Reale
-Microware-Konvention vermutlich: ein von `csl`s `M$Init` gefüllter,
-PRO-PROZESS-EIGENER Bereich (Sprungtabelle + Scratch-Zellen), nicht
-`csl`s gemeinsamer Code. Echte Lösung braucht einen neuen
-Speicher-Layout-Entwurf (Schwierigkeitsgrad wie Fortsetzung 46-48) —
-bewusst NICHT mehr in dieser bereits sehr langen Sitzung begonnen,
-konkrete nächste Schritte in Fortsetzung 50.
+**Neuer, eigenstaendiger Fund dahinter (Fortsetzung 51, NICHT mehr in
+dieser Sitzung verfolgt):** nach ausreichend langer Laufzeit (erstmals
+ueberhaupt erreicht) korrumpierter IRQ-Vektortabellen-Eintrag --
+`Q9K_IRQTAB_BASE` ($1500) enthaelt einen Eintrag mit ISR-Zeiger
+`$1650` (= `Q9K_VMODUL_RETBUF`, ein reiner Datenpuffer, nie als Code
+gedacht), die IRQ-Dispatch-Schleife (`q9kernel_entry.a` $7c60-$7ccc)
+springt per `jsr (a1)` dorthin -- Vektor 4, `PC=$7002`. Vermutlich ein
+Registerleck zwischen einem `F$VModul`- und einem `F$IRQ`-Aufruf
+(`sc68681`s Treiberinit ruft `F$IRQ` dreimal). Konkrete
+nächste Schritte in Fortsetzung 51.
 
 **Vorheriger Meilenstein (weiterhin gültig, unverändert stabil):** der
 seit 2026-09-04 verfolgte "kernelgrößenabhängige Interrupt-Race"-Absturz
@@ -6764,3 +6758,110 @@ ausgerichteten Folgecode. Verifiziert wurde die Ausrichtung von
 `echo+$7c2` deshalb NICHT per linearem Vorwaertslauf, sondern
 gegenlaeufig: ein `beq.b`-Sprung bei `echo+$7a2` zeigt UNABHAENGIG exakt
 auf `echo+$7c2` -- ein Sprungziel MUSS ein echter Befehlsanfang sein.
+
+## Fortsetzung 51: ECHTE URSACHE + FIX der gesamten echo/csl-Adressbeziehungssaga -- fehlender $8000-Bias auf A6 (2026-09-11, elfte Sitzung, auf "ok mach weiter")
+
+**Der Handbuchtext, direkt gefunden (68k_tech.pdf, ZWEI unabhaengige
+Stellen, Table 2-6 UND Table D-7):**
+
+> "(a6) is always biased by $8000 to allow object programs to access
+> 64K of data using indexed addressing. You can usually ignore this
+> bias because the OS-9 linker automatically adjusts for it."
+
+> "(a6) is actually biased by $8000, but this can usually be ignored
+> because the linker biases all data references by -$8000."
+
+**Das war die ECHTE, EINZIGE Ursache der gesamten `echo`/`csl`-
+Adressbeziehungs-Saga seit Fortsetzung 44** -- nicht drei verschiedene
+Probleme, sondern EIN einziges: unser `Q9K_ProcFork` uebergab A6 bisher
+UNVERSCHOBEN (`a6 = block`), waehrend der ECHTE Microware-Linker jeden
+negativen a6-relativen Zugriff in kompiliertem Code (wie `echo.mod`)
+so einkompiliert, dass er `a6 = block + $8000` erwartet. Nachrechnung
+bestaetigt es zweifelsfrei:
+- `-$78a0(a6)` (Fortsetzung 44/48, Aufruf) = `$8000-$78a0` =
+  **`$0760`** relativ zur ROHEN Basis -- exakt der Datenoffset der
+  beiden nie relozierten `4ef9 00000000`-("jmp.l $0")-Stubs, die in
+  Fortsetzung 48 in `echo`s eigenem `M$IData` gefunden wurden!
+- `-$78cc(a6)` (Fortsetzung 48, Lesen) = `$8000-$78cc` = **`$0734`** --
+  der ALLERERSTE kopierte Wert von `M$IData`, per `M$IRefs` bereits
+  korrekt zum Datenzeiger relozierbar.
+- `-$789e(a6)` (Fortsetzung 50, Schreiben) = `$8000-$789e` = **`$0762`**
+  -- genau 2 Byte in den ERSTEN `jmp.l`-Stub hinein, also dessen
+  4-Byte-Sprungziel-Operand.
+
+**Die drei scheinbar unabhaengigen Symptome (Sprung ~68 Byte daneben in
+Fortsetzung 44, Speichermuell-Zeiger in Fortsetzung 48, Zerstoerung von
+`csl`s Code in Fortsetzung 50) waren die GANZE ZEIT nur unterschiedliche
+Konsequenzen DESSELBEN fehlenden Bias.** `echo` benutzt seinen eigenen,
+per `M$IData`/`M$IRefs` bereits korrekt aufgebauten "Sprungtabellen"-
+Bereich (die beiden `jmp.l`-Stubs) fuer den Aufruf in `csl` hinein --
+schreibt VORHER per `-$789e(a6)` die vom Trap-Bibliotheks-Mechanismus
+aufgeloeste Zieladresse in den ersten Stub, ruft ihn dann per
+`-$78a0(a6)` auf. Alles davon spielt sich in `echo`s EIGENEM, ganz
+normalen Prozessblock ab -- die kunstvolle Fortsetzung-48-Kombi-
+Allokation war unnoetig und sogar schaedlich (sie legte eine blosse
+Codekopie von `csl` genau dort hin, wo `echo` in Wahrheit in seinen
+EIGENEN Speicher schreiben wollte).
+
+**Fix:**
+- `Q9K_ProcFork` (`q9kernel_firstproc.c`): `a6 = block + $8000` statt
+  `a6 = block` (Table 2-6/D-7-konform). `M$IData`/`M$IRefs` bleiben
+  UNVERAENDERT relativ zur ROHEN Basis `block` (verifiziert: `M$Mem`
+  passt nur zur rohen Basis, nicht zum gebiasten a6).
+- `Q9K_ExperimentalCombinedAlloc` (`q9kernel_traplink.c`) samt Aufruf
+  in `q9kernel_entry.a` und `Q9K_FORK_BLOCK_OVERRIDE`-Mechanismus
+  (`q9kernel_firstproc.c`) VOLLSTAENDIG entfernt -- durch den Bias-Fix
+  ueberfluessig geworden, kein Sonderfall mehr fuer `F$Fork`.
+- `test_q9kernel_firstproc.c`: F1-Erwartung fuer a6 um die Bias-
+  Subtraktion ergaenzt; die Fortsetzung-48/49-Testinfrastruktur
+  (`Q9K_FORK_BLOCK_OVERRIDE`-Umleitung, `Q9K_COMB_*`-Umleitungen in
+  `test_q9kernel_traplink.c`, dortiger `Q9K_AllocMem`-Stub) entfernt,
+  da nichts mehr davon referenziert wird.
+
+**Live verifiziert:** `echo` erreicht nach dem Fix erneut alle vier
+Meilensteine (`l`=Load, `c`=csl geladen, `t`=F$TLink erfolgreich,
+`E`=erfolgreich geforkt) -- diesmal OHNE das fruehere `'P'`-Diagnose-
+zeichen (Kombi-Allokation entfallen) und OHNE den Fortsetzung-50-
+Absturz (`csl`s Code bleibt unangetastet). Kernel neu gebaut (kleiner:
+`$439e`->`$41b4`, da die Kombi-Allokation entfallen ist), Sicherheits-
+abstand aus Fortsetzung 38 erneut per Byte-Dump geprueft (weiterhin
+exakt richtig). Alle 15 Host-Testsuiten gruen.
+
+### Neuer, eigenstaendiger Fund dahinter (NICHT mehr in dieser Sitzung verfolgt): korrupter IRQ-Vektortabellen-Eintrag
+
+Nach ausreichend langer Laufzeit (`echo`/`csl` laufen jetzt so lange
+und so weit wie nie zuvor) tritt ein NEUER, unabhaengiger Absturz auf
+(Vektor 4, `PC=$7002`) -- reproduzierbar auch OHNE jeden Tastendruck
+(also kein Diagnose-Trigger-Artefakt). Per `Q9_FREEZE_PC=$7002` +
+`Q9_TRACE_INSTR=1` exakt zurueckverfolgt: die IRQ-Dispatch-Schleife
+(`q9kernel_entry.a`, Adresse `$7c60`-`$7ccc`, laeuft die 16-Eintraege-
+Tabelle bei `$1500` ab, s. `Q9K_ProcIRQ`/`Q9K_IRQTAB_BASE` in
+`q9kernel_exctable.c`) fuehrt bei einem Tabelleneintrag ein `jsr (a1)`
+aus, wobei `a1` faelschlich `$1650` enthaelt -- das ist
+`Q9K_VMODUL_RETBUF` (`q9kernel_moddir.c`), ein reiner DATEN-
+Rueckgabepuffer fuer `F$VModul` (NIE als Code gedacht). Der Sprung
+dorthin krabbelt ueber Nullwoerter bis zu einem echten Illegal-Opcode-
+Muster bei `$7002` (exaktes Gegenstueck zum Mechanismus aus
+Fortsetzung 50, nur an anderer Stelle).
+
+**Bedeutet:** irgendein `F$IRQ`-Registrierungsaufruf (vermutlich
+`sc68681`s eigene Treiberinitialisierung, die laut Kopfkommentar in
+`Q9K_ProcIRQ` dreimal `F$IRQ` aufruft) bekommt/uebergibt an dieser
+Stelle `$1650` als ISR-Zeiger (a0-Eingabe von `F$IRQ`) statt einer
+echten Interrupt-Routine -- vermutlich ein Registerleck (ein
+Aufrufpfad laesst einen von `F$VModul` stammenden Restwert in einem
+Register stehen, das spaeter fuer `F$IRQ` wiederverwendet wird, ohne
+neu belegt zu werden). Noch NICHT weiter eingegrenzt, WELCHER Aufruf
+genau den Leckwert einschleust. Vermutlich ein SEIT LANGEM latent
+vorhandener Bug, der nie ausgeloest wurde, weil `echo`/`csl` nie lange
+genug liefen, um eine echte Interrupt-Zustellung durch diese Tabelle
+zu erreichen.
+
+**Fuer eine Folgesitzung:** den Aufrufpfad zwischen dem letzten
+`F$VModul`-Aufruf (liefert `$1650` in irgendeinem Register) und dem
+naechsten `F$IRQ`-Aufruf (uebernimmt diesen Wert faelschlich als ISR)
+per Ringpuffer/Kanarie in `Q9K_SysFVModul`/`Q9K_SysFIRQ`
+(`q9kernel_entry.a`) genau nachvollziehen -- gleiche Methodik wie bei
+allen bisherigen Registerleck-Funden dieses Kernels.
+
+Alle 15 Host-Testsuiten gruen. Committet+gepusht.

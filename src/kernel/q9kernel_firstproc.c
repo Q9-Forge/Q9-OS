@@ -304,12 +304,6 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_E_MEMFUL  0x00CFU   /* Process Memory Full */
 #define Q9K_E_PRCFUL  0x00E5U   /* Process Table Full */
 
-/* EXPERIMENT (2026-09-11, Fortsetzung 48) -- s. Kommentar bei der
- * Verwendungsstelle in Q9K_ProcFork weiter unten. */
-#ifndef Q9K_FORK_BLOCK_OVERRIDE
-#define Q9K_FORK_BLOCK_OVERRIDE 0x16F0UL
-#endif
-
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
@@ -673,22 +667,12 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
 
     totalSize = dataSize + stackSize + addMem + paramSize; /* s. Kopfkommentar */
 
-    /* EXPERIMENT (2026-09-11, Fortsetzung 48 -- Nachfolger von
-     * Fortsetzung 46/47, s. docs/OWN_KERNEL_STATUS.md fuer die volle
-     * Architekturbegruendung): optionaler, selbstloeschender Adress-
-     * Override fuer GENAU den naechsten F$Fork. Normalfall (0 = nicht
-     * gesetzt) ist fuer JEDEN bestehenden Aufrufer VOELLIG unveraendert
-     * -- nur wenn Q9K_ExperimentalCombinedAlloc (q9kernel_traplink.c)
-     * vorher explizit eine kombinierte Allokation fuer csl+diesen
-     * Prozess reserviert hat, wird HIER die vorreservierte Adresse
-     * verwendet statt einer neuen, moeglicherweise ueberlappenden
-     * Q9K_AllocMem-Allokation. */
-    if (Q9K_GetU32(Q9K_FORK_BLOCK_OVERRIDE) != 0) {
-        block = Q9K_GetU32(Q9K_FORK_BLOCK_OVERRIDE);
-        Q9K_SetU32(Q9K_FORK_BLOCK_OVERRIDE, 0UL);   /* self-clearing -- gilt nur fuer DIESEN einen Fork */
-    } else {
-        block = Q9K_AllocMem(totalSize);
-    }
+    /* NACHTRAG (2026-09-11, Fortsetzung 51): der Fortsetzung-48-Adress-
+     * Override (Q9K_FORK_BLOCK_OVERRIDE) ist entfallen -- er loeste ein
+     * Problem, das durch den fehlenden $8000-Bias auf a6 (s. u.) nur
+     * VORGETAEUSCHT wurde. Normale, unveraenderte Q9K_AllocMem-Allokation
+     * genuegt jetzt wieder fuer JEDEN Aufrufer. */
+    block = Q9K_AllocMem(totalSize);
     if (block == 0) {
         Q9K_ModDirUnlinkByHeader(hdrAddr); /* Link-Zaehler wieder zuruecknehmen -- Fork bricht ab */
         *outError = (Q9_u16)Q9K_E_MEMFUL;
@@ -769,7 +753,39 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetFrameReg(frameBase, 11, hdrAddr);   /* a3 = Primary (forked) module pointer */
     Q9K_SetFrameReg(frameBase, 12, 0);         /* a4 = Undefined */
     Q9K_SetFrameReg(frameBase, 13, spBoundary);/* a5 = (a5),(a7)-Grenze */
-    Q9K_SetFrameReg(frameBase, 14, block);     /* a6 = Datenbereichsbasis (eigene Kernel-Konvention, s. Kopfkommentar) */
+    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, Fortsetzung 51) -- Manual
+     * WOERTLICH (68k_tech.pdf, Table 2-6 UND Table D-7, beide Stellen
+     * gegengeprueft): "(a6) is always biased by $8000 ... the OS-9 linker
+     * automatically adjusts for it" / "(a6) is actually biased by $8000
+     * ... the linker biases all data references by -$8000". Das heisst:
+     * ECHTE, vom Microware-Linker gebaute Programme (wie "echo") haben
+     * JEDEN negativen a6-relativen Zugriff bereits so einkompiliert, dass
+     * er einen a6-Wert um +$8000 UEBER der rohen Datenbereichsbasis
+     * erwartet -- NICHT die rohe Basis selbst. Bisher wurde hier direkt
+     * "block" (unverschoben) uebergeben, was fuer reinen, selbst
+     * geschriebenen Assembler-Code (forkchild.a/hellosvc.a, kein
+     * Linker-Bias einkompiliert) folgenlos blieb, aber JEDEN negativen
+     * a6-Zugriff eines ECHTEN, linker-gebauten C-Programms um exakt
+     * $8000 daneben treffen liess.
+     *
+     * Das war die WAHRE Ursache der gesamten "echo springt/liest/schreibt
+     * an einer falschen Adresse"-Serie (Fortsetzung 44 [Sprungziel um
+     * ~68 Byte daneben], 48 [Zeiger liest Speichermuell], 49/50 [Schreib-
+     * zugriff zerstoert csl] -- alle drei sind NUR unterschiedliche
+     * Symptome DESSELBEN fehlenden $8000-Bias, s. docs/OWN_KERNEL_STATUS.md
+     * Fortsetzung 51 fuer die vollstaendige Herleitung ueber die
+     * M$IData/M$IRefs-Bytewerte). Die kunstvolle Kombi-Allokation aus
+     * Fortsetzung 48 (Q9K_ExperimentalCombinedAlloc) loeste ein Problem,
+     * das es bei korrektem Bias nie gegeben haette -- deshalb in
+     * derselben Fortsetzung vollstaendig zurueckgebaut (s.
+     * q9kernel_traplink.c/q9kernel_entry.a).
+     *
+     * NACHTRAG: M$IData/M$IRefs (Q9K_ApplyInitializedData oben) bleiben
+     * UNVERAENDERT -- deren Tabellenoffsets sind, wie im selben Zug
+     * verifiziert, IMMER relativ zur ROHEN (unverschobenen) Datenbereichs-
+     * basis "block" zu verstehen (M$Mem passt nur zur rohen Basis, s.
+     * Fortsetzung 51), nicht zum gebiasten a6. */
+    Q9K_SetFrameReg(frameBase, 14, block + 0x8000UL); /* a6 = Datenbereichsbasis + $8000-Bias (Table 2-6/D-7) */
 
     Q9K_SetU16(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_SR_OFF, Q9K_INITIAL_SR);
     Q9K_SetU32(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_PC_OFF, entryPC);
