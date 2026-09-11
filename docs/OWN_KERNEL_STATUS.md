@@ -5989,3 +5989,90 @@ Verdachtsort.
 
 Alle 15 Host-Testsuiten weiterhin gruen. Keine Codeaenderung aus
 dieser Fortsetzung im Repo (Experiment vollstaendig zurueckgesetzt).
+
+## Fortsetzung 41: neues Werkzeug `tools/annotate_trace.py` -- zwei weitere Hypothesen zum `echo`-Absturz widerlegt, `Q9K_TCallDispatch` als Verdaechtiger ausgeschlossen (2026-09-11, elfte Sitzung, direkte Fortsetzung)
+
+**Neues Werkzeug:** `tools/annotate_trace.py` liest eine
+`Q9_TRACE_INSTR=1`-Instruktionsspur (Dump-Datei) ein, ordnet JEDE
+PC-Adresse automatisch dem richtigen geladenen Modul zu (Basisadressen
+werden LIVE aus der Moduldirectory-Sektion desselben Dumps gelesen,
+nie von Hand eingetragen), disassembliert per `capstone` korrekt aus
+der passenden Binaerdatei, loest Kerneladressen ueber eine per `l68
+-s=` erzeugte Symbolkarte zu Funktionsnamen auf, und verfolgt
+automatisch die Call/Return-Bilanz (inkl. Erkennung der in diesem
+Kernel bewusst genutzten "Adresse pushen, `rts` springt hin"-
+Trampoline, die keine echte Rueckkehr sind). Grund fuer das Werkzeug:
+in dieser Sitzung fuehrten mehrere Versuche, Adressen von Hand zwischen
+Kernel/`echo.mod`/`csl.mod` umzurechnen, zu eigenen Rechenfehlern
+(einmal ein falsch decodiertes Bit in einer LEA-Adressierungsart,
+einmal eine Adresse faelschlich `Q9K_SetupTables` statt der generischen
+`Q9K_ZeroRangeLoop` zugeschrieben) -- das Werkzeug macht diese Fehler
+strukturell unmoeglich.
+
+### Fund 1 (per Werkzeug widerlegt): `Q9K_TCallDispatch` ist NICHT beteiligt
+
+Der komplette 24576-Instruktionen-Trace bis zum Absturz enthaelt
+**null** Treffer im Adressbereich von `Q9K_TCallDispatch`. Der
+zuvor vermutete Zusammenhang mit dem `tcall`/`F$TLink`-Dispatcher
+(nahegelegt durch Fortsetzung 36s "nie live gegen echos eigenen tcall
+verifiziert") ist damit ausgeschlossen -- der Absturz passiert
+vollstaendig INNERHALB von `csl`s/`echo`s eigenem, normalem
+`bsr`/`rts`-Aufrufcode (ein Zeichen-Klassifizierungs-/
+Formatstring-Scanner in `csl`, erkennbar an Pruefungen auf
+`n`/`s`/`x`/`u`/`p`/`g`-Zeichen -- typisch fuer eine
+`printf`-Implementierung).
+
+**Nebenfund:** die vorher (Fortsetzung 40) beobachteten Schreibzugriffe
+auf `Q9K_TCallScratch_ExecEntry` mit Wert 0 kamen NICHT von
+`Q9K_TCallDispatch`, sondern von der GENERISCHEN Boot-Zeit-
+Nullungsschleife `Q9K_ZeroRangeLoop` (zaehlt zu den drei bekannten,
+einmaligen `Q9K_ZeroRange`-Aufrufen direkt in `Q9K_Entry`) -- ein
+eigener Fehlschluss dieser Sitzung, durch das neue Werkzeug aufgeklaert
+und hiermit richtiggestellt. `F$TLink`s Trap-Tabellen-Eintrag selbst
+ist nachweislich korrekt (`ExecEntry=$3f420`, per Watchpoint direkt in
+echos Prozessdeskriptor bestaetigt, s. Fortsetzung 40).
+
+### Fund 2 (per Experiment widerlegt): fehlendes `argv` ist NICHT die Ursache
+
+Verdacht: `F$Fork("echo")` im eigenen Testcode uebergibt `paramSize=0`
+(keinerlei Kommandozeilenargument) -- ein Fall, der auf einem echten
+System nie vorkommt (eine Shell uebergibt immer mindestens den
+Programmnamen/ein Zeilenende), moeglicherweise ein in `echo`/`csl`
+nie getesteter Sonderfall.
+
+Testweise ein echtes 3-Byte-Argument (`"hi",$0d`) mitgegeben, neu
+gebaut, live getestet: **Absturz tritt identisch wieder auf** --
+`D3`/`D4`/`D6`(=`echo+$8d8`)/`D7` byteidentisch zum Lauf ohne
+Argument, nur `D0` und die betroffenen Adressen um genau die 3
+zusaetzlichen Byte verschoben. Schliesst aus, dass der Fehler von der
+konkreten Kommandozeile abhaengt -- er liegt in einem UNBEDINGTEN,
+argumentunabhaengigen Teil des Ablaufs. Experiment vollstaendig
+zurueckgesetzt (`git diff` leer).
+
+### Stand: zwei plausible Hypothesen widerlegt, echte Ursache noch offen
+
+Ausgeschlossen bisher: Speichererschoepfung (Fortsetzung 40),
+`Q9K_TCallDispatch`-Bug, fehlendes Argument. Gesichert: ein
+deterministischer Stack-Rahmen-Fehler tief in `csl`s eigenem
+Format-/Zeichen-Scanner, ausgeloest durch `echo.mod`s eigenen
+Funktionsprolog bei Modul-Offset `$82e` (`movem.l
+d2-d7/a0-a2,-(a7)`), der eine noch lebende Ruecksprungadresse
+(`echo+$8d8`) mit Null ueberschreibt.
+
+**Naechster Schritt fuer eine Folgesitzung:** `tools/annotate_trace.py`
+auf einen frischen `Q9_TRACE_INSTR=1`-Dump anwenden und GEZIELT die
+vollstaendige, ununterbrochene Aufrufkette ab `echo`s eigenem
+Haupteinstieg (`M$Exec`) bis zum Absturz von Hand durchgehen (das
+Werkzeug listet Anomalien nur automatisch, echte Fehlinterpretationen
+durch die "getarnter Sprung"-Heuristik sind nicht auszuschliessen --
+im Zweifel die annotierte Rohliste selbst lesen, nicht nur die
+Anomalie-Zusammenfassung). Ziel: die EINE Stelle finden, an der eine
+Aufruftiefe/Rahmengroesse falsch angenommen wird -- vermutlich in
+`echo.mod` selbst (geschlossene Microware-Binaerdatei, keine
+Quelltextaenderung moeglich, aber ein VERSTANDENER Mechanismus koennte
+einen gezielten Workaround im Kernel nahelegen, z. B. ein groesserer
+initialer Registerkontext oder ein A6/A5-Wert, den `echo`/`csl`
+stillschweigend anders erwarten als bisher angenommen).
+
+Alle 15 Host-Testsuiten weiterhin gruen. Kein Codefix in dieser
+Fortsetzung, `tools/annotate_trace.py` neu im Repo.
