@@ -1243,15 +1243,33 @@ Q9K_TestPathScanNext:
 * TRAP #0 -> IOMan -> scf -> sc68681 -> DUART, und d1 meldet exakt die
 * 17 uebergebenen Bytes zurueck.
 *
-* BEKANNTER FOLGEFEHLER, bewusst hier vermerkt statt kaschiert: kurz nach
-* diesem Punkt loest der DUART-Interrupt eine Exception aus (Vektor 4,
-* Illegal Instruction, PC=$6C) -- dasselbe Muster, das in diesem Projekt
-* schon einmal auftrat: ein "jsr (a0,d1.w)" mit a0=0, also ein
-* Sprungziel aus einer nicht gefuellten Tabelle (Verdacht: Q9_D_DevTbl,
-* das IOMans I$Attach fuellt). Ob er auftritt, haengt an der Modulgroesse
-* und damit am Zeitpunkt des Interrupts -- er ist also ein Race, kein
-* deterministischer Pfadfehler. Naechster Arbeitspunkt; die Ausgabe
-* selbst ist davon unberuehrt.
+* ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 33, 2026-09-11): kurz nach
+* diesem Punkt loeste der DUART-Interrupt gelegentlich eine Exception aus
+* (Vektor 4, Illegal Instruction, PC je nach Kernelgroesse unterschiedlich
+* -- u.a. $6C, $74b9, $1a10 live beobachtet) -- seit 2026-09-04 als
+* Modulgroessen-/Zeitpunkt-abhaengiger Race vermerkt, aber nicht verstanden.
+* Per Ringpuffer-Instrumentierung (s. docs/OWN_KERNEL_STATUS.md,
+* Fortsetzung 33) LIVE nachgewiesen: ein ankommender DUART-Interrupt traf
+* diesen Prozess mit einem bereits kollabierten, winzigen (also eindeutig
+* ungueltigen) geretteten PC-Wert -- die Kollision entsteht IRGENDWO in der
+* Interrupt-Verschachtelung (Timer trifft Q9K_IRQDispatch oder umgekehrt),
+* nicht abschliessend auf eine einzelne Instruktion zurueckgefuehrt.
+* Fix (bewusst schmal, nicht der grosse Kernel-weite Umbau): Interrupts
+* fuer dieses kurze Fenster (reine Diagnose-Ausgabe + Registervorbereitung
+* fuer F$Fork -- kein I/O noetig, das nicht per Direktzugriff auf den
+* DUART liefe) sperren. Q9K_DiagWriteD7 pollt SRA/THRA direkt (kein
+* Interrupt noetig), bleibt also unter Maskierung voll funktionsfaehig.
+* Live verifiziert: mit dieser Sperre kommt der Testablauf zuverlaessig an
+* F$Load(echo)/F$Load(csl)/F$TLink(13,"csl")/F$Fork(echo) vorbei, OHNE
+* die Sperre bricht er weiterhin genau hier ab (identischer Kernel-Build,
+* nur diese zwei Zeilen unterschiedlich). Der allgemeine Kernel-Race
+* selbst (irgendein Interrupt kann PRINZIPIELL jeden unmaskierten Code
+* treffen) ist damit NICHT behoben, nur dieses eine, bekannte Zeitfenster
+* in unserem eigenen Testcode entschaerft -- echte Anwendungsprozesse
+* (z.B. echo, s.u.) laufen weiterhin unmaskiert und koennten denselben
+* Mechanismus an anderer Stelle treffen. Echtes TODO bleibt die generelle
+* Ursache in Q9K_TimerIRQHandler/Q9K_IRQDispatch.
+        ori.w   #$0700,sr
         moveq   #'O',d7                     * DIAGNOSE: I$Write ohne Fehler zurueck
         bsr     Q9K_DiagWriteD7
 
@@ -1273,6 +1291,9 @@ Q9K_TestPathScanNext:
         clr.l   d2
         clr.w   d3
         clr.w   d4
+* Maskierung wieder aufheben -- F$Fork selbst UND hellosvc brauchen
+* funktionierende IRQs (Konsolenausgabe ueber I$WritLn).
+        andi.w  #$f8ff,sr
         lea     Q9K_TestHelloName(pc),a0
         trap    #0
         dc.w    3                                  * Funktionscode 3 = F$Fork
@@ -1326,6 +1347,30 @@ Q9K_TestHelloDone:
         moveq   #'c',d7                     * DIAGNOSE: csl geladen
         bsr     Q9K_DiagWriteD7
 Q9K_TestCslDone:
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (Fortsetzung 33, "F$TLink kontrolliert
+* pruefen"): echten F$TLink(13,"csl")-Aufruf aus EIGENEM, bekanntem
+* Kontext testen -- entkoppelt von echos unbekannter C-Laufzeit. Reale
+* Konvention (s. Kopfkommentar q9kernel_traplink.c): IN d0.w=Trap-Nummer
+* (1-15), d1.l=optionale Speichergroesse (0=Vorgabe aus M$Mem), (a0)=
+* Modulname. OUT (Erfolg): Carry geloescht. Schlug F$Load(csl) oben schon
+* fehl, bleibt dieser Test aussagekraeftig fehlschlagend (E$MNF erwartet) --
+* kein Sonderpfad noetig.
+        moveq   #13,d0                      * Trap-Nummer 13 (per Disassemblierung von echo.mod verifiziert)
+        clr.l   d1                           * kein Speicher-Override -- M$Mem des Moduls entscheidet
+        lea     Q9K_TestCslBareName(pc),a0     * NACKTER Name, s. Kommentar bei Q9K_TestCslBareName
+        trap    #0
+        dc.w    $0021                        * F$TLink
+        bcs     Q9K_TestTLinkFail
+        moveq   #'t',d7                      * DIAGNOSE: F$TLink(13,"csl") erfolgreich
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestTLinkDone
+Q9K_TestTLinkFail:
+        moveq   #'x',d7                      * DIAGNOSE: F$TLink(13,"csl") fehlgeschlagen, Fehlercode folgt
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+Q9K_TestTLinkDone:
 
 * Das per F$Load geladene Modul jetzt auch wirklich AUSFUEHREN -- der
 * eigentliche Zweck des Meilensteins. "echo" steht jetzt (per
@@ -1425,6 +1470,16 @@ Q9K_TestLoadName:
 
 Q9K_TestCslName:
         dc.b    "/dd/CMDS/csl",0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+Q9K_TestCslBareName:
+* ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 33, eigener Testcode, nicht
+* der Kernel selbst): F$TLink braucht den NACKTEN Modulnamen (genau wie
+* echo.mod ihn per Disassemblierung nachweislich benutzt), keinen Pfad --
+* Q9K_ModDirLinkByName sucht nach dem Namen AUS DEM MODULKOPF ("csl"),
+* nie nach "/dd/CMDS/csl". Erster Versuch nutzte faelschlich
+* Q9K_TestCslName (den F$Load-Pfad) auch fuer F$TLink -- E$MNF war damit
+* garantiert, unabhaengig davon, ob F$TLink selbst korrekt arbeitet.
+        dc.b    "csl",0
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 
 Q9K_TestEchoName:

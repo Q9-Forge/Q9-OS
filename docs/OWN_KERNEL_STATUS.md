@@ -5211,3 +5211,93 @@ Alle 15 Host-Testsuiten weiterhin grün. Keine Quelltextänderung aus
 dieser Sitzung committet -- die gesamte Instrumentierung war temporär
 und wurde vor Sitzungsende auf den Stand von Commit `4de8704`
 zurückgesetzt (`git checkout -- src/kernel/q9kernel_entry.a`).
+
+## Fortsetzung 34: MEILENSTEIN -- `F$TLink(13,"csl")` funktioniert
+wirklich, `echo` installiert `csl` erfolgreich (2026-09-11, direkte
+Fortsetzung derselben Sitzung, nach neuem Sitzungslimit)
+
+**Auftrag:** "Wir haben ... wieder neue Limits bekommen ... mach bitte
+weiter" -- Fortsetzung 33s konkreten nächsten Schritt umgesetzt: einen
+kontrollierten `F$TLink(13,"csl")`-Aufruf aus EIGENEM Testcode, um die
+Frage "funktioniert `F$TLink` überhaupt korrekt?" von `echo`s unbekannter
+C-Laufzeit zu entkoppeln.
+
+### Fund 1 (ECHTER BUG, GEFIXT): Interrupt-Race im eigenen Testcode-Fenster
+
+Der kontrollierte Testaufruf wurde direkt hinter dem `I$Write`-Erfolg
+platziert -- genau das seit 2026-09-04 als Race dokumentierte Zeitfenster.
+Ein erster Lauf bestätigte das erwartungsgemäß: derselbe bekannte Absturz,
+diesmal schon VOR dem eigenen `F$TLink`-Test (der neue Diagnosemarker
+feuerte gar nicht). Die in Fortsetzung 33 gebaute Ringpuffer-
+Instrumentierung hatte bereits gezeigt, WAS passiert (ein Interrupt trifft
+einen bereits kollabierten PC) -- als gezielter, schmaler Fix wird das
+betroffene Fenster (reine Diagnose-Ausgabe + Registervorbereitung für
+`F$Fork`, kein echtes I/O nötig) jetzt per `ori.w #$0700,sr` /
+`andi.w #$f8ff,sr` gegen Interrupts abgeschirmt -- `Q9K_DiagWriteD7`
+pollt den DUART direkt und bleibt dabei voll funktionsfähig. **Live
+verifiziert, zweimal reproduziert:** mit der Sperre kommt der Testablauf
+zuverlässig bis `F$Load(echo)`→`F$Load(csl)`→`F$TLink(13,"csl")`→
+`F$Fork(echo)` durch, ohne sie bricht er identisch wie vorher ab (exakt
+derselbe Kernel-Build, nur diese zwei Zeilen unterschiedlich). **Der
+allgemeine Kernel-Race ist damit NICHT behoben** -- nur dieses eine,
+namentlich bekannte Zeitfenster in unserem eigenen Testcode. Echte
+Anwendungsprozesse (`echo` selbst, s. Fund 3) laufen weiterhin
+unmaskiert und können denselben Mechanismus anderswo treffen. Die
+generelle Ursache (`Q9K_TimerIRQHandler`/`Q9K_IRQDispatch`) bleibt echtes
+TODO.
+
+### Fund 2 (ECHTER BUG, GEFIXT): eigener Testaufruf nutzte den falschen Namen
+
+Nach dem Interrupt-Fix erreichte der `F$TLink`-Test seinen eigenen
+Diagnosemarker -- und meldete prompt E$MNF ($DD), obwohl `F$Load("csl")`
+direkt davor sichtbar erfolgreich war (Marker `c`). Ursache: der
+Testaufruf übergab `Q9K_TestCslName`, das den vollen `F$Load`-Pfad
+`"/dd/CMDS/csl"` enthält -- `Q9K_ModDirLinkByName` sucht aber nach dem
+NACKTEN Namen aus dem Modulkopf (`"csl"`), genau wie es `echo.mod` selbst
+per Disassemblierung nachweislich tut. Eigener Testcode-Fehler, keine
+Kernel-Logik betroffen. Fix: neues Label `Q9K_TestCslBareName` (`"csl"`,
+ohne Pfad) für den `F$TLink`-Aufruf; `Q9K_TestCslName` bleibt unverändert
+für `F$Load`.
+
+### Fund 3: `F$TLink` funktioniert -- `echo` kommt weiter als je zuvor,
+trifft auf einen NEUEN, eigenständigen Absturz
+
+Mit beiden Fixes: `F$TLink(13,"csl")` liefert Erfolg (Diagnosemarker `t`),
+UND `echo` selbst (das intern denselben Aufruf macht) stürzt NICHT mehr
+an seiner alten Stelle (`PC=$7031`, Textkonstante "...sed Me!SysBoot
+Used...") ab. Stattdessen läuft `echo` spürbar weiter (zwei echte
+Prozesse in der Ready-Queue, `csl` im Moduldirectory mit erhöhtem
+Link-Zähler) und stürzt an einer ANDEREN, neuen Stelle ab: Vektor 4,
+PC=`$0000006C`, A4=`$FFFFFFFE` (offensichtlich nie gesetzt), erreicht laut
+Stack-Rückverfolgung über eine Rücksprungadresse in `echo.mod` selbst
+(Modul-Offset `$9a`, direkt hinter einem ganz gewöhnlichen PC-relativen
+internen Funktionsaufruf zu Modul-Offset `$82A` -- `movea.l #$792,a0 /
+jsr $98(pc,a0.l)`, die bei Aufrufen ausserhalb der kurzen Sprungreichweite
+übliche OS-9-PIC-Konvention, keine `csl`/`F$TLink`-Angelegenheit mehr).
+
+**Einordnung:** `PC=$6C` mit `A4` uninitialisiert (`$FFFFFFFE`) ist
+DIESELBE, in diesem Projekt schon mehrfach gefundene Fehlerklasse wie die
+früheren "A4 muss Prozessdeskriptor sein, wurde für diesen externen
+Aufrufpfad aber nie gesetzt"-Bugs (s. `Q9K_TrapCallExternal`-Historie) --
+vermutlich ruft `echo` an dieser Stelle (innerhalb der Funktion bei
+Modul-Offset `$82A`, deren Inhalt noch nicht untersucht wurde) einen
+weiteren, noch nicht (oder über den falschen Pfad) verdrahteten Syscall
+auf. NICHT weiter verfolgt in dieser Sitzung -- `echo.mod`/`csl.mod` sind
+geschlossene, nicht quelloffene Microware-Binärdateien, die weitere
+Rückverfolgung braucht gezielte Disassemblierung der Funktion bei
+Offset `$82A` (nächster, klar benannter Startpunkt für eine Folgesitzung).
+
+### Fazit
+
+`F$TLink`/TRAP-#1-15-Support ist damit nicht nur code-vollständig und
+host-getestet (Fortsetzung 32), sondern jetzt auch LIVE gegen ein echtes,
+kompiliertes Microware-Kommando end-to-end verifiziert: das ursprüngliche
+Ziel dieser mehrtägigen Teilaufgabe ("kann `echo` seine `csl`-
+Trap-Bibliothek installieren?") ist erreicht. Das Projekt ist dabei einen
+Schritt weiter gekommen als geplant -- `echo` läuft jetzt so weit, dass es
+an einer GANZ ANDEREN, unabhängigen Kernel-Lücke hängen bleibt, die einen
+eigenen, neuen Untersuchungs-Faden darstellt (s. Fund 3).
+
+Alle 15 Host-Testsuiten grün. Committet (`q9kernel_entry.a`: Interrupt-
+Sperre um das Diagnose-/Registrierfenster, `Q9K_TestCslBareName`) und
+gepusht auf `fix/a4-aufruferabhaengig`.
