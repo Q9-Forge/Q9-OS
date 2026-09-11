@@ -5108,3 +5108,106 @@ Hardware unterbrechen kann), keine weiteren Bisektions-Rateversuche.
 Alle 15 Host-Testsuiten grün (der Race betrifft ausschließlich den
 emulierten Boot-Test, nicht den Kernel-Quelltext oder dessen
 Host-Tests).
+
+## Fortsetzung 33: Ringpuffer-Instrumentierung zeigt den Race live --
+Absturz in `echo` selbst ist NICHT (mehr) der `F$TLink`-Fehlschlag,
+sondern eine noch frühere, ungeklärte Lücke (2026-09-11, direkte
+Fortsetzung derselben Sitzung)
+
+**Auftrag:** nach Fortsetzung 32 ("Sollen wir den Bug angehen?") --
+"ja bitte" -- echte Ursachenanalyse statt weiterer Zeitversatz-Versuche.
+
+### Instrumentierung (alle TEMPORÄR, am Ende dieser Sitzung wieder
+vollständig entfernt -- `git checkout -- src/kernel/q9kernel_entry.a`
+auf den Stand von Commit `4de8704`)
+
+* Ringpuffer der letzten 32 Interrupt-Eintritte (Marker=Vektornummer,
+  30 für den Timer; geretteter PC), gefüllt in `Q9K_TimerIRQHandler`
+  und `Q9K_IRQDispatch`, ausgegeben von `Q9K_ExcTrap` vor dem Anhalten.
+* Alle-256-Aufrufe-Marker in `Q9K_DiagWriteD7` (zeigt den Aufrufer, um
+  eine Endlosschleife auf dieser Routine ihrem wahren Ursprung
+  zuzuordnen).
+* Erfolg/Fehlschlag-Marker (`+`/`-` + Trap-Nummer bzw. Fehlercode)
+  direkt in `Q9K_SysFTLink`.
+* **Wichtige Lektion unterwegs:** die ersten Puffer-Adressen ($1900/
+  $1A00/$1A10) lagen im NIEDRIGEN Adressbereich -- ein Absturz landete
+  daraufhin zufällig GENAU auf einer dieser eigenen Debug-Zellen
+  (PC=$1a10). Verschieben auf eine hohe, garantiert freie Adresse
+  (`$1440C0`, direkt hinter dem längst etablierten `Q9K_ExcInfo_Stack`)
+  lieferte anschließend BYTE-IDENTISCHE Ergebnisse -- bewiesen: die
+  eigene Debug-Zelle war nie die Ursache, nur zufällig im Zielbereich
+  des ohnehin vorhandenen Fehlers platziert. Eigene Debug-Puffer für
+  diese Fehlerklasse gehören grundsätzlich in den hohen Adressbereich,
+  nie in den niedrigen (genau dort landen die kaputten Sprungziele).
+
+### Fund 1: der Ringpuffer bestätigt die Race-These direkt
+
+Kurz vor einem Absturz zeigte der Puffer ~30 Einträge mit Marker `$50`
+(80 = der per F$IRQ verdrahtete DUART-Vektor) und IDENTISCHEM PC
+`$756E` (die TXRDY-Poll-Schleife in `Q9K_DiagWait`/`Q9K_DiagHexWait`)
+-- plausibel: viele schnelle Sende-Interrupts während einer Zeichen-
+ausgabe. EIN Eintrag mitten drin weicht ab: Marker `$50`, aber PC
+`$0000001B` -- eine winzige, eindeutig ungültige Codeadresse. Das ist
+der erste DIREKTE, live gemessene Beleg (nicht mehr nur Vermutung),
+dass irgendwo in der Interrupt-Verschachtelung (Timer trifft
+`Q9K_IRQDispatch` oder umgekehrt) der gerettete PC auf einen kleinen,
+plausiblen "Registerwert-statt-Adresse"-Wert kollabiert -- exakt die
+seit 2026-09-04 vermutete Fehlerklasse, jetzt erstmals mit echten
+Zahlen statt nur "Ob er auftritt, hängt an der Modulgröße" belegt.
+
+### Fund 2: der eigentliche Absturz in `echo` ist NICHT der `F$TLink`-Fehlschlag
+
+Der Absturz selbst (Vektor 4, PC=`$7031`, mitten in der Textkonstante
+"...sed Me!SysBoot Used...") ist WORTWÖRTLICH derselbe, den Fortsetzung
+31 VOR der `F$TLink`-Implementierung dokumentiert hat. Das allein wäre
+noch kein Widerspruch (`F$TLink` könnte ja weiterhin fehlschlagen) --
+aber der neu eingebaute `+`/`-`-Diagnosemarker in `Q9K_SysFTLink`
+**feuerte kein einziges Mal** vor dem Absturz. Da dieser Marker JEDEN
+echten Aufruf von Callcode `$21` protokolliert hätte, unabhängig vom
+Aufrufer (eigener Testcode oder `echo`), heißt das: **`echo` hat
+`F$TLink` in diesem Lauf gar nicht erst erreicht.** Die ursprüngliche
+Diagnose ("scheitert an `F$TLink`, dann Absturz in der eigenen
+Fehlerbehandlung") war entweder ein Umstand einer früheren, anders
+getakteten Sitzung, oder der hier untersuchte Absturzpfad ist ein
+GANZ ANDERER als der ursprünglich dokumentierte, der zufällig zur
+selben Adresse führt (beides bei einem PC MITTEN IN EINER
+TEXTKONSTANTE plausibel -- ein springender Zeiger, der zufällig genau
+dort landet, muss nicht jedes Mal aus demselben Grund kommen).
+
+Zusätzlich fehlten in diesem Lauf auch die erwarteten Diagnosezeichen
+`l`/`k` (F$Load "echo") und `c` (F$Load "csl") VOLLSTÄNDIG aus dem
+Konsolenstrom -- direkt zwischen hellosvcs eigener Ausgabe und dem
+"E" (F$Fork "echo" erfolgreich) klafft eine Lücke ohne jedes Zeichen
+(per Rohbyte-Vergleich verifiziert, kein Anzeige-/Terminal-Artefakt).
+Das heißt: mindestens die BEIDEN Diagnose-Ausgaben wurden komplett
+übersprungen, OHNE dass der nachfolgende F$Fork fehlschlug -- ein
+weiterer, eigenständiger Beleg für denselben PC-Verschiebungs-
+Mechanismus (er überspringt hier offenbar nur die kurzen
+Diagnose-Aufrufe, nicht die eigentlichen Trap-#0-Aufrufe selbst).
+
+### Fazit und offener nächster Schritt
+
+Der `F$TLink`-Verdacht aus Fortsetzung 32 ist widerlegt: die
+Implementierung wird in diesem Lauf gar nicht erreicht, der Absturz
+in `echo` hat eine andere, noch nicht identifizierte Ursache (entweder
+derselbe Kernel-Race, diesmal INNERHALB des geforkten Kindprozesses
+statt in unserem eigenen Testcode, oder eine ECHTE Lücke in `echo`s
+eigener C-Laufzeit-Startsequenz, die mit unserem noch unvollständigen
+Kernel kollidiert -- z. B. ein von `echo`s Runtime vorausgesetzter,
+bei uns fehlender Syscall). Beides ist plausibel, keins der beiden ist
+in dieser Sitzung mehr abschließend unterscheidbar gewesen.
+
+**Konkreter nächster Schritt (nicht mehr in dieser Sitzung):** den
+`+`/`-`-Diagnosemarker in `Q9K_SysFTLink` (oder eine schlankere
+Variante davon) dauerhaft/wieder einbauen und GEZIELT einen KONTROLLIERTEN
+`F$TLink(13,"csl")`-Aufruf aus dem EIGENEN Testcode heraus prüfen
+(vor dem `F$Fork("echo")`, mit bekanntem, sauberem Kontext) -- das
+entkoppelt die Prüfung von `echo`s unbekannter, nicht quelloffener
+C-Laufzeit und beantwortet zuerst die einfachere Frage "funktioniert
+`F$TLink` überhaupt korrekt, wenn WIR es sauber aufrufen?", bevor
+weiter in `echo`s eigenem Absturz gegraben wird.
+
+Alle 15 Host-Testsuiten weiterhin grün. Keine Quelltextänderung aus
+dieser Sitzung committet -- die gesamte Instrumentierung war temporär
+und wurde vor Sitzungsende auf den Stand von Commit `4de8704`
+zurückgesetzt (`git checkout -- src/kernel/q9kernel_entry.a`).
