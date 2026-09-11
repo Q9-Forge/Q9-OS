@@ -2996,8 +2996,14 @@ Q9K_SysFPrsNam_Fail:
 * Registersatz wird gesichert: eine fremde ISR haelt sich nicht
 * zwingend an unsere Aufrufkonventionen, und ein Interrupt darf den
 * unterbrochenen Prozess unter keinen Umstaenden veraendern.
-Q9K_IRQTabBase   equ $1500          * 16 Eintraege a 20 Byte, s. q9kernel_exctable.c
-Q9K_IRQTabSlots  equ 16
+* NACHTRAG (2026-09-11, Fortsetzung 51): 16 -> 12 Eintraege -- bei 16
+* ueberlappte die Tabelle ($1500-$1640) gleich vierfach mit spaeter
+* angelegten Scratch-Zellen anderer Syscalls (Q9K_SEND_/Q9K_RETPD_/
+* Q9K_VMODUL_SCRATCH_*, s. ausfuehrlichen Kommentar bei Q9K_IRQTAB_BASE,
+* q9kernel_exctable.c). 12 Eintraege enden bei $15F0, vor der ersten
+* real belegten Nachbarzelle ($1600).
+Q9K_IRQTabBase   equ $1500          * 12 Eintraege a 20 Byte, s. q9kernel_exctable.c
+Q9K_IRQTabSlots  equ 12
 Q9K_IRQTabEntSz  equ 20
 Q9K_IRQDispatch:
         ori.w   #$0700,sr                      * ZUERST sperren -- s. Begruendung unten
