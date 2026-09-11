@@ -102,6 +102,7 @@ extern void   Q9K_SysFMove(void);         /* q9kernel_entry.a, F$Move  (Callcode
 extern void   Q9K_SysFVModul(void);       /* q9kernel_entry.a, F$VModul  (Callcode 0x2e) */
 extern void   Q9K_SysFSRqCMem(void);      /* q9kernel_entry.a, F$SRqCMem (Callcode 0x5c) */
 extern void   Q9K_SysFTLink(void);        /* q9kernel_entry.a, F$TLink   (Callcode 0x21) */
+extern void   Q9K_SysFCCtl(void);         /* q9kernel_entry.a, F$CCtl  (Callcode 0x5a) */
 extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
  * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
@@ -385,6 +386,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x31UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFRetPD);
                     Q9K_PutU32(usrdisBase + 0x38UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMove);
                     Q9K_PutU32(usrdisBase + 0x21UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTLink);
+                    Q9K_PutU32(usrdisBase + 0x5aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFCCtl);
                     Q9K_PutU32(usrdisBase + 0x2eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFVModul);
                     Q9K_PutU32(usrdisBase + 0x5cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqCMem);
                     Q9K_PutU32(usrdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
@@ -409,6 +411,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x31UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFRetPD);
                     Q9K_PutU32(sysdisBase + 0x38UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMove);
                     Q9K_PutU32(sysdisBase + 0x21UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTLink);
+                    Q9K_PutU32(sysdisBase + 0x5aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFCCtl);
                     Q9K_PutU32(sysdisBase + 0x2eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFVModul);
                     Q9K_PutU32(sysdisBase + 0x5cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqCMem);
                     Q9K_PutU32(sysdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
