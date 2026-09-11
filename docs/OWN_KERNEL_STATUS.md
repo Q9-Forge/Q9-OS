@@ -6429,3 +6429,71 @@ ergiebige) Sitzung wirklich abgeschlossen.** Der Hauptauftrag
 (Interrupt-Race-Fix, Commits `6e5a4de`-`4a21cd8`) bleibt vollstaendig
 geloest und verifiziert. Alle 15 Host-Testsuiten gruen, Repo sauber,
 keine offenen Prozesse.
+
+## Fortsetzung 48: MEILENSTEIN -- csl/echo-Adressbeziehung korrekt geloest per Kombi-Allokation; neuer, eigenstaendiger Folgefund (fehlende "Initialized Data") (2026-09-11, elfte Sitzung, dritter und erfolgreicher Loesungsanlauf)
+
+**Dritter Anlauf zur Architekturfrage aus Fortsetzung 44, ERSTER
+ERFOLGREICHER (nach den verworfenen Fortsetzung 46/47):**
+`Q9K_ExperimentalCombinedAlloc` (`q9kernel_traplink.c`) reserviert EINE
+einzige `Q9K_AllocMem`-Allokation, die `csl`s Code UND `echo`s
+kuenftigen Prozessblock GEMEINSAM enthaelt (Layout: `[csl-Kopie] [Leer-
+raum] [echos kuenftiger Block]`, Gesamtgroesse = `$E33C` +
+`echos Speicherbedarf`) -- garantiert ueberlappungsfrei mit ALLEM
+anderen, weil der Allocator selbst dafuer buergt (kein Raten wie in
+Fortsetzung 47, keine nachtraegliche Fremdreferenzen-Jagd wie in
+Fortsetzung 46). `Q9K_FORK_BLOCK_OVERRIDE` (selbstloeschende Scratch-
+Zelle, `q9kernel_firstproc.c`) sorgt dafuer, dass der naechste `F$Fork`
+exakt diesen vorreservierten Block bekommt statt einer neuen Allokation
+-- fuer jeden ANDEREN Aufrufer vollstaendig unveraendertes Verhalten.
+
+**Live verifiziert, per `tools/annotate_trace.py` Instruktion fuer
+Instruktion nachvollzogen:** `csl` laedt jetzt exakt an der Adresse,
+die `echo`s fest einkompilierte `jsr -$78a0(a6)`-Konstante braucht
+(Moduldirectory zeigt die berechnete Adresse byte-genau). **`echo`
+springt jetzt korrekt auf `csl`s ECHTEN Funktionsanfang** (`csl+$6a9c`,
+samt intaktem Registersicherungs-Prolog `movem.l d1/d6-d7/a0,-(a7)` --
+vorher wurde dieser uebersprungen, s. Fortsetzung 42). Der urspruengliche
+Absturzmechanismus (Epilog frisst `echo`s Ruecksprungadresse als
+Registerwert) ist damit behoben.
+
+### Neuer, eigenstaendiger Folgefund: fehlende "Initialized Data"
+
+Der Ablauf kommt jetzt WEITER als je zuvor, stuerzt aber an einer
+NEUEN Stelle: `echo` liest `move.l -$78cc(a6),d0` und uebergibt diesen
+Wert (`$feb64a80` -- eindeutiger Speichermuell, weit ausserhalb 16 MB
+RAM) als Zeiger an `csl`s Funktion. Ursache **direkt im Handbuch
+verifiziert** (`68k_tech.pdf`, Table 1-8): der Modulkopf hat zwei
+dokumentierte Felder, die unser `F$Fork` (`Q9K_ProcFork`,
+`q9kernel_firstproc.c`) bisher VOLLSTAENDIG ignoriert:
+
+- **`M$IData`** (Offset `$40`): zeigt auf eine Tabelle aus
+  `(Zieloffset im Datenbereich, Byteanzahl, <Rohdaten>)`-Eintraegen --
+  "the linker places all constant values declared in vsects here".
+  Muss beim Fork in den NEUEN Prozessblock kopiert werden.
+- **`M$IRefs`** (Offset `$44`): zeigt auf eine Tabelle von
+  Zeiger-Korrekturen ("MS-Wort" + Anzahl LS-Woerter, kombiniert zum
+  vollen Offset eines Zeigers IM Datenbereich) -- jeder so gefundene
+  Zeiger muss um die ECHTE Ladeadresse (Code- oder Datenbereich, je
+  nachdem) erhoeht werden. Terminiert laut Handbuch bei MS=0/Anzahl=0.
+
+**Das ist eine voellig eigenstaendige, klar umrissene Baustelle** --
+unabhaengig von der jetzt geloesten Adressbeziehung. Kleinere,
+reine Assembler-Testmodule (`hellosvc`, `forkchild`) brauchten das nie
+(keine initialisierten C-Globalen mit Zeigerwerten), `echo` als
+echtes, kompiliertes C-Programm dagegen schon.
+
+**Fuer eine Folgesitzung, konkret:** `Q9K_ProcFork` um das Kopieren von
+`M$IData` UND das Anwenden von `M$IRefs` erweitern (Reihenfolge:
+Kopieren, DANACH Zeiger korrigieren). Eine Detailfrage bleibt aus dem
+Handbuchtext ungeklaert: WIE genau "Code-Zeiger" von "Daten-Zeiger"
+innerhalb derselben `M$IRefs`-Tabelle unterschieden werden (zwei
+getrennte, je durch MS=0/Anzahl=0 beendete Abschnitte sind die
+naheliegendste Deutung, aber nicht ausdruecklich bestaetigt) -- am
+sichersten per Byte-Dump von `echo.mod`s eigenem `M$IData`/`M$IRefs`-
+Bereich zu klaeren, bevor die Implementierung beginnt.
+
+Alle 15 Host-Testsuiten gruen. Committet+gepusht. Testdateien
+(`test_q9kernel_firstproc.c`/`test_q9kernel_traplink.c`) um passende
+Testadress-Umleitungen erweitert (echte kleine absolute Adressen sind
+auf dem 64-Bit-Testhost keine gueltigen Zeiger, gleiche Konvention wie
+ueberall in diesen Tests).
