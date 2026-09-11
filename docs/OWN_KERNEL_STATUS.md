@@ -6076,3 +6076,83 @@ stillschweigend anders erwarten als bisher angenommen).
 
 Alle 15 Host-Testsuiten weiterhin gruen. Kein Codefix in dieser
 Fortsetzung, `tools/annotate_trace.py` neu im Repo.
+
+## Fortsetzung 42: EXAKTER Mechanismus des `echo`-Absturzes gefunden -- Funktionszeiger-Cache in `echo.mod` zeigt ~68 Byte zu weit in `csl` hinein, ueberspringt deren Prolog (2026-09-11, elfte Sitzung, direkte Fortsetzung)
+
+**Werkzeugfehler behoben:** `tools/annotate_trace.py` erkannte KEINEN
+einzigen `bsr`-Aufruf -- Capstone meldet das Mnemonic bei Groessen-
+suffix als EIN String (`"bsr.l"`, `"bsr.w"`, ...), der bisherige
+exakte Vergleich `mnem in {"jsr","bsr"}` traf das nie. Fix: Praefix-
+Vergleich (`mnem.startswith("bsr")`/`"jsr"`/`"rts"`/`"rte"`). Nach dem
+Fix loesen sich fast alle vorherigen "RUECKSPRUNG-MISMATCH"-Funde aus
+Fortsetzung 41 als Artefakte dieses Bugs auf -- der Kernel-eigene Code
+(`Q9K_ProcTLink`, `Q9K_SysTLinkImpl`, `Q9K_ProcSRqMem`) balanciert
+Call/Return tatsaechlich sauber.
+
+### Der echte, verbleibende Fehler -- jetzt Byte-genau lokalisiert
+
+Instruktion fuer Instruktion nachvollzogen (`echo`-Offset `$8d4` bis
+zum Absturz):
+1. `echo+$8d4`: `jsr $3ede6(pc,d7.l)` (d7=`$232`) -> Ziel `echo+$b08`.
+2. `echo+$b08` (`$3f018`): `jsr -$78a0(a6)` -- Aufruf ueber einen in
+   `echo`s eigenem Datenbereich gecachten Funktionszeiger (12 Aufruf-
+   stellen im ganzen Modul benutzen denselben Cache -- ein gemeinsamer
+   "aktuelle Ausgabefunktion"-Slot). SP vorher `$4e9d4`, nach dem
+   `jsr`-eigenen Push `$4e9d0` -- **die Ruecksprungadresse (`echo+$b0c`)
+   liegt jetzt auf dem Stack GENAU bei Adresse `$4e9d0`.**
+3. Das tatsaechliche Sprungziel ist `csl+$6ae0` (`$45e00`).
+4. **Byte-genau nachgewiesen** (Disassemblierung ab dem zweifelsfrei
+   erkennbaren `movem`-Byte-Muster `48e74380`): die ECHTE Funktion
+   beginnt nicht bei `$45e00`, sondern 68 Byte frueher bei `$45dbc`
+   (`csl+$6a9c`) mit `movem.l d1/d6-d7/a0,-(a7)` -- ihrem Prolog, der
+   vier Register (16 Byte) rettet. **`echo`s Funktionszeiger-Cache
+   zeigt auf `$45e00`, MITTEN in dieselbe Funktion, HINTER deren
+   eigenem Prolog.** Der Prolog wird bei diesem Aufruf also komplett
+   uebersprungen.
+5. Die Funktion (ein Formatstring-/Prozentzeichen-Scanner, an den
+   Vergleichen auf `E`/`X`/`G`/`d`/`f`/`e`/`c`/`i`/`o`/`n`/`s`/`x`/`u`/
+   `p`/`g` erkennbar) laeuft korrekt durch, macht einen sauberen,
+   balancierten verschachtelten `bsr.l`-Aufruf (Zeichen-Klassifizierer,
+   `csl+$9a98`) und erreicht am Ende trotzdem ihren GEMEINSAMEN Epilog
+   `movem.l (a7)+,d1/d6-d7/a0` (Zeile `$45e90`) -- der IMMER 16 Byte
+   vom Stack "zurueckholt", UNABHAENGIG davon, ob bei DIESEM Aufruf
+   ueberhaupt etwas gepusht wurde.
+6. **Der Absturz, Schritt fuer Schritt per SP-Differenz belegt:**
+   `movem.l (a7)+,...` liest 16 Byte ab der Adresse, an der die ECHTE
+   Ruecksprungadresse (`echo+$b0c`) steht (`$4e9d0`) -- verschluckt sie
+   als vermeintlichen Registerwert (`d1`) -- und hebt SP auf `$4e9e0`
+   (16 Byte zu weit). Das nachfolgende `rts` liest von `$4e9e0` --
+   einer Adresse, an der NIE etwas Sinnvolles abgelegt wurde (deshalb
+   `0`) -- Absturz bei `PC=$0`, weiterlaufend bis zum ersten
+   ungueltigen Opcode bei `$6C` (exakt der seit Fortsetzung 34 bekannte
+   Befund).
+
+### Einordnung
+
+Der Fehler ist **kein Interrupt-Problem, keine Speicherfrage, kein
+`Q9K_TCallDispatch`-Bug** (alle drei diese Sitzung widerlegt) --
+sondern ein **falscher Wert in `echo.mod`s eigenem Funktionszeiger-
+Cache** (`-$78a0(a6)`), der um ca. 68 Byte zu weit in `csl` zeigt.
+**Woher dieser Wert kommt, ist noch offen** -- zwei Moeglichkeiten:
+(a) `csl` loest diesen Zeiger selbst ueber eine interne, noch nicht
+verstandene Tabellen-/Indexlogik auf, und ein von unserem Kernel
+bereitgestellter Ausgangswert (z. B. `ExecEntry=$3f420` aus `F$TLink`,
+selbst nachweislich korrekt, s. Fortsetzung 40) wird von `csl`s
+EIGENEM Code falsch WEITERVERARBEITET, oder (b) `echo.mod`/`csl.mod`
+(fest editierte, geschlossene Microware-Binaerdateien) wurden fuer
+eine ANDERE `csl`-Version/einen anderen `F$TLink`-Ablauf kompiliert und
+diese exakte Kombination aus Dateien war so nie vorgesehen.
+
+**Naechster Schritt fuer eine Folgesitzung:** herausfinden, WELCHER
+Code in `echo.mod` oder `csl.mod` den Wert `-$78a0(a6)` ZUERST
+SCHREIBT (12 Aufrufstellen bekannt, s.o., aber der SCHREIBER noch
+nicht identifiziert -- `lea.l -$78a0(a6),a1` bei `echo+$35a` ist ein
+Kandidat, laedt aber nur die ADRESSE der Zelle, nicht deren Inhalt).
+Ein gezielter `Q9_WATCH_ADDR` auf die tatsaechliche RAM-Adresse dieser
+Zelle (`A6-Basiswert - $78a0`, `A6` per Instruktionsspur an einer
+beliebigen `echo`-Stelle ablesbar) wuerde den Schreiber direkt zeigen
+-- dieselbe bereits etablierte Methodik wie in Fortsetzung 37/40.
+
+Alle 15 Host-Testsuiten weiterhin gruen. Kein Codefix in dieser
+Fortsetzung, `tools/annotate_trace.py`s Mnemonic-Fix ist die einzige
+Aenderung (im Repo, s. `tools/annotate_trace.py`).
