@@ -35,12 +35,20 @@ SCRATCH_*`. Fix: Tabelle auf 12 Einträge verkleinert (endet bei
 `$15F0`, vor der ersten echten Nachbarzelle `$1600`). Live verifiziert:
 der `PC=$7002`-Absturz tritt nicht mehr auf.
 
-**Neuer, VIERTER Fund dahinter (Fortsetzung 52, NICHT mehr in dieser
-Sitzung verfolgt):** `echo`/`csl` laufen jetzt länger als je zuvor und
-stoßen auf Vektor 10 (A-Line-Trap, nicht implementierte Instruktion),
-`PC=$4e25e` -- mutmaßlich ein Sprung in `echo`s eigenen Stack-Bereich
-statt in echten Code. Noch nicht eingegrenzt. Nächste Schritte
-(`Q9_FREEZE_PC`+`Q9_TRACE_INSTR`) in Fortsetzung 52.
+**Vierter Fund (Vektor 10, `PC≈$4e25e`) TEILWEISE aufgeklärt, ECHTE
+URSACHE OFFEN (Fortsetzung 53):** kein Sprung durch einen Nullzeiger --
+die Adressrechnung des zweiten `jsr -$78a0(a6)`-Aufrufs (Fortsetzung
+51) stimmt exakt, aber die Zielzelle in `echo`s eigenem `M$IData`-
+Bereich enthält keinen gültigen `jmp.l` mehr. Per `Q9_WATCH_ADDR`
+gefunden: `echo`s eigener Code beschreibt diese Zelle nachweislich
+MEHRFACH zur Laufzeit (kein einmaliger Lazy-Binding-Stub, wie in
+Fortsetzung 51 angenommen) — Verdacht auf eine Interrupt-mitten-in-
+nicht-atomarer-Mehrbyte-Aktualisierung-Situation (bekanntes Muster
+aus Fortsetzung 37/38). Zusätzlich: Blockadressen sind zwischen
+Boot-Läufen desselben Abbilds NICHT exakt reproduzierbar (Timing-
+Nichtdeterminismus) — künftige Untersuchungen müssen Adressen aus dem
+JEWEILS selben Lauf gewinnen. Bewusst NICHT weiter verfolgt, konkreter
+Plan für eine Folgesitzung in Fortsetzung 53.
 
 **Vorheriger Meilenstein (weiterhin gültig, unverändert stabil):** der
 seit 2026-09-04 verfolgte "kernelgrößenabhängige Interrupt-Race"-Absturz
@@ -6952,3 +6960,75 @@ Fremdherkunft stammt -- gleiche Methodik wie bei allen bisherigen
 Funden dieser Sitzung.
 
 Alle 15 Host-Testsuiten gruen. Committet+gepusht.
+
+## Fortsetzung 53: Vektor-10-Absturz TEILWEISE aufgeklaert -- echte Ursache noch offen, Sitzung hier bewusst beendet (2026-09-12, elfte Sitzung, auf "ok weiter")
+
+**Per `Q9_FREEZE_PC=$4e25e` + `Q9_TRACE_INSTR=1` zurueckverfolgt:**
+Der Absturz ist KEIN Sprung durch einen Nullzeiger, sondern ein
+GENAU BERECHNETER `jsr -$78a0(a6)`-Aufruf (dieselbe, in Fortsetzung 51
+gefixte Instruktion bei `echo+$b84`, ein ZWEITES Mal ausgefuehrt) --
+die Adressrechnung selbst stimmt exakt (`a6-$78a0` ergibt genau die
+beobachtete Sprungadresse, nachgerechnet und bestaetigt). Das
+Sprungziel liegt in `echo`s eigenem, per `M$IData` kopiertem
+Datenbereich -- dort steht aber diesmal KEIN gueltiger `jmp.l`-Befehl
+mehr, sondern die CPU "krabbelt" durch die Bytes wie durch Daten, bis
+sie bei `$4e25e` auf ein echtes 1010-Emulator-Bitmuster (Vektor 10)
+trifft.
+
+**Neue, wichtige Erkenntnis per `Q9_WATCH_ADDR` auf den Datenbereich:**
+`echo`s eigener Code beschreibt Teile dieses Bereichs OFFENSICHTLICH
+MEHRFACH und WIEDERHOLT waehrend der Laufzeit (derselbe Wert `$3e700`
+-- eine per Kodebasis relozierte Adresse INNERHALB von `echo` selbst,
+`hdrAddr+$1f0` -- wurde bei DEMSELBEN Testlauf siebenmal an dieselbe
+Zelle geschrieben, mit steigenden Sequenznummern ueber die gesamte
+Laufzeit verteilt). Das widerspricht der in Fortsetzung 51
+angenommenen Deutung "einmaliger Lazy-Binding-Stub, von aussen
+gefuellt" -- es sieht eher nach einer von `echo`s COMPILIERTEM CODE
+SELBST bei jedem Aufruf einer bestimmten Funktion neu aufgebauten
+Tabelle aus (z.B. ein Formatierungs-/Dispatch-Mechanismus, der
+Kodezeiger-Werte aus kleinen, im Modul selbst gespeicherten relativen
+Offsets berechnet). Die urspruengliche `M$IData`/`M$IRefs`-Kopie
+liefert dabei nur den ANFANGSZUSTAND (einmalig bei `F$Fork`) -- was
+`echo` SPAETER selbst hineinschreibt, ist eine ganz andere,
+eigenstaendige Frage.
+
+**Zusaetzliche Komplikation, ehrlich benannt:** die genaue
+Blockadresse (`a6`/roher Datenbereich) unterscheidet sich zwischen
+zwei ansonsten identisch gestarteten Boot-Laeufen desselben Abbilds
+um einen kleinen, nicht-runden Betrag (`$4d67f` vs. `$4d6a0` in zwei
+Messungen) -- vermutlich, weil die exakte Instruktionsanzahl bis zu
+diesem Punkt leicht vom relativen Timing zwischen Boot-Ablauf und
+Hintergrund-Interrupts abhaengt (Emulator-Timing ist an dieser Stelle
+nicht perfekt deterministisch). Das bedeutet: Adressen, die aus EINEM
+Testlauf gewonnen werden, muessen im NAECHSTEN Testlauf nicht mehr
+exakt stimmen -- jede weitere Untersuchung sollte `Q9_FREEZE_PC` immer
+im SELBEN, unmittelbar vorangegangenen Lauf gewinnen, nicht aus einem
+aelteren Dump uebernehmen.
+
+**Bewusst NICHT weiter verfolgt in dieser (bereits sehr langen)
+Sitzung:** die eigentliche Frage -- WARUM/WIE die kopierte "Stub"-
+Zelle irgendwann einen ungueltigen Wert enthaelt, obwohl `echo`
+denselben Bereich nachweislich mehrfach erfolgreich neu beschreibt --
+bleibt offen. Mit vier bereits in dieser Sitzung geloesten,
+voneinander unabhaengigen Bugs (Interrupt-Race, `M$IData`/`M$IRefs`,
+A6-Bias, IRQ-Tabellenkollision) ist das ein sinnvoller Punkt, um
+diesen fuenften/sechsten Fund einer eigenen, frischen Sitzung zu
+ueberlassen statt ihn am Ende einer bereits erschoepfend langen
+Sitzung zu erzwingen.
+
+**Fuer eine Folgesitzung:** in EINEM einzigen, zusammenhaengenden Lauf
+(a) den Fortsetzung-51-Watch auf die Stub-Zelle wiederholen, DIESMAL
+bis zum tatsaechlichen Absturz durchlaufen lassen (nicht vorher
+abbrechen), um die LETZTE Schreiboperation vor dem Fehlschlag zu
+sehen; (b) klaeren, ob `echo`s wiederholtes Neuschreiben derselben
+Zelle eine legitime, wiederholt aufgerufene Bibliotheksfunktion ist
+(z.B. Zahlformatierung) und ob DORT ein Fall fehlt, der die Zelle
+in einen inkonsistenten Zwischenzustand versetzen kann (z.B. eine
+unterbrochene Teilaktualisierung durch einen Interrupt mitten in der
+Mehr-Byte-Schreibsequenz -- passt zum bereits zweimal in diesem
+Kernel gefundenen "Interrupt unterbricht eine nicht-atomare
+Aktualisierung"-Fehlermuster, s. Fortsetzung 37/38 und den
+IRQ-Dispatch-Kopfkommentar in `q9kernel_entry.a`).
+
+Keine Codeaenderung in dieser Fortsetzung -- reine Diagnose. Alle 15
+Host-Testsuiten unveraendert gruen, Repo sauber auf Commit `6b29d32`.
