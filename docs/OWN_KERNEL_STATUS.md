@@ -24,16 +24,23 @@ geworden und VOLLSTAENDIG entfernt. `echo` erreicht live wieder alle
 vier Meilensteine (Load/csl geladen/F$TLink/F$Fork), diesmal ohne den
 Fortsetzung-50-Absturz. Alle 15 Host-Testsuiten grün.
 
-**Neuer, eigenstaendiger Fund dahinter (Fortsetzung 51, NICHT mehr in
-dieser Sitzung verfolgt):** nach ausreichend langer Laufzeit (erstmals
-ueberhaupt erreicht) korrumpierter IRQ-Vektortabellen-Eintrag --
-`Q9K_IRQTAB_BASE` ($1500) enthaelt einen Eintrag mit ISR-Zeiger
-`$1650` (= `Q9K_VMODUL_RETBUF`, ein reiner Datenpuffer, nie als Code
-gedacht), die IRQ-Dispatch-Schleife (`q9kernel_entry.a` $7c60-$7ccc)
-springt per `jsr (a1)` dorthin -- Vektor 4, `PC=$7002`. Vermutlich ein
-Registerleck zwischen einem `F$VModul`- und einem `F$IRQ`-Aufruf
-(`sc68681`s Treiberinit ruft `F$IRQ` dreimal). Konkrete
-nächste Schritte in Fortsetzung 51.
+**IRQ-Tabellen-Absturz aus Fortsetzung 51 GELÖST (Fortsetzung 52):**
+KEIN Registerleck (die Vermutung in Fortsetzung 51 war falsch) --
+echte Ursache war eine simple ADRESSKOLLISION: `Q9K_IRQTAB_BASE`
+($1500, 16 Einträge à 20 Byte) reichte bis `$1640` und überlappte
+GLEICH VIER später angelegte Scratch-Zellen-Gruppen (`Q9K_SEND_`/
+`Q9K_RETPD_`/`Q9K_VMODUL_SCRATCH_*`), die "$16xx" fälschlich für frei
+hielten -- Slot 15 war BYTE-GENAU deckungsgleich mit `Q9K_VMODUL_
+SCRATCH_*`. Fix: Tabelle auf 12 Einträge verkleinert (endet bei
+`$15F0`, vor der ersten echten Nachbarzelle `$1600`). Live verifiziert:
+der `PC=$7002`-Absturz tritt nicht mehr auf.
+
+**Neuer, VIERTER Fund dahinter (Fortsetzung 52, NICHT mehr in dieser
+Sitzung verfolgt):** `echo`/`csl` laufen jetzt länger als je zuvor und
+stoßen auf Vektor 10 (A-Line-Trap, nicht implementierte Instruktion),
+`PC=$4e25e` -- mutmaßlich ein Sprung in `echo`s eigenen Stack-Bereich
+statt in echten Code. Noch nicht eingegrenzt. Nächste Schritte
+(`Q9_FREEZE_PC`+`Q9_TRACE_INSTR`) in Fortsetzung 52.
 
 **Vorheriger Meilenstein (weiterhin gültig, unverändert stabil):** der
 seit 2026-09-04 verfolgte "kernelgrößenabhängige Interrupt-Race"-Absturz
@@ -6863,5 +6870,85 @@ naechsten `F$IRQ`-Aufruf (uebernimmt diesen Wert faelschlich als ISR)
 per Ringpuffer/Kanarie in `Q9K_SysFVModul`/`Q9K_SysFIRQ`
 (`q9kernel_entry.a`) genau nachvollziehen -- gleiche Methodik wie bei
 allen bisherigen Registerleck-Funden dieses Kernels.
+
+Alle 15 Host-Testsuiten gruen. Committet+gepusht.
+
+## Fortsetzung 52: IRQ-Tabellen-Absturz GELOEST -- echte Ursache war Adresskollision mit VIER anderen Scratch-Zellen-Gruppen (2026-09-11/12, elfte Sitzung, auf "ok, du kannst weiter machen")
+
+**Ursache der Fortsetzung-51-Vermutung ("Registerleck zwischen F$VModul
+und F$IRQ") war falsch -- es gibt gar kein Registerleck.** Per
+`Q9_WATCH_ADDR` auf `Q9K_IRQScratch_Isr` ($13D0, die Trampolin-Zelle,
+in die `Q9K_SysFIRQ` das eingehende `a0` GANZ AM ANFANG schreibt, VOR
+jedem C-Aufruf) gezeigt: es gibt in der GESAMTEN Boot-Sitzung nur EINEN
+einzigen echten `F$IRQ`-Aufruf (von `sc68681`), und der uebergibt einen
+VOLLKOMMEN PLAUSIBLEN ISR-Zeiger (`$d9cc`, real innerhalb von
+`sc68681`s eigenem Modul). Das Register `a0` war beim Trap-Eintritt
+also nie falsch.
+
+**Echte Ursache, per vollstaendigem Watch auf die GESAMTE Tabelle
+gefunden:** `Q9K_IRQTAB_BASE` ($1500) mit 16 Eintraegen a 20 Byte
+reicht bis `$1640` -- das Tabellenende ueberlappt mit GLEICH VIER
+spaeter (in anderen Dateien) angelegten Scratch-Zellen-Gruppen, die
+"$16xx" faelschlich fuer frei hielten:
+- Slot 13 (`static`=`$1610`, `port`=`$1614`) = `Q9K_SEND_SCRATCH_ERROR`/`_SUCCESS` (`q9kernel_procsleep.c`)
+- Slot 14 (`isr`=`$1620`..`port`=`$1628`) = `Q9K_RETPD_SCRATCH_*` (`q9kernel_iopath.c`)
+- Slot 15 (ALLE FUENF Felder `$162C`-`$163C`) = BYTE-GENAU deckungsgleich mit `Q9K_VMODUL_SCRATCH_HDR`/`_SIZE`/`_ENTRY`/`_ERROR`/`_SUCCESS` (`q9kernel_moddir.c`)
+
+Slot 15s Ueberlappung ist die, die den Absturz ausloeste: sobald
+`F$VModul` einmal erfolgreich lief (z.B. beim Laden von "echo"),
+enthaelt `Q9K_VMODUL_SCRATCH_ENTRY` ($1634, alias Slot 15s `isr`-Feld)
+den Wert `$1650` (`Q9K_VMODUL_RETBUF`, ein reiner Datenpuffer). Da
+Slot 15s "Vektor"-Feld (alias `Q9K_VMODUL_SCRATCH_HDR`, $162C) zu
+diesem Zeitpunkt zufaellig ungleich 0 ist (haelt den zuletzt
+gepruexften Modulkopfzeiger), haelt die IRQ-Dispatch-Schleife
+(`q9kernel_entry.a`) Slot 15 faelschlich fuer einen GUELTIGEN,
+registrierten Eintrag und ruft `jsr (a1)` mit `a1=$1650` auf -- Vektor
+4, `PC` krabbelt ueber Nullwoerter bis `$7002`.
+
+**Fix:** `Q9K_IRQTAB_SLOTS` von 16 auf 12 verkleinert (`q9kernel_exctable.c`
+UND die gleichnamige Assembler-Konstante in `q9kernel_entry.a`) -- 12
+Eintraege enden bei `$15F0`, VOR der ersten tatsaechlich belegten
+Nachbarzelle (`$1600`, `Q9K_PRSNAM_SCRATCH_ERROR`). Keine funktionale
+Einschraenkung (bisher wird nur EIN Slot je ueberhaupt benutzt). Host-
+Test (`test_q9kernel_exctable.c`) verwendet ein eigenes, redirected
+`g_irqTable[16*20]` und ruft `Q9K_ProcIRQ` gar nicht direkt auf --
+keine Anpassung noetig.
+
+**Lektion, ergaenzt zur bestehenden Konvention** ("beim Anlegen neuer
+Scratch-Felder IMMER die $13xx-Belegung gegenpruefen"): das gilt nicht
+nur fuer den ANFANG einer neuen Konstante, sondern fuer den GESAMTEN
+belegten Bereich einer TABELLE (Anfang + Groesse × Eintragsgroesse) --
+eine Tabelle mit mehreren Eintraegen kann in einen Bereich hineinragen,
+der beim Anlegen als "frei, weil weit hinter dem Tabellenanfang" galt.
+
+**Live verifiziert:** der Fortsetzung-51-Absturz (Vektor 4, `PC=$7002`)
+tritt nach dem Fix nicht mehr auf. Alle 15 Host-Testsuiten gruen,
+Kernel neu gebaut, Sicherheitsabstand aus Fortsetzung 38 erneut per
+Byte-Dump geprueft (weiterhin exakt richtig).
+
+### Neuer, NOCH TIEFERER Fund dahinter (NICHT mehr in dieser Sitzung verfolgt)
+
+`echo`/`csl` laufen jetzt so lange wie noch nie -- und stossen auf
+einen VIERTEN, wieder eigenstaendigen Absturz: Vektor 10 (A-Line/
+"1010 Emulator"-Trap, typischerweise eine vom CPU-Kern nicht
+implementierte Instruktion), `PC=$4e25e`. Anders als alle bisherigen
+Funde dieser Sitzung liegt die Absturzstelle NICHT in einer bekannten
+Modul-Kopfregion, sondern (per Registerauswertung: `A6=$5567f`, abzueglich
+des jetzt korrekten `$8000`-Bias also roher Block `$4d67f`) mutmasslich
+INNERHALB `echo`s EIGENEM Stack-Bereich (M\$Mem endet bei `block+$76c`,
+der PC faellt in den direkt anschliessenden `M$Stack`-Bereich). Der
+Hex-Dump um den PC zeigt Bytemuster, die eher wie eine ADRESSTABELLE
+aussehen (mehrere Langworte, die selbst wie Zeiger INNERHALB `echo`s
+Modul aussehen, z.B. `$3e310`), nicht wie echter Code -- Verdacht:
+wieder ein Sprung in Daten statt Code, diesmal mutmasslich ueber einen
+Wert, der aus `echo`s eigenem Stack gelesen wird. NICHT weiter
+eingegrenzt (welcher Aufruf/welches Register).
+
+**Fuer eine Folgesitzung:** `Q9_FREEZE_PC=$4e25e` + `Q9_TRACE_INSTR=1`
+fuer die Instruktionsspur bis zum Absturz, dann pruefen, welche
+Instruktion den Sprung/Aufruf ausloest und ob der verwendete Zeiger
+aus dem Stack, aus `echo`s Datenbereich oder aus einem Register mit
+Fremdherkunft stammt -- gleiche Methodik wie bei allen bisherigen
+Funden dieser Sitzung.
 
 Alle 15 Host-Testsuiten gruen. Committet+gepusht.

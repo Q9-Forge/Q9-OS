@@ -159,10 +159,35 @@ static const Q9_u16 Q9K_ExcGroupCounts[] = {
  * ab). Die Zustellung gehoert in den IRQ-Pfad (Q9K_TimerIRQHandler bzw.
  * einen dortigen Polling-Durchlauf) und ist ein eigener Schritt.
  * --------------------------------------------------------------------- */
+/* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, Fortsetzung 51): bei 16
+ * Eintraegen a 20 Byte reicht die Tabelle von $1500 bis $1640 -- das
+ * ueberlappt GLEICH VIERFACH mit spaeter angelegten Scratch-Zellen
+ * anderer Syscalls, die "$16xx" faelschlich fuer frei hielten:
+ * Q9K_SEND_SCRATCH_ERROR/SUCCESS ($1610/$1614, q9kernel_procsleep.c,
+ * Slot 13), Q9K_RETPD_SCRATCH_* ($161C-$1628, q9kernel_iopath.c, Slot
+ * 14), UND Q9K_VMODUL_SCRATCH_HDR/SIZE/ENTRY/ERROR/SUCCESS ($162C-
+ * $163C, q9kernel_moddir.c, Slot 15) -- BYTE-GENAU deckungsgleich mit
+ * den Feldern von Slot 15 (Vektor/Prioritaet/ISR/Static/Port). Live
+ * gefunden per Instruktionsspur-Freeze (`Q9_FREEZE_PC`) + gezieltem
+ * `Q9_WATCH_ADDR` auf die gesamte Tabelle: nach einem `F$VModul`-Aufruf
+ * (z.B. beim Laden von "echo") hinterlaesst dessen Rueckgabewert
+ * ($1650, ein reiner Datenpuffer) in `Q9K_VMODUL_SCRATCH_ENTRY`
+ * ($1634 = Slot 15s ISR-Feld) einen Wert, der Slot 15 wie einen
+ * gueltigen, registrierten Eintrag aussehen laesst (solange dessen
+ * "Vektor"-Feld, alias `Q9K_VMODUL_SCRATCH_HDR`, zufaellig nicht 0
+ * ist) -- die IRQ-Dispatch-Schleife (`q9kernel_entry.a`) ruft dann
+ * `jsr (a1)` mit `a1=$1650` auf und stuerzt ab (Vektor 4, `PC=$7002`
+ * nach Sprung durch Nullwoerter, s. docs/OWN_KERNEL_STATUS.md
+ * Fortsetzung 51). Fix: auf 12 Slots verkleinert -- endet bei $15F0,
+ * VOR der ersten real belegten Nachbarzelle ($1600,
+ * Q9K_PRSNAM_SCRATCH_ERROR/OK) -- keine Ueberlappung mehr moeglich.
+ * Kollisionspruefung bei neuen Scratch-Feldern MUSS ab sofort den
+ * GESAMTEN belegten Bereich einer Tabelle einschliessen, nicht nur
+ * deren Anfangsadresse. */
 #ifndef Q9K_IRQTAB_BASE
-#define Q9K_IRQTAB_BASE   0x1500UL   /* 16 Eintraege a 20 Byte, im genullten Global-Bereich */
+#define Q9K_IRQTAB_BASE   0x1500UL   /* 12 Eintraege a 20 Byte -- endet bei $15F0, s. Kommentar oben */
 #endif
-#define Q9K_IRQTAB_SLOTS  16UL
+#define Q9K_IRQTAB_SLOTS  12UL
 #define Q9K_IRQTAB_ENTSZ  20UL
 #define Q9K_IRQ_OFF_VECTOR  0UL      /* 0 = Slot frei */
 #define Q9K_IRQ_OFF_PRIO    4UL
