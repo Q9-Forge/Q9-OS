@@ -6371,3 +6371,61 @@ Host-Testsuiten gruen, keine Codeaenderung im Repo aus diesem
 Experiment (vollstaendig zurueckgesetzt). Der Hauptauftrag der Sitzung
 (Interrupt-Race-Fix, Commits `6e5a4de`-`4a21cd8`) bleibt geloest und
 verifiziert.
+
+## Fortsetzung 47: zweiter Positionierungs-Versuch (vorab statt nachtraeglich) -- ebenfalls verworfen, neue Erkenntnis: Ueberlappung mit bereits geladenen Modulen (2026-09-11, elfte Sitzung, endgueltiger Abschluss)
+
+**Verbesserter Ansatz gegenueber Fortsetzung 46:** `csl` nicht mehr
+NACHTRAEGLICH verschieben, sondern SOFORT nach `F$Load(csl)` und VOR
+jeder Registrierung positionieren (`Q9K_ExperimentalPositionCsl`,
+`q9kernel_traplink.c`) -- zu diesem Zeitpunkt existiert nur eine
+Referenz (der Moddir-Eintrag), kein Trap-Tabellen-Eintrag, kein
+`M$Init`, kein `echo`-Fork. `echo`s kuenftiges `A6` wird vorhergesagt,
+indem die Freiliste von `Q9K_AllocMem` GELESEN (nicht veraendert) wird
+-- deterministisch, solange zwischen Vorhersage und tatsaechlichem
+`F$Fork` nichts anderes allokiert.
+
+**Erster Fehlversuch dabei (in derselben Sitzung gefunden+gefixt):**
+die Namenssuche fuer "echo" (4 echte Buchstaben) verwendete
+faelschlich dieselbe 3-Buchstaben-plus-Terminator-Logik wie fuer "csl"
+-- "echo" wurde nie gefunden, die Funktion kehrte immer frueh zurueck,
+OHNE jemals etwas zu verschieben (per Live-Test bestaetigt: Moddir
+zeigte `csl` unveraendert). Gefixt (eigene 4-Buchstaben-Pruefung).
+
+**Nach dem Fix: `F$TLink` blieb erfolgreich (`t`), aber `F$Fork(echo)`
+schlug jetzt fehl (`e`, klein -- Fehlschlag).** Ursache gefunden: die
+BERECHNETE Zieladresse fuer `csl` (`$3ccd4`) UEBERLAPPT VOLLSTAENDIG
+mit `echo`s eigenem, bereits geladenem Modul (`$3e510`-`$3f19e` liegt
+komplett innerhalb von `csl`s neuem Bereich `$3ccd4`-`$489c2`) -- die
+Bytekopie hat `echo` selbst teilweise ueberschrieben.
+
+**Auch dieses Experiment vollstaendig zurueckgesetzt** (`git checkout`),
+Repo wieder exakt auf dem verifizierten Stand von Commit `646739e`,
+15/15 Host-Testsuiten gruen.
+
+### Endgueltige Einordnung dieser Sitzung
+
+Zwei unabhaengige, sorgfaeltig durchdachte Loesungsversuche (Fortsetzung
+46 und 47) sind an ZWEI VERSCHIEDENEN, jeweils erst durch den Versuch
+sichtbar gewordenen Nebenwirkungen gescheitert (verwaiste Referenzen
+bei nachtraeglicher Verschiebung; Ueberlappung mit anderen Modulen bei
+vorheriger Platzierung). Das ist ein starkes Signal: **eine tragfaehige
+Loesung braucht einen echten Speicherzuteilungs-Entwurf** (mit
+Ueberlappungspruefung gegen ALLE bereits geladenen Bereiche, nicht nur
+gegen `echo`) -- kein Experiment, das sich in einer bereits sehr langen
+Sitzung "nebenbei" verifizieren laesst. Fuer die naechste, dediziert
+dafuer angesetzte Sitzung empfohlen:
+1. Eine echte "ist dieser Adressbereich frei?"-Pruefung gegen die
+   GESAMTE Moduldirectory (nicht nur ein Modul) VOR jeder Positionierung.
+2. Klaeren, ob die Konstante `$E33C` ueberhaupt fuer JEDES `echo`-Mal
+   stabil ist, oder ob sie selbst von `csl`s Ladeadresse zirkulaer
+   abhaengt (in dieser Sitzung nie unabhaengig von der aktuellen
+   Kombination verifiziert).
+3. In Erwaegung ziehen, `csl` grundsaetzlich VOR jedem Nutzerprogramm zu
+   laden (fester, frueher Boot-Slot) statt bedarfsgesteuert -- naeher an
+   der vermuteten Original-Systemkonvention (s. Fortsetzung 44).
+
+**Damit ist die `echo`/`csl`-Baustelle fuer diese (sehr lange, sehr
+ergiebige) Sitzung wirklich abgeschlossen.** Der Hauptauftrag
+(Interrupt-Race-Fix, Commits `6e5a4de`-`4a21cd8`) bleibt vollstaendig
+geloest und verifiziert. Alle 15 Host-Testsuiten gruen, Repo sauber,
+keine offenen Prozesse.
