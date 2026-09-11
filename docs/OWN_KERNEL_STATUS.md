@@ -6209,3 +6209,71 @@ zusammengefasst:**
 
 Alle 15 Host-Testsuiten durchgehend gruen. Kein Codefix in dieser
 letzten Fortsetzung.
+
+## Fortsetzung 44: moegliche Grundsatzerkenntnis -- `echo.mod` koennte auf eine FESTE, dem Kernel unbekannte `csl`-Adresse fest verdrahtet sein (2026-09-11, elfte Sitzung, Abschluss)
+
+**Korrektur einer eigenen Fehlannahme aus Fortsetzung 42/43:**
+`jsr -$78a0(a6)` liest KEINEN Funktionszeiger aus dem Speicher -- die
+Adressierungsart berechnet die Zieladresse DIREKT aus `a6` (Register-
+Indirekt-mit-Displacement als Sprungziel selbst, kein zusaetzliches
+Dereferenzieren). Es gibt also keine "Zeiger-Zelle" zu reparieren --
+das eigentliche Problem ist, DASS `echo.mod`s eigener kompilierter
+Code direkt "A6 minus fester Konstante" als `csl`-Zieladresse
+verwendet.
+
+### `68k_tech.pdf` direkt gelesen: Trap-Handler-Module haben einen
+dokumentierten `M$Init`-Einstiegspunkt (Modulkopf-Offset `$48`,
+"Initialization Execution Offset") -- UNSER `Q9K_SysFTLink` ruft ihn
+bereits korrekt auf (`q9kernel_entry.a`, `Q9K_SysFTLink`, mit dem in
+Kapitel 5 des Handbuchs dokumentierten `TrapInit`-Spezialrahmen,
+bereits in einer FRUEHEREN Sitzung implementiert, s. Kopfkommentar
+dort).
+
+**Aber:** beim Aufruf von `M$Init` ist `a6` = `csl`s EIGENER frisch
+zugewiesener statischer Speicher (`StaticPtr`) -- `echo`s EIGENES `a6`
+(sein Prozess-Speicherblock, per Table D-9 bei F\$Fork gesetzt) ist zu
+diesem Zeitpunkt in KEINEM Register mehr verfuegbar (wird kurz vorher
+gerettet, wiederhergestellt, dann sofort wieder ueberschrieben, s.
+Code). `M\$Init` kann also -- so wie unser Kernel es aufruft -- gar
+nicht wissen, WO `echo`s eigener Datenbereich liegt, selbst wenn seine
+Aufgabe waere, dort eine Vektortabelle zu befuellen.
+
+**Wichtigste, noch nicht abschliessend geklaerte Frage fuer eine
+Folgesitzung:** ist das laut Handbuch UEBERHAUPT `M$Init`s Aufgabe
+(eine Vektortabelle im AUFRUFER zu befuellen), oder verwendet `echo.mod`
+stattdessen eine GANZ ANDERE, HIER NOCH NICHT VERSTANDENE Konvention?
+Die Tatsache, dass `echo.mod`s kompilierter Code eine FESTE, ABSOLUTE
+Differenz (`-$78a0`, ca. 68 Byte Diskrepanz zum tatsaechlich
+funktionierenden Ziel bei aktuellem `A6`-Wert) zu `A6` benutzt, um
+`csl`-Funktionen zu erreichen, deutet stark darauf hin, dass **dieses
+konkrete `echo.mod`/`csl.mod`-Paar beim urspruenglichen Kompilieren/
+Linken eine FESTE, VORHERSAGBARE Adressbeziehung zwischen einem
+UCC-Programm und dem System-`csl` voraussetzte** (auf einem echten
+System vermutlich: `csl` laedt immer an einer sehr fruehen, festen
+Adresse, und der Compiler/Linker kennt diese Beziehung beim Bauen des
+Programms) -- eine Annahme, die eine DYNAMISCHE, generische
+`F$TLink`-Ladeadresse (wie unser Kernel sie vergibt) grundsaetzlich
+nicht erfuellen kann, OHNE die Ladereihenfolge/-adresse von `csl`
+gezielt an das nachzubilden, was das ORIGINALSYSTEM hatte.
+
+**Konsequenz:** dies koennte KEIN einfach behebbarer Kernel-Bug sein,
+sondern eine grundsaetzliche Kompatibilitaetsfrage dieser SPEZIELLEN,
+vorkompilierten `echo.mod`/`csl.mod`-Kombination mit einem generischen,
+dynamischen `F\$TLink`. Vor einem weiteren Fixversuch waere zu klaeren
+(z. B. durch Vergleich mit einer ECHTEN Microware-Systemkonfiguration,
+falls Referenzmaterial verfuegbar ist, oder durch weitere gezielte
+Disassemblierung von `csl`s `M\$Init`-Routine selbst bei `csl+$50`),
+WELCHEN Mechanismus `M$Init` tatsaechlich implementiert und ob es einen
+dokumentierten Weg gibt, `echo`s A6 an `M\$Init` zu uebergeben.
+
+**Fuer die naechste Sitzung, konkret:** `csl+$50` (`M$Init`s echte
+Routine) disassemblieren -- prueft, ob sie ueberhaupt versucht, in den
+Aufrufer zu schreiben (z. B. ueber den geretteten `a6`-Wert im
+TrapInit-Rahmen selbst, den unser Code VOR dem Ruecksprung noch besitzt
+und aktuell einfach verwirft, s. `Q9K_SysFTLink_AfterInit`).
+
+**Da das ein potenziell grundlegenderes Thema ist als ein einzelner
+Bugfix, wird diese Baustelle hier bewusst BEENDET** -- der Hauptauftrag
+dieser Sitzung (Interrupt-Race-Fix) ist geloest und verifiziert, diese
+`echo`-Nebenbaustelle ist jetzt so praezise wie moeglich fuer eine
+gezielte Folgesitzung dokumentiert.
