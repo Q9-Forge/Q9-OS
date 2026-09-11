@@ -9,7 +9,118 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-11, achte Arbeitssitzung — HIER ZUERST LESEN)
+## ÜBERGABE (2026-09-11, neunte Arbeitssitzung — HIER ZUERST LESEN,
+ersetzt die Übergabe direkt darunter vollständig)
+
+**Branch: weiterhin `fix/a4-aufruferabhaengig` (PR #13), Commit `3e35aa0`.**
+Volle Kette: `Fortsetzung 1` bis `36` weiter unten im Dokument, die
+letzten fünf (`32`–`36`) sind die dieser Sitzung.
+
+**MEILENSTEIN ERREICHT: `F$TLink` funktioniert end-to-end.** Die in
+Fortsetzung 31 aufgemachte Baustelle ("csl"-Trap-Library fehlt komplett)
+ist geschlossen: `F$TLink` (Callcode `0x21`, TRAP-#1–15-Mechanismus)
+implementiert (`q9kernel_traplink.c`, `Q9K_SysFTLink`/
+`Q9K_TCallDispatch` in `q9kernel_entry.a`), 15/15 Host-Testsuiten grün,
+UND live gegen das echte, unveränderte Microware-Kommando `echo`
+verifiziert: `F$TLink(13,"csl")` liefert Erfolg, `echo` installiert
+seine C-Laufzeitbibliothek und läuft danach spürbar weiter (zwei echte
+Prozesse in der Ready-Queue), statt wie vorher sofort in seiner eigenen,
+fragilen Fehlerbehandlung abzustürzen (`PC=$7031`). Details/Forensik:
+`Fortsetzung 32`–`34`.
+
+**Zwei weitere echte Bugs unterwegs gefunden+gefixt** (beide unabhängig
+vom Endergebnis wertvoll, nicht nur Krücken):
+- `F$CCtl` (Cache Control, Callcode `0x5A`) fehlte komplett — `csl` ruft
+  es laut Handbuch (68k_tech.pdf S. 379f) nach jedem `F$TLink` auf, um
+  vor Ausführung frisch gelinkten Codes den Instruction-Cache zu leeren.
+  Jetzt implementiert (ehrlicher No-Op, da Q9-Flux-68k keine echte
+  Cache-Hardware emuliert). `Fortsetzung 35`.
+- `Q9K_TCallDispatch` verletzte die reale TrapEnt-Konvention
+  (68k_tech.pdf S. 172f, "d0-d7/a0-a5 = caller's registers", MÜSSEN
+  unverändert durchgereicht werden) zweifach: d0 wurde beim
+  Rahmenaufbau als eigenes Rechenregister missbraucht und nie
+  zurückgegeben, UND `movea.l ExecEntry,a4 / jmp (a4)` überschrieb a4
+  genauso. Beide gefixt (Vorausberechnung in neue Speicherzellen,
+  registerloser "Adresse pushen, RTS springt hin"-Trampolin wie bei
+  `Q9K_TrapExtInvoke`). Noch NICHT live gegen `echo`s eigenen
+  `tcall 13,X`-Aufruf nachverfolgt (s. nächster Absatz, warum).
+  `Fortsetzung 36`.
+
+**OFFEN, NICHT GELÖST — die seit 2026-09-04 bekannte, kernelgrößen-
+abhängige Interrupt-Race.** Blockiert weiterhin zuverlässiges Live-
+Testen: je nach exakter Kernelgröße (jede Codeänderung verschiebt sie!)
+schlägt derselbe Boot-Testablauf an UNTERSCHIEDLICHEN Stellen fehl
+(Illegal Instruction, mal vor `I$Write`, mal danach, mal erst nach
+`F$TLink`). **Neuer, präziser Fund dieser Sitzung** (per Ringpuffer-
+Instrumentierung, s.u.): die Absturz-PC landet regelmäßig EXAKT auf dem
+`dc.w`-Funktionscode-Wort direkt hinter einer `trap #0`-Instruktion —
+`Q9K_TrapDispatch`s eigene `addq.l #2,38(sp)`-Rücksprungkorrektur (die
+genau dieses Wort überspringen soll) geht offenbar irgendwann zwischen
+ihrer Ausführung und dem finalen `rte` wieder verloren. Hauptverdächtiger:
+`Q9K_TrapCallExternal`s Rückweg (schon dreimal real gefixt — CCR-Verlust,
+A4-Konvention, Herkunftsprüfung —, verträgt keinen ungeprüften vierten
+Blindfix). **Kein Fix versucht in dieser Sitzung, bewusst** — braucht
+gezielte Live-Instrumentierung.
+
+**Konkreter nächster Schritt für die kommende Sitzung:** die in
+Fortsetzung 33 gebaute Ringpuffer-Technik (Marker+PC bei jedem Timer-/
+`Q9K_IRQDispatch`-Eintritt, ausgegeben von `Q9K_ExcTrap` bei einem
+Absturz — Code dafür NICHT mehr im Repo, wurde nach Gebrauch bewusst
+per `git checkout` zurückgesetzt, s. Fortsetzung 33 für den vollen
+Patch-Text zum Wiederherstellen) um zwei weitere Eintragspunkte
+erweitern: direkt am Anfang von `Q9K_TrapCallExternal` UND direkt vor
+dem `rte` in `Q9K_TrapAfterCall`. Ziel: live sehen, ob ein Interrupt
+GENAU zwischen diesen beiden Punkten einschlägt — falls ja, ist die
+Ursache dort lokalisiert und ein echter Fix (vermutlich: Interrupts für
+diesen Rückweg-Abschnitt sperren, analog zu `Q9K_TrapDispatch`s
+eigenem `ori.w #$0700,sr` ganz am Anfang) endlich zielgerichtet möglich.
+Ring-Puffer-Adressen NICHT in den niedrigen Speicherbereich legen (s.
+Lehre in Fortsetzung 33 — ein früherer Versuch landete zufällig auf der
+eigenen Debug-Zelle) — `$1440C0` ff. (direkt hinter `Q9K_ExcInfo_Stack`)
+hat sich bewährt.
+
+**Wiederverwendbares Testabbild-Rezept** (ersetzt alle älteren Hinweise
+zu `OS9SYS.q9test.hda` — WICHTIG, mehrfach live verifiziert):
+```
+export OS9=/Volumes/SSD1TB/projects/MWOS/tools/macos/bin/os9
+IMG=/Volumes/SSD1TB/projects/Q9-Forge/Q9-Flux-68k/local_images/OS9SYS.q9test.hda
+rm -f "$IMG"
+"$OS9" format -q -k -nQ9TEST -bs512 -l32768 -c32 "$IMG"   # OHNE -e, s.u.!
+export REF_TAIL_START=0x33d6 REF_TAIL_SPLIT=0x35d2
+export Q9_DISK_MODULES="<jobtmp>/rbf.mod <jobtmp>/cfide.mod <jobtmp>/dd.mod <jobtmp>/c0.mod"
+tools/mkbootfile.sh --disk <jobtmp>/ref.boot "$IMG"        # ERST die Bootkette, auf leerem Abbild!
+"$OS9" makdir "$IMG,/CMDS"
+"$OS9" copy <jobtmp>/echo.mod "$IMG,/CMDS/echo"            # DANACH erst echo/csl kopieren
+"$OS9" copy <jobtmp>/csl.mod "$IMG,/CMDS/csl"
+"$OS9" attr -e "$IMG,/CMDS/echo"
+"$OS9" attr -e "$IMG,/CMDS/csl"
+```
+Zwei live erlebte Fallen: **`-e` bei `format`** (volles Abbild sofort
+materialisieren) lässt den emulierten CompactFlash-Treiber nicht mehr
+sauber booten (endlose Zeichenflut) — IMMER ohne `-e` formatieren, die
+volle Größe steht im Identification-Sektor, das Hostdateisystem
+materialisiert erst bei echtem Schreibzugriff. Und: **`os9 gen -b=`
+scheitert mit "is fragmented"**, sobald vorher schon andere Dateien
+angelegt wurden — Bootkette IMMER zuerst auf dem leeren Abbild
+schreiben. `<jobtmp>` = `/Users/afoe/.claude/jobs/a6da3b59/tmp/` (könnte
+sich bei einem neuen Job-Verzeichnis ändern — falls die Dateien dort
+fehlen, sind sie im alten Job-Verzeichnis noch vorhanden und lassen sich
+kopieren; `echo.mod`/`csl.mod` notfalls erneut aus
+`OS9SYS.dbg10.hda,/CMDS/echo` bzw. `/CMDS/csl` extrahieren).
+
+Live-Test-Kommando: `expect -f /tmp/run_dump4.exp local_images/OS9SYS.q9test.hda <log>`
+aus dem Q9-Flux-68k-Repo-Root (Skript wartet auf die CF-Treiber-Banner-
+Zeile, dann 20s, dann Ctrl-^-Dump + Ctrl-]-Quit — Skript selbst nicht
+mehr im Repo, kurzer Inhalt steht in Fortsetzung 33/34 falls neu
+angelegt werden muss). Absturz-Dump landet in
+`Q9-Flux-68k/local_images/q9dbg_dump.txt`.
+
+Alle 15 Host-Testsuiten grün (`gcc -Wall -Wextra -DQ9K_KERNEL_DEVELOPMENT
+-DQ9K_ALLOC_STANDARD` je `test_q9kernel_*.c`, aus `src/kernel/` heraus).
+
+---
+
+## ÜBERGABE (2026-09-11, achte Arbeitssitzung — historisch, s. oben)
 
 **Branch für die aktuelle Arbeit: `fix/a4-aufruferabhaengig` (PR #13)**,
 NICHT der oben genannte `fix/ccr-error-signaling-flink-funlink`-Stand.
