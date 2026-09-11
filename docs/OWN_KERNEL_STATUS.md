@@ -6156,3 +6156,56 @@ beliebigen `echo`-Stelle ablesbar) wuerde den Schreiber direkt zeigen
 Alle 15 Host-Testsuiten weiterhin gruen. Kein Codefix in dieser
 Fortsetzung, `tools/annotate_trace.py`s Mnemonic-Fix ist die einzige
 Aenderung (im Repo, s. `tools/annotate_trace.py`).
+
+## Fortsetzung 43: Watchpoint auf die Zeigerzelle -- neuer dritter Wert, Byte-Ausrichtung noch ungeklaert (2026-09-11, elfte Sitzung, direkte Fortsetzung)
+
+`Q9_WATCH_ADDR` auf die per `A6-$78a0` berechnete Zelladresse (`$45e00`
+-- bemerkenswerterweise IDENTISCH mit dem bereits als falsch erkannten
+Sprungziel aus Fortsetzung 42) zeigt zwei Schreiber:
+1. `pc=$1016a` (innerhalb `cfide`/Disk-Treiberbereich) schreibt beim
+   Laden von `csl.mod` von der Platte 4 Byte `$0c800000` dorthin --
+   plausibel Dateiinhalt/Puffer-Randdaten aus dem `F$Load`-Vorgang,
+   nicht die eigentliche Zeigerbefuellung.
+2. `pc=$3ecd2` (in `echo.mod` selbst) schreibt 4 Byte `$0003f406` an
+   Adresse `$45e02` -- ZWEI Byte VERSETZT zur angenommenen Zellgrenze
+   (`$45e00`-`$45e03`), UND ein DRITTER, bisher an keiner Stelle
+   gesehener Wert (weder `$3f420`=`ExecEntry` aus `F$TLink` noch
+   `$45dbc`=echte Funktionsadresse noch `$45e00`=tatsaechlich benutztes
+   Sprungziel).
+
+**Nicht mehr in dieser Sitzung aufgeloest:** ob die eigentliche
+Zellgrenze bei `$45e00` oder tatsaechlich bei `$45e02` liegt (die
+`(a6)`-Adressierung des Compilers koennte je nach erzeugtem Code
+unterschiedlich ausgerichtet sein), und in welcher Reihenfolge/mit
+welchem Wert die Zelle VOR dem Absturz-Aufruf zuletzt wirklich
+geschrieben wurde. Fuer eine Folgesitzung: `Q9_WATCH_ADDR` probeweise
+auf `$45e02` (Laenge 4 UND 2) wiederholen, UND `Q9_WATCH_FREEZE`
+gezielt auf den letzten Schreiber VOR dem fehlerhaften `jsr -$78a0(a6)`
+bei Zeile ~24521 setzen (s. `tools/annotate_trace.py`-Methodik aus
+Fortsetzung 41/42), um den Wert UNMITTELBAR vor dem fehlschlagenden
+Aufruf zu sehen, statt wie hier ueber den gesamten Lauf gemittelt.
+
+---
+
+**Gesamtstand dieser Sitzung (elfte Arbeitssitzung, Fortsetzung 37-43),
+zusammengefasst:**
+- **GELOEST, zweifach live verifiziert, gepusht:** der seit 2026-09-04
+  verfolgte "kernelgroessenabhaengige Interrupt-Race"-Absturz war der
+  bereits in Fortsetzung 25 gefundene A4-Herkunftspruefung-Bug (RBF/SCF
+  schreiben blind auf `Modulbasis+$3ac`) -- behoben per Sicherheits-
+  abstand an der betroffenen Datei-Position, OHNE die fragile
+  A4-Pruefung selbst anzufassen. `F$TLink`/`echo`-Erfolgskette (`lctE`)
+  laeuft seitdem wieder zuverlaessig.
+- **Neues, wiederverwendbares Werkzeug:** `tools/annotate_trace.py`
+  (Modul/Symbol-Zuordnung + Call/Return-Bilanz fuer
+  `Q9_TRACE_INSTR`-Dumps), inkl. eines im Verlauf gefundenen und
+  behobenen eigenen Bugs (bsr.l-Mnemonic-Erkennung).
+- **Praezise mechanistisch verstanden, aber NICHT geloest:** `echo`s
+  separater Folgeabsturz (Fortsetzung 34 Fund 3) ist ein Funktions-
+  zeiger in `echo.mod`s eigenem Datenbereich, der ca. 68 Byte zu weit
+  in `csl` zeigt und deren Registersicherungs-Prolog ueberspringt --
+  Ursache des FALSCHEN ZEIGERWERTS selbst noch offen (naechster Schritt
+  oben benannt).
+
+Alle 15 Host-Testsuiten durchgehend gruen. Kein Codefix in dieser
+letzten Fortsetzung.
