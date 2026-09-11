@@ -9,8 +9,146 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-11, neunte Arbeitssitzung — HIER ZUERST LESEN,
+## ÜBERGABE (2026-09-11, zehnte Arbeitssitzung — HIER ZUERST LESEN,
 ersetzt die Übergabe direkt darunter vollständig)
+
+**Auftrag dieser Sitzung:** Fortsetzung 33s konkreten nächsten Schritt
+umsetzen — die Ringpuffer-Instrumentierung um zwei Messpunkte an
+`Q9K_TrapCallExternal`/`Q9K_TrapAfterCall` erweitern, um die seit
+2026-09-04 bekannte Interrupt-Race live zu fangen.
+
+**WICHTIGSTER NEUER FUND: der crash-verursachende `trap #0`-Aufruf
+erreicht `Q9K_TrapDispatch` NIE — der Fehler liegt vermutlich VOR oder
+AUSSERHALB des Dispatchers selbst, nicht (nur) in der Rücksprung-PC-
+Korrektur, wie bisher angenommen.**
+
+Instrumentiert wurden fünf Messpunkte (Ringpuffer, 8192 Slots à 8 Byte
+Marker.l/PC.l, `$1440C0`ff., Index bei `$1540C0`, Details/Patch-Text
+siehe Abschnitt "Instrumentierung" unten):
+1. `Q9K_TimerIRQHandler`-Eintritt (Marker=30)
+2. `Q9K_IRQDispatch`-Eintritt (Marker=Vektornummer)
+3. `Q9K_TrapDispatch`-ALLERANFANG, direkt nach dem Lesen des
+   Funktionscodes, VOR der `addq.l #2`-Korrektur (Marker=`$5400`+
+   Funktionscode, PC=roh/unkorrigiert) — **neu, gezielt für diesen Fund**
+4. `Q9K_TrapCallExternal`-Anfang (Marker=`$58`='X')
+5. `Q9K_TrapAfterCall` unmittelbar vor `rte` (Marker=`$41`='A')
+
+**Reproduktion:** Der Absturz aus Fortsetzung 34/36 (`$6C`/Illegal
+Instruction bei einem `I$Write`-Trap) tritt mit dieser Instrumentierung
+(die den Kernel um ~1,8 KB vergrößert) SCHON BEIM EINFACHEN A/B-
+Testprozess-Boot auf, lange vor jedem `F$TLink`/`echo`-Test — exakt wie
+die seit 2026-09-04 dokumentierte Kernelgrößenabhängigkeit vorhersagt.
+**Deterministisch reproduzierbar, nicht zufällig:** zwei unabhängige
+Testläufe (verschiedene Kernel-Builds, identischer sonstiger Zustand)
+landen BYTE-IDENTISCH bei Vektor 4, `PC=$000074B4`, identischem
+Registersatz und identischem Code-Dump. `$74B2`=`4e40` (`trap #0`),
+`$74B4`=`008a` (Funktionscode `$8A`=I$Write) — die CPU führt das
+Funktionscode-Wort als Instruktion aus, GENAU das seit Fortsetzung 36
+bekannte Muster ("die addq.l-Korrektur geht verloren"), jetzt aber mit
+vollem Ringpuffer-Kontext davor.
+
+**Der Ringpuffer zeigt für DIESEN Absturz KEINEN Messpunkt-3-Eintrag
+(`Q9K_TrapDispatch`-Start) — obwohl 8192 Slots reichlich Platz boten
+(Index stand bei nur ~325) und der Puffer für ALLE VORHERIGEN Trap-
+Aufrufe zuverlässig Einträge zeigte.** Das heißt: der crash-Trap hat
+noch nicht einmal die ERSTE Instruktion von `Q9K_TrapDispatch` erreicht
+— der Fehler liegt vermutlich nicht (nur) in der Korrektur selbst,
+sondern schon davor: entweder springt die Hardware-Exception beim
+`trap #0` gar nicht (mehr) zum Handler, oder der Opcode an `$74B2` war
+zum Ausführungszeitpunkt noch nicht `4e40` (Selbstmodifikation/Race an
+dieser Speicherstelle) und wurde es erst später (der Dump danach zeigt
+ihn korrekt) — beides bisher nicht unterschieden.
+
+**Zweiter Fund, direkt davor im Ringpuffer: ein Interrupt-Sturm mit
+EINGEFRORENEM PC.** Unmittelbar bevor der Puffer für den Rest des Laufs
+nur noch Timer-/DUART-Ticks zeigt (keine weiteren Traps mehr bis zum
+Crash), stehen drei aufeinanderfolgende DUART-Interrupt-Einträge
+(Marker `$50`=80) mit BYTE-IDENTISCHEM PC (`$B422`) — derselbe Wert, zu
+dem gerade ein externer `I$ChgDir`-Aufruf (Messpunkt 4/5, Funktionscode
+`$86`) per RTE zurückgekehrt war. Der unterbrochene Prozess kam
+zwischen diesen drei IRQs nachweislich NIE dazu, auch nur EINE
+Instruktion nach der Rückkehr auszuführen — ein echter Interrupt-Sturm,
+plausibel gemacht durch die im Kopfkommentar von `Q9K_IRQDispatch`
+dokumentierte hohe DUART-TxRDY-Frequenz während einer Zeichenausgabe.
+**Kausalität zwischen diesem Sturm und dem späteren `trap #0`-Verlust
+NICHT bewiesen, aber der einzige auffällige Vorläufer im gesamten
+aufgezeichneten Verlauf.**
+
+**Arbeitshypothese für die nächste Sitzung (NICHT verifiziert):** die
+Musashi-CPU-Emulation könnte bei einem Interrupt, der sehr knapp vor
+oder während der Ausführung einer `trap #0`-Instruktion selbst eintritt
+(nicht danach — dieser Fall ist über die Interrupt-Sperre am
+`Q9K_TrapDispatch`-Anfang bereits abgedeckt), die Trap-Exception
+verschlucken oder verzögern, statt sie danach nachzuholen — das würde
+erklären, warum kein Kernel-Fix (fünf Anläufe an `Q9K_TrapCallExternal`
+allein) das Symptom je vollständig beseitigt hat: die Ursache läge dann
+nicht im Kernel-Code, sondern im Emulator selbst. **Nicht geprüft**, ob
+ein vergleichbares Verhalten bei Musashi bekannt/dokumentiert ist, und
+nicht geprüft, ob genau in diesem Fenster (kurz vor der abgestürzten
+`trap #0`) tatsächlich ein Interrupt anlag — das wäre der nächste,
+präzise benannte Schritt: Messpunkt 3 (`Q9K_TrapDispatch`-Anfang) UND
+einen sechsten Messpunkt GANZ VORN in `Q9K_TimerIRQHandler`/
+`Q9K_IRQDispatch` (vor `ori.w #$0700,sr`, falls technisch möglich, oder
+mit einem Zyklenzähler statt PC) so nah beieinander vergleichen, dass
+sich eine echte Verschachtelung auf Instruktionsebene zeigt — dafür
+reicht der grobe Ringpuffer nicht, das bräuchte einen Musashi-eigenen
+Trace-Hook (`m68k_set_instr_hook_callback` o. ä.) statt Kernel-Code.
+
+**Testabbild-Rezept: NEUE, robustere Alternative zum bisherigen
+`OS9SYS.q9test.hda`-Weg gefunden.** Das in Fortsetzung 33/34
+dokumentierte Rezept (frisch mit `os9 format` ohne `-e` formatieren,
+dann `tools/mkbootfile.sh --disk`) erzeugte in dieser Sitzung
+reproduzierbar einen VÖLLIG ANDEREN, viel früheren Hang (CF-Bootstrap-
+Banner "RP012E" gefolgt von endlosem "B", kein einziges eigenes
+Diagnosezeichen) — auch mit dem unveränderten `6dbc6af`-Kernel
+(Kontrollversuch: `git stash` in Q9-OS, Original-Kernel gebaut, gleiches
+Bild, gleiches Symptom). Stundenlang als Testabbild-Bug verdächtigt,
+per Sync-Wort-Analyse (`$4AFC`-Suche) VERIFIZIERT als bytegleiche
+Bootkette zum bekannt funktionierenden `OS9SYS.dbg10.hda` — also NICHT
+die Ursache. Der tatsächliche Hang war derselbe Interrupt-Race, nur
+noch früher ausgelöst (durch die zusätzliche Instrumentierungsgröße).
+**Robusteres Rezept, das diese Sitzung zuverlässig benutzt hat:** ein
+frischer `cp -c`-Klon von `OS9SYS.dbg10.hda` (garantiert korrekt
+partitioniert/formatiert), NUR die Bootkette per direktem Python-
+Byteschreiben an eine weit entfernte, sicher freie LSN (z. B. `2000000`)
+geschrieben (Identification-Sektor `$15`-`$17`=LSN, `$18`-`$19`=Länge
+manuell aktualisiert) — umgeht sowohl das bekannte `os9 gen -b=`-
+Fragmentierungsproblem auf bereits benutzten Abbildern als auch jedes
+Format-Detail von frisch formatierten Abbildern. Die einzelnen Module
+der `dbg10`-Bootkette (init/forkchild/hellosvc/ioman/scf/sc68681/term/
+rbf/cfide/dd/c0) liegen extrahiert unter `/tmp/dbg10_mods/*.mod` auf dem
+Mac (Job-lokal, ggf. erneut extrahieren: Sync-Wort-Suche in der per
+Identification-Sektor gelesenen Bootkette, Grenzen sind exakt an jedem
+`M$Size`-Feld ablesbar). Für einen frühen Absturz reicht ein
+`sleep 3`-Dump-Trigger direkt nach Spawn (kein Warten auf ein
+Bannermuster nötig).
+
+**Instrumentierung: aktueller Zustand und Patch-Text zum
+Wiederherstellen.** Die fünf Messpunkte sind wie in dieser Sitzung
+gebaut noch im Repo (`q9kernel_entry.a`, s. `git diff`) — anders als in
+Fortsetzung 33 NICHT zurückgesetzt, weil der nächste Schritt (sechster
+Messpunkt / Musashi-Trace-Hook) direkt darauf aufbaut. **Falls doch
+zurückgesetzt wurde:** `git log --oneline -- src/kernel/q9kernel_entry.a`
+zeigt, ob ein Commit `Q9K_RaceRing` diese Sitzung eingecheckt hat: falls
+ja, dort der volle Patch; falls die Arbeitskopie stattdessen per
+`git checkout` zurückgesetzt wurde, ist der Patch nur noch in dieser
+Übergabe (Diff nicht mehr verfügbar) — dann per Neuanlage der equ-
+Definitionen (`Q9K_RaceRingBase equ $1440C0`, `Slots equ 8192`, `EntSz
+equ 8`, `Idx equ $1540C0`) und der fünf oben beschriebenen Log-Blöcke
+neu bauen (jeder rettet die von ihm benutzten Register explizit per
+`movem`, s. Kommentare im Code für die genauen Register-Konventionen
+an jeder Stelle — sie unterscheiden sich je Einfügepunkt). Auswertung:
+`Q9-Flux-68k/src/kernel/q9boardrun.c`, Funktion
+`dbg_dump_q9kernel_extras`, Abschnitt "Q9K_RaceRing" (liest `$1540C0`
+als Index, `$1440C0`ff. als Ringpuffer, filtert auf X/A/T-Marker ±3
+Nachbareinträge, sonst bei 8192 Slots unlesbar viel Text).
+
+Alle 15 Host-Testsuiten weiterhin grün (die Instrumentierung ist reines
+Assembler in `q9kernel_entry.a`, keine C-Signatur geändert).
+
+---
+
+## ÜBERGABE (2026-09-11, neunte Arbeitssitzung — historisch, s. oben)
 
 **Branch: weiterhin `fix/a4-aufruferabhaengig` (PR #13), Commit `3e35aa0`.**
 Volle Kette: `Fortsetzung 1` bis `36` weiter unten im Dokument, die
