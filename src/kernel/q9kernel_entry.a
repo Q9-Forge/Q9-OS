@@ -376,6 +376,12 @@ Q9K_TCallScratch_ModPtr    equ $16C4     * Q9_u32
 Q9K_TCallScratch_ExecEntry equ $16C8     * Q9_u32
 Q9K_TCallScratch_StaticPtr equ $16CC     * Q9_u32
 Q9K_TCallScratch_RetPC     equ $16D0     * Q9_u32
+* NEU (Fortsetzung 35, s. Kopfkommentar bei Q9K_TCallDispatch): Vektorwort
+* und Funktionscode werden jetzt VOR der Aufrufer-Registerwiederherstellung
+* in eigenen Zellen zwischengelagert, statt d0/a4 spaeter nochmal als
+* Rechenregister zu missbrauchen.
+Q9K_TCallScratch_VectorWord equ $16D4    * Q9_u16
+Q9K_TCallScratch_FuncCode   equ $16D6    * Q9_u16
 Q9K_PROCDESC_TRAPTBL_OFF   equ $1CC      * s. q9kernel_traplink.c Kopfkommentar, 15x12 Byte
 
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
@@ -941,8 +947,34 @@ Q9K_TCallDispatch:
         move.l  d0,Q9K_TCallScratch_ModPtr
         move.l  4(a4),Q9K_TCallScratch_ExecEntry
         move.l  8(a4),Q9K_TCallScratch_StaticPtr
+
+* ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 35, per erneutem Lesen der
+* TrapEnt-Konvention, 68k_tech.pdf S. 172f, waehrend der Suche nach dem
+* $6C-Absturz in echo/csl): "Passed: d0-d7 = caller's registers, a0-a5 =
+* caller's registers" -- ALLE muessen UNVERAENDERT beim Trap-Handler
+* ankommen. Die bisherige Fassung benutzte d0 SPAETER (nach der
+* Ruecksprungadress-/Rahmen-Berechnung unten) noch zweimal als eigenes
+* Rechenregister (Vektor#, dann Funktionscode) und gab d0 NIE an den
+* echten Aufrufer-Wert zurueck, bevor sie in den Handler sprang -- der
+* Aufrufer verlor sein eigenes d0 also dauerhaft. Fix: Vektorwort und
+* Funktionscode HIER, SOLANGE d0/a4 noch die eigenen (bereits geretteten)
+* Arbeitsregister dieser Routine sind, in eigene Speicherzellen
+* vorausberechnen -- danach werden d0/a4 wie bisher an den Aufrufer
+* zurueckgegeben und bis zum Sprung in den Handler nicht mehr angefasst.
+        move.w  Q9K_TCallScratch_TrapNum,d0
+        addi.w  #32,d0                        * echte Vektornummer (ADDQ erlaubt nur 1-8)
+        move.w  d0,Q9K_TCallScratch_VectorWord
+* Geretteter PC steht noch im Original-Hardware-Rahmen -- d0/a4 sind an
+* dieser Stelle noch EIGENE Arbeitsregister (a4 zeigt gerade auf den
+* Trap-Tabellen-Slot, d0/a4 wurden bereits zu Beginn dieser Routine
+* gerettet, s.o.), der Rahmen selbst liegt deshalb bei sp+8 (8 Byte
+* eigene Rettung davor) -- PC-Feld also bei sp+8+2=sp+10, exakt wie beim
+* Format/Vektor-Wort weiter oben ("14(sp)" = sp+8+6).
+        movea.l 10(sp),a4                       * a4 = geretteter PC (nur als eigenes Zwischenregister)
+        move.w  -2(a4),Q9K_TCallScratch_FuncCode  * Funktionscode -- lag direkt vor RetPC im Code
+
         movea.l (sp)+,a4                     * a4 unveraendert zurueck (echtes Aufrufer-Register)
-        move.l  (sp)+,d0                      * ebenso d0
+        move.l  (sp)+,d0                      * ebenso d0 (jetzt wirklich bis zum Handler-Sprung unangetastet)
 
 * Urspruenglicher Hardware-Rahmen jetzt wieder unangetastet bei (sp):
 * SR(2)/PC(4)/FMT(2). Ruecksprung muss hinter das Funktionscode-Wort
@@ -954,19 +986,25 @@ Q9K_TCallDispatch:
 
 * TrapEnt-Rahmen aufbauen (Kapitel 5, S. 172f): von HOCH nach NIEDRIG
 * also in dieser Reihenfolge pushen: Ruecksprung-PC, Vektor#,
-* Funktionscode, Aufrufer-a6.
+* Funktionscode, Aufrufer-a6. Alle vier Werte kommen jetzt direkt aus
+* Speicherzellen (kein Register mehr als Zwischenspeicher noetig) --
+* d0-d7/a0-a5 bleiben ab hier bis zum Handler-Sprung vollstaendig
+* unangetastet.
         move.l  Q9K_TCallScratch_RetPC,-(sp)
-        move.w  Q9K_TCallScratch_TrapNum,d0
-        addi.w  #32,d0                        * echte Vektornummer (ADDQ erlaubt nur 1-8)
-        move.w  d0,-(sp)
-        movea.l Q9K_TCallScratch_RetPC,a4
-        move.w  -2(a4),d0                     * Funktionscode -- lag direkt vor RetPC im Code
-        move.w  d0,-(sp)
+        move.w  Q9K_TCallScratch_VectorWord,-(sp)
+        move.w  Q9K_TCallScratch_FuncCode,-(sp)
         move.l  a6,-(sp)                       * Aufrufer-a6 (bis hierher unveraendert)
 
         movea.l Q9K_TCallScratch_StaticPtr,a6
-        movea.l Q9K_TCallScratch_ExecEntry,a4
-        jmp     (a4)                            * echter Trap-Handler -- KEIN jsr, s. Kopfkommentar
+* ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 35, dieselbe Fundstelle):
+* "movea.l ExecEntry,a4 / jmp (a4)" verletzte dieselbe Konvention ein
+* zweites Mal -- a4 gehoert zu "a0-a5 = caller's registers" und muss
+* GENAUSO unangetastet bleiben. Fix: derselbe registerlose "Adresse
+* pushen, RTS springt hin"-Trampolin, der in diesem Kernel bereits fuer
+* Q9K_TrapExtInvoke etabliert ist (dort aus demselben Grund: kein freies
+* Register fuer das Sprungziel) -- kein Register wird dafuer gebraucht.
+        move.l  Q9K_TCallScratch_ExecEntry,-(sp)
+        rts                                     * springt in den echten Trap-Handler, d0-d7/a0-a5 unberuehrt
 
 Q9K_TCallNotInstalled:
         movea.l (sp)+,a4
