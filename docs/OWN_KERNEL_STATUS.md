@@ -5301,3 +5301,52 @@ eigenen, neuen Untersuchungs-Faden darstellt (s. Fund 3).
 Alle 15 Host-Testsuiten grün. Committet (`q9kernel_entry.a`: Interrupt-
 Sperre um das Diagnose-/Registrierfenster, `Q9K_TestCslBareName`) und
 gepusht auf `fix/a4-aufruferabhaengig`.
+
+## Fortsetzung 35: `F$CCtl` (Cache Control) implementiert -- behebt den
+`$6C`-Absturz aus Fortsetzung 34 NICHT, aber ein echter, fehlender
+Syscall ist jetzt sauber verdrahtet (2026-09-11, direkte Fortsetzung
+derselben Sitzung)
+
+**Fund per Live-Diagnose, nicht per Disassemblierungs-Raten:** die
+schon vorhandene Callcode-Scratchzelle (`$1370`, "letzter Funktionscode")
+zeigte beim `$6C`-Absturz aus Fortsetzung 34 den Wert `$5A`. Per
+`modules/SYSCALL_MODULE_MAP.md`: `F$CCtl`, "Cache Control". Echt im
+Handbuch nachgelesen (68k_tech.pdf S. 379f, `/System/Volumes/Data/
+Volumes/SSD1TB/#INFO/#Microware/68k_tech.pdf`): IN d0.l=gewünschte
+Cache-Operation (0 = beide Caches fluschen, generischer Fall). Das
+Handbuch nennt explizit den hier vorliegenden Anwendungsfall: *"Any
+program building or changing executable code in memory should flush
+the instruction cache by F\$CCtl before executing the new code"* --
+genau das tut `csl` nach einem erfolgreichen `F$TLink` (frisch
+gelinkter Code muss vor der Ausführung cache-kohärent gemacht werden).
+
+**Implementierung:** `Q9K_SysFCCtl` (reines Assembler, keine C-Logik
+nötig) unter Callcode `0x5A` registriert. Da Q9-Flux-68k laut eigener
+Boot-Meldung ("680x0: unhandled PFLUSH ... kein TLB") keine echte
+Cache-/MMU-Hardware emuliert, ist ein Flush auf diesem Ziel bedeutungslos
+-- ehrliche Implementierung: immer Erfolg, keine Wirkung (kein
+verstecktes Validierungs-Framework, gleiche Begründung wie bei
+`F$SRtMem`/`F$SSvc`). Die dokumentierte `E$Param`-Prüfung reservierter
+Bits für den privilegierten Pfad (Supergruppe/System-Zustand) bewusst
+NICHT nachgebildet -- dieser Kernel hat noch keine echte
+User-/Supervisor-Prozesstrennung.
+
+**Ergebnis live geprüft:** `F$CCtl` wird jetzt erfolgreich bedient (die
+"Unimplemented"-Zählzelle bleibt bei 0, statt wie vorher `F$CCtl`
+mitzuzählen) -- der `$6C`-Absturz aus Fortsetzung 34 tritt aber WEITERHIN
+auf, mit BYTE-IDENTISCHEN Registerwerten (`A4=$FFFFFFFE`, `D3=$EE`,
+identischer Stack-Inhalt) wie vorher. Das beweist: `F$CCtl` war nicht die
+Ursache dieses Absturzes, nur ein zusätzlicher, vorher fehlender
+Aufruf, der zufällig kurz davor lag. **Bemerkenswerter Nebenbefund:**
+der Absturz ist über zwei unterschiedlich große Kernel-Builds hinweg
+byte-identisch reproduzierbar -- anders als der Interrupt-Race aus
+Fortsetzung 32/33 (der mit der Kernelgröße wanderte) ist DIESER Absturz
+offenbar ein deterministischer Logikfehler, kein Race. Das macht ihn
+grundsätzlich leichter zu fassen als den Race -- aber `echo.mod`/
+`csl.mod` sind weiterhin geschlossene Binärdateien ohne Quelltext, die
+weitere Rückverfolgung bleibt aufwendig (s. Fortsetzung 34, Fund 3,
+Startpunkt Modul-Offset `$82A`).
+
+Alle 15 Host-Testsuiten grün (keine neue Testdatei nötig -- `Q9K_SysFCCtl`
+ist reines Assembler ohne eigene C-Logik, gleiches Muster wie andere
+triviale Wrapper in dieser Datei).
