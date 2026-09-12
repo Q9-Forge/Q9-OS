@@ -1,0 +1,5 @@
+Linkage map for module 'kernel' in file kernel.out2                       Page 1
+
+
+'kernel' psect from file: M:\Q9-OS\src\kernel\kernel.r68o
+	C:00000000 M:00000000 D:00000000 RM:00000000 RD:00000000
