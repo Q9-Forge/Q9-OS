@@ -97,6 +97,13 @@ extern int Q9K_ValidModuleHeader(const Q9_u8 *addr, Q9_u32 availableLen);
 #define Q9K_MODDIR_HEAD_ADDR 0x1238UL
 #endif
 
+/* F$VModul-Rueckgabepuffer (2026-09-11, s. Kopfkommentar
+ * Q9K_ModDirValidateAndAdd) -- 20 Byte, fest/wiederverwendet, freier
+ * Bereich hinter Q9K_SRqCMemFrameScratch ($1640, q9kernel_entry.a). */
+#ifndef Q9K_VMODUL_RETBUF
+#define Q9K_VMODUL_RETBUF 0x1650UL
+#endif
+
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 
@@ -457,4 +464,201 @@ Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr)
     }
 
     return 1;
+}
+
+/* Q9K_ModDirValidateAndAdd -- F$VModul-Kernlogik (Callcode 0x2e,
+ * "Validate Module", 68k_tech.pdf S. 532f, echt per Read gelesen). IN
+ * (hier als Parameter durchgereicht): (a0)=Modulzeiger, d1.l=Modulgroesse
+ * (d0.l=Modulgruppen-ID wird laut Manual nur fuer eine spaetere,
+ * gruppenbezogene Sonderbehandlung gebraucht -- unser Kernel kennt keine
+ * "Modulgruppen", deshalb hier ungenutzt). OUT (Erfolg): "Verzeichnis-
+ * eintragszeiger" -- s. u., ist bei uns der VALIDIERTE MODULKOPF SELBST,
+ * NICHT unser eigener 16-Byte-Slot. Rueckgabe 0 = Fehlschlag
+ * (*outError gesetzt).
+ *
+ * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, per Rueckspringadressen-
+ * Forensik in IOMans F$Load-Wrapper, s. docs/OWN_KERNEL_STATUS.md):
+ * anfangs wurde hier -- dem Kopfkommentar von F$Link/F$UnLink folgend
+ * ("Verzeichnis-internes Layout sehen externe Module nie") -- unser
+ * eigener 16-Byte-Slot zurueckgegeben. Live per Instruktionsspur
+ * nachgewiesen, dass IOMans F$Load-Wrapper (ioman+$6d6) DIREKT nach dem
+ * Aufruf zwei ECHTE Modulheader-Felder aus (a2) liest:
+ *     move.w $12(a0), d0      * $12 = M$TypLang (Q9K_MH_TYLANG)
+ *     adda.l $c(a0), a0       * $c  = M$Name-Offset (Q9K_MH_NAME)
+ * -- exakt die Standard-68K-Modulheader-Offsets, NICHT unser eigenes
+ * Slot-Layout (das bei $0E endet). Mit dem Slot-Zeiger las IOMan damit
+ * Datenmuell als "Modulname" und rief intern F$Link darauf auf, das
+ * folgerichtig E$MNF ($DD) meldete -- OBWOHL F$VModul selbst laengst
+ * erfolgreich validiert+eingetragen hatte. Anders als bei F$Link/
+ * F$UnLink (deren reale OUT-Konvention laut Manual "(a2) = Module
+ * pointer" ist -- das war schon vorher korrekt) verlangt F$VModul also
+ * TROTZ der Bezeichnung "Directory entry pointer" denselben echten
+ * Modulkopfzeiger. Fix: `hdr` zurueckgeben statt des Slots; der Slot
+ * bleibt intern (Q9K_ModDirAdd traegt ihn wie bisher ins Verzeichnis
+ * ein, nur sein Zeiger wird nicht mehr nach aussen gereicht).
+ *
+ * ECHTER BUG GEFUNDEN + BEHOBEN (2026-09-10): dieser Dienst fehlte
+ * komplett (lief in Q9K_SysUnimplemented) -- IOMans eigene F$Load-
+ * Implementierung braucht ihn beim Laden eines neuen Moduls von
+ * Mass-Storage, s. docs/OWN_KERNEL_STATUS.md.
+ *
+ * Pruefung in drei real belegten Stufen (MWOS/OS9/SRC/DEFS/funcs.a, per
+ * E$UnkSvc/E$BPAddr/E$BPNam als Anker ausgezaehlt, s.
+ * docs/OWN_KERNEL_STATUS.md):
+ *   1. Sync-Wort ($4AFC)                -> sonst E$BMID  ($CD)
+ *   2. 24-Word-XOR-Kopfpruefsumme       -> sonst E$BMHP  ($EC)
+ *   3. 24-Bit-Modul-CRC ueber das GANZE Modul (inkl. des CRC-Feldes
+ *      selbst) -- Polynom $800063, Akkumulator-Start $FFFFFF, muss am
+ *      Ende genau CRCCon ($00800FE3, MWOS/OS9/SRC/DEFS/module.a Zeile
+ *      248) ergeben. NICHT aus der Doku geraten (die nennt nur den
+ *      Algorithmus in Worten, keinen Code) -- empirisch gegen sechs
+ *      echte, unveraenderte Microware-Module verifiziert (rbf/cfide/
+ *      ioman/scf/dd/c0.mod aus dem F$Load-Testkorpus dieser Sitzung):
+ *      alle sechs ergeben exakt $800FE3, ein einzelnes verfaelschtes
+ *      Byte ergibt nachweislich etwas anderes.
+ *                                        -> sonst E$BMCRC ($E8)
+ *
+ * Vereinfachung: KEINE Namens-/Revisions-Deduplizierung -- ein zweiter
+ * F$VModul-Aufruf fuer denselben Namen legt einen weiteren Eintrag an,
+ * statt die bessere Revision auszuwaehlen (das erledigt
+ * Q9K_ModDirLinkByName beim SUCHEN ohnehin schon, s. dort: es waehlt
+ * unter mehreren Treffern die hoechste Revision). Fuer den F$Load-
+ * Regelfall (neues Modul, noch nicht im Verzeichnis) korrekt; echtes
+ * TODO, sobald mehrfaches Laden derselben Datei ueblich wird.
+ *
+ * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-10): das per Parameter (d1.l)
+ * hereingereichte `size` stimmt bei einem echten F$Load-Aufruf (IOMan,
+ * Mass-Storage-Pfad) NACHWEISLICH NICHT mit der wahren Modulgroesse
+ * ueberein -- live gemessen mit "/CMDS/echo" ($C8E laut os9-Toolshed-
+ * ident, "Good CRC"): IOMan uebergab $C90, zwei Byte zu viel (Ursache
+ * auf IOMan-Seite nicht weiterverfolgt, ausserhalb der Kernel-
+ * Zustaendigkeit). Die CRC-Pruefung ueber die FALSCHEN zwei
+ * Zusatzbyte hinweg schlug deshalb reproduzierbar mit E$BMCRC fehl,
+ * obwohl das Modul selbst unversehrt war (Sync-Wort am Pufferanfang
+ * exakt korrekt gemessen). Fix: die Modulgroesse NACH bestandener
+ * Kopfpruefsumme aus dem Header selbst lesen (M$Size, Offset $04) --
+ * der Wert ist zu diesem Zeitpunkt bereits durch die 24-Word-XOR-
+ * Pruefsumme abgesichert (sie deckt Offset $00-$2F, M$Size liegt
+ * darin), also vertrauenswuerdig, sobald Q9K_ValidModuleHeader
+ * erfolgreich war. `size` (Aufrufer-Parameter) bleibt nur noch als
+ * OBERGRENZE fuer die Bounds-Pruefung der beiden billigen Vorstufen
+ * (Sync-Wort, Kopfpruefsumme) in Gebrauch, s. u. */
+Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
+{
+    Q9_u32 crc;
+    Q9_u32 i;
+    Q9_u32 realSize;
+    Q9_u16 tyLang;
+
+    *outError = 0;
+
+    if (!Q9K_CheckSyncWord(hdr, size)) {
+        *outError = 0x00CDU;            /* E$BMID, Bad Module ID */
+        return 0;
+    }
+    if (!Q9K_ValidModuleHeader(hdr, size)) {
+        *outError = 0x00ECU;            /* E$BMHP, Bad Module Header Parity */
+        return 0;
+    }
+
+    /* Reale Groesse aus dem (jetzt pruefsummengesicherten) Header lesen
+     * statt dem moeglicherweise ungenauen Aufrufer-Parameter zu
+     * vertrauen (s. Kopfkommentar). Trotzdem nie ueber die vom Aufrufer
+     * zugesicherte Pufferlaenge hinaus lesen -- ein beschaedigter Header
+     * koennte theoretisch eine zu grosse Groesse behaupten. */
+    realSize = Q9K_ReadU32BE(hdr + Q9K_MH_SIZE);
+    if (realSize == 0 || realSize > size)
+        realSize = size;
+    tyLang = Q9K_GetU16BE((Q9_u32)(unsigned long)hdr + Q9K_MH_TYLANG);
+
+    crc = 0xFFFFFFUL;
+    for (i = 0; i < realSize; i++) {
+        Q9_u32 bit;
+
+        crc = (crc ^ ((Q9_u32)hdr[i] << 16)) & 0xFFFFFFUL;
+        for (bit = 0; bit < 8; bit++) {
+            if (crc & 0x800000UL)
+                crc = ((crc << 1) ^ 0x800063UL) & 0xFFFFFFUL;
+            else
+                crc = (crc << 1) & 0xFFFFFFUL;
+        }
+    }
+    if (crc != 0x00800FE3UL) {
+        *outError = 0x00E8U;            /* E$BMCRC, Bad Module CRC */
+        return 0;
+    }
+
+    /* Slot wird intern angelegt (Buchhaltung, F$Link/F$UnLink finden das
+     * Modul kuenftig darueber) -- Slot-Erschoepfung wird hier bewusst
+     * NICHT als Fehler behandelt: das validierte Modul ist uneinge-
+     * schraenkt benutzbar, es fehlt nur der Verzeichniseintrag fuer eine
+     * SPAETERE Namenssuche -- dafuer gibt es (noch) keinen eigenen, real
+     * belegten Fehlercode-Fall. */
+    (void)Q9K_ModDirAdd(hdr);
+
+    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, zweite Runde, per
+     * Instruktionsspur/Registerfreeze in IOMans F$Load-Wrapper): weder
+     * unser eigener 16-Byte-Slot NOCH der rohe Modulkopfzeiger sind das
+     * richtige (a2). IOMans Wrapper (ioman+$8f8 ff.) inkrementiert/
+     * dekrementiert `+$0C(a2)` als Link-Zaehler (live gemessen: ADDQ.W
+     * dann spaeter SUBQ.W) und liest `+$12(a2)` als Typ/Sprache-Wort --
+     * das sind FESTE Offsets eines ECHTEN Microware-Verzeichniseintrags,
+     * die weder mit unserem 16-Byte-Slot (endet bei $0E) noch mit dem
+     * Modulheader (dessen $0C/$12 M$Name/M$TypLang sind -- Schreiben
+     * DORT haette den Header selbst beschaedigt, live bestaetigt: `+$0C`
+     * als Kopfzeiger interpretiert korrumpierte M$Name) uebereinstimmen.
+     * Ausserdem liest derselbe Wrapper `+$00(a2)` und macht daraus am
+     * Ende SEINEN EIGENEN Rueckgabewert (a2) -- muss also der Modulkopf-
+     * zeiger sein, damit der AUFRUFER dieses Aufrufers (unser Testcode)
+     * am Ende einen sinnvollen Modulzeiger bekommt.
+     *
+     * Fix: ein eigener, NUR FUER DIESEN ZWECK reservierter 20-Byte-
+     * Rueckgabe-Puffer (Q9K_VMODUL_RETBUF, fest/wiederverwendet -- muss
+     * nur bis zum naechsten F$VModul-Aufruf ueberleben, IOMan liest ihn
+     * unmittelbar nach dem Rueckkehren):
+     *   +0x00 (4) Modulkopfzeiger (wird am Ende IOMans eigener
+     *             Rueckgabewert)
+     *   +0x0C (2) Link-Zaehler-Platzhalter (wird inkrementiert, dann im
+     *             selben Aufruf wieder dekrementiert -- Endwert 0,
+     *             daher als reiner Scratch ausreichend)
+     *   +0x12 (2) Typ/Sprache, Kopie aus dem Modulheader
+     * Weder unser eigener Slot noch der Modulkopf werden dadurch
+     * angetastet -- der Puffer liegt vollstaendig ausserhalb beider. */
+    Q9K_SetU32(Q9K_VMODUL_RETBUF + 0x00UL, (Q9_u32)(unsigned long)hdr);
+    Q9K_ModDirSetU16(Q9K_VMODUL_RETBUF + 0x0CUL, 0);
+    Q9K_ModDirSetU16(Q9K_VMODUL_RETBUF + 0x12UL, tyLang);
+    return (Q9_u32)Q9K_VMODUL_RETBUF;
+}
+
+/* Scratch-Bruecke fuer F$VModul, gleiches Muster wie ueberall in diesem
+ * Kernel -- freier Bereich direkt hinter den F$RetPD-Scratchzellen
+ * ($161C-$1628, q9kernel_iopath.c) und vor der F$SSvc-Markierungstabelle
+ * ($1700, q9kernel_ssvc.c). */
+#ifndef Q9K_VMODUL_SCRATCH_HDR
+#define Q9K_VMODUL_SCRATCH_HDR     0x162CUL   /* Q9_u32, (a0) EIN = Modulzeiger */
+#define Q9K_VMODUL_SCRATCH_SIZE    0x1630UL   /* Q9_u32, d1.l EIN = Modulgroesse */
+#define Q9K_VMODUL_SCRATCH_ENTRY   0x1634UL   /* Q9_u32, (a2) AUS = Verzeichniseintrag */
+#define Q9K_VMODUL_SCRATCH_ERROR   0x1638UL   /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_VMODUL_SCRATCH_SUCCESS 0x163CUL   /* Q9_u32, 0 = Fehlschlag / 1 = Erfolg */
+#endif
+
+/* Q9K_SysVModulImpl -- duenne, PARAMETERLOSE Bruecke zwischen dem
+ * Assembler-Trampolin (q9kernel_entry.a, Q9K_SysFVModul) und
+ * Q9K_ModDirValidateAndAdd oben -- gleiches, etabliertes Muster wie
+ * Q9K_SysRetPDImpl (q9kernel_iopath.c). */
+void Q9K_SysVModulImpl(void)
+{
+    Q9_u32 hdrAddr = Q9K_GetU32(Q9K_VMODUL_SCRATCH_HDR);
+    Q9_u32 size    = Q9K_GetU32(Q9K_VMODUL_SCRATCH_SIZE);
+    Q9_u32 entry;
+    Q9_u16 err = 0;
+
+    entry = Q9K_ModDirValidateAndAdd((const Q9_u8 *)hdrAddr, size, &err);
+    if (entry != 0) {
+        Q9K_SetU32(Q9K_VMODUL_SCRATCH_ENTRY, entry);
+        Q9K_SetU32(Q9K_VMODUL_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_VMODUL_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_VMODUL_SCRATCH_SUCCESS, 0UL);
+    }
 }

@@ -320,14 +320,34 @@ int Q9K_ProcRetPD(Q9_u32 dbtAddr, Q9_u16 num, Q9_u16 *outError)
  *     tst.b   d0            d0.b = Trennzeichen HINTER dem Namen
  *     cmpi.b  #$d,d0        scf akzeptiert 0, CR und Leerzeichen
  *     cmpi.b  #$20,d0
- *     movea.l a1,a0         a1 = Zeiger auf den Namensanfang
+ *     movea.l a1,a0         a1 = Zeiger HINTER das letzte Namenszeichen
  *
- * Vollstaendige Ausgabe (klassische OS-9-Konvention):
- *   a1    = erstes Zeichen des Namens
- *   a0    = hinter dem Namen (auf das Trennzeichen)
+ * Vollstaendige Ausgabe (ECHTE Microware-Konvention -- 2026-09-08 durch
+ * ECHTEN RBF-Level-2-Quellcode (SchDir/RBPNam, www.roug.org, l2sources/rbf)
+ * zweifelsfrei belegt, nicht mehr nur aus dem Technical Manual geraten):
+ * RBFs SchDir-Schleife ruft F$PrsNam via RBPNam GENAU EINMAL pro
+ * Verzeichnisebene auf und braucht daraus GLEICHZEITIG zwei verschiedene
+ * Zeiger -- das war der Denkfehler hinter der bisherigen "struktureller
+ * Widerspruch, blackbox nicht loesbar"-Einschaetzung (Fortsetzung 23):
+ *   a0 AUS = Anfang des Namens (hinter einem evtl. FUEHRENDEN '/', sonst
+ *            unveraendert) -- RBF sichert dies SOFORT nach dem Trap
+ *            (`pshs x`) als S.PathPt und benutzt es SPAETER direkt als
+ *            Vergleichszeiger fuer F$CmpNam gegen die Verzeichniseintraege.
+ *   a1 AUS = hinter dem letzten Namenszeichen, VOR einem evtl. Trenner
+ *            (= Position DES Trenners selbst) -- RBF sichert dies als
+ *            S.NextPt und ueberspringt den Trenner beim naechsten
+ *            RBPNam-Aufruf SELBST per `leax 1,X` -- F$PrsNam darf hier
+ *            NICHT vorgreifen.
  *   d0.b  = das Trennzeichen selbst
  *   d1.w  = Namenslaenge
  *   Carry gesetzt + d1.w = E_BPNAM ($D7), wenn kein gueltiger Name folgt.
+ *
+ * Der bisherige Code lieferte in a0 faelschlich "hinter Name UND Trenner"
+ * (schon fast die Position des NAECHSTEN Elements) statt des Anfangs des
+ * AKTUELLEN Namens -- dadurch verglich RBFs F$CmpNam bei jeder zweiten
+ * Verzeichnisebene gegen die falsche (zu weit vorgerueckte) Adresse, was
+ * die eigentliche Ursache des $D8-Bugs bei "/dd/startup" war. s.
+ * docs/OWN_KERNEL_STATUS.md Fortsetzung 24 fuer die komplette Herleitung.
  *
  * Fuehrende '/' werden uebersprungen -- fuer "/term" liefert das den
  * Namen "term" (Laenge 4) mit Trennzeichen 0, genau was scf erwartet.
@@ -375,10 +395,29 @@ int Q9K_ProcPrsNam(Q9_u32 pathPtr, Q9_u32 *outNameStart, Q9_u32 *outPastName,
         return 0;
     }
 
-    *outNameStart = pathPtr + start;
-    *outPastName  = pathPtr + i;
+    /* a1 (outNameStart): hinter dem letzten Namenszeichen, VOR einem
+     * evtl. Trenner -- KEIN Trenner-Ueberspringen hier (s. Kopfkommentar,
+     * durch echten RBF-Quellcode belegt). Numerisch unveraendert seit
+     * Fortsetzung 16; nur die Rollenbeschreibung war dort noch falsch
+     * begruendet (s. Fortsetzung 24). */
+    *outNameStart = pathPtr + i;
     *outLen       = (Q9_u16)(i - start);
     *outDelim     = (Q9_u16)p[i];
+
+    /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08, Fortsetzung 24, durch
+     * echten RBF-Quellcode (SchDir/RBPNam) zweifelsfrei belegt): a0 muss
+     * den ANFANG des aktuellen Namens liefern (hinter einem evtl.
+     * fuehrenden '/', sonst unveraendert) -- RBF sichert genau diesen
+     * Wert (`pshs x` direkt nach dem Trap) als seinen spaeteren
+     * F$CmpNam-Vergleichszeiger. Der bisherige Code lieferte hier
+     * faelschlich "hinter Name UND Trenner" (schon fast Position des
+     * NAECHSTEN Elements) -- dadurch verglich RBF bei jeder zweiten
+     * Verzeichnisebene gegen eine zu weit vorgerueckte Adresse, was die
+     * eigentliche Ursache des $D8-Fehlers bei "/dd/startup" war. RBF
+     * ueberspringt einen folgenden Trenner beim naechsten RBPNam-Aufruf
+     * SELBST (`leax 1,X` auf *outNameStart, nicht auf *outPastName) --
+     * F$PrsNam darf dem nicht vorgreifen. */
+    *outPastName = pathPtr + start;
     return 1;
 }
 
@@ -512,8 +551,8 @@ void Q9K_SysRetPDImpl(void)
 /* Scratch-Bruecke fuer F$PrsNam, gleiches Muster wie ueberall. */
 #ifndef Q9K_PRSNAM_SCRATCH_PATH
 #define Q9K_PRSNAM_SCRATCH_PATH   0x13ECUL   /* Q9_u32, (a0) EIN  = Pfadname */
-#define Q9K_PRSNAM_SCRATCH_NAME   0x13F0UL   /* Q9_u32, (a1) AUS = Namensanfang */
-#define Q9K_PRSNAM_SCRATCH_PAST   0x13F4UL   /* Q9_u32, (a0) AUS = hinter dem Namen */
+#define Q9K_PRSNAM_SCRATCH_NAME   0x13F0UL   /* Q9_u32, (a1) AUS = hinter dem letzten Namenszeichen (NICHT Namensanfang, s. Fix-Kommentar bei Q9K_ProcPrsNam) */
+#define Q9K_PRSNAM_SCRATCH_PAST   0x13F4UL   /* Q9_u32, (a0) AUS = Anfang des Namens (fuer F$CmpNam), s. Fortsetzung 24 */
 #define Q9K_PRSNAM_SCRATCH_LEN    0x13F8UL   /* Q9_u32, d1.w AUS = Laenge */
 #define Q9K_PRSNAM_SCRATCH_DELIM  0x13FCUL   /* Q9_u32, d0.b AUS = Trennzeichen */
 #define Q9K_PRSNAM_SCRATCH_ERROR  0x1600UL   /* Q9_u32, d1.w AUS bei Fehler */

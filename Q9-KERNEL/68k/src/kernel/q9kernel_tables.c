@@ -25,9 +25,25 @@
  * schreibt bei I$Dup unbedingt auf D_SysPrc+0x168 -- das ist exakt
  * P$Path[0] im echten Microware-Layout (P$DIO@0x148, DefIOSiz=32,
  * P$Path direkt danach@0x168, NumPaths(32)*2=64 Byte bis 0x1A8; per
- * process.a gegengeprueft, nicht kopiert). Q9K_PROCDESC_SIZE ist daher
- * jetzt bewusst auf 0x200 (512) vergroessert -- deckt P$Path (bis 0x1A8)
- * plus Sicherheitsmarge fuer weitere, noch nicht benoetigte P$-Felder.
+ * process.a gegengeprueft, nicht kopiert). Q9K_PROCDESC_SIZE wurde
+ * daraufhin von 128 auf 0x200 (512) vergroessert -- deckte P$Path (bis
+ * 0x1A8) plus Marge.
+ *
+ * ZWEITE Vergroesserung 0x200 -> 0x400 (2026-09-09, Fortsetzung 27):
+ * auch 512 Byte reichten NICHT. RBF (reales Microware-Modul) klammert
+ * einen internen Treiberaufruf mit "addq.l #1,$3ac(a4)" /
+ * "subq.l #1,$3ac(a4)" ein -- Offset $3AC ist im echten Layout
+ * P$Preempt ("process level system-state pre-emption flag"), also
+ * voellig legitimes, dokumentiertes Verhalten. Bei 512 Byte
+ * Deskriptorgroesse landete dieser Schreibzugriff JENSEITS unseres
+ * Slots und korrumpierte Nachbarspeicher (live per Q9_WATCH_ADDR
+ * nachgewiesen, s. docs/OWN_KERNEL_STATUS.md Fortsetzung 24-27).
+ * Neuer Wert 0x400 (1024) = P$PrcBody, die ECHTE Gesamtgroesse des
+ * Basis-Prozessdeskriptors -- aus process.a Feld fuer Feld
+ * aufsummiert (org 0 ab P$ID bis P$PrcBody, mit MemBlks=NumPaths=
+ * DefIOSiz=32), nicht geschaetzt. Bleibt Zweierpotenz, die
+ * Masken-Rechnung in q9kernel_procapi.c gilt unveraendert weiter.
+ *
  * Der Rest des Deskriptors bleibt unser eigener, generischer Slot-Pool
  * mit Freiliste; nur der P$DIO/P$Path-Bereich ist jetzt layoutkompatibel
  * reserviert (noch nicht inhaltlich befuellt -- s. q9kernel_iopath.c).
@@ -74,7 +90,7 @@ extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
 #define Q9K_INIT_OFF_PATHS    0x3AUL   /* M$Paths,  68k_tech.pdf Table 2-4 */
 #define Q9K_INIT_OFF_MDIRSZ   0x62UL   /* M$MDirSz, 68k_tech.pdf Table 2-4 */
 
-#define Q9K_PROCDESC_SIZE     0x200UL  /* deckt P$Path bis 0x1A8, s. Kopfkommentar */
+#define Q9K_PROCDESC_SIZE     0x400UL  /* = P$PrcBody (echte Groesse), s. Kopfkommentar */
 /* 32 -> 256 (2026-09-02): dieselbe Lektion wie oben beim Prozess-
  * deskriptor, jetzt fuer den PFAD-Deskriptor belegt. IOMans I$Open
  * kopiert den Geraete-Descriptor unbedingt nach Deskriptor+$80

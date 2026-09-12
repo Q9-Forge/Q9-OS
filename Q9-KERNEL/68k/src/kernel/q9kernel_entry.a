@@ -342,7 +342,50 @@ Q9K_RetPDScratch_NumIn    equ $1620      * Q9_u32, d0.w EIN = Deskriptornummer
 Q9K_RetPDScratch_Error    equ $1624      * Q9_u32, d1.w AUS bei Fehler
 Q9K_RetPDScratch_Success  equ $1628      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 
+* F$VModul (Callcode $2e) -- Scratch-Bruecke fuer Q9K_SysVModulImpl
+* (q9kernel_moddir.c), direkt hinter den F$RetPD-Zellen.
+Q9K_VModulScratch_Hdr     equ $162C      * Q9_u32, (a0) EIN = Modulzeiger
+Q9K_VModulScratch_Size    equ $1630      * Q9_u32, d1.l EIN = Modulgroesse
+Q9K_VModulScratch_Entry   equ $1634      * Q9_u32, (a2) AUS = Verzeichniseintrag
+Q9K_VModulScratch_Error   equ $1638      * Q9_u32, d1.w AUS bei Fehler
+Q9K_VModulScratch_Success equ $163C      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+* Eigenes Frame-Scratch fuer F$SRqCMem (Callcode $5c) -- gleiche
+* Begruendung wie Q9K_SRqMemFrameScratch (s. dort), eigene Zelle, damit
+* ein verschachtelter Aufruf F$SRqMem/F$SRqCMem sich nicht gegenseitig
+* ueberschreibt.
+Q9K_SRqCMemFrameScratch   equ $1640      * Q9_u32, Rahmenbasis oder 0
+
+* F$TLink (Callcode $21) -- Scratch-Bruecke fuer Q9K_SysTLinkImpl
+* (q9kernel_traplink.c), freier Bereich hinter Q9K_VMODUL_RETBUF
+* ($1650-$1663, q9kernel_moddir.c).
+Q9K_TLinkScratch_TrapNum   equ $1690     * Q9_u32, d0.w EIN
+Q9K_TLinkScratch_MemOvr    equ $1694     * Q9_u32, d1.l EIN
+Q9K_TLinkScratch_NamePtr   equ $1698     * Q9_u32, (a0) EIN
+Q9K_TLinkScratch_PastName  equ $169C     * Q9_u32, (a0) AUS
+Q9K_TLinkScratch_ModPtr    equ $16A0     * Q9_u32, (a2) AUS
+Q9K_TLinkScratch_ExecEntry equ $16A4     * Q9_u32, (a1) AUS
+Q9K_TLinkScratch_InitEntry equ $16A8     * Q9_u32, AUS -- nur fuer den M$Init-Sprung
+Q9K_TLinkScratch_StaticPtr equ $16AC     * Q9_u32, AUS -- wird a6 beim M$Init-Aufruf
+Q9K_TLinkScratch_Error     equ $16B0     * Q9_u32, d1.w AUS bei Fehler
+Q9K_TLinkScratch_Success   equ $16B4     * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+
+* Q9K_TCallDispatch (TRAP #1-15, s. dort) -- eigene Scratch-Zellen,
+* freier Bereich direkt dahinter.
+Q9K_TCallScratch_TrapNum   equ $16C0     * Q9_u32
+Q9K_TCallScratch_ModPtr    equ $16C4     * Q9_u32
+Q9K_TCallScratch_ExecEntry equ $16C8     * Q9_u32
+Q9K_TCallScratch_StaticPtr equ $16CC     * Q9_u32
+Q9K_TCallScratch_RetPC     equ $16D0     * Q9_u32
+* NEU (Fortsetzung 35, s. Kopfkommentar bei Q9K_TCallDispatch): Vektorwort
+* und Funktionscode werden jetzt VOR der Aufrufer-Registerwiederherstellung
+* in eigenen Zellen zwischengelagert, statt d0/a4 spaeter nochmal als
+* Rechenregister zu missbrauchen.
+Q9K_TCallScratch_VectorWord equ $16D4    * Q9_u16
+Q9K_TCallScratch_FuncCode   equ $16D6    * Q9_u16
+Q9K_PROCDESC_TRAPTBL_OFF   equ $1CC      * s. q9kernel_traplink.c Kopfkommentar, 15x12 Byte
+
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
+Q9K_TrapCallerPC          equ $13E8      * echte Ruecksprung-PC des Aufrufers (fuer Herkunftspruefung)
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
 Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
 Q9K_PrsNamScratch_Past    equ $13F4      * Q9_u32, (a0) AUS = hinter dem Namen
@@ -366,6 +409,26 @@ Q9K_ExcInfo_A1            equ $144044    * Langwort, A1 beim Eintritt
 Q9K_ExcInfo_A2            equ $144048    * a2/a3/a4 (12 Byte)
 Q9K_ExcInfo_D0            equ $144054    * d0-d7 (32 Byte)
 Q9K_ExcInfo_Stack         equ $144080    * 64 Byte Stackinhalt ab SP
+* Q9K_RaceRing -- TEMPORAERE Ringpuffer-Instrumentierung (2026-09-11,
+* zehnte Arbeitssitzung, Fortsetzung von Fortsetzung 33/36) zur
+* Lokalisierung der seit 2026-09-04 bekannten Interrupt-Race. Gleiches
+* Prinzip wie Fortsetzung 33 (Marker+geretteter PC pro Eintrag, feste
+* RAM-Adresse weit oberhalb der genullten Kernel-Globals, s. Lehre dort
+* zu niedrigen Adressen), aber diesmal ZUSAETZLICH an zwei neuen
+* Punkten: Anfang von Q9K_TrapCallExternal (Marker $58='X') und direkt
+* VOR dem "rte" in Q9K_TrapAfterCall (Marker $41='A', der PC-Wert, der
+* GLEICH per RTE zurueckgegeben wird -- korrekt waere er IMMER >
+* Q9K_TrapCallerPC, weil addq.l #2 ihn hinter das Funktionscode-Wort
+* korrigiert hat). Ziel: sehen, ob ein Timer/IRQ-Log-Eintrag zeitlich
+* GENAU zwischen einem 'X'- und dem zugehoerigen 'A'-Eintrag liegt.
+* Jeder Eintrag 8 Byte (Marker.l/PC.l), 64 Slots = 512 Byte, danach ein
+* 4-Byte laufender Index (kein Modulo beim Schreiben noetig -- Lesen
+* maskiert beim Dump). NICHT dauerhaft: nach Gebrauch wieder per
+* "git checkout" entfernen, s. docs/OWN_KERNEL_STATUS.md.
+Q9K_RaceRingBase          equ $1440C0
+Q9K_RaceRingSlots         equ 8192
+Q9K_RaceRingEntSz         equ 8
+Q9K_RaceRingIdx           equ $1540C0    * Base + Slots*EntSz (8192*8=$10000), Literal wegen r68
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -847,6 +910,127 @@ _stklimit:
 * Inhalt, deshalb hier 16 explizite Nullen statt einer Reservierung.
 Q9K_CRuntimeData:
         dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+*******************************************************************************
+* Q9K_TCallDispatch -- gemeinsamer Handler fuer TRAP #1 bis #15 (Vektoren
+* 33-47, "User Trap"-Instruktionen -- "tcall N,Funktion" = "trap #N" +
+* "dc.w Funktion", s. F$TLink/Kapitel 5 "User Trap Handlers",
+* 68k_tech.pdf S. 163ff, echt per Read gelesen). Anders als
+* Q9K_TrapDispatch (TRAP #0, unsere eigene F$/I$-Syscall-Tabelle) geht
+* es hier NICHT um unsere eigenen Handler, sondern um ECHTE, per
+* F$TLink installierte fremde Trap-Bibliotheken (z.B. "csl") -- die
+* reale Aufrufkonvention ("TrapEnt", Kapitel 5) unterscheidet sich
+* komplett von unserer eigenen F$-Konvention: d0-d7/a0-a5 werden dem
+* Trap-Handler UNVERAENDERT durchgereicht (eine CPU-Exception ruehrt
+* normale Register nicht an, kein Registerschutz noetig), stattdessen
+* baut der Kernel einen winzigen 12-Byte-Rahmen (Ruecksprung-PC,
+* Vektor#, Funktionscode, Aufrufer-a6) auf, den der Trap-Handler SELBST
+* konsumiert -- reale Rueckkehr per "rts", NICHT "rte".
+*
+* Vektor -> Trap-Nummer: Format/Vektor-Wort im Hardware-Frame ist
+* (Format<<12)|(Vektor*4); fuer TRAP #n ist Vektor=32+n, also
+* Format/Vektor-Wort = $80+4n (n=(Wort-$80)/4) -- exakt dieselbe
+* Rechnung, die echo.mod SELBST in seiner eigenen M$Excpt-Routine
+* benutzt (per Disassemblierung bestaetigt, s. docs/OWN_KERNEL_STATUS.md).
+*
+* Trap-Tabelle: pro Prozess, s. q9kernel_traplink.c
+* Q9K_PROCDESC_TRAPTBL_OFF ($1CC, 15 Eintraege a 12 Byte: Modulzeiger/
+* Ausfuehrungs-Einsprung/statischer Speicherzeiger). Ist fuer diesen
+* Vektor NICHTS installiert, wird (noch) NICHT auf M$Excpt (Kapitel-5-
+* "Lazy Install"-Fallback) weitergeleitet -- Q9K_ExcTrap (genereller
+* Halt/Diagnose) dient bis dahin als Ausweich. Echtes TODO.
+*
+* Weil die reale Rueckkehr per "rts" statt "rte" erfolgt, wird der
+* urspruengliche 8-Byte-Hardware-Rahmen HIER manuell verworfen (addq.l
+* #8,sp) statt per RTE konsumiert -- unser eigener 12-Byte-TrapEnt-
+* Rahmen tritt an seine Stelle. Das SR/CCR bleibt dabei LEBEND
+* unveraendert (keine echte User-/Supervisor-Trennung in diesem Kernel,
+* s. an anderer Stelle dokumentiert) -- der Trap-Handler signalisiert
+* Erfolg/Fehlschlag direkt ueber das lebende CCR, das der Aufrufer nach
+* der Rueckkehr per "bcs" auswertet, exakt wie bei einem echten
+* Systemaufruf.
+Q9K_TCallDispatch:
+        move.l  d0,-(sp)
+        move.l  a4,-(sp)
+        move.w  14(sp),d0                   * Format/Vektor-Wort aus dem Original-Frame (jetzt bei sp+8+6)
+        subi.w  #$80,d0
+        asr.w   #2,d0                        * d0.w = Trap-Nummer (1-15)
+        ext.l   d0
+        move.l  d0,Q9K_TCallScratch_TrapNum
+        subq.l  #1,d0
+        mulu    #12,d0
+        movea.l Q9_D_Proc,a4
+        adda.l  #Q9K_PROCDESC_TRAPTBL_OFF,a4
+        adda.l  d0,a4                        * a4 = Slot-Adresse in der Trap-Tabelle
+        move.l  (a4),d0                      * d0 = Modulzeiger (0 = nicht installiert)
+        beq     Q9K_TCallNotInstalled
+        move.l  d0,Q9K_TCallScratch_ModPtr
+        move.l  4(a4),Q9K_TCallScratch_ExecEntry
+        move.l  8(a4),Q9K_TCallScratch_StaticPtr
+
+* ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 35, per erneutem Lesen der
+* TrapEnt-Konvention, 68k_tech.pdf S. 172f, waehrend der Suche nach dem
+* $6C-Absturz in echo/csl): "Passed: d0-d7 = caller's registers, a0-a5 =
+* caller's registers" -- ALLE muessen UNVERAENDERT beim Trap-Handler
+* ankommen. Die bisherige Fassung benutzte d0 SPAETER (nach der
+* Ruecksprungadress-/Rahmen-Berechnung unten) noch zweimal als eigenes
+* Rechenregister (Vektor#, dann Funktionscode) und gab d0 NIE an den
+* echten Aufrufer-Wert zurueck, bevor sie in den Handler sprang -- der
+* Aufrufer verlor sein eigenes d0 also dauerhaft. Fix: Vektorwort und
+* Funktionscode HIER, SOLANGE d0/a4 noch die eigenen (bereits geretteten)
+* Arbeitsregister dieser Routine sind, in eigene Speicherzellen
+* vorausberechnen -- danach werden d0/a4 wie bisher an den Aufrufer
+* zurueckgegeben und bis zum Sprung in den Handler nicht mehr angefasst.
+        move.w  Q9K_TCallScratch_TrapNum,d0
+        addi.w  #32,d0                        * echte Vektornummer (ADDQ erlaubt nur 1-8)
+        move.w  d0,Q9K_TCallScratch_VectorWord
+* Geretteter PC steht noch im Original-Hardware-Rahmen -- d0/a4 sind an
+* dieser Stelle noch EIGENE Arbeitsregister (a4 zeigt gerade auf den
+* Trap-Tabellen-Slot, d0/a4 wurden bereits zu Beginn dieser Routine
+* gerettet, s.o.), der Rahmen selbst liegt deshalb bei sp+8 (8 Byte
+* eigene Rettung davor) -- PC-Feld also bei sp+8+2=sp+10, exakt wie beim
+* Format/Vektor-Wort weiter oben ("14(sp)" = sp+8+6).
+        movea.l 10(sp),a4                       * a4 = geretteter PC (nur als eigenes Zwischenregister)
+        move.w  -2(a4),Q9K_TCallScratch_FuncCode  * Funktionscode -- lag direkt vor RetPC im Code
+
+        movea.l (sp)+,a4                     * a4 unveraendert zurueck (echtes Aufrufer-Register)
+        move.l  (sp)+,d0                      * ebenso d0 (jetzt wirklich bis zum Handler-Sprung unangetastet)
+
+* Urspruenglicher Hardware-Rahmen jetzt wieder unangetastet bei (sp):
+* SR(2)/PC(4)/FMT(2). Ruecksprung muss hinter das Funktionscode-Wort
+* zeigen (das liegt direkt im Code hinter der TRAP-Instruktion, gleiche
+* Konvention wie Q9K_TrapDispatch fuer TRAP #0).
+        move.l  2(sp),Q9K_TCallScratch_RetPC
+        addq.l  #2,Q9K_TCallScratch_RetPC
+        addq.l  #8,sp                         * Hardware-Rahmen verwerfen (s. Kopfkommentar)
+
+* TrapEnt-Rahmen aufbauen (Kapitel 5, S. 172f): von HOCH nach NIEDRIG
+* also in dieser Reihenfolge pushen: Ruecksprung-PC, Vektor#,
+* Funktionscode, Aufrufer-a6. Alle vier Werte kommen jetzt direkt aus
+* Speicherzellen (kein Register mehr als Zwischenspeicher noetig) --
+* d0-d7/a0-a5 bleiben ab hier bis zum Handler-Sprung vollstaendig
+* unangetastet.
+        move.l  Q9K_TCallScratch_RetPC,-(sp)
+        move.w  Q9K_TCallScratch_VectorWord,-(sp)
+        move.w  Q9K_TCallScratch_FuncCode,-(sp)
+        move.l  a6,-(sp)                       * Aufrufer-a6 (bis hierher unveraendert)
+
+        movea.l Q9K_TCallScratch_StaticPtr,a6
+* ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 35, dieselbe Fundstelle):
+* "movea.l ExecEntry,a4 / jmp (a4)" verletzte dieselbe Konvention ein
+* zweites Mal -- a4 gehoert zu "a0-a5 = caller's registers" und muss
+* GENAUSO unangetastet bleiben. Fix: derselbe registerlose "Adresse
+* pushen, RTS springt hin"-Trampolin, der in diesem Kernel bereits fuer
+* Q9K_TrapExtInvoke etabliert ist (dort aus demselben Grund: kein freies
+* Register fuer das Sprungziel) -- kein Register wird dafuer gebraucht.
+        move.l  Q9K_TCallScratch_ExecEntry,-(sp)
+        rts                                     * springt in den echten Trap-Handler, d0-d7/a0-a5 unberuehrt
+
+Q9K_TCallNotInstalled:
+        movea.l (sp)+,a4
+        move.l  (sp)+,d0
+        bra     Q9K_ExcTrap
+
 * Q9K_ExcTrap -- generischer Exception-Einstieg (2026-09-02).
 * Ersetzt den bisherigen Default Q9K_ExcDefault aus q9kernel_exctable.c.
 * Grund: jener ist eine C-Funktion, und der Compiler stellt ihr einen
@@ -1039,6 +1223,17 @@ Q9K_TestProcA:
         bcs     Q9K_TestIOManLinkFail
         movea.l a6,a5                        * eigenes a6 sichern
         movea.l #0,a6                          * reale Kernel-Global-Basis fuer IOMans eigenen Code
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-09, Fortsetzung 27, zweiter Teil
+* des A4-Fixes in Q9K_TrapDispatch): A4 wurde hier NIE gesetzt. IOMan
+* bekam beim Einsprung also einen zufaelligen Restwert aus unserem
+* eigenen Bootstrap-Code (live gemessen: $7832/$7822/... -- je nach Lauf
+* verschieden, immer eine Adresse in unserem Modul) statt der realen
+* OS-9-Konvention "a4 = aktueller Prozessdeskriptor". Solange der
+* Dispatcher A4 ohnehin ueberschrieb, fiel das nicht auf; sobald er ihn
+* korrekt BEWAHRT, wuerde IOMan den Muellwert dauerhaft weiterreichen.
+* Q9_D_Proc haelt hier bereits einen gueltigen Deskriptor (Prozess 1
+* existiert vor diesem ersten Modulaufruf -- per Live-Messung belegt).
+        movea.l Q9_D_Proc,a4                    * A4 = aktueller Prozessdeskriptor (echte Konvention)
         jsr     (a1)                             * IOMan-Einsprungpunkt (a1 = M$Exec, reale F$Link-Ausgabe)
         movea.l a5,a6                              * eigenes a6 unbedingt wiederherstellen
 
@@ -1095,6 +1290,26 @@ Q9K_TestPathScanNext:
         move.l  a6,-(sp)
         movea.l #0,a6                              * reale Systemglobal-Basis fuer IOMans Handler
         move.w  d3,d0                               * d0.w = Pfadnummer
+* SICHERHEITSABSTAND (2026-09-11, Fortsetzung 37): RBF/SCF fuehren bei
+* JEDEM eigenen internen Treiberaufruf blind "addq.l/subq.l
+* #1,$3ac(a4)" aus (P$Preempt-Zaehler) -- mit a4 faelschlich auf UNSERE
+* Kernel-Modulbasis statt auf den echten Prozessdeskriptor gesetzt (seit
+* Fortsetzung 25 bekannter, bewusst nicht reparierter Bug: fuenf
+* Versuche, a4 dort richtigzustellen, brachen jedes Mal IOMans
+* Konsolen-Open). Reale Adresse = Modulbasis+$3ac -- ob das schadet,
+* haengt rein vom Kernel-LAYOUT ab (welcher eigene Code zufaellig dort
+* liegt), nicht von Interrupts/Timing (s. docs/OWN_KERNEL_STATUS.md,
+* Fortsetzung 37, fuer die vollstaendige Herleitung). Dieser Sprung
+* ueberspringt einen 12-Byte-Totraum, der Datei-Offset $3ac-$3af
+* (4 Byte, das eigentliche Angriffsziel) mit Rand auf beiden Seiten
+* abdeckt -- der Totraum darf beliebig kaputtgeschrieben werden, er wird
+* nie gelesen/ausgefuehrt. NUR ein Symptomschutz fuer den AKTUELLEN
+* Kernelbau: verschiebt sich der Code durch kuenftige Aenderungen,
+* verschiebt sich auch dieser Totraum mit -- die eigentliche Ursache
+* (A4-Herkunftspruefung) bleibt ungeloest.
+        bra.s   Q9K_TestWriteSafetyGapEnd
+        dc.w    0,0,0,0,0,0
+Q9K_TestWriteSafetyGapEnd:
         move.l  #Q9K_TestWriteLen,d1                 * d1.l = Bytezahl
         lea     Q9K_TestWriteText(pc),a0              * (a0) = Puffer
         trap    #0
@@ -1106,19 +1321,35 @@ Q9K_TestPathScanNext:
 * TRAP #0 -> IOMan -> scf -> sc68681 -> DUART, und d1 meldet exakt die
 * 17 uebergebenen Bytes zurueck.
 *
-* BEKANNTER FOLGEFEHLER, bewusst hier vermerkt statt kaschiert: kurz nach
-* diesem Punkt loest der DUART-Interrupt eine Exception aus (Vektor 4,
-* Illegal Instruction, PC=$6C) -- dasselbe Muster, das in diesem Projekt
-* schon einmal auftrat: ein "jsr (a0,d1.w)" mit a0=0, also ein
-* Sprungziel aus einer nicht gefuellten Tabelle (Verdacht: Q9_D_DevTbl,
-* das IOMans I$Attach fuellt). Ob er auftritt, haengt an der Modulgroesse
-* und damit am Zeitpunkt des Interrupts -- er ist also ein Race, kein
-* deterministischer Pfadfehler. Naechster Arbeitspunkt; die Ausgabe
-* selbst ist davon unberuehrt.
+* ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 33, 2026-09-11): kurz nach
+* diesem Punkt loeste der DUART-Interrupt gelegentlich eine Exception aus
+* (Vektor 4, Illegal Instruction, PC je nach Kernelgroesse unterschiedlich
+* -- u.a. $6C, $74b9, $1a10 live beobachtet) -- seit 2026-09-04 als
+* Modulgroessen-/Zeitpunkt-abhaengiger Race vermerkt, aber nicht verstanden.
+* Per Ringpuffer-Instrumentierung (s. docs/OWN_KERNEL_STATUS.md,
+* Fortsetzung 33) LIVE nachgewiesen: ein ankommender DUART-Interrupt traf
+* diesen Prozess mit einem bereits kollabierten, winzigen (also eindeutig
+* ungueltigen) geretteten PC-Wert -- die Kollision entsteht IRGENDWO in der
+* Interrupt-Verschachtelung (Timer trifft Q9K_IRQDispatch oder umgekehrt),
+* nicht abschliessend auf eine einzelne Instruktion zurueckgefuehrt.
+* Fix (bewusst schmal, nicht der grosse Kernel-weite Umbau): Interrupts
+* fuer dieses kurze Fenster (reine Diagnose-Ausgabe + Registervorbereitung
+* fuer F$Fork -- kein I/O noetig, das nicht per Direktzugriff auf den
+* DUART liefe) sperren. Q9K_DiagWriteD7 pollt SRA/THRA direkt (kein
+* Interrupt noetig), bleibt also unter Maskierung voll funktionsfaehig.
+* Live verifiziert: mit dieser Sperre kommt der Testablauf zuverlaessig an
+* F$Load(echo)/F$Load(csl)/F$TLink(13,"csl")/F$Fork(echo) vorbei, OHNE
+* die Sperre bricht er weiterhin genau hier ab (identischer Kernel-Build,
+* nur diese zwei Zeilen unterschiedlich). Der allgemeine Kernel-Race
+* selbst (irgendein Interrupt kann PRINZIPIELL jeden unmaskierten Code
+* treffen) ist damit NICHT behoben, nur dieses eine, bekannte Zeitfenster
+* in unserem eigenen Testcode entschaerft -- echte Anwendungsprozesse
+* (z.B. echo, s.u.) laufen weiterhin unmaskiert und koennten denselben
+* Mechanismus an anderer Stelle treffen. Echtes TODO bleibt die generelle
+* Ursache in Q9K_TimerIRQHandler/Q9K_IRQDispatch.
+        ori.w   #$0700,sr
         moveq   #'O',d7                     * DIAGNOSE: I$Write ohne Fehler zurueck
         bsr     Q9K_DiagWriteD7
-        move.l  d1,d5                         * d1.l = geschriebene Bytes
-        bsr     Q9K_DiagWriteHex32
 
 * MEILENSTEIN-TEST (2026-09-04): ein ECHTES Programm starten. hellosvc
 * (s. hellosvc.a) ist ein eigenstaendiges OS-9-Programmmodul, das seine
@@ -1138,6 +1369,9 @@ Q9K_TestPathScanNext:
         clr.l   d2
         clr.w   d3
         clr.w   d4
+* Maskierung wieder aufheben -- F$Fork selbst UND hellosvc brauchen
+* funktionierende IRQs (Konsolenausgabe ueber I$WritLn).
+        andi.w  #$f8ff,sr
         lea     Q9K_TestHelloName(pc),a0
         trap    #0
         dc.w    3                                  * Funktionscode 3 = F$Fork
@@ -1153,105 +1387,102 @@ Q9K_TestHelloFail:
         bsr     Q9K_DiagWriteHex32
 Q9K_TestHelloDone:
 
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06, Abschnitt "F$Load"):
-* Nachweis, dass der Dateizugriff ueber RBF wirklich traegt. Vor F$Load muss
-* feststehen, dass I$Open/I$Read auf eine ECHTE Datei funktionieren -- sonst
-* baut man den Lader auf Sand.
-*
-* Konvention (68k_tech): I$Open  d0.b = Zugriffsmodus (1 = Lesen),
-* (a0) = Pfadname; zurueck d0.w = Pfadnummer, a0 hinter dem Namen.
-*        I$Read  d0.w = Pfadnummer, d1.l = Anzahl, (a0) = Puffer;
-* zurueck d1.l = tatsaechlich gelesen.
-* Ausgegeben werden Marker und die ersten acht Bytes der Datei.
-* Vorprobe: findet unsere EIGENE Modulsuche den kompletten "Dreiklang"?
-* IOMan braucht beim Open drei Module: den Geraetedeskriptor, den darin
-* genannten File-Manager und den Treiber. Faellt EINES aus, meldet der
-* Aufruf E_MNF -- und zwar ohne dass IOMans eigene E_MNF-Stelle je erreicht
-* wird (per Freeze geprueft), der Code kommt also aus einem Unterdienst.
-* Ausgegeben wird je Name ein Grossbuchstabe bei Erfolg, ein Kleinbuchstabe
-* plus Fehlercode sonst.
-        lea     Q9K_TestTriadNames(pc),a3
-        moveq   #'1',d3                     * Kennung des gerade geprueften Namens
-Q9K_TestTriadLoop:
-        tst.b   (a3)
-        beq     Q9K_TestTriadDone
-        clr.w   d0                          * Typ/Sprache beliebig
-        movea.l a3,a0
-        movem.l d3/a3,-(sp)
+* Der Dreiklang-Vorprobe-Test (F$Link auf "dd"/"rbf"/"cfide") UND der
+* schlichte Dateitest (I$Open/I$Read auf "/dd/startup") standen hier
+* frueher (2026-09-06 bis 2026-09-10) -- beide entfernt, nachdem sie ihren
+* Zweck erfuellt haben (F$Link/I$Open/I$Read/F$Move sind live verifiziert
+* und in docs/OWN_KERNEL_STATUS.md, Fortsetzung 27/28, dokumentiert UND
+* committet) und Platz fuer den F$Load-Test unten gebraucht wurde (feste
+* Groessengrenze der Testabbild-Bootkette, s. dort).
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-10, Abschnitt "F$Load"):
+* Nachweis, dass F$Load wirklich ein echtes Kommandomodul von Platte
+* laedt. "/CMDS/echo" ist ein echtes, kleines Kommandomodul auf dem
+* Testabbild (per os9-Toolshed geprueft: Modulgroesse $C8E, "Good CRC").
+* Konvention (68k_tech.pdf S. 462f): IN d0.b=Zugriffsmodus (1=Read_),
+* d1.l=Speicherfarbe (nur relevant, wenn Bit 7 von d0 gesetzt -- hier
+* nicht), (a0)=Pfadname. OUT (Erfolg): (a2)=Modulzeiger, (a1)=
+* Einsprungpunkt, Carry geloescht.
+        moveq   #1,d0                       * Read_ (Bit 7 nicht gesetzt -- d1/Farbe bleibt bewusst unbelegt)
+        lea     Q9K_TestLoadName(pc),a0
         trap    #0
-        dc.w    $0000                       * F$Link
-        movem.l (sp)+,d3/a3
-        bcs     Q9K_TestTriadFail
-        move.b  d3,d7                       * Ziffer = gefunden
+        dc.w    $0001                       * F$Load
+        bcs     Q9K_TestLoadFail
+        moveq   #'l',d7                     * DIAGNOSE: F$Load erfolgreich (Modulzeiger/-groesse
+        bsr     Q9K_DiagWriteD7              * per Moduldirectory-Dump pruefbar, s. Ctrl-^)
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-11): Verdacht pruefen,
+* dass "can't install csl" schlicht bedeutet "F$Link(csl) fand nichts",
+* weil csl nirgends geladen ist -- NICHT zwingend ein fehlender neuer
+* TRAP-#1-15-Mechanismus. csl vorab per F$Load bereitstellen (Fehler
+* wird ignoriert -- wir wollen NUR sehen, ob es die spaetere Meldung
+* aendert, kein zweiter Fehlerpfad noetig).
+        moveq   #1,d0
+        lea     Q9K_TestCslName(pc),a0
+        trap    #0
+        dc.w    $0001                       * F$Load
+        bcs     Q9K_TestCslDone              * Fehlschlag: keine Diagnose (Platzgrund), einfach weiter
+        moveq   #'c',d7                     * DIAGNOSE: csl geladen
         bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestTriadNext
-Q9K_TestTriadFail:
-        moveq   #'x',d7                     * DIAGNOSE: nicht gefunden
+* NACHTRAG (2026-09-11, Fortsetzung 51): die Fortsetzung-48-Kombi-
+* Allokation (Q9K_ExperimentalCombinedAlloc) ist entfallen -- sie loeste
+* ein Problem, das durch den fehlenden $8000-Bias auf a6 nur VORGETAEUSCHT
+* wurde (s. Q9K_ProcFork, q9kernel_firstproc.c, und docs/OWN_KERNEL_STATUS.md
+* Fortsetzung 51). Mit korrektem Bias landet echos "jsr -$78a0(a6)" von
+* selbst an der richtigen Stelle -- in echos EIGENEM, ganz normal per
+* Q9K_AllocMem zugeteiltem Prozessblock, keine Sonderbehandlung mehr noetig.
+Q9K_TestCslDone:
+
+* NUR FUER DIESEN BOOT-TEST TEMPORAER (Fortsetzung 33, "F$TLink kontrolliert
+* pruefen"): echten F$TLink(13,"csl")-Aufruf aus EIGENEM, bekanntem
+* Kontext testen -- entkoppelt von echos unbekannter C-Laufzeit. Reale
+* Konvention (s. Kopfkommentar q9kernel_traplink.c): IN d0.w=Trap-Nummer
+* (1-15), d1.l=optionale Speichergroesse (0=Vorgabe aus M$Mem), (a0)=
+* Modulname. OUT (Erfolg): Carry geloescht. Schlug F$Load(csl) oben schon
+* fehl, bleibt dieser Test aussagekraeftig fehlschlagend (E$MNF erwartet) --
+* kein Sonderpfad noetig.
+        moveq   #13,d0                      * Trap-Nummer 13 (per Disassemblierung von echo.mod verifiziert)
+        clr.l   d1                           * kein Speicher-Override -- M$Mem des Moduls entscheidet
+        lea     Q9K_TestCslBareName(pc),a0     * NACKTER Name, s. Kommentar bei Q9K_TestCslBareName
+        trap    #0
+        dc.w    $0021                        * F$TLink
+        bcs     Q9K_TestTLinkFail
+        moveq   #'t',d7                      * DIAGNOSE: F$TLink(13,"csl") erfolgreich
         bsr     Q9K_DiagWriteD7
-        move.b  d3,d7
+        bra     Q9K_TestTLinkDone
+Q9K_TestTLinkFail:
+        moveq   #'x',d7                      * DIAGNOSE: F$TLink(13,"csl") fehlgeschlagen, Fehlercode folgt
         bsr     Q9K_DiagWriteD7
         move.l  d1,d5
         bsr     Q9K_DiagWriteHex32
-Q9K_TestTriadNext:
-        addq.b  #1,d3
-Q9K_TestTriadSkip:
-        tst.b   (a3)+                        * bis hinter das NUL-Byte
-        bne     Q9K_TestTriadSkip
-        bra     Q9K_TestTriadLoop
-Q9K_TestTriadDone:
+Q9K_TestTLinkDone:
 
-        moveq   #'F',d7                     * DIAGNOSE: Dateitest beginnt
-        bsr     Q9K_DiagWriteD7
-        moveq   #1,d0                       * Modus 1 = Lesen
-        lea     Q9K_TestFileName(pc),a0
+* Das per F$Load geladene Modul jetzt auch wirklich AUSFUEHREN -- der
+* eigentliche Zweck des Meilensteins. "echo" steht jetzt (per
+* F$VModul) korrekt im Moduldirectory, ein normaler F$Fork("echo")
+* sollte es darueber finden (Q9K_ModDirLinkByName, laengst fuer
+* hellosvc/forkchild bewaehrt).
+        clr.w   d0
+        clr.l   d1
+        clr.l   d2                          * Parametergroesse 0 -- kein argv
+        clr.w   d3
+        clr.w   d4
+        lea     Q9K_TestEchoName(pc),a0
+        suba.l  a1,a1
         trap    #0
-        dc.w    $0084                       * I$Open
-        bcs     Q9K_TestFileOpenFail
-        move.w  d0,d4                       * Pfadnummer merken
-        moveq   #'o',d7                     * DIAGNOSE: geoeffnet
+        dc.w    3                           * F$Fork
+        bcs     Q9K_TestForkEchoFail
+        moveq   #'E',d7                     * DIAGNOSE: echo geforkt
         bsr     Q9K_DiagWriteD7
-
-        move.w  d4,d0
-        moveq   #8,d1
-        lea     Q9K_TestFileBuf(pc),a0
-        trap    #0
-        dc.w    $0089                       * I$Read
-        bcs     Q9K_TestFileReadFail
-        moveq   #'[',d7
+        bra     Q9K_TestProcA_Loop
+Q9K_TestForkEchoFail:
+        moveq   #'e',d7                     * DIAGNOSE: F$Fork("echo") fehlgeschlagen
         bsr     Q9K_DiagWriteD7
-        lea     Q9K_TestFileBuf(pc),a1
-        moveq   #7,d6
-Q9K_TestFileShow:
-        move.b  (a1)+,d7
-        cmpi.b  #$20,d7
-        bcc     Q9K_TestFileShowChar
-        moveq   #'.',d7
-Q9K_TestFileShowChar:
+        bra     Q9K_TestProcA_Loop
+Q9K_TestLoadFail:
+        moveq   #'k',d7                     * DIAGNOSE: F$Load fehlgeschlagen
         bsr     Q9K_DiagWriteD7
-        dbra    d6,Q9K_TestFileShow
-        moveq   #']',d7
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestFileDone
-
-Q9K_TestFileOpenFail:
-* DIAGNOSE-HAKEN: als ERSTES eine sonst unbenutzte Zelle beschreiben. Ein
-* Schreib-Watch mit Freeze darauf (Q9_WATCH_ADDR=0x1700, Q9_WATCH_FREEZE=1)
-* haelt den Instruktions-Ring GENAU hier an -- er enthaelt dann noch den Weg,
-* auf dem der Fehler entstanden ist. Auf den Fehlerzweig selbst laesst sich
-* nicht triggern, ohne seine Laufzeitadresse zu kennen.
-        move.l  d1,$1700
-        moveq   #'f',d7                     * DIAGNOSE: I$Open fehlgeschlagen, Code folgt
-        bsr     Q9K_DiagWriteD7
-        move.l  d1,d5
-        bsr     Q9K_DiagWriteHex32
-        bra     Q9K_TestFileDone
-
-Q9K_TestFileReadFail:
-        moveq   #'g',d7                     * DIAGNOSE: I$Read fehlgeschlagen, Code folgt
-        bsr     Q9K_DiagWriteD7
-        move.l  d1,d5
-        bsr     Q9K_DiagWriteHex32
-Q9K_TestFileDone:
+        bra     Q9K_TestProcA_Loop
 
 * Der I$ReadLn-Test von hier ist entfernt (2026-09-06), nachdem er seinen
 * Zweck erfuellt hat: er machte den Lesepfad bis in den Treiber verfolgbar
@@ -1315,20 +1546,30 @@ Q9K_TestWriteText:
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 Q9K_TestWriteLen equ 17
 
-* NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-06) -- Pfadname und Puffer
-* fuer den Dateitest oben. "/dd" ist der Geraetedeskriptor aus dem Bootfile.
-* Namensliste fuer die Dreiklang-Probe: Deskriptor, File-Manager, Treiber.
-* Doppeltes NUL beendet die Liste.
-Q9K_TestTriadNames:
-        dc.b    "dd",0
-        dc.b    "rbf",0
-        dc.b    "cfide",0
-        dc.b    0
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-10): "/CMDS/echo" ohne
+* Geraetepraefix schlug mit E$MNF fehl -- das ERSTE Pfadsegment nach "/"
+* ist in OS-9 immer der Geraetedeskriptorname, IOMan versuchte also
+* F$Link("CMDS") statt F$Link("dd").
+Q9K_TestLoadName:
+        dc.b    "/dd/CMDS/echo",0
+
+Q9K_TestCslName:
+        dc.b    "/dd/CMDS/csl",0
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
-Q9K_TestFileName:
-        dc.b    "/dd/startup",0
-Q9K_TestFileBuf:
-        dc.b    0,0,0,0,0,0,0,0
+Q9K_TestCslBareName:
+* ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 33, eigener Testcode, nicht
+* der Kernel selbst): F$TLink braucht den NACKTEN Modulnamen (genau wie
+* echo.mod ihn per Disassemblierung nachweislich benutzt), keinen Pfad --
+* Q9K_ModDirLinkByName sucht nach dem Namen AUS DEM MODULKOPF ("csl"),
+* nie nach "/dd/CMDS/csl". Erster Versuch nutzte faelschlich
+* Q9K_TestCslName (den F$Load-Pfad) auch fuer F$TLink -- E$MNF war damit
+* garantiert, unabhaengig davon, ob F$TLink selbst korrekt arbeitet.
+        dc.b    "csl",0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+
+Q9K_TestEchoName:
+        dc.b    "echo",0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 
 Q9K_TestHelloName:
         dc.b    "hellosvc",0
@@ -1503,6 +1744,19 @@ Q9K_TimerActivate:
 * oben zum gemeinsamen Fake-Rahmen-Mechanismus).
 Q9K_TimerIRQHandler:
         movem.l d0-d7/a0-a6,-(sp)              * kompletten Registersatz des unterbrochenen Prozesses sichern
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben): d0-d2/a0 sind hier
+* frei benutzbar -- ihre echten Werte liegen bereits gesichert im
+* movem-Bereich auf dem Stack, unberuehrt von den folgenden Zeilen.
+        move.l  62(sp),d1                        * geretteter PC (60 Byte movem + 2 Byte SR-Wort)
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        moveq   #30,d0                            * Marker = Timer-Vektor
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
         movea.l Q9_D_Proc,a0                    * a0 = aktueller Prozessdeskriptor
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * dessen SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
 
@@ -1577,10 +1831,35 @@ Q9K_TrapDispatch:
 * (A6 bewusst NICHT dabei, s. Kopfkommentar oben).
         movem.l d2-d7/a3-a5,-(sp)
         movea.l 38(sp),a4                 * a4 = geretteter PC (Frame jetzt bei sp+36; PC-Feld bei +2 davon)
+        move.l  a4,Q9K_TrapCallerPC          * echte Ruecksprungadresse fuer die Herkunftspruefung sichern
         move.w  (a4),d7                    * d7 = Funktionscode (0-255), direkt aus dem Code-Strom
 * NUR TEMPORAER (2026-09-01, I$Open-Folgeschritt-Suche): letzten
 * Funktionscode an feste Debug-Adresse schreiben.
         move.w  d7,($1370).w
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben), fuenfter Messpunkt
+* (2026-09-11, gezielt fuer den Fall "Absturz-PC landet auf dem
+* Funktionscode-Wort OHNE zugehoerigen X-Marker" -- deutet auf einen
+* Fehler VOR der externen/internen Verzweigung hin). Marker=$5400+
+* Funktionscode, PC=a4 (ROH, noch VOR der addq.l-Korrektur). d0-d2/a0
+* sind hier NOCH LEBENDE Aufrufer-Register -- erst "movem.l (sp),
+* d2-d7/a3-a5" weiter unten holt d2-d7/a3-a5 zurueck, d0/d1/a0-a2 werden
+* NIE gesichert -- deshalb hier explizit per movem retten/wiederherstellen.
+* a4/d7 bleiben unberuehrt, der Aufrufer (Rest dieser Routine) braucht sie
+* unveraendert weiter.
+        movem.l d0-d2/a0,-(sp)
+        move.w  d7,d1
+        andi.l  #$ff,d1
+        or.l    #$5400,d1
+        move.l  a4,d0                       * PC, roh, vor der Korrektur
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                     * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        move.l  d1,(a0)
+        move.l  d0,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
+        movem.l (sp)+,d0-d2/a0
         addq.l  #2,38(sp)                   * geretteten PC im Frame um 2 erhoehen (hinter das Funktionscode-Wort)
         cmp.w   #256,d7
         bcc     Q9K_TrapUnknown
@@ -1629,8 +1908,70 @@ Q9K_TrapDispatch:
         tst.b   (a4)
         movea.l Q9K_TrapA4Save,a4                       * A4 unveraendert zurueck
         bne     Q9K_TrapCallExternal
-        movea.l Q9K_TrapHandlerScratch,a4                 * eigener Handler: unveraendertes Verhalten
+* HERKUNFTSPRUEFUNG (sechster A4-Anlauf, 2026-09-07): der Rueckweg
+* fuer eigene Handler ueberschreibt A4 bisher IMMER mit der Handler-
+* Adresse (reale Konvention: Aufrufer erwartet dort seinen
+* Prozessdeskriptor-/Geraete-Statikspeicherzeiger zurueck). Fuenf
+* fruehere Anlaeufe scheiterten an zwei Huerden: kein freies Register
+* fuer die Pruefung, keine Kernel-Grenze als Assemblier-Konstante.
+* Beide jetzt geloest: die Pruefung erfolgt VOR dem A4-Laden (a4 selbst
+* ist zu diesem Zeitpunkt noch frei), und die Modulgrenze wird PC-
+* relativ zu Q9K_ModuleStart berechnet -- keine absolute Adresse noetig,
+* da r68 den Versatz zwischen zwei Marken im selben Modul zur
+* Assemblierzeit ausrechnet, unabhaengig von der Lade-Adresse.
+* GEMESSEN (2026-09-07): RBFs echte Speicherkorruption an einer per
+* Speicher-Watch nachgewiesenen Adresse verschwindet mit diesem Fix,
+* IOMans Konsolen-Open bleibt (erstmals nach fuenf Fehlversuchen) heil.
+* NACHTRAG (zweite Praezisierung): weder eine geratene 64-KByte-Konstante
+* (zu grosszuegig, s. o.) NOCH "M\$Size ab Q9K_ModuleStart" (zu kurz --
+* Q9K_ModuleStart markiert laut eigenem Kopfkommentar NICHT Offset 0 des
+* Moduls, sondern das Ende des generierten Kopfs, $3C=Q9K_ModuleHeaderSize
+* Byte WEITER; "4(a4)" traf dadurch auf echten Code statt auf M$Size --
+* per Messung entdeckt: gelesener "M$Size"-Wert war offensichtlicher
+* Muell). Um Q9K_ModuleHeaderSize korrigiert zeigt a4 jetzt auf den
+* WAHREN Modulanfang (M$ID), "4(a4)" liest dort das echte M$Size-Feld.
+* WICHTIGE MESSUNG (2026-09-09, Fortsetzung 27) -- der Kommentar unten
+* ("A4 bleibt dessen eigener Wert, unangetastet") ist SACHLICH FALSCH:
+* die Pruefung hier ueberschreibt A4 mit unserer Modulbasis, und fuer
+* Fremdaufrufer stellt das niemand wieder her. Laut Technical Manual
+* definieren weder F$SRqMem noch F$SSvc einen A4-Rueckgabewert (Output
+* listet nur d0/a2 bzw. gar nichts), A4 MUESSTE also unveraendert
+* zurueckgehen.
+*
+* TROTZDEM NICHT "REPARIERT" -- und das ist Absicht: FUENF Versuche, A4
+* hier korrekt zu bewahren oder zu setzen (globale Zelle, Stack, auf
+* Q9_D_Proc setzen, nur in Q9K_SysFSRqMem, sowie stack-basiert plus
+* korrekter Deskriptorgroesse), brachen JEDES MAL IOMans allererstes
+* Konsolen-Open (`Error $0000`). Ein Kontrollexperiment mit identischer
+* Stack-Bewegung, aber unveraendertem A4-Wert lief dagegen sauber durch
+* -- es liegt also am WERT, nicht an der Codeform. Warum IOMan/scf
+* ausgerechnet unsere Modulbasis vertragen, ist noch ungeklaert.
+*
+* Der eigentliche Schaden (RBF klammert einen internen Treiberaufruf mit
+* "addq.l #1,$3ac(a4)"/"subq.l #1,$3ac(a4)"; Offset $3AC = P$Preempt im
+* echten Layout) ist stattdessen an zwei anderen Stellen behoben:
+* Q9K_PROCDESC_SIZE auf die echten 0x400 (q9kernel_tables.c) und A4 vor
+* IOMans allererstem Einsprung ueberhaupt erst initialisiert (s. "jsr
+* (a1)" weiter oben in dieser Datei). Damit laufen I$Open UND I$Read auf
+* /dd/startup erstmals sauber durch. Details: docs/OWN_KERNEL_STATUS.md
+* Fortsetzung 25-27.
+        lea     Q9K_ModuleStart(pc),a4               * a4 = Ende des generierten Modulkopfs
+        suba.l  #Q9K_ModuleHeaderSize,a4                * a4 = WAHRER Modulanfang (M$ID-Wort)
+        move.l  Q9K_TrapCallerPC,d7
+        sub.l   a4,d7                                  * d7 = Ruecksprung-PC minus wahre Lade-Basis
+        cmp.l   4(a4),d7                                * gegen echtes M$Size aus dem Modulkopf
+        bcc     Q9K_TrapCallForeignCaller               * >= eigene Groesse: Aufrufer AUSSERHALB
+        movea.l Q9K_TrapHandlerScratch,a4                 * Aufrufer ist WIR SELBST: unveraendertes Verhalten
         jsr     (a4)
+        bra     Q9K_TrapAfterCall
+Q9K_TrapCallForeignCaller:
+* Aufrufer liegt ausserhalb unseres Moduls (IOMan/File-Manager/Treiber) --
+* A4 muss dessen eigener Wert sein (vom Stack zurueck, s. Fix oben).
+* "jsr (a4)" wuerde A4 zusaetzlich mit der Handler-Adresse ueberschreiben,
+* deshalb speicherindirekt ueber Opcode-Bytes (r68 kennt "jsr ([...])"
+* nicht, der 68030 die Adressierungsart aber sehr wohl).
+        dc.w    $4ebb,$01f1                               * jsr ([Q9K_TrapHandlerScratch])
+        dc.l    Q9K_TrapHandlerScratch
         bra     Q9K_TrapAfterCall
 Q9K_TrapCallExternal:
 * Registerrahmen im ECHTEN OS-9-Layout anlegen (72 Byte). Maszgeblich ist
@@ -1648,6 +1989,23 @@ Q9K_TrapCallExternal:
 * "movem" kann A7 nicht mitschreiben, der Slot wird separat gesetzt;
 * ebenso SR/PC/Format, die aus dem Hardware-Exception-Frame stammen
 * (SP zeigt beim Eintritt hierher genau darauf).
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben), Marker $58='X' =
+* Anfang externer Aufruf. d0-d2/a0 sind hier laut Konvention frei
+* (Handler-Ergebnisregister, noch nicht belegt); a4 (Aufrufer-A4) bleibt
+* unangetastet. PC kommt aus dem noch reinen Hardware-Frame (2(sp) --
+* bereits per addq.l #2 im TrapDispatch korrigiert).
+        movem.l d0-d2/a0,-(sp)
+        move.l  18(sp),d1                        * PC (Frame jetzt 16 Byte tiefer)
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        moveq   #$58,d0
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
+        movem.l (sp)+,d0-d2/a0
         lea     -72(sp),sp                      * Platz fuer den R$-Rahmen
         movem.l d0-d7/a0-a6,(sp)                 * R$d0..R$a6 (60 Byte, aufsteigend)
         move.l  sp,$3c(sp)
@@ -1806,6 +2164,25 @@ Q9K_TrapAfterCall:
         or.w    d0,6(sp)                       * echtes CCR einsetzen
         move.l  (sp)+,d0                        * d0 wiederherstellen
         addq.l  #2,sp                            * CCR-Wort verwerfen -- sp zeigt auf den Frame
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben), Marker $41='A' =
+* Ende, unmittelbar VOR dem RTE. d0 traegt hier den ECHTEN Rueckgabewert
+* des Handlers (z.B. F$SRqMems gewaehrte Byte-Anzahl) -- deshalb per
+* movem VOLLSTAENDIG gerettet/wiederhergestellt, nicht nur "frei"
+* angenommen. Das lebende CCR wird von "andi.l"/"addq.l" unten zwar
+* veraendert, das ist HIER folgenlos: RTE laedt SR ausschliesslich aus
+* dem Frame (bereits oben per "or.w d0,6(sp)" endgueltig gesetzt).
+        movem.l d0-d2/a0,-(sp)
+        move.l  18(sp),d1                        * PC, der GLEICH per RTE zurueckgegeben wird
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        moveq   #$41,d0
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
+        movem.l (sp)+,d0-d2/a0
         rte
 
 Q9K_TrapUnknown:
@@ -1958,6 +2335,49 @@ Q9K_SysFRetPD_Fail:
         ori     #1,ccr                          * Carry setzen -- Fehlschlag
         rts
 
+*******************************************************************************
+* Q9K_SysFMove -- TRAP-#0-Handler fuer F$Move (Callcode 0x38, 68k_tech.pdf
+* S. 466f). ECHT GEFUNDEN + GEFIXT (2026-09-10): RBFs eigene Kopierroutine
+* (Modul-Offset $C0-$D7, per Ruecksprungadressen-Forensik am unbelegten
+* Dispatch-Slot lokalisiert, s. docs/OWN_KERNEL_STATUS.md) ruft genau
+* diesen Dienst auf, um Dateidaten aus ihrem eigenen Puffer in den
+* Aufruferpuffer zu kopieren -- OHNE hinterher Carry/d1 zu pruefen. Bisher
+* lief der Aufruf in Q9K_SysUnimplemented: kein Fehler wurde sichtbar
+* (I$Read blieb "erfolgreich"), aber es wurde schlicht NICHTS kopiert,
+* der Zielpuffer blieb auf Null.
+*
+* IN:  d2.l = Bytezahl, (a0) = Quelle, (a2) = Ziel.
+* OUT: keine (laut Manual). Fehlerfall: Carry gesetzt, d1.w = Fehlercode.
+* "Low Bound First": bei ueberlappenden Bereichen richtungssicher kopieren
+* (a2 > a0 -> rueckwaerts, sonst vorwaerts) -- reine Byteschleife, Tempo
+* spielt fuer unseren Zweck keine Rolle.
+*
+* a0/a2/d2 werden trotz laut Manual undefiniertem OUT unangetastet
+* zurueckgegeben (kostet nichts, schont potentielle Aufrufer-Annahmen wie
+* die von F$Sleep schon einmal erlebte "a5==sp+8"-Falle).
+Q9K_SysFMove:
+        movem.l d0/a0/a2,-(sp)
+        move.l  d2,d0
+        beq     Q9K_SysFMoveDone
+        cmpa.l  a0,a2
+        bhi     Q9K_SysFMoveBack
+Q9K_SysFMoveFwd:
+        move.b  (a0)+,(a2)+
+        subq.l  #1,d0
+        bne     Q9K_SysFMoveFwd
+        bra     Q9K_SysFMoveDone
+Q9K_SysFMoveBack:
+        add.l   d2,a0
+        add.l   d2,a2
+Q9K_SysFMoveBackLoop:
+        move.b  -(a0),-(a2)
+        subq.l  #1,d0
+        bne     Q9K_SysFMoveBackLoop
+Q9K_SysFMoveDone:
+        movem.l (sp)+,d0/a0/a2
+        andi    #$fe,ccr                       * Carry loeschen -- Erfolg
+        rts
+
 * NACHSCHLAGEN, falls wieder gebraucht (2026-09-05): ein 'U' hier auszugeben
 * ("movem.l d0-d7/a0-a6,-(sp) / moveq #'U',d7 / bsr Q9K_DiagWriteD7 / movem.l
 * zurueck", VOR dem move.w unten) beantwortet die Frage, ob ueberhaupt ein
@@ -1965,6 +2385,22 @@ Q9K_SysFRetPD_Fail:
 * stillschweigend mit Carry zurueck und ist von einem echten Fehler des
 * Dienstes nicht zu unterscheiden. Damit wurde F$RetPD gefunden.
 Q9K_SysUnimplemented:
+* NACHSCHLAGEN, falls wieder gebraucht (2026-09-10, per F$Move-Fund): $1370
+* zeigt nur bei ECHTEM TRAP #0 den aktuellen Callcode -- ruft ein
+* Fremdmodul intern per Trampolin (rts-Trick, kein TRAP) in einen
+* unbelegten Slot, bleibt $1370 stehen (veraltet). Um den ECHTEN Callcode
+* zu finden: die Ruecksprungadresse liegt bei (sp), genau wie bei einem
+* normalen jsr; 8 Byte DAVOR steht beim Trampolin-Muster ("pea <ret>(pc)"
+* / "move.l disp(a3),-(a7)" / "movea.l disp2(a3),a3" / "rts") die
+* Verschiebung der ersten move.l -- das ist Callcode*4. Probe: "move.l
+* (sp),d5 / bsr Q9K_DiagWriteHex32" (Ruecksprungadresse) und "movea.l
+* (sp),a0 / clr.l d5 / move.w -8(a0),d5 / bsr Q9K_DiagWriteHex32"
+* (Verschiebung) VOR dem move.w unten, jeweils mit Registersicherung drum
+* herum. Damit wurde F$Move (Callcode 0x38) in RBFs Kopierroutine
+* (Modul-Offset $C0-$D7) gefunden -- s. docs/OWN_KERNEL_STATUS.md.
+* LIVE GEPRUEFT (2026-09-10, F$Load-Ruecksprung-Suche): waehrend der
+* F$Load-Fehlschlagkette landet NICHTS hier -- der spaetere E$MNF stammt
+* also nicht aus einem fehlenden Kernel-Dienst.
         move.w  #$00d0,d1                        * d1.w = E_UNKSVC (gleicher Wert wie Q9K_TrapUnknown)
         ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
@@ -2505,6 +2941,29 @@ Q9K_SysFPrsNam:
         movea.l Q9K_PrsNamScratch_Past,a0          * a0 = hinter dem Namen
         move.l  Q9K_PrsNamScratch_Delim,d0          * d0.b = Trennzeichen
         move.l  Q9K_PrsNamScratch_Len,d1             * d1.w = Namenslaenge
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08, nach dem A4-Fix aufgefallen):
+* der Registerrahmen ($a3e0-Nachbau von gestern) wurde BEDINGUNGSLOS
+* nach (a5) geschrieben -- als sei a5 IMMER ein gueltiger Trampolin-
+* Rahmenzeiger. Fuer den direkten "trap #0"-Weg (z. B. RBFs eigener aus
+* dem Modul heraus abgesetzter F$PrsNam-Aufruf) ist a5 aber nur ein
+* GEWOEHNLICHES Register des Aufrufers -- der Schreibzugriff traf
+* fremden Speicher. Gemessen: RBFs I$Open("/dd/startup") scheiterte
+* danach mit einem Muell-Fehlercode ($D8), obwohl F$PrsNam selbst
+* erfolgreich war (Carry-frei) -- Symptom genau dieser Speicherstoerung.
+* Fix: dieselbe stackrelative Rahmenerkennung wie bei
+* Q9K_SysFAllPD/Q9K_SysFSRqMem (a5 == sp+8 relativ zum Trampolin-
+* Aufrufer) -- nur bei einem ECHTEN Rahmen wird hineingeschrieben, sonst
+* bleibt es bei den bereits gesetzten, dokumentierten Ausgaberegistern
+* (a0/a1/d0/d1), die der Aufrufer laut echter Konvention ohnehin liest.
+        move.l  a0,-(sp)                     * a0 gleich wieder gebraucht -- kurz rueckenfrei (4 Byte)
+        movea.l sp,a0
+        adda.l  #12,a0                         * a0 = sp VOR diesem push (4) + 8 (dieselbe Zielformel wie F$SRqMem/F$AllPD)
+        cmpa.l  a0,a5
+        movea.l (sp)+,a0
+        bne     Q9K_SysFPrsNam_NoFrame
+        movem.l d0-d1,(a5)                            * R$d0/R$d1
+        movem.l a0-a1,$20(a5)                          * R$a0/R$a1
+Q9K_SysFPrsNam_NoFrame:
         andi    #$fe,ccr                              * Carry loeschen -- Erfolg
         rts
 
@@ -2537,8 +2996,14 @@ Q9K_SysFPrsNam_Fail:
 * Registersatz wird gesichert: eine fremde ISR haelt sich nicht
 * zwingend an unsere Aufrufkonventionen, und ein Interrupt darf den
 * unterbrochenen Prozess unter keinen Umstaenden veraendern.
-Q9K_IRQTabBase   equ $1500          * 16 Eintraege a 20 Byte, s. q9kernel_exctable.c
-Q9K_IRQTabSlots  equ 16
+* NACHTRAG (2026-09-11, Fortsetzung 51): 16 -> 12 Eintraege -- bei 16
+* ueberlappte die Tabelle ($1500-$1640) gleich vierfach mit spaeter
+* angelegten Scratch-Zellen anderer Syscalls (Q9K_SEND_/Q9K_RETPD_/
+* Q9K_VMODUL_SCRATCH_*, s. ausfuehrlichen Kommentar bei Q9K_IRQTAB_BASE,
+* q9kernel_exctable.c). 12 Eintraege enden bei $15F0, vor der ersten
+* real belegten Nachbarzelle ($1600).
+Q9K_IRQTabBase   equ $1500          * 12 Eintraege a 20 Byte, s. q9kernel_exctable.c
+Q9K_IRQTabSlots  equ 12
 Q9K_IRQTabEntSz  equ 20
 Q9K_IRQDispatch:
         ori.w   #$0700,sr                      * ZUERST sperren -- s. Begruendung unten
@@ -2560,6 +3025,19 @@ Q9K_IRQDispatch:
         move.w  66(sp),d0                      * Format-/Vektor-Wort (60 + 6)
         andi.l  #$00000fff,d0
         lsr.l   #2,d0                            * d0 = eigene Vektornummer
+* Q9K_RaceRing-Log (TEMPORAER, s. Definition oben). d0 (Vektornummer)
+* bleibt danach unveraendert -- die Subroutine unten liest ihn nur,
+* d1/d2/a0 sind hier noch frei (die Tabellenschleife belegt sie erst
+* weiter unten neu).
+        move.l  62(sp),d1                        * geretteter PC
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
 * AUTOVEKTOR-SONDERFALL (2026-09-03): bei den Vektoren 25-31 (Autovektor
 * Level 1-7) sagt die Vektornummer NICHTS ueber die Quelle -- sie nennt nur
 * den Interruptpegel. Genau dafuer fuehrt OS-9 ueberhaupt eine Polling-
@@ -2833,6 +3311,237 @@ Q9K_SysFSRqMem_NoFrameOut:
 Q9K_SysFSRqMem_Fail:
         move.w  Q9K_SRqMemScratch_Error,d1
         ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
+* Q9K_SysFSRqCMem -- TRAP-#0-Handler fuer den echten F$SRqCMem-Callcode
+* (0x5c, 68k_tech.pdf S. 501f, echt per Read gelesen). IN d0.l=Bytezahl,
+* d1.w=Speicherfarbe/-typ (0=beliebig). OUT (Erfolg): d0.l=gewaehrte
+* Bytezahl, (a2)=Blockzeiger. Fehlschlag: Carry+d1.w.
+*
+* "F$SRqMem is equivalent to a F$SRqCMem request with a color of 0" (S.
+* 502) -- unser Kernel kennt ohnehin nur EINEN Speicherbereich (keine
+* "farbige"/typisierte Speicherverwaltung), deshalb hier wortwoertlich
+* dieselbe Logik wie Q9K_SysFSRqMem, d1 (Farbe) bleibt ungenutzt. Eigenes
+* Frame-Scratch (Q9K_SRqCMemFrameScratch), damit ein verschachtelter
+* Aufruf das laufende F$SRqMem nicht durcheinanderbringt -- exakt
+* dieselbe Rahmenerkennung/-versorgung wie dort, s. den ausfuehrlichen
+* Kopfkommentar bei Q9K_SysFSRqMem fuer die Herleitung.
+Q9K_SysFSRqCMem:
+        movem.l d0/a0,-(sp)
+        movea.l sp,a0
+        adda.l  #16,a0
+        cmpa.l  a0,a5
+        bne     Q9K_SysFSRqCMem_NoFrame
+        move.l  a5,Q9K_SRqCMemFrameScratch
+        bra     Q9K_SysFSRqCMem_FrameDone
+Q9K_SysFSRqCMem_NoFrame:
+        clr.l   Q9K_SRqCMemFrameScratch
+Q9K_SysFSRqCMem_FrameDone:
+        movem.l (sp)+,d0/a0
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_SRqMemScratch_SizeIn
+        bsr     Q9K_SysSRqMemImpl
+        movea.l (sp)+,a6
+
+        tst.w   Q9K_SRqMemScratch_Success
+        beq     Q9K_SysFSRqCMem_Fail
+
+        move.l  Q9K_SRqMemScratch_SizeOut,d0
+        movea.l Q9K_SRqMemScratch_Addr,a2
+        movem.l d1/a1,-(sp)
+        move.l  Q9K_SRqCMemFrameScratch,d1
+        beq     Q9K_SysFSRqCMem_NoFrameOut
+        movea.l d1,a1
+        move.l  d0,(a1)
+        move.l  a2,$28(a1)
+Q9K_SysFSRqCMem_NoFrameOut:
+        movem.l (sp)+,d1/a1
+        andi    #$fe,ccr
+        rts
+
+Q9K_SysFSRqCMem_Fail:
+        move.w  Q9K_SRqMemScratch_Error,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFVModul -- TRAP-#0-Handler fuer den echten F$VModul-Callcode
+* (0x2e, 68k_tech.pdf S. 532f). IN d0.l=Modulgruppen-ID (ungenutzt, s.
+* Q9K_ModDirValidateAndAdd), d1.l=Modulgroesse, (a0)=Modulzeiger. OUT
+* (Erfolg): (a2)=Verzeichniseintragszeiger, Carry geloescht. Fehlschlag:
+* Carry+d1.w.
+*
+* ECHTER BUG GEFUNDEN + BEHOBEN (2026-09-10): fehlte komplett (lief in
+* Q9K_SysUnimplemented) -- gefunden per Ruecksprungadressen-Forensik am
+* selben Muster, mit dem vorher schon F$Move gefunden wurde (s.
+* docs/OWN_KERNEL_STATUS.md); IOMans eigene F$Load-Implementierung
+* braucht ihn beim Laden eines neuen Moduls von Mass-Storage.
+*
+* NOCH KEINE 44-Byte-Rahmenversorgung: anders als bei F$SRqMem/F$AllPD
+* ist NICHT verifiziert, dass IOMans Aufrufer hier ebenfalls ueber das
+* colored-memory-Wrapper-Muster (a5==sp+8) geht -- ein blinder Nachbau
+* hat bei F$Sleep bereits einmal fremden Speicher zerstoert (s.
+* Kopfkommentar Q9K_SysFRetPD-Fund).
+*
+* LIVE GEPRUEFT (2026-09-10): F$VModul selbst arbeitet nachweislich
+* korrekt (das per F$Load geladene Testmodul "/dd/CMDS/echo" stand mit
+* richtiger Groesse UND korrekter CRC im eigenen Moduldirectory-Dump),
+* aber IOMans F$Load meldete dem AUFRUFER trotzdem E$MNF. Ein Versuch,
+* das wie F$SRqMem/F$AllPD per 44-Byte-Rahmen zu versorgen, hat daran
+* NICHTS geaendert UND ein verdaechtiges Folgesymptom gezeigt (ein
+* spaeterer F$Link-Aufruf mit erkennbar kaputten Parametern) -- deshalb
+* wieder zurueckgebaut, statt auf Verdacht drin zu bleiben. Die
+* eigentliche Ursache der Fehlermeldung an den Aufrufer ist damit noch
+* NICHT gefunden; naechster Schritt waere Ruecksprungadressen-Forensik
+* auf den Punkt, an dem IOMans F$Load selbst den Carry setzt (nicht
+* mehr auf einen fehlenden Kernel-Dienst -- das ist per Q9K_SysUnimple-
+* mented-Sonde bereits ausgeschlossen). Details, inklusive der drei
+* Live-Laeufe, die dahin gefuehrt haben: docs/OWN_KERNEL_STATUS.md.
+Q9K_SysFVModul:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  a0,Q9K_VModulScratch_Hdr
+        move.l  d1,Q9K_VModulScratch_Size
+        bsr     Q9K_SysVModulImpl
+        movea.l (sp)+,a6
+
+        tst.l   Q9K_VModulScratch_Success
+        beq     Q9K_SysFVModul_Fail
+
+        movea.l Q9K_VModulScratch_Entry,a2
+        andi    #$fe,ccr                        * Carry loeschen -- Erfolg
+        rts
+
+* NACHSCHLAGEN, falls wieder gebraucht (2026-09-10, per Groessen-Bug-Fund):
+* Groesse + erste/letzte 4 Byte des Modulzeigers ausgeben (vor dem
+* move.w unten: "movem.l d0-d7/a0-a6,-(sp) / moveq #'V',d7 / bsr
+* Q9K_DiagWriteD7 / move.l Q9K_VModulScratch_Size,d5 / bsr
+* Q9K_DiagWriteHex32 / ... / movem.l (sp)+,d0-d7/a0-a6") beantwortet,
+* ob der Aufrufer wirklich das VOLLSTAENDIGE, unverstuemmelte Modul
+* uebergibt. Damit wurde gefunden: IOMans F$Load-Mass-Storage-Pfad
+* uebergibt eine um 2 Byte zu grosse Groesse (s. Kopfkommentar
+* Q9K_ModDirValidateAndAdd, q9kernel_moddir.c).
+Q9K_SysFVModul_Fail:
+        move.w  Q9K_VModulScratch_Error+2,d1
+        ori     #1,ccr                           * Carry setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
+* Q9K_SysFTLink -- TRAP-#0-Handler fuer den echten F$TLink-Callcode
+* (0x21, "Install User Trap Handler Module", 68k_tech.pdf S. 524f UND
+* Kapitel 5 "User Trap Handlers" mit vollstaendigem Beispielcode, echt
+* per Read gelesen). IN: d0.w=Trap-Nummer (1-15), d1.l=optionale
+* Speichergroesse (0=Vorgabe aus M$Mem), (a0)=Modulname. OUT (Erfolg):
+* (a0)=hinter den Namen, (a1)=Trap-Ausfuehrungs-Einsprung,
+* (a2)=Trap-Modulzeiger, Carry geloescht. OUT (Fehlschlag): Carry
+* gesetzt, d1.w=Fehlercode.
+*
+* Anlass (2026-09-11): ein per F$Load geladenes echtes Kommandomodul
+* ("/dd/CMDS/echo") per F$Fork ausgefuehrt, laeuft echten Microware-Code
+* und versucht F$TLink(13,"csl") -- scheitert bisher mit "**** can't
+* install csl ****", weil dieser Dienst komplett fehlte (per
+* Byte-Muster-Forensik direkt in echo.mod gefunden: trap 13, Name
+* "csl", s. docs/OWN_KERNEL_STATUS.md).
+*
+* Die eigentliche Buchhaltung (Modul finden, statischen Speicher
+* anfordern, in der pro-Prozess-Trap-Tabelle eintragen) macht
+* Q9K_ProcTLink (q9kernel_traplink.c) -- hier bleibt nur noch der ECHTE
+* Fremdaufruf von M$Init (Offset $48 im Trap-Modulkopf), GENAU EINMAL,
+* mit dem in Kapitel 5 ("TrapInit") dokumentierten Spezialrahmen:
+*     +8  Ruecksprung-PC
+*     +4  0000 0000 (Fuellwortpaar)
+*     +0  Aufrufer-a6
+* M$Init verbraucht diesen Rahmen SELBST per "movem.l (a7),a6 /
+* addq.l #8,a7 / rts" -- deshalb hier bewusst "jmp", kein "jsr" (sonst
+* laege eine ZUSAETZLICHE Ruecksprungadresse im Rahmen, die M$Init nie
+* erwartet, exakt dieselbe Lehre wie beim F$Move-Trampolin anderer
+* Module).
+Q9K_SysFTLink:
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, Fortsetzung 45, per echtem
+* Lesen von csl+$50 = M$Init): M$Init liest nachweislich d1-d5/a3/a4
+* des URSPRUENGLICHEN Aufrufers (68k_tech.pdf, TrapInit-Konvention
+* "Passed: d0-d7 = caller's registers, a0-a5 = caller's registers") --
+* bisher wurde nur a6 um den internen "bsr Q9K_SysTLinkImpl"-Aufruf
+* geschuetzt, alle anderen blieben Q9K_SysTLinkImpls (normale C-
+* Funktion) Arbeitsregistern schutzlos ausgeliefert. Rettung deckt
+* grosszuegig d1-d7/a3-a5 ab (a0/a1/a2/a6 bekommen ohnehin bewusst neue,
+* dokumentierte Werte fuer M$Init, s. unten -- KEIN Aufrufer-Wert dort
+* noetig).
+        movem.l d1-d7/a3-a5,-(sp)
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_TLinkScratch_TrapNum
+        move.l  d1,Q9K_TLinkScratch_MemOvr
+        move.l  a0,Q9K_TLinkScratch_NamePtr
+        bsr     Q9K_SysTLinkImpl
+        movea.l (sp)+,a6
+        movem.l (sp)+,d1-d7/a3-a5
+
+        tst.l   Q9K_TLinkScratch_Success
+        beq     Q9K_SysFTLink_Fail
+
+        movea.l Q9K_TLinkScratch_InitEntry,a4
+        tst.l   Q9K_TLinkScratch_InitEntry
+        beq     Q9K_SysFTLink_NoInit             * kein M$Init -- selten, aber laut Manual erlaubt
+
+        pea     Q9K_SysFTLink_AfterInit(pc)       * Rahmen: Ruecksprung-PC (liegt am Ende bei +8)
+        clr.l   -(sp)                              * Rahmen: Fuellwortpaar 0000/0000 (bei +4)
+        move.l  a6,-(sp)                            * Rahmen: Aufrufer-a6 (bei +0, oben)
+        movea.l Q9K_TLinkScratch_StaticPtr,a6        * a6 = frische statische Speicherzelle
+        movea.l Q9K_TLinkScratch_PastName,a0         * a0 = Name, hinter den Namen aktualisiert
+        movea.l Q9K_TLinkScratch_ExecEntry,a1        * a1 = Ausfuehrungs-Einsprung
+        movea.l Q9K_TLinkScratch_ModPtr,a2           * a2 = Modulzeiger
+        jmp     (a4)                                  * M$Init -- KEIN jsr, s.o.
+Q9K_SysFTLink_AfterInit:
+        andi    #$fe,ccr                            * Carry loeschen -- Erfolg (a0/a1/a2 unveraendert von M$Init erwartet)
+        rts
+
+Q9K_SysFTLink_NoInit:
+        movea.l Q9K_TLinkScratch_PastName,a0
+        movea.l Q9K_TLinkScratch_ExecEntry,a1
+        movea.l Q9K_TLinkScratch_ModPtr,a2
+        andi    #$fe,ccr
+        rts
+
+Q9K_SysFTLink_Fail:
+        move.w  Q9K_TLinkScratch_Error+2,d1
+        ori     #1,ccr                           * Carry setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
+* Q9K_SysFCCtl -- TRAP-#0-Handler fuer den echten F$CCtl-Callcode (0x5A,
+* "Cache Control", s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention
+* (68k_tech.pdf S. 379f, echt per Read gelesen): IN d0.l=gewuenschte
+* Cache-Operation (0 = beide Caches fluschen -- generischer Fall fuer
+* Nicht-Supergruppen-/User-Zustand-Prozesse; einzelne Bits 0/1/2/4/5/6
+* fuer praezise Kontrolle, nur fuer System-Zustand/Supergruppe reserviert,
+* sonst E$Param). OUT: keine. Fehlerfall: Carry gesetzt, d1.w=Fehlercode.
+*
+* Anlass (Fortsetzung 34, live per Callcode-Scratchzelle $1370 gefunden):
+* echo ruft dies ueber seine C-Laufzeit (csl) unmittelbar nach einem
+* erfolgreichen F$TLink auf -- reale, im Handbuch explizit beschriebene
+* Konvention ("flush the instruction cache by F$CCtl before executing
+* the new code" nach dem Laden/Linken neuen Codes, exakt der F$TLink-
+* Fall). Ohne Registrierung lief dieser Aufruf bisher auf
+* Q9K_SysUnimplemented (E$UnkSvc) -- kein Absturz an dieser Stelle
+* selbst, aber echos/csls eigene Behandlung eines unerwarteten
+* Fehlschlags ist nachweislich fragil (s. Kopfkommentar bei
+* Q9K_TestEchoName-Test, PC=$7031-Fund).
+*
+* Dieser Kernel emuliert keinen echten CPU-Cache (Q9-Flux-68k meldet
+* selbst "680x0: unhandled PFLUSH ... kein TLB" -- keine echte Cache-/
+* MMU-Hardware vorhanden) -- ein "Flush" ist auf diesem Ziel bedeutungslos.
+* Ehrliche, reale Implementierung fuer ein Ziel ohne Cache: immer Erfolg,
+* keine Wirkung (kein verstecktes Validierungs-Framework, gleiche
+* Begruendung wie bei F$SRtMem/F$SSvc oben). NICHT implementiert: die
+* dokumentierte E$Param-Pruefung reservierter Bits fuer den praezisen
+* (Supergruppe/System-Zustand-)Pfad -- dieser Kernel hat noch keine
+* echte User-/Supervisor-Prozesstrennung (s. an anderer Stelle
+* dokumentiert), jeder Aufrufer wird wie der generische Fall behandelt.
+Q9K_SysFCCtl:
+        andi    #$fe,ccr                        * Carry loeschen -- immer "Erfolg", kein echter Cache vorhanden
         rts
 
 *******************************************************************************
