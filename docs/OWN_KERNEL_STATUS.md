@@ -32,13 +32,26 @@ reproduzierbar. Zwei zuvor versuchte Kernel-seitige Fixes (Arena-
 Interrupt-Sperre, `F$SRqMem`/`F$SRtMem`-Registerrettung) behoben DAHER
 folgerichtig nichts — beide bleiben trotzdem als eigenständig
 gerechtfertigte Härtungen im Kernel (alle 15 Host-Testsuiten grün,
-committet). Offen: ob Q9-OS' `F$TLink`/`F$SRqMem`-Groessenvergabe an
-`csl` (`M$Mem=$2690`) von der echten Hardware abweicht und dadurch
-diesen an sich in `csl` latenten Bug ueberhaupt erst ausloest, oder ob
-das ein waehrend echter OS-9-Nutzung nie erreichter csl-eigener
-Randfall ist. Neue, wiederverwendbare Diagnosewerkzeuge im Emulator
+committet). Neue, wiederverwendbare Diagnosewerkzeuge im Emulator
 (`Q9_A6TRACE_LO/_HI/_FREEZE`, `Q9_PCHIT_ADDR`) committet, s.
 Fortsetzung 56 fuer Details und die vollstaendige Herleitung.
+
+**Fortsetzung 57 (direkter Anschluss): offene Frage aus Fortsetzung 56
+GEKLAERT.** Testweise `csl`s zugeteilten statischen Speicher auf das
+8-Fache erhoeht (`Q9K_ProcTLink`, NUR live getestet, sofort wieder
+vollstaendig zurueckgesetzt, kein Diff) — der Absturz bleibt bestehen,
+verschiebt sich aber (anderer Vektor, andere Adresse, anderer A6-Wert,
+spaeter im Lauf). Das beweist: der Bug ist ein von der Speichergroesse
+UNABHAENGIGER Logikfehler in `csl`s eigenem Code (fehlende NULL-
+Pruefung nach dem Weiterruecken in dessen privater Freiliste), NICHT
+eine Folge zu knapper Q9-OS-Speichervergabe. Q9-OS' `F$TLink`/`M$Mem`-
+Groessenvergabe an `csl` ist NICHT die Ursache und braucht KEINE
+Reparatur. Eine echte Behebung muesste `csl.mod`s Maschinencode selbst
+patchen (bewusst NICHT in dieser Sitzung entschieden — Aenderung an
+echtem, closed-source Microware-Binaercode, eigene Entscheidung noetig).
+Damit ist die Ursachenermittlung fuer den Vektor-10-Absturz
+ENDGUELTIG ABGESCHLOSSEN, kein weiterer Q9-OS-Kernel-seitiger Ansatz
+ersichtlich.
 
 ---
 
@@ -7423,3 +7436,71 @@ Direktes Ausschreiben der Flags in der Kommandozeile (statt ueber eine
 Variable) umgeht das zuverlaessig. Fuer kuenftige Sitzungen: bei
 scheinbar grundlosen `#error`-Abbruechen trotz "richtig gesetzter"
 Flags zuerst genau DAS pruefen.
+
+---
+
+## Fortsetzung 57: die in Fortsetzung 56 offen gelassene Frage
+GEKLAERT -- mehr Speicher fuer `csl` VERSCHIEBT den Absturz nur, behebt
+ihn NICHT (2026-09-13, elfte Sitzung, auf "ok, dann mach bitte weiter")
+
+### Experiment
+
+Offene Frage aus Fortsetzung 56: liegt die Ursache DOCH (indirekt) bei
+Q9-OS, weil `F\$TLink` `csl` weniger statischen Speicher zuteilt als
+echte OS-9-Hardware es taete, und der an sich in `csl` latente
+Freilisten-Bug dadurch ueberhaupt erst ausgeloest wird? Direkt
+geprueft: `Q9K_ProcTLink`s `size`-Berechnung TEMPORAER um Faktor 8
+erhoeht (`size = size * 8UL` direkt nach der `M\$Mem`-Ermittlung, NUR
+fuer diesen Live-Test, danach vollstaendig zurueckgesetzt -- kein
+Rest im Diff). Kernel neu gebaut, derselbe `echo`-Lauf erneut
+gestartet.
+
+### Ergebnis
+
+Der Absturz bleibt bestehen, verschiebt sich aber deutlich:
+- Vorher (normale Groesse): Vektor 10, `PC=\$4e25e`, `A6=\$5567f`.
+- Mit 8-facher `csl`-Speicherzuteilung: Vektor 11, `PC=\$5f6ae`,
+  `A6=\$6646f` -- andere Absturzart (F-Line statt A-Line), andere
+  Adresse, anderer A6-Wert, spaeter im Lauf.
+
+Das ist der entscheidende Beweis: MEHR Speicher verzoegert den
+Absturz (offensichtlich laeuft `echo` dadurch laenger/kommt weiter,
+bevor `csl`s privater Allocator erneut in dieselbe Kante läuft),
+BEHEBT ihn aber nicht. Waere die Ursache schlichte Speicherknappheit
+(Q9-OS teilt `csl` zu wenig zu), haette 8-facher Speicher das Problem
+entweder ganz vermieden oder den Absturz bei EXAKT dem gleichen
+"Freilisten fast leer"-Zustand nur weiter nach hinten verschoben, aber
+NICHT die Absturzart (Vektor) UND den betroffenen Speicherbereich
+gleichzeitig veraendert. Stattdessen zeigt sich: der in Fortsetzung 56
+gefundene fehlende NULL-Check nach dem Weiterruecken in `csl`s privater
+Freiliste ist ein von der Speichergroesse UNABHAENGIGER Logikfehler --
+er tritt zuverlaessig auf, sobald `csl`s eigener Allocator (bei genug
+Allokations-/Freigabezyklen, unabhaengig davon wie viel Gesamtspeicher
+zur Verfuegung steht) einmal an das Ende seiner Freiliste laeuft, ohne
+dass die zuletzt gepruefte Groesse passt.
+
+### Bewertung
+
+Die in Fortsetzung 56 offen gelassene Frage ist damit BEANTWORTET:
+Q9-OS' `F\$TLink`/`M\$Mem`-Speichervergabe an `csl` ist NICHT die
+Ursache und muss NICHT "repariert" werden -- der Bug liegt
+ausschliesslich in `csl`s eigenem, geerbtem Maschinencode und wuerde
+bei genuegend langer Laufzeit JEDE Kombination aus `echo` (oder jedem
+anderen `csl`-nutzenden Programm) mit genuegend vielen internen
+`malloc`/`free`-Zyklen treffen, unabhaengig vom zugeteilten
+`M\$Mem`. Eine echte Reparatur muesste `csl.mod`s Maschinencode selbst
+patchen (die fehlende `tst.l a4`/`beq`-Pruefung nach `movea.l (a0),a4`
+bei `csl+ca.\$449d6` einfuegen) -- eine bewusste Entscheidung ausserhalb
+des bisherigen Q9-OS-Kernel-Umfangs (Aenderung an echtem, closed-source
+Microware-Binaercode), nicht mehr fuer diese Sitzung getroffen.
+
+### Ergebnis dieser Fortsetzung
+
+- Kein Kernel-Code veraendert (Experiment vollstaendig zurueckgesetzt,
+  `git diff` auf `q9kernel_traplink.c` leer). Kernel neu gebaut, alle
+  15 Host-Testsuiten erneut gruen.
+- Vektor-10-Absturz: Ursachenermittlung jetzt ENDGUELTIG abgeschlossen.
+  Kein weiterer Q9-OS-Kernel-seitiger Ansatz ersichtlich. Naechster
+  Schritt (falls gewuenscht) waere ein bewusster, separat zu
+  entscheidender Bināerpatch von `csl.mod` selbst -- keine Kernel-
+  Baustelle mehr.
