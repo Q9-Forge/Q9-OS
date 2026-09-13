@@ -39,7 +39,11 @@ cp "$SRCDIR"/q9kernel_entry.a "$SRCDIR"/q9kernel_cinit.c "$SRCDIR"/q9kernel_modc
    "$SRCDIR"/q9kernel_procsleep.c "$SRCDIR"/q9kernel_sysmem.c \
    "$SRCDIR"/q9kernel_ssvc.c "$SRCDIR"/q9kernel_iopath.c "$SRCDIR"/q9kernel_procapi.c "$SRCDIR"/q9kernel_traplink.c \
    "$SRCDIR"/q9kernel_config.h .
-cp "$SRCDIR"/../q9sysglob.h .
+# NACHTRAG (2026-09-13): Pfad an die Repo-Reorganisation angepasst --
+# q9sysglob.h liegt jetzt unter Q9-KERNEL/common/src/ (fuer den
+# geplanten x86-Port gemeinsam genutzt), nicht mehr direkt eine Ebene
+# ueber src/kernel/.
+cp "$SRCDIR"/../../../common/src/q9sysglob.h .
 sed -i.bak 's#"../q9sysglob.h"#"q9sysglob.h"#' q9kernel_cinit.c && rm q9kernel_cinit.c.bak
 
 source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh

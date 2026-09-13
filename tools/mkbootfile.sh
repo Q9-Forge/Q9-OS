@@ -32,7 +32,10 @@ if [ -z "$REF" ] || [ -z "$IMG" ]; then
 fi
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-BUILD="$HERE/src/kernel/build"
+# NACHTRAG (2026-09-13): Pfad an die Repo-Reorganisation angepasst --
+# der Kernel liegt jetzt unter Q9-KERNEL/68k/src/kernel/, nicht mehr
+# direkt unter src/kernel/.
+BUILD="$HERE/Q9-KERNEL/68k/src/kernel/build"
 OS9=${OS9:-/Volumes/SSD1TB/projects/MWOS/tools/macos/bin/os9}
 OUT=$(mktemp -t os9boot)
 
