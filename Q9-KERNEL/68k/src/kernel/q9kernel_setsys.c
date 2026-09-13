@@ -30,20 +30,34 @@
  *       d1.l = Bit 31 gesetzt = "lesen" (sonst "schreiben"), untere
  *              Bits = erwartete/gemeldete Groesse in Byte (1/2/4)
  *       d2.l = beim Schreiben: der zu setzende Wert
- *   OUT d2.l = beim Lesen: der gelesene Wert
- *       Carry im geretteten SR: 0 = Erfolg (bei uns IMMER, s. u.)
+ *   OUT d2.l = beim Lesen (Erfolg): der gelesene Wert
+ *       Carry im geretteten SR: 0 = Erfolg, 1 = Fehlschlag
+ *       d1.w (Fehlschlag) = Fehlercode
  *
  * EIGENE ENTSCHEIDUNG, dokumentiert (gleiches Muster wie F$CCtl,
  * q9kernel_cinit.c): KEIN echtes, persistentes System-Global-Register
  * fuer beliebige Variablennummern implementiert -- dafuer fehlt die
  * vollstaendige Liste aller realen Variablennummern samt Bedeutung.
  * "Schreiben" wird bestaetigt (Carry geloescht), aber NICHT
- * gespeichert. "Lesen" liefert fuer die EINE live als Ausloeser
+ * gespeichert -- der EINZIGE live gefundene Aufrufer (s. o.) LIEST nur,
+ * schreibt nie, ein Fehlschlag beim Schreiben haette daher keinen
+ * bekannten Nutzen und koennte einen bislang unbekannten Aufrufer
+ * unnoetig stoeren. "Lesen" liefert fuer die EINE live als Ausloeser
  * gefundene Variable (124/$7C, die csl-Speicherzuwachsgroesse) einen
- * sinnvollen Standardwert (4096 Byte, uebliche Seiten-/Blockgroesse);
- * fuer jede andere, (noch) unbekannte Variable 0 -- BEWUSST nicht
- * einfach "Fehler melden", weil unklar ist, ob und wie andere
- * Aufrufer (anders als der hier gefundene) das Fehlschlagen pruefen.
+ * sinnvollen Standardwert (4096 Byte, uebliche Seiten-/Blockgroesse).
+ *
+ * NACHTRAG 2026-09-13 (Fortsetzung 60, auf Wunsch robuster gemacht):
+ * "Lesen" einer ANDEREN, unbekannten Variable liefert jetzt E$UnkSvc
+ * ($D0, MWOS/OS9/SRC/DEFS/funcs.a Zeile 1011 -- Position in der
+ * Fehlercode-Tabelle rueckwaerts von den bereits bekannten Werten
+ * E$ModBsy=$D1/E$BPAddr=$D2 gezaehlt, nicht geraten) statt still 0 UND
+ * Erfolg vorzutaeuschen. Begruendung: ein stiller Falschwert ist
+ * gefaehrlicher als ein sauberer Fehlschlag -- ein Aufrufer, der die
+ * Carry-Flagge tatsaechlich prueft (anders als der hier gefundene),
+ * kann auf einen klaren Fehler reagieren (z. B. einen eigenen
+ * Standardwert benutzen), auf einen unbemerkt falschen Wert dagegen
+ * nicht. Der EINE bekannte Aufrufer (der genau NICHT prueft) bleibt
+ * durch die weiterhin erfolgreiche Variable $7C unveraendert bedient.
  */
 
 typedef unsigned long Q9_u32;
@@ -63,6 +77,17 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 #ifndef Q9K_SetSysScratch_Value
 #define Q9K_SetSysScratch_Value   0x164CUL   /* Q9_u32, d2.l EIN (Schreiben)/AUS (Lesen) */
 #endif
+/* NICHT bei $1650 fortsetzen -- das ist Q9K_VMODUL_RETBUF's Start
+ * (q9kernel_moddir.c, $1650-$1663), s. Kollisionslehre Fortsetzung
+ * 52/58 (immer den GESAMTEN belegten Bereich pruefen, nicht nur
+ * Startadressen). Naechster wirklich freier Bereich: $1664-$168F (44
+ * Byte, vor Q9K_TLinkScratch_* bei $1690). */
+#ifndef Q9K_SetSysScratch_Error
+#define Q9K_SetSysScratch_Error   0x1664UL   /* Q9_u32, d1.w AUS bei Fehlschlag */
+#endif
+#ifndef Q9K_SetSysScratch_Success
+#define Q9K_SetSysScratch_Success 0x1668UL   /* Q9_u32, 0 = Fehlschlag / 1 = Erfolg */
+#endif
 
 #define Q9K_SETSYS_GETFLAG 0x80000000UL
 
@@ -72,17 +97,26 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 #define Q9K_SETSYS_VAR_CSL_MALLOC_INCR 0x7CUL
 #define Q9K_SETSYS_DEFAULT_MALLOC_INCR 4096UL
 
+/* E$UnkSvc -- s. Kopfkommentar. */
+#define Q9K_ERR_UNKSVC 0x00D0UL
+
 /* Q9K_ProcSetSys -- echte F$SetSys-Kernlogik (s. Kopfkommentar).
- * Rueckgabe immer 1 (Erfolg) -- s. dortige Begruendung. */
-int Q9K_ProcSetSys(Q9_u32 varCode, Q9_u32 flags, Q9_u32 valueIn, Q9_u32 *outValue)
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcSetSys(Q9_u32 varCode, Q9_u32 flags, Q9_u32 valueIn, Q9_u32 *outValue, Q9_u32 *outError)
 {
+    *outError = 0UL;
+
     if ((flags & Q9K_SETSYS_GETFLAG) != 0) {
-        *outValue = (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR)
-                        ? Q9K_SETSYS_DEFAULT_MALLOC_INCR
-                        : 0UL;
-    } else {
-        *outValue = valueIn;   /* bestaetigt, aber nicht gespeichert (s. Kopfkommentar) */
+        if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
+            *outValue = Q9K_SETSYS_DEFAULT_MALLOC_INCR;
+            return 1;
+        }
+        *outValue = 0UL;
+        *outError = Q9K_ERR_UNKSVC;
+        return 0;
     }
+
+    *outValue = valueIn;   /* bestaetigt, aber nicht gespeichert (s. Kopfkommentar) */
     return 1;
 }
 
@@ -95,7 +129,11 @@ void Q9K_SysSetSysImpl(void)
     Q9_u32 flags   = Q9K_GetU32(Q9K_SetSysScratch_Flags);
     Q9_u32 valueIn = Q9K_GetU32(Q9K_SetSysScratch_Value);
     Q9_u32 result  = 0UL;
+    Q9_u32 error   = 0UL;
+    int ok;
 
-    Q9K_ProcSetSys(varCode, flags, valueIn, &result);
+    ok = Q9K_ProcSetSys(varCode, flags, valueIn, &result, &error);
     Q9K_SetU32(Q9K_SetSysScratch_Value, result);
+    Q9K_SetU32(Q9K_SetSysScratch_Error, error);
+    Q9K_SetU32(Q9K_SetSysScratch_Success, (Q9_u32)ok);
 }
