@@ -11,47 +11,40 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 56/57 —
+## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 58 —
 HIER ZUERST LESEN, ersetzt die Übergabe direkt darunter vollständig)
 
-**MEILENSTEIN: Vektor-10-Absturz (`PC=$4e25e`, `A6=$5567f`) VOLLSTAENDIG
-bis zur auslösenden Instruktion aufgeklärt (Fortsetzung 56).** Die
-echte Ursache liegt NICHT im Q9-OS-Kernel, sondern in `csl`s EIGENEM,
-privatem Freispeicher-Verwalter (ein Teil des echten, closed-source
-Microware-`csl.mod`, nicht von Q9-OS nachgebaut): dessen interne
-Freiliste läuft über einen NULL-"Next"-Zeiger, OHNE das vor dem
-Dereferenzieren zu prüfen, und behandelt Adresse `$0` danach als
-vermeintlich gültigen Freiblock. Die Instruktion `sub.l d3,$4(a4)` mit
-`a4=0` schreibt dadurch auf ABSOLUTE ADRESSE `$4` (Teil der nach dem
-Boot ungenutzten 68000-Reset-Vektortabelle) — just die Zelle, die
-`csl` selbst (nach demselben `a0=0`-Konventionsmuster) als GLOBALEN,
-system­weiten Cache für "meine eigene a6" benutzt. Live gemessen:
-`d3=$21`(=33), Zelle vorher `$556a0`, danach `$556a0-$21=$5567f` —
-exakt der spätere Absturzwert, bis auf die letzte Nachkommastelle
-reproduzierbar. Zwei zuvor versuchte Kernel-seitige Fixes (Arena-
-Interrupt-Sperre, `F$SRqMem`/`F$SRtMem`-Registerrettung) behoben DAHER
-folgerichtig nichts — beide bleiben trotzdem als eigenständig
-gerechtfertigte Härtungen im Kernel (alle 15 Host-Testsuiten grün,
-committet). Neue, wiederverwendbare Diagnosewerkzeuge im Emulator
-(`Q9_A6TRACE_LO/_HI/_FREEZE`, `Q9_PCHIT_ADDR`) committet, s.
-Fortsetzung 56 fuer Details und die vollstaendige Herleitung.
+**GROSSER MEILENSTEIN: `echo`/`csl` laeuft jetzt VOLLSTAENDIG UND
+ABSTURZFREI durch (Fortsetzung 58) — das seit Fortsetzung 44
+verfolgte Sagathema ist damit ENDGUELTIG ABGESCHLOSSEN.** Zwei Fixes
+noetig, live verifiziert (zweimal unabhaengig reproduziert, `Vektor=0`
+= keine Exception, `echo`s Prozess sauber per `F$Exit` beendet und aus
+der Ready-Queue entfernt):
 
-**Fortsetzung 57 (direkter Anschluss): offene Frage aus Fortsetzung 56
-GEKLAERT.** Testweise `csl`s zugeteilten statischen Speicher auf das
-8-Fache erhoeht (`Q9K_ProcTLink`, NUR live getestet, sofort wieder
-vollstaendig zurueckgesetzt, kein Diff) — der Absturz bleibt bestehen,
-verschiebt sich aber (anderer Vektor, andere Adresse, anderer A6-Wert,
-spaeter im Lauf). Das beweist: der Bug ist ein von der Speichergroesse
-UNABHAENGIGER Logikfehler in `csl`s eigenem Code (fehlende NULL-
-Pruefung nach dem Weiterruecken in dessen privater Freiliste), NICHT
-eine Folge zu knapper Q9-OS-Speichervergabe. Q9-OS' `F$TLink`/`M$Mem`-
-Groessenvergabe an `csl` ist NICHT die Ursache und braucht KEINE
-Reparatur. Eine echte Behebung muesste `csl.mod`s Maschinencode selbst
-patchen (bewusst NICHT in dieser Sitzung entschieden — Aenderung an
-echtem, closed-source Microware-Binaercode, eigene Entscheidung noetig).
-Damit ist die Ursachenermittlung fuer den Vektor-10-Absturz
-ENDGUELTIG ABGESCHLOSSEN, kein weiterer Q9-OS-Kernel-seitiger Ansatz
-ersichtlich.
+1. **`Q9K_PatchCslFreelistBug`** (neu, `q9kernel_traplink.c`): patcht
+   NACH DEM LADEN (nur die RAM-Kopie, NIE die Datei `csl.mod`) den in
+   Fortsetzung 56/57 gefundenen `csl`-eigenen Freilisten-Bug (fehlende
+   NULL-Pruefung nach dem Weiterruecken in `csl`s privater, zirkulaeren
+   Freiliste) -- ein 4-Byte-`bsr.w` zu einem frisch allozierten,
+   28-Byte-Stub, der dieselbe Pruefung ergaenzt. Nur wirksam bei exakt
+   passendem Bytemuster UND ausreichender `M$Size` (Sicherheitsnetz),
+   sonst unveraendert. Neuer Testfall F10 (`test_q9kernel_traplink.c`).
+2. **`F$SetSys`** (Callcode `$27`, neu, `q9kernel_setsys.c` +
+   `Q9K_SysFSetSys` in `q9kernel_entry.a`): eine ECHTE, bis dahin
+   unentdeckte Q9-OS-Kernelluecke (nicht `csl`s Code!) -- der Aufruf
+   war komplett unregistriert, wodurch `csl`s `malloc()`-
+   Wachstumslogik eine uninitialisierte (effektiv 0) Zuwachsgroesse
+   bekam und kurz darauf durch Null teilte (Vektor 5). Bewusst nur
+   PRAGMATISCH implementiert (gleiches Muster wie `F$CCtl`): kein
+   echtes System-Global-Register, Lesen liefert fuer die eine
+   bekannte Variable (`$7C`) einen sinnvollen Standardwert (4096),
+   sonst 0, immer Erfolg. Neuer, 16. Host-Testfall
+   `test_q9kernel_setsys.c`.
+
+Alle 16 Host-Testsuiten gruen. Sicherheitsabstand (Fortsetzung 37/38)
+erneut geprueft, weiterhin exakt richtig. Vollstaendige technische
+Herleitung (Disassemblat, Byte-Ebenen-Beweise, alle Entscheidungen)
+in Fortsetzung 56/57/58 unten.
 
 ---
 
@@ -7504,3 +7497,124 @@ Microware-Binaercode), nicht mehr fuer diese Sitzung getroffen.
   Schritt (falls gewuenscht) waere ein bewusster, separat zu
   entscheidender Bināerpatch von `csl.mod` selbst -- keine Kernel-
   Baustelle mehr.
+
+---
+
+## Fortsetzung 58: MEILENSTEIN -- `echo`/`csl` laeuft jetzt VOLLSTAENDIG
+UND ABSTURZFREI durch (Laufzeit-Binaerpatch von `csl.mod` + echte
+Kernelluecke `F$SetSys` geschlossen) (2026-09-13, elfte Sitzung, auf
+"lässt sich das csl jetzt auch ordnungsgemäß ausführen.")
+
+### Auftrag
+
+Direkte Nachfrage im Anschluss an Fortsetzung 57: kann der in
+Fortsetzung 56/57 vollstaendig aufgeklaerte `csl`-eigene Freilisten-Bug
+jetzt auch tatsaechlich BEHOBEN werden, statt nur dokumentiert zu
+bleiben?
+
+### Teil 1: Laufzeit-Binaerpatch fuer `csl`s Freilisten-Bug
+
+Vollstaendige `malloc()`-Routine in `csl.mod` disassembliert (nicht nur
+die zuvor bekannte Fehlerstelle). Ergebnis: eine klassische, K&R-artige
+ZIRKULAERE Freiliste (`-$64c0(a6)` = Rover-/Kopfzeiger, jeder Knoten hat
+bei Offset 0 seinen "naechster"-Zeiger). Der reale Abbruchtest der
+Suchschleife ("wieder beim Ausgangspunkt angekommen? -> `F$SRqMem`
+nachfordern", bei Dateiversatz `$448da`) ist vorhanden und korrekt --
+die eigentliche Luecke: NACH dem Weiterruecken zum naechsten Knoten
+(`movea.l (a0),a4`, Versatz `$56b6`) wird das Ergebnis NICHT auf `0`
+geprueft, bevor sein Groessenfeld gelesen/beschrieben wird. Kommt ein
+kaputt terminierter Ring vor (Ursache dafuer NICHT weiter verfolgt --
+liegt auch in `csl`s eigenem Code, ausserhalb der hier gewaehlten
+Reparaturtiefe), landet `a4=0`, und `sub.l d3,$4(a4)` bei Versatz
+`$56bc` schreibt auf ABSOLUTE ADRESSE `$4` -- exakt der in Fortsetzung
+56 gefundene Absturzmechanismus.
+
+**Fix** (`Q9K_PatchCslFreelistBug`, neu in `q9kernel_traplink.c`,
+aufgerufen direkt nach `Q9K_ApplyInitializedData` in `Q9K_ProcTLink`):
+patcht NACH DEM LADEN, in der RAM-Kopie (NICHT die Datei `csl.mod`
+selbst) die 4 Byte bei Dateiversatz `$56bc` (`bhi.w $448da`) zu
+`bsr.w <Stub>`. Der Stub (28 Byte, per `Q9K_AllocMem` frisch alloziert,
+im Modulabbild selbst ist an dieser Stelle kein Platz fuer eine
+Einfuegung) tut GENAU dasselbe wie vorher, PLUS die fehlende
+NULL-Pruefung davor (`tst.l a4; beq.w <"mehr Speicher"-Pfad>`) --
+Byte-Ebenen-Herleitung samt allen Distanzberechnungen im
+Kopfkommentar der Funktion. **Sicherheitsnetz:** patcht NUR, wenn (a)
+`M$Size` des Moduls die Patchstelle ueberhaupt abdeckt UND (b) die 4
+Byte an der Zielstelle EXAKT dem bekannten Original entsprechen -- bei
+jeder anderen `csl`-Version bleibt der Patch unwirksam, kein blindes
+Ueberschreiben. Neuer Testfall F10 (`test_q9kernel_traplink.c`, drei
+Teilfaelle a/b/c) prueft alle drei Pfade inklusive der exakten
+Stub-Bytes und Sprungdistanzen.
+
+**Live bestaetigt:** derselbe Fehlerpfad (jetzt ueber unseren Stub
+umgeleitet) tritt tatsaechlich ein zweites Mal auf -- diesmal in
+`echo`s EIGENEM Speicherbereich statt in `csl`s (der Patch schuetzt
+BEIDE, weil er im gemeinsam genutzten `csl`-Code liegt, nicht an einer
+`csl`-spezifischen Adresse haengt). Kein Absturz mehr an dieser Stelle
+-- ABER ein NEUER, dahinterliegender Absturz (Vektor 5, Zero Divide)
+wird dadurch erstmals ueberhaupt erreichbar (vorher blockierte die
+Speicherkorruption jeden Fortschritt vorher).
+
+### Teil 2: echte Q9-OS-Kernelluecke gefunden -- `F$SetSys` (Callcode
+`$27`) war komplett unimplementiert
+
+Der neue Zero-Divide-Absturz (`divu.l d1,d7` bei Dateiversatz `$448fc`)
+zurueckverfolgt: `csl`s `malloc()`-Wachstumslogik (einmalige
+Initialisierung beim ersten Aufruf, Dateiversatz `$44a06`) fragt per
+internem Wrapper (`$49d18`, `trap #0`/Callcode `$27`) eine
+Systemvariable ab, um die minimale Speicherblock-Zuwachsgroesse zu
+bestimmen (`d0.l`=Variablennummer `$7C`, `d1.l`=Flags mit Bit 31
+gesetzt fuer "lesen"). Callcode `$27` = `F$SetSys` laut
+`Q9-KERNEL/.os9-original/SYSCALL_MODULE_MAP.md` -- bei Q9-OS bisher
+GAR NICHT registriert. Der Wrapper erkennt den Fehlschlag zwar korrekt
+(Carry gesetzt), ABER sein Aufrufer prueft das Ergebnis NICHT und liest
+die lokale Ausgabevariable trotzdem -- die bleibt dadurch `0`, und
+genau DAS ist der Divisor der kurz darauf folgenden Division. Ein
+GENUINER, bisher unentdeckter Q9-OS-Kernel-Bug (nicht `csl`s eigener
+Code) -- die anderen beiden Funde dieser Sitzung liegen in `csl` selbst,
+DIESER hier liegt eindeutig bei uns.
+
+**Fix** (`q9kernel_setsys.c`, neu, plus `Q9K_SysFSetSys` in
+`q9kernel_entry.a`, Registrierung in `q9kernel_cinit.c`): Konvention
+EMPIRISCH aus dem aufrufenden Code hergeleitet (kein Zugriff auf den
+exakten `68k_tech.pdf`-Abschnitt in dieser Sitzung, daher bewusst NICHT
+als "aus dem Handbuch zitiert" gekennzeichnet, anders als bei den
+uebrigen Syscalls in diesem Kernel) -- `d0.l`=Variablennummer,
+`d1.l`=Flags (Bit 31 = lesen), `d2.l`=Wert (lesen: Ausgabe, schreiben:
+Eingabe). **Bewusst NUR pragmatisch implementiert** (gleiches Muster
+wie `F$CCtl`): kein echtes, persistentes System-Global-Register fuer
+beliebige Variablennummern (dafuer fehlt die vollstaendige reale
+Variablenliste) -- Schreiben wird bestaetigt, aber nicht gespeichert;
+Lesen liefert fuer die eine live gefundene Variable (`$7C`, die
+`csl`-Speicherzuwachsgroesse) einen sinnvollen Standardwert (4096
+Byte), fuer jede andere (noch) unbekannte Variable `0`, IMMER mit
+Erfolg (Carry geloescht) -- bewusst kein Fehlschlag, weil unklar ist,
+ob andere Aufrufer das pruefen. Neue Scratch-Zellen `$1644`-`$164F`
+(genau in die Luecke zwischen `Q9K_SRqCMemFrameScratch` und
+`Q9K_VMODUL_RETBUF` gesetzt, Kollision explizit gegen den GESAMTEN
+belegten Bereich gegengeprueft, nicht nur Startadressen -- Lehre aus
+Fortsetzung 52). Neuer, 16. Host-Testfall `test_q9kernel_setsys.c`
+(vier Faelle: bekannte Variable, unbekannte Variable, Schreiben ohne
+Persistenz, Scratch-Bruecke).
+
+### Ergebnis: LIVE VERIFIZIERT, ZWEIMAL REPRODUZIERT
+
+Nach BEIDEN Fixes (Freilisten-Patch + `F$SetSys`): `echo`/`csl` laeuft
+komplett durch. `Q9K_ExcTrap-Mitschrift` zeigt `Vektor=0` ("keine
+Exception aufgetreten") -- die Ready-Queue enthaelt danach nur noch den
+Idle-Testprozess, `echo`s eigener Prozess ist sauber beendet und aus
+der Queue entfernt (`F$Exit` erreicht). ZWEIMAL unabhaengig voneinander
+live getestet, beide Male identisches Ergebnis. Alle 16 Host-
+Testsuiten gruen (neuer Testfall F10 in `test_q9kernel_traplink.c` +
+neue Datei `test_q9kernel_setsys.c`). Sicherheitsabstand (Fortsetzung
+37/38) erneut per Byte-Dump geprueft, weiterhin exakt richtig.
+
+**Damit ist das seit Fortsetzung 44 verfolgte `echo`/`csl`-Sagathema
+ENDGUELTIG UND VOLLSTAENDIG abgeschlossen** -- vom anfaenglichen
+kompletten Fehlschlag ueber die A6-Bias-Entdeckung (Fortsetzung 51),
+`M$IData`/`M$IRefs` (Fortsetzung 49), die IRQ-Tabellenkollision
+(Fortsetzung 52), die vollstaendige Aufklaerung des Vektor-10-Absturzes
+(Fortsetzung 56/57) bis zu den beiden hier umgesetzten Fixes -- ein
+reales, unveraendertes Microware-C-Programm samt seiner echten,
+closed-source C-Laufzeitbibliothek laeuft jetzt absturzfrei auf dem
+selbstgeschriebenen Q9-OS-Kernel.
