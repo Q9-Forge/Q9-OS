@@ -7919,3 +7919,22 @@ wieder verworfen werden. Fuer eine Folgesitzung: zuerst ein
 Adress-zu-Funktion-Mapping (Map-Datei oder sorgfaeltig von Hand
 gezaehlte Funktionsgrenzen) beschaffen, BEVOR neue Ursachenthesen
 aufgestellt werden.
+
+**Konkret geprueft und bestaetigt (noch in derselben Sitzung):** der
+Assembler `r68.exe` (MWOS-Toolchain) kennt den Schalter **`-s`** und
+liefert damit eine VOLLSTAENDIGE Symboltabelle mit Adressen/Offsets
+fuer JEDES Label -- direkt getestet gegen `q9kernel_entry.a`:
+```
+arch -x86_64 "$WINE_BIN" ".../r68.exe" -s q9kernel_entry.a
+```
+liefert Zeilen wie `Q9K_TrapDispatch 0004-01ad 000005f4` (Psect-Index,
+Segmentoffset, Groesse) fuer ALLE Labels der Datei -- exakt das
+gesuchte Funktionsgrenzen-Mapping, OHNE weiteres Raten. Fuer die aus C
+uebersetzten Dateien (`q9kernel_arena.c` usw., ueber `cpfe`+`r68`
+laufend, s. `build.sh`) muesste `-s` noch in DIESEN r68-Aufruf
+eingeschleust werden (aktuell laeuft er innerhalb von `mwos-build`/
+`os9make`, nicht direkt aus `build.sh` aufrufbar) -- das ist der
+konkrete erste Handgriff fuer eine Folgesitzung, BEVOR neue
+Live-Thesen zu `Q9K_FreeMem`/`Q9K_AllocMem`/`Q9K_ProcTLink` (die
+eigentlich interessanten Funktionen fuer die "traphandler mismatch"-
+Ursache) aufgestellt werden.
