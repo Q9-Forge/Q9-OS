@@ -44,6 +44,27 @@ static unsigned long g_fakeArenaTail;
 #define Q9_D_ARENA 0  /* unbenutzt, da Q9K_ARENA_HEAD/TAIL direkt ueberschrieben werden */
 #define Q9K_ARENA_HEAD ((unsigned long)&g_fakeArenaHead)
 #define Q9K_ARENA_TAIL ((unsigned long)&g_fakeArenaTail)
+
+/* NACHTRAG 2026-09-13 (Fortsetzung 56): Q9K_IntLock/Q9K_IntUnlock sind
+ * echte Assembler-Funktionen (q9kernel_entry.a, klammern die kritischen
+ * Abschnitte gegen Timer-Interrupts) -- auf dem Testhost gibt es keine
+ * Interrupts, reine Zaehl-Stubs genuegen, um die Aufrufbilanz (jeder
+ * Lock hat genau einen passenden Unlock) mitzuverfolgen. */
+static int g_intLockDepth = 0;
+static int g_intLockMaxDepth = 0;
+unsigned long Q9K_IntLock(void)
+{
+    g_intLockDepth++;
+    if (g_intLockDepth > g_intLockMaxDepth)
+        g_intLockMaxDepth = g_intLockDepth;
+    return 0x2000UL;   /* frei erfundener, aber realistischer "alter SR"-Wert */
+}
+void Q9K_IntUnlock(unsigned long savedSr)
+{
+    (void)savedSr;
+    g_intLockDepth--;
+}
+
 #include "q9kernel_arena.c"
 
 static int failures = 0;
@@ -182,6 +203,16 @@ int main(void)
         checkU32("Q9K_AllocLargest bei leerer Arena -> 0", result, 0);
         checkU32("... *outSize wird auf 0 gesetzt", outSize, 0);
     }
+
+    /* Fall 10 (NACHTRAG 2026-09-13, Fortsetzung 56): Q9K_IntLock/
+     * Q9K_IntUnlock-Aufrufbilanz -- jeder Lock aus den obigen Faellen
+     * muss durch genau einen Unlock ausgeglichen sein (Tiefe zurueck auf
+     * 0), und da Q9K_AllocMem/Q9K_AllocLargest/Q9K_FreeMem einander nie
+     * verschachtelt aufrufen, darf die Tiefe nie ueber 1 gestiegen sein. */
+    checkU32("Q9K_IntLock/_Unlock-Aufrufe sind ausgeglichen (Tiefe zurueck auf 0)",
+             (Q9_u32)g_intLockDepth, 0);
+    checkU32("Q9K_IntLock/_Unlock nie verschachtelt (max. Tiefe 1)",
+             (Q9_u32)g_intLockMaxDepth, 1);
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;

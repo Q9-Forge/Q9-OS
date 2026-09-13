@@ -80,6 +80,30 @@ typedef unsigned long Q9_u32;
 #define Q9K_ALLOC_GRANULARITY 16   /* Standard-Allocator, s. vendor/README.md */
 #define Q9K_MIN_SPLIT_REMAINDER 16 /* kleinster Rest, der noch als eigener Freiblock lohnt */
 
+/* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-13, Fortsetzung 56): die
+ * Freiliste (Q9K_ARENA_HEAD/_TAIL, s.o.) wurde bisher OHNE JEDEN Schutz
+ * gegen Timer-Interrupts manipuliert -- mehrere Q9K_SetU32-Aufrufe in
+ * Folge, die zusammen EINE logische Aktualisierung bilden (z.B. Block
+ * aufteilen: neuer Freiblock anlegen, Kopf/Vorgaenger umhaengen). Ein
+ * Timer-Interrupt mitten in einer solchen Folge, gefolgt von einem
+ * Kontextwechsel zu einem ANDEREN Aufrufer, der SEINERSEITS
+ * Q9K_AllocMem/Q9K_FreeMem aufruft, sieht die Freiliste in einem
+ * HALB aktualisierten Zwischenzustand -- klassische Race Condition.
+ *
+ * GEFUNDEN, NICHT GERATEN: per Instruktions-/A6-Aenderungs-Ringpuffer
+ * (Emulator-eigene Diagnose) live beobachtet, wie `csl`s interne, per
+ * F$SRqMem/F$SRtMem verwaltete verkettete Liste (ihr eigener Aufruf-
+ * Kontext-Stack) nach mehreren korrekten Durchlaeufen ploetzlich einen
+ * falschen Wert lieferte -- s. docs/OWN_KERNEL_STATUS.md Fortsetzung
+ * 55/56 fuer die volle Herleitung. `F$SRqMem`/`F$SRtMem` fuehren
+ * letztlich auf genau diese Funktionen hier zurueck.
+ *
+ * Fix: Q9K_IntLock/Q9K_IntUnlock (q9kernel_entry.a) klammern jetzt
+ * JEDE der drei Funktionen unten vollstaendig ein -- kurze,
+ * sperrenbasierte kritische Abschnitte statt gar keines Schutzes. */
+extern Q9_u32 Q9K_IntLock(void);
+extern void   Q9K_IntUnlock(Q9_u32 savedSr);
+
 static Q9_u32 Q9K_GetU32(Q9_u32 addr)
 {
     return *(volatile Q9_u32 *)addr;
@@ -121,8 +145,11 @@ Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize)
 {
     Q9_u32 needed = Q9K_RoundUp16(requestedSize);
     Q9_u32 prevAddr = 0;
-    Q9_u32 curAddr = Q9K_GetU32(Q9K_ARENA_HEAD);
+    Q9_u32 curAddr;
+    Q9_u32 result = 0;
+    Q9_u32 savedSr = Q9K_IntLock();   /* s. Kopfkommentar oben -- ganze Funktion ist kritischer Abschnitt */
 
+    curAddr = Q9K_GetU32(Q9K_ARENA_HEAD);
     while (curAddr != 0) {
         Q9_u32 curSize = Q9K_GetU32(curAddr + sizeof(Q9_u32));
         Q9_u32 curNext = Q9K_GetU32(curAddr);
@@ -153,14 +180,16 @@ Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize)
                     Q9K_SetU32(Q9K_ARENA_TAIL, prevAddr);
             }
 
-            return curAddr;
+            result = curAddr;
+            break;
         }
 
         prevAddr = curAddr;
         curAddr = curNext;
     }
 
-    return 0; /* kein ausreichend grosser Freiblock gefunden */
+    Q9K_IntUnlock(savedSr);
+    return result;   /* 0 = kein ausreichend grosser Freiblock gefunden */
 }
 
 /* NACHTRAG 2026-08-30 (Abschnitt "F$SRqMem/F$SRtMem") -- Best-Fit-
@@ -175,9 +204,11 @@ Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize)
 Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize)
 {
     Q9_u32 prevAddr = 0;
-    Q9_u32 curAddr = Q9K_GetU32(Q9K_ARENA_HEAD);
+    Q9_u32 curAddr;
     Q9_u32 bestAddr = 0, bestSize = 0, bestPrev = 0, bestNext = 0;
+    Q9_u32 savedSr = Q9K_IntLock();   /* s. Kopfkommentar bei Q9K_AllocMem oben */
 
+    curAddr = Q9K_GetU32(Q9K_ARENA_HEAD);
     while (curAddr != 0) {
         Q9_u32 curSize = Q9K_GetU32(curAddr + sizeof(Q9_u32));
         Q9_u32 curNext = Q9K_GetU32(curAddr);
@@ -193,19 +224,17 @@ Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize)
         curAddr = curNext;
     }
 
-    if (bestAddr == 0) {
-        *outSize = 0;
-        return 0;
+    if (bestAddr != 0) {
+        if (bestPrev == 0)
+            Q9K_SetU32(Q9K_ARENA_HEAD, bestNext);
+        else
+            Q9K_SetU32(bestPrev, bestNext);
+        if (bestNext == 0)
+            Q9K_SetU32(Q9K_ARENA_TAIL, bestPrev);
     }
 
-    if (bestPrev == 0)
-        Q9K_SetU32(Q9K_ARENA_HEAD, bestNext);
-    else
-        Q9K_SetU32(bestPrev, bestNext);
-    if (bestNext == 0)
-        Q9K_SetU32(Q9K_ARENA_TAIL, bestPrev);
-
-    *outSize = bestSize;
+    Q9K_IntUnlock(savedSr);
+    *outSize = bestSize;   /* bestAddr==0: bleibt 0, s. Kopfkommentar */
     return bestAddr;
 }
 
@@ -217,14 +246,19 @@ Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize)
 void Q9K_FreeMem(Q9_u32 addr, Q9_u32 size)
 {
     Q9_u32 oldHead;
+    Q9_u32 savedSr;
 
     if (size < Q9K_MIN_SPLIT_REMAINDER)
-        return; /* zu klein, um selbst als Freiblock zu dienen -- verloren, TODO */
+        return; /* zu klein, um selbst als Freiblock zu dienen -- verloren, TODO
+                  * (ruehrt die Freiliste noch nicht an, deshalb VOR dem
+                  * Q9K_IntLock -- s. Kopfkommentar bei Q9K_AllocMem) */
 
+    savedSr = Q9K_IntLock();
     oldHead = Q9K_GetU32(Q9K_ARENA_HEAD);
     Q9K_SetU32(addr, oldHead);
     Q9K_SetU32(addr + sizeof(Q9_u32), size);
     Q9K_SetU32(Q9K_ARENA_HEAD, addr);
     if (oldHead == 0)
         Q9K_SetU32(Q9K_ARENA_TAIL, addr);
+    Q9K_IntUnlock(savedSr);
 }

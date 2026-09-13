@@ -3282,11 +3282,24 @@ Q9K_SysFSRqMem_NoFrame:
         clr.l   Q9K_SRqMemFrameScratch          * TRAP-Pfad: kein Rahmen, nichts hineinschreiben
 Q9K_SysFSRqMem_FrameDone:
         movem.l (sp)+,d0/a0
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-13, Fortsetzung 56, gleiches
+* Muster wie Q9K_SysFTLink/Fortsetzung 45): bisher wurde NUR a6 um den
+* internen C-Aufruf herum gerettet -- die reale Konvention laesst aber
+* NUR d0/d1/a0/a1/a2 als Scratch gelten (s. Kopfkommentar oben), alle
+* ANDEREN Register (d2-d7/a3-a5) MUESSEN erhalten bleiben. Der interne
+* C-Aufruf (Q9K_SysSRqMemImpl -> Q9K_ProcSRqMem -> Q9K_AllocMem) kann
+* sie als gewoehnliche Compiler-Arbeitsregister benutzen. GEFUNDEN per
+* Instruktions-/A6-Aenderungs-Ringpuffer: `csl`s eigener, ueber F$SRqMem/
+* F$SRtMem verwalteter Aufruf-Kontext-Stack lieferte nach mehreren
+* korrekten Durchlaeufen einen falschen Wert zurueck (s.
+* docs/OWN_KERNEL_STATUS.md Fortsetzung 55/56).
+        movem.l d2-d7/a3-a5,-(sp)
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf, sonst Q9K_CRuntimeData)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  d0,Q9K_SRqMemScratch_SizeIn
         bsr     Q9K_SysSRqMemImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen -- WICHTIG fuer externe Aufrufer wie IOMan
+        movem.l (sp)+,d2-d7/a3-a5
 
         tst.w   Q9K_SRqMemScratch_Success
         beq     Q9K_SysFSRqMem_Fail
@@ -3557,12 +3570,24 @@ Q9K_SysFSRtMem:
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, gleiches Muster wie bei
 * Q9K_SysFLink/SysFUnLink/SysFFork/SysFWait oben): A6-Schutz fuer den
 * C-Aufruf.
+* NACHTRAG, ECHTER BUG GEFUNDEN + GEFIXT (2026-09-13, Fortsetzung 56,
+* gleiches Muster wie Q9K_SysFTLink/Fortsetzung 45 UND Q9K_SysFSRqMem
+* oben): a6-Schutz allein reichte nicht -- die reale Konvention sagt
+* "OUT: keine", also MUESSEN alle Register ausser d0/a2 (bereits vor
+* dieser Stelle in Scratch-Zellen gerettet, duerfen danach als
+* Compiler-Arbeitsregister dienen) erhalten bleiben. GEFUNDEN per
+* Instruktions-/A6-Aenderungs-Ringpuffer: `csl`s eigener, ueber
+* F$SRqMem/F$SRtMem verwalteter Aufruf-Kontext-Stack lieferte nach
+* mehreren korrekten Durchlaeufen einen falschen Wert zurueck (s.
+* docs/OWN_KERNEL_STATUS.md Fortsetzung 55/56).
+        movem.l d1-d7/a0-a1/a3-a5,-(sp)
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  a2,Q9K_SRtMemScratch_AddrIn
         move.l  d0,Q9K_SRtMemScratch_SizeIn
         bsr     Q9K_SysSRtMemImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
+        movem.l (sp)+,d1-d7/a0-a1/a3-a5
 
         andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
         rts
@@ -3751,6 +3776,45 @@ Q9K_DiagPrintU32:
 * den richtigen Wert, ganz ohne die Adresse selbst zu kennen.
 Q9K_GetA6:
         move.l  a6,d0
+        rts
+
+* Q9K_IntLock/Q9K_IntUnlock -- (2026-09-13, Q9-OS Fortsetzung 56)
+* schuetzen kurze, kritische Abschnitte in C-Code (konkret: die
+* Freiliste in q9kernel_arena.c) gegen Unterbrechung durch einen
+* Timer-Interrupt mitten in einer Mehrfach-Schreib-Aktualisierung.
+* GEFUNDEN, NICHT GERATEN: per Instruktions-Ringpuffer + A6-Aenderungs-
+* Ringpuffer (Emulator-eigene Diagnose, s. docs/OWN_KERNEL_STATUS.md
+* Fortsetzung 55/56) direkt beobachtet, dass `csl`s interne, per
+* F$SRqMem/F$SRtMem verwaltete verkettete Liste (eigener Aufruf-
+* Kontext-Stack, NICHT unser Code) nach mehreren korrekten Durchlaeufen
+* einen falschen Wert liefert -- unser eigener Freiliste-Allocator
+* (Q9K_AllocMem/Q9K_FreeMem) besass KEINERLEI Schutz gegen genau dieses
+* Szenario (Freiliste wird von zwei ineinander verschachtelten
+* Aufrufern -- der unterbrochene UND der wiederaufgenommene Timer-
+* Interrupt-Pfad -- gleichzeitig angefasst).
+*
+* Aufrufkonvention (wie Q9K_GetA6 oben, EMPIRISCH am kompilierten
+* Q9K_ApplyInitializedData-Code verifiziert, s. Fortsetzung 49: ein
+* einzelner Q9_u32-Parameter kommt in d0 herein, ein Q9_u32-Rueckgabe-
+* wert geht in d0 hinaus -- reiner C-zu-C-Aufruf, kein ASM<->C-
+* Scratch-Zellen-Umweg noetig):
+*   Q9_u32 Q9K_IntLock(void)       -- sperrt (ori.w #$0700,sr), liefert
+*                                      den VORHERIGEN SR-Wert (Q9_u32,
+*                                      obere 16 Bit = 0) zum spaeteren
+*                                      Wiederherstellen.
+*   void   Q9K_IntUnlock(Q9_u32 savedSr) -- stellt den per Q9K_IntLock
+*                                      gelieferten SR-Wert wieder her
+*                                      (auch bereits gesperrte inne-
+*                                      re Aufrufe geben dadurch korrekt
+*                                      ineinander verschachtelt frei).
+Q9K_IntLock:
+        move.w  sr,d0
+        andi.l  #$0000ffff,d0
+        ori.w   #$0700,sr
+        rts
+
+Q9K_IntUnlock:
+        move.w  d0,sr
         rts
 
 * Q9K_ModuleEnd -- NACHTRAG 2026-08-19: nicht mehr fuer den
