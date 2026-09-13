@@ -15,21 +15,28 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 HIER ZUERST LESEN, ersetzt die Übergabe direkt darunter vollständig)
 
 **Fortsetzung 61 (zweites echtes Kommandomodul "date" getestet):
-"csl traphandler mismatch" gefunden, Ursache NACH ANFAENGLICHER
-FEHLDEUTUNG NOCH OFFEN.** `date` (zweites, von `echo` unabhaengiges
-Testprogramm) druckt `**** csl traphandler mismatch ****` und bricht
-ab (kein Absturz). Drei Hypothesen geprueft und widerlegt (Trap-15-
-Mechanismus, gemeinsamer Prozess-Speicherbereich, Scheduler rettet A6
-nicht). Eine VIERTE These ("Arena-Ueberlappung zwischen `echo`s und
-`date`s Speicherbloecken") wurde noch INNERHALB DERSELBEN SITZUNG per
-Nachrechnung und genauerer Pruefung WIDERLEGT und ZURUECKGEZOGEN --
-s. "NACHTRAG/KORREKTUR" am Ende von Fortsetzung 61. Die tatsaechliche
-Ursache bleibt OFFEN. **Eine unabhaengig davon gueltige, echte
-Erkenntnis:** `F\$Exit` (`q9kernel_procend.c`) gibt den primaeren
-Prozessblock automatisch an die Arena zurueck -- korrigiert die
-bisherige Annahme "Speicher-Ruecknahme bei Prozessende nicht
+"csl traphandler mismatch" gefunden, Ursache trotz MEHRERER
+Untersuchungsanlaeufe NOCH OFFEN.** `date` (zweites, von `echo`
+unabhaengiges Testprogramm) druckt `**** csl traphandler mismatch
+****` und bricht ab (kein Absturz). VIER Hypothesen geprueft und
+ALLE widerlegt (Trap-15-Mechanismus, gemeinsamer Prozess-A6, Scheduler
+rettet A6 nicht, Arena-Ueberlappung zwischen echo/date -- letztere
+zunaechst faelschlich "bestaetigt", dann selbst wieder zurueckgezogen,
+dann per echter Symboltabelle [`r68 -s`, s. u.] endgueltig als
+Sackgasse erkannt: die beobachteten Speicherfreigaben waren schlicht
+normales Prozessende, keine Korruption). **Die tatsaechliche Ursache
+bleibt nach alledem OFFEN.** Eine unabhaengig davon gueltige, echte
+Erkenntnis bleibt bestehen: `F\$Exit` (`q9kernel_procend.c`) gibt den
+primaeren Prozessblock automatisch an die Arena zurueck -- korrigiert
+die bisherige Annahme "Speicher-Ruecknahme bei Prozessende nicht
 implementiert" (galt nur fuer per `F\$SRqMem` angeforderte
-Zusatzbloecke). Details in Fortsetzung 61 unten.
+Zusatzbloecke). **Neues, funktionierendes Werkzeug fuer kuenftige
+Sitzungen:** `r68 -s` liefert eine echte Symboltabelle mit
+Funktionsgrenzen (auch fuer aus C uebersetzte Dateien, volle
+Kompilierkette dokumentiert) -- naechster Schritt: `Q9K_ProcTLink`/
+`Q9K_ApplyInitializedData`/`Q9K_ProcFork` DAMIT untersuchen, nicht die
+Arena. Details in Fortsetzung 61 unten (inkl. zweier Korrekturen am
+Ende).
 
 **Fortsetzung 60 (direkter Anschluss an 58/59): `F$SetSys` gehaertet.**
 Unbekannte Systemvariablen meldeten bisher still `0` + Erfolg (in
@@ -7938,3 +7945,36 @@ konkrete erste Handgriff fuer eine Folgesitzung, BEVOR neue
 Live-Thesen zu `Q9K_FreeMem`/`Q9K_AllocMem`/`Q9K_ProcTLink` (die
 eigentlich interessanten Funktionen fuer die "traphandler mismatch"-
 Ursache) aufgestellt werden.
+
+### ZWEITE KORREKTUR (direkter Anschluss, selbe Sitzung): die
+beobachteten "Freigaben" waren normale Prozessenden, KEINE Korruption
+
+Der oben beschriebene Schalter `-s` wurde tatsaechlich genutzt (volle
+Kompilierkette fuer `q9kernel_arena.c` manuell nachgebaut: `cpfe` ->
+`ilink` -> `iopt` -> `be68k` -> `opt68k` -> `r68 -s`) und lieferte eine
+echte Symboltabelle. Ergebnis: `Q9K_FreeMem` beginnt exakt bei der
+schon vorher live gefundenen Kerneladresse (`$8c2e`) -- DAS war also
+korrekt identifiziert.
+
+Aber: `grep -rn "Q9K_FreeMem" *.c` zeigt GENAU ZWEI Aufrufstellen im
+gesamten Kernel-C-Code -- `q9kernel_firstproc.c:694` (Fehlerpfad
+innerhalb `F\$Fork`, nur bei Fehlschlag) und `q9kernel_procend.c:188`
+(normaler `F\$Exit`-Pfad, gibt den PRIMAEREN Prozessblock zurueck, s.
+Erkenntnis oben). Da weder `echo` noch `date` beim Forken scheitern,
+MUSS es der normale `F\$Exit`-Pfad sein. Die beiden in dieser
+Fortsetzung beobachteten "Freigaben" (`echo`s eigener Block, dann
+`date`s eigener Block) sind damit hoechstwahrscheinlich schlicht
+**normales Prozessende** -- `echo` beendet sich und gibt seinen
+eigenen Speicher zurueck, danach tut `date` dasselbe. KEINE
+Korruption, KEIN Speicherzuteilungs-Bug.
+
+**Damit war die GESAMTE "Arena"-Spur dieser Fortsetzung eine
+Sackgasse** -- die eigentliche, unbeantwortete Frage (warum `date`s
+`csl`-Sentinel-Pruefung VOR jedem `F\$Exit` fehlschlaegt) ist dadurch
+NICHT beantwortet. Fuer eine Folgesitzung, MIT der jetzt verfuegbaren
+`r68 -s`-Symboltabellen-Technik: `q9kernel_traplink.c`
+(`Q9K_ProcTLink`/`Q9K_ApplyInitializedData`) und `q9kernel_firstproc.c`
+(`Q9K_ProcFork`) auf dieselbe Weise kompilieren und disassemblieren,
+um zu sehen, ob/wie diese beiden Funktionen sich bei `echo`s und
+`date`s jeweiligem Aufruf unterscheiden -- DORT, nicht in der Arena,
+liegt die eigentliche Erklaerung.
