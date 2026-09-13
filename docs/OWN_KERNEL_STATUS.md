@@ -11,8 +11,27 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 60 —
+## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 61 —
 HIER ZUERST LESEN, ersetzt die Übergabe direkt darunter vollständig)
+
+**Fortsetzung 61 (zweites echtes Kommandomodul "date" getestet):
+ECHTER, BISHER UNBEKANNTER SPEICHERZUTEILUNGS-BUG gefunden (noch NICHT
+behoben).** `date` (zweites, von `echo` unabhaengiges Testprogramm)
+druckt `**** csl traphandler mismatch ****` und bricht ab (kein
+Absturz). Drei Hypothesen geprueft und widerlegt (Trap-15-Mechanismus,
+gemeinsamer Prozess-Speicherbereich, Scheduler rettet A6 nicht) --
+ECHTE Ursache: `date`s EIGENER Prozessspeicherbereich (`$4f690`) liegt
+INNERHALB von `csl`s zu diesem Zeitpunkt noch aktivem statischem
+Bereich (`$4d6a0`-`$4fd30`, allozieren fuer `echo`s `F\$TLink`-Instanz)
+-- `Q9K_AllocMem` hat also ZWEI GLEICHZEITIG AKTIVEN Prozessen
+ueberlappende Speicherbloecke gegeben. Live per Freilisten-
+Schreibzugriffen bestaetigt (`csl`s ganzer Block UND `date`s eigener,
+noch aktiver Bereich werden beide in dieselbe Kernel-Freiliste
+eingetragen). EXAKTER Ausloeser (welcher `F\$SRtMem`-Aufruf das
+verursacht) noch NICHT isoliert -- naechster Schritt fuer eine
+Folgesitzung. Betrifft grundsaetzlich JEDES Szenario mit zwei
+gleichzeitig laufenden, `csl`-nutzenden Prozessen. Details in
+Fortsetzung 61 unten.
 
 **Fortsetzung 60 (direkter Anschluss an 58/59): `F$SetSys` gehaertet.**
 Unbekannte Systemvariablen meldeten bisher still `0` + Erfolg (in
@@ -7735,3 +7754,127 @@ die Haertung aendert nichts am bereits funktionierenden Fall (`$7C`
 bleibt erfolgreich), schliesst nur die dokumentierte Luecke fuer
 kuenftige, andere Aufrufer. Sicherheitsabstand (Fortsetzung 37/38)
 erneut geprueft, unveraendert korrekt.
+
+---
+
+## Fortsetzung 61: ZWEITES echtes Kommandomodul getestet ("date") --
+"traphandler mismatch" gefunden, echte Ursache bis zu einer belegten
+Arena-Speicherueberlappung zwischen ZWEI GLEICHZEITIG AKTIVEN Prozessen
+zurueckverfolgt (2026-09-13, elfte Sitzung, auf "weitere echte
+Programme testen")
+
+### Auftrag und Testaufbau
+
+Direkter Anschluss an Fortsetzung 58/59/60: ein ZWEITES, von `echo`
+unabhaengiges echtes Kommandomodul aus dem Microware-Referenzabbild
+testen (`date`, ausgewaehlt weil es die bisher komplett unbenutzte
+Zeit-Syscall-Gruppe beruehren koennte). `q9kernel_entry.a` um einen
+zweiten Test-Block erweitert (`F\$Load("/dd/CMDS/date")` +
+`F\$Fork("date")`, direkt im Anschluss an den erfolgreichen
+`echo`-Fork -- WICHTIG: der urspruengliche Code sprang nach
+erfolgreichem `echo`-Fork SOFORT in die Idle-Schleife, der neue
+Testblock war dadurch beim ersten Versuch unerreichbar UND KORRIGIERT
+worden, s. Commit).
+
+### Fund 1: `date` laeuft ab, druckt aber keine Ausgabe
+
+`echo`/`csl` (Fortsetzung 58-60) bestaetigt weiterhin fehlerfrei.
+`date` dagegen druckt **`**** csl traphandler mismatch ****`** und
+beendet sich, OHNE ein Datum auszugeben -- kein Absturz (`Vektor=0`),
+aber inhaltlich falsches/abgebrochenes Verhalten.
+
+### Fund 2: die Pruefung selbst, byte-genau disassembliert
+
+Der Text stammt aus `date.mod`s eigenem, statisch mitkompiliertem
+Startcode (nicht aus `csl.mod` -- derselbe Text UND Mechanismus
+existiert identisch in `echo.mod`, s. u.). Mechanismus (per
+Disassemblierung von `date.mod` UND `csl+$58`, `csl`s `M\$Init`):
+- Vor `F\$TLink(13,"csl")` schreibt das Programm den Sentinel-Wert `10`
+  an eine LOKALE Adresse `a3 = a6-$7ff0` (`a6` = das Programm selbst,
+  NICHT `csl`).
+- `csl`s `M\$Init` (bekommt `a3` als TrapInit-Parameter durchgereicht,
+  s. Fortsetzung 45) prueft `cmpi.l #$a,(a3); bgt <ueberspringen>` --
+  bei `10` (nicht `>10`) wird normal initialisiert UND `*(a3)` auf `0`
+  gesetzt.
+- Nach der Rueckkehr prueft das Programm `tst.l (a3)` -- ist es NICHT
+  `0`, gilt "traphandler mismatch".
+
+### Drei Hypothesen geprueft, ALLE widerlegt
+
+1. **Trap-#15-Auto-Link-Mechanismus** (vermuteter Ausloeser eines
+   gemeinsam genutzten Handler-Slots) -- widerlegt: keine einzige
+   `trap #15`-Instruktion (Byte-Muster `4e4f`) in `echo.mod`,
+   `date.mod` ODER `csl.mod`.
+2. **`echo` und `date` teilen sich denselben eigenen Speicherbereich**
+   -- widerlegt: live gemessen an `M\$Exec` (allererste Instruktion,
+   VOR jedem `F\$TLink`): `echo`s A6 = `$556a0`, `date`s A6 = `$57690`
+   -- klar verschieden, beide korrekt.
+3. **Scheduler rettet A6 beim Kontextwechsel nicht** -- widerlegt: im
+   Assembler-Code ist A6 überall konsequent Teil von
+   `movem.l d0-d7/a0-a6` bei jedem Kontextwechsel (Sleep/Wait/Timer-
+   Verdraengung), keine Ausnahme gefunden.
+
+### Fund 3: die ECHTE Ursache -- Arena-Ueberlappung
+
+Live wiederholte Messungen an `csl+$58` (`M\$Init`s Pruefinstruktion)
+zeigten NICHT-DETERMINISTISCHE Werte zwischen zwei Laeufen desselben
+Abbilds -- Hinweis auf eine echte Race Condition, kein fester Bug.
+Nachrechnung der beteiligten Adressen:
+- `csl`-Block fuer `echo`s Instanz (`a6=$556a0`): `$4d6a0`-`$4fd30`
+  (Groesse `M\$Mem=$2690`).
+- `date`s EIGENER Prozessbereich (`a6=$57690`) beginnt bei `$4f690` --
+  **mitten in `csl`s obigem Bereich!**
+
+Live per `Q9_WATCH_ADDR` an genau dieser Adresse (`$4f690`) bestaetigt:
+nach `date`s eigener Initialisierung (Heap-Grenzen, `M\$IData`-Kopie --
+alles korrekt und erwartet) wird die STELLE SPAETER als Teil der
+Kernel-Freiliste beschrieben (`next`-/`size`-Felder, `Q9K_FreeMem`s
+eigenes Schreibmuster, live an `pc=$8c5c` im Kernel selbst
+verifiziert) -- **waehrend `date` sie noch aktiv benutzt.** Eine
+zweite, separate Messung zeigt zusaetzlich, dass VORHER `csl`s
+GESAMTER Block (`$4d6a0`) auf dieselbe Weise freigegeben wird
+(passend zu `echo`s `F\$UnLink`/`F\$SRtMem`-Aufraeumen seiner eigenen
+`csl`-Instanz) -- durch die Ueberlappung trifft diese (fuer sich
+genommen korrekte) Freigabe DIREKT `date`s aktiven Speicher.
+
+**Das ist ein echter Speicherzuteilungs-Bug:** `Q9K_AllocMem` hat
+`date`s `F\$Fork`-Anfrage einen Block zugewiesen, der sich zum
+Zuteilungszeitpunkt noch mit `csl`s (zu diesem Zeitpunkt aktivem)
+statischem Bereich ueberschneidet. Erklaert zwanglos sowohl die
+beobachtete Nichtdeterminismus (Zeitpunkt/Reihenfolge der beiden
+gleichzeitig laufenden Prozesse entscheidet, wessen Daten wann
+ueberschrieben werden) als auch die "traphandler mismatch"-Meldung
+(`date`s Sentinel-Zelle liegt im ueberlappten, spaeter korrumpierten
+Bereich).
+
+### Offen fuer eine Folgesitzung
+
+Der EXAKTE Aufrufer der fehlerhaften Freigabe (welche Instruktion in
+`csl` oder unserem Kernel `F\$SRtMem` mit der falschen Groesse/Adresse
+ausloest) konnte trotz mehrerer Versuche NICHT zweifelsfrei isoliert
+werden -- die Ruecksprungadressen-Rekonstruktion im Stack
+compilierter, symbolloser C-Funktionen (versch. `movem.l`-
+Registersaetze je Funktion, kein Stack-Frame-Zeiger durchgehend
+genutzt) erwies sich als fehleranfaellig ohne ein echtes Disassembler-
+Listing mit Funktionsgrenzen. Naechster Schritt: entweder ein
+vollstaendiges Kernel-Listing (`r68`/`l68`-Map-Datei) heranziehen, um
+Funktionsgrenzen exakt zu bestimmen, oder gezielt JEDEN `F\$SRtMem`-
+Aufruf systemweit mitschneiden (Adresse+Groesse+Ruecksprung) statt nur
+punktuell an einer vermuteten Stelle zu suchen.
+
+### Ergebnis dieser Fortsetzung
+
+- `q9kernel_entry.a`: zweiter Testblock (`date` laden+forken) hinzugefuegt
+  und der Kontrollfluss-Fehler (Erfolgspfad sprang an ihm vorbei)
+  korrigiert.
+- Kein Kernel-Logik-Code veraendert (reine Testcode-Erweiterung).
+  Alle 16 Host-Testsuiten weiterhin gruen (unberuehrt).
+- Emulator-Diagnosewerkzeuge (`Q9_PCHIT_ADDR`-Beispielfelder) mehrfach
+  fuer diese Untersuchung angepasst, im aktuellen Zustand committet
+  (`a0`/Stack-Woerter -- fuer die naechste Fragestellung anzupassen,
+  s. Kopfkommentar).
+- Ein bislang UNBEKANNTER, ECHTER Speicherzuteilungs-Bug (Arena-
+  Ueberlappung zwischen zwei gleichzeitig aktiven Prozessen) konkret
+  nachgewiesen, aber NOCH NICHT behoben (exakter Ausloeser offen, s. o.).
+  Betrifft NICHT nur `date` -- jedes Szenario mit zwei parallel
+  laufenden, `csl` nutzenden Prozessen waere potenziell betroffen.

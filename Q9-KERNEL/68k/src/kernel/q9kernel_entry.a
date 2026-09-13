@@ -1489,11 +1489,46 @@ Q9K_TestTLinkDone:
         bcs     Q9K_TestForkEchoFail
         moveq   #'E',d7                     * DIAGNOSE: echo geforkt
         bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestProcA_Loop
+        bra     Q9K_TestLoadDate            * NACHTRAG Fortsetzung 61: weiter zum date-Test statt direkt in die Idle-Schleife
 Q9K_TestForkEchoFail:
         moveq   #'e',d7                     * DIAGNOSE: F$Fork("echo") fehlgeschlagen
         bsr     Q9K_DiagWriteD7
         bra     Q9K_TestProcA_Loop
+
+* NACHTRAG 2026-09-13 (Fortsetzung 61): zweites echtes Kommandomodul
+* laden+forken -- "date" statt "echo", s. Kopfkommentar bei
+* Q9K_TestLoadDateName. Gleiches Muster wie oben bei echo.
+Q9K_TestLoadDate:
+        moveq   #1,d0
+        lea     Q9K_TestLoadDateName(pc),a0
+        trap    #0
+        dc.w    $0001                       * F$Load
+        bcs     Q9K_TestLoadDateFail
+        moveq   #'L',d7                     * DIAGNOSE: F$Load("date") erfolgreich
+        bsr     Q9K_DiagWriteD7
+
+        clr.w   d0
+        clr.l   d1
+        clr.l   d2                          * kein Argument -- "date" soll ohne argv laufen
+        clr.w   d3
+        clr.w   d4
+        lea     Q9K_TestDateName(pc),a0
+        suba.l  a1,a1
+        trap    #0
+        dc.w    3                           * F$Fork
+        bcs     Q9K_TestForkDateFail
+        moveq   #'D',d7                     * DIAGNOSE: date geforkt
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+Q9K_TestForkDateFail:
+        moveq   #'d',d7                     * DIAGNOSE: F$Fork("date") fehlgeschlagen
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+Q9K_TestLoadDateFail:
+        moveq   #'K',d7                     * DIAGNOSE: F$Load("date") fehlgeschlagen
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+
 Q9K_TestLoadFail:
         moveq   #'k',d7                     * DIAGNOSE: F$Load fehlgeschlagen
         bsr     Q9K_DiagWriteD7
@@ -1595,6 +1630,20 @@ Q9K_TestEchoParam:
         dc.b    "echo Hallo",$0d
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 Q9K_TestEchoParamLen equ 11
+
+* NACHTRAG 2026-09-13 (Fortsetzung 61, "weitere echte Programme
+* testen"): zweites, unabhaengiges echtes Kommandomodul (aus dem
+* echten Microware-Referenzabbild, unveraendert) -- "date" statt "echo",
+* deckt organisch auf, welcher naechste Syscall wirklich gebraucht wird
+* (Zeit-Gruppe F$Time/F$STime/F$Julian/F$Gregor ist bisher komplett
+* unimplementiert, s. docs/OWN_KERNEL_MODULES_OVERVIEW.md).
+Q9K_TestLoadDateName:
+        dc.b    "/dd/CMDS/date",0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+
+Q9K_TestDateName:
+        dc.b    "date",0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 
 Q9K_TestEchoName:
         dc.b    "echo",0
