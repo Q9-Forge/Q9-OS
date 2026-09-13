@@ -98,6 +98,20 @@ int Q9K_ProcSRqMem(unsigned long requestedSize, unsigned long *outAddr, unsigned
     return g_srqmemReturn;
 }
 
+/* NACHTRAG 2026-09-13 (Fortsetzung 58, Q9K_PatchCslFreelistBug): in
+ * den bestehenden Testfaellen F1-F9 nie wirklich erreicht (M$Size
+ * steht in keinem der dortigen Fake-Module auf einen Wert >=
+ * Q9K_CSL_PATCH_OFF, s. dortige Groessenpruefung) -- eigenstaendiger
+ * Testfall F10 unten nutzt den Stub gezielt. */
+static int g_allocMemCalls = 0;
+static unsigned char g_fakeStubBuf[64];
+unsigned long Q9K_AllocMem(unsigned long requestedSize)
+{
+    (void)requestedSize;
+    g_allocMemCalls++;
+    return (unsigned long)g_fakeStubBuf;
+}
+
 #include "q9kernel_traplink.c"
 
 static int g_failures = 0;
@@ -145,6 +159,18 @@ static unsigned long slotAddrFor(unsigned long trapNum)
 static void setModuleField(unsigned long fieldOff, unsigned long value)
 {
     unsigned char *p = g_fakeModule + fieldOff;
+    p[0] = (unsigned char)(value >> 24);
+    p[1] = (unsigned char)(value >> 16);
+    p[2] = (unsigned char)(value >> 8);
+    p[3] = (unsigned char)value;
+}
+
+/* Wie setModuleField, aber fuer einen BELIEBIGEN Puffer (nicht nur
+ * g_fakeModule) -- gebraucht in Fall 10 (Q9K_PatchCslFreelistBug), der
+ * einen eigenen, groesseren Fake-Modulpuffer braucht. */
+static void setModuleFieldAt(unsigned long hdr, unsigned long fieldOff, unsigned long value)
+{
+    unsigned char *p = (unsigned char *)(hdr + fieldOff);
     p[0] = (unsigned char)(value >> 24);
     p[1] = (unsigned char)(value >> 16);
     p[2] = (unsigned char)(value >> 8);
@@ -423,6 +449,73 @@ int main(void)
                  relocatedData, (unsigned long)(unsigned int)(5UL + staticMem));
         checkU32("F9: M\\$IData kopiert UND per M\\$IRefs (Kodezeiger-Gruppe) reloziert (3+hdrAddr)",
                  relocatedCode, (unsigned long)(unsigned int)(3UL + (unsigned long)g_fakeModule));
+    }
+
+    /* Fall 10 (NACHTRAG 2026-09-13, Fortsetzung 58): Q9K_PatchCslFreelistBug
+     * direkt getestet (statische Funktion, per #include sichtbar) --
+     * eigenstaendiger, ausreichend grosser Fake-Modulpuffer (NICHT
+     * g_fakeModule, das ist fuer diesen Versatz zu klein). */
+    {
+        static unsigned char bigMod[0x5700];
+        unsigned long hdr = (unsigned long)bigMod;
+        unsigned long patchAddr = hdr + Q9K_CSL_PATCH_OFF;
+        unsigned long stubAddr;
+        unsigned long expDisp;
+
+        /* F10a: falsches Bytemuster an der Patchstelle -- bleibt unangetastet. */
+        memset(bigMod, 0, sizeof(bigMod));
+        setModuleFieldAt(hdr, Q9K_MH_SIZE, (unsigned long)sizeof(bigMod));
+        g_allocMemCalls = 0;
+        Q9K_PatchCslFreelistBug(hdr);
+        checkU32("F10a: falsches Bytemuster -- Q9K_AllocMem NICHT aufgerufen",
+                 (unsigned long)g_allocMemCalls, 0UL);
+        checkU32("F10a: Patchstelle unveraendert (0)", Q9K_GetU8(patchAddr), 0UL);
+
+        /* F10b: M$Size zu klein (Patch-Versatz liegt ausserhalb) -- trotz
+         * korrektem Bytemuster bleibt es unangetastet. */
+        memset(bigMod, 0, sizeof(bigMod));
+        setModuleFieldAt(hdr, Q9K_MH_SIZE, Q9K_CSL_PATCH_OFF);   /* zu klein */
+        Q9K_SetU8(patchAddr + 0, 0x62); Q9K_SetU8(patchAddr + 1, 0x00);
+        Q9K_SetU8(patchAddr + 2, 0xfe); Q9K_SetU8(patchAddr + 3, 0xfc);
+        g_allocMemCalls = 0;
+        Q9K_PatchCslFreelistBug(hdr);
+        checkU32("F10b: M\\$Size zu klein -- Q9K_AllocMem NICHT aufgerufen",
+                 (unsigned long)g_allocMemCalls, 0UL);
+        checkU32("F10b: Patchstelle unveraendert (Originalmuster)", Q9K_GetU8(patchAddr), 0x62UL);
+
+        /* F10c: passendes Bytemuster + ausreichende Groesse -- patcht. */
+        memset(bigMod, 0, sizeof(bigMod));
+        setModuleFieldAt(hdr, Q9K_MH_SIZE, (unsigned long)sizeof(bigMod));
+        Q9K_SetU8(patchAddr + 0, 0x62); Q9K_SetU8(patchAddr + 1, 0x00);
+        Q9K_SetU8(patchAddr + 2, 0xfe); Q9K_SetU8(patchAddr + 3, 0xfc);
+        g_allocMemCalls = 0;
+        Q9K_PatchCslFreelistBug(hdr);
+        checkU32("F10c: Q9K_AllocMem genau einmal aufgerufen",
+                 (unsigned long)g_allocMemCalls, 1UL);
+        checkU32("F10c: Patchstelle jetzt bsr.w (0x61)", Q9K_GetU8(patchAddr), 0x61UL);
+        checkU32("F10c: Patchstelle Byte 2 (0x00)", Q9K_GetU8(patchAddr + 1), 0x00UL);
+
+        stubAddr = (unsigned long)g_fakeStubBuf;
+        expDisp = (unsigned long)(unsigned short)(stubAddr - (patchAddr + 2UL));
+        checkU32("F10c: bsr.w-Distanz zeigt auf den Stub",
+                 (Q9K_GetU8(patchAddr + 2) << 8) | Q9K_GetU8(patchAddr + 3), expDisp);
+
+        checkU32("F10c: Stub Byte 0-1 = tst.l a4 (4A8C)",
+                 (Q9K_GetU8(stubAddr) << 8) | Q9K_GetU8(stubAddr + 1), 0x4A8CUL);
+        checkU32("F10c: Stub Byte 6-9 = cmp.l $4(a4),d3 (B6AC0004)",
+                 ((unsigned long)Q9K_GetU8(stubAddr + 6) << 24) |
+                 ((unsigned long)Q9K_GetU8(stubAddr + 7) << 16) |
+                 ((unsigned long)Q9K_GetU8(stubAddr + 8) << 8) |
+                 (unsigned long)Q9K_GetU8(stubAddr + 9), 0xB6AC0004UL);
+        checkU32("F10c: Stub Byte 14-15 = rts (4E75)",
+                 (Q9K_GetU8(stubAddr + 14) << 8) | Q9K_GetU8(stubAddr + 15), 0x4E75UL);
+
+        expDisp = (unsigned long)(unsigned short)((hdr + Q9K_CSL_TOOSMALL_OFF) - (stubAddr + 0x14UL));
+        checkU32("F10c: bra.w im Stub zeigt auf 'zu klein' (448da relativ)",
+                 (Q9K_GetU8(stubAddr + 0x14) << 8) | Q9K_GetU8(stubAddr + 0x15), expDisp);
+        expDisp = (unsigned long)(unsigned short)((hdr + Q9K_CSL_GROW_OFF) - (stubAddr + 0x1AUL));
+        checkU32("F10c: bra.w im Stub zeigt auf 'mehr Speicher' (448e2 relativ)",
+                 (Q9K_GetU8(stubAddr + 0x1A) << 8) | Q9K_GetU8(stubAddr + 0x1B), expDisp);
     }
 
     if (g_failures == 0) {

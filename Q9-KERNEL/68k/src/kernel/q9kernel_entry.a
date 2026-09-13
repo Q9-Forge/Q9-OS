@@ -355,6 +355,15 @@ Q9K_VModulScratch_Success equ $163C      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 * ueberschreibt.
 Q9K_SRqCMemFrameScratch   equ $1640      * Q9_u32, Rahmenbasis oder 0
 
+* F$SetSys (Callcode $27) -- Scratch-Bruecke fuer Q9K_SysSetSysImpl
+* (q9kernel_setsys.c). Freier Bereich zwischen Q9K_SRqCMemFrameScratch
+* ($1640) und Q9K_VMODUL_RETBUF ($1650, q9kernel_moddir.c) -- endet
+* EXAKT bei $1650, keine Kollision (s. Fortsetzung 52/58-Lehre: immer
+* den GESAMTEN belegten Bereich pruefen, nicht nur die Startadresse).
+Q9K_SetSysScratch_VarCode equ $1644      * Q9_u32, d0.l EIN
+Q9K_SetSysScratch_Flags   equ $1648      * Q9_u32, d1.l EIN
+Q9K_SetSysScratch_Value   equ $164C      * Q9_u32, d2.l EIN (Schreiben)/AUS (Lesen)
+
 * F$TLink (Callcode $21) -- Scratch-Bruecke fuer Q9K_SysTLinkImpl
 * (q9kernel_traplink.c), freier Bereich hinter Q9K_VMODUL_RETBUF
 * ($1650-$1663, q9kernel_moddir.c).
@@ -3590,6 +3599,35 @@ Q9K_SysFSRtMem:
         movem.l (sp)+,d1-d7/a0-a1/a3-a5
 
         andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
+        rts
+
+
+*******************************************************************************
+* Q9K_SysFSetSys -- TRAP-#0-Handler fuer den echten F$SetSys-Callcode
+* (0x27, s. modules/SYSCALL_MODULE_MAP.md). Konvention EMPIRISCH
+* hergeleitet, NICHT aus dem Handbuch zitiert -- s. ausfuehrlichen
+* Kopfkommentar in q9kernel_setsys.c (Fortsetzung 58: live gefundene
+* Notwendigkeit, um einen Divide-by-zero-Absturz in csl.mod's
+* malloc()-Wachstumslogik zu vermeiden). IN d0.l=Variablennummer,
+* d1.l=Flags (Bit 31 = lesen), d2.l=Wert (nur beim Schreiben
+* aussagekraeftig). OUT d2.l=Wert (nur beim Lesen aussagekraeftig).
+* Gleicher vollstaendiger Registerschutz wie bei Q9K_SysFSRtMem oben
+* (Fortsetzung 56/58-Lehre: die reale Konvention "OUT: keine" [bzw.
+* hier nur d2 als Ausgabe] verlangt, ALLE anderen Register unveraendert
+* zu lassen -- der Aufrufer (csl.mod) liest d1 NACH dem trap #0 erneut).
+Q9K_SysFSetSys:
+        movem.l d0-d1/d3-d7/a0-a1/a3-a5,-(sp)
+        move.l  a6,-(sp)                     * eingehendes a6 sichern (kann 0 sein)
+        lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
+        move.l  d0,Q9K_SetSysScratch_VarCode
+        move.l  d1,Q9K_SetSysScratch_Flags
+        move.l  d2,Q9K_SetSysScratch_Value
+        bsr     Q9K_SysSetSysImpl
+        move.l  Q9K_SetSysScratch_Value,d2   * Ergebnis VOR dem Wiederherstellen abholen (d2 selbst wird nicht gerettet)
+        movea.l (sp)+,a6                     * eingehendes a6 wiederherstellen
+        movem.l (sp)+,d0-d1/d3-d7/a0-a1/a3-a5
+
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg" (s. Kopfkommentar q9kernel_setsys.c)
         rts
 
 *******************************************************************************

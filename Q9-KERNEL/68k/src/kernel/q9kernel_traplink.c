@@ -70,6 +70,7 @@ typedef unsigned char  Q9_u8;
  * Kernel. */
 extern Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name);
 extern int    Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outSize, Q9_u16 *outError);
+extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
 
 /* Modulheader-Offsets (s. src/q9moduleheader.h Q9_MH68K_*) -- lokal
  * dupliziert, gleiche Konvention wie q9kernel_moddir.c/q9kernel_modsearch.c. */
@@ -194,6 +195,110 @@ static void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
     }
 }
 
+/* NACHTRAG 2026-09-13 (Fortsetzung 58): binaerer Laufzeit-Patch fuer
+ * einen ECHTEN Bug in csl.mod's eigenem, geerbten Maschinencode (nicht
+ * von Q9-OS nachgebaut -- volle Herleitung per Live-Instrumentierung
+ * in docs/OWN_KERNEL_STATUS.md, Fortsetzung 56/57): csl's privater
+ * Freispeicher-Verwalter (eine K&R-artige zirkulaere Freiliste) prueft
+ * nach dem Weiterruecken zum naechsten Knoten ("movea.l (a0),a4" bei
+ * Dateiversatz $56b6) nicht erneut auf einen (durch anderswo bereits
+ * korrumpierte Verkettung entstandenen) NULL-Zeiger, bevor dessen
+ * Groessenfeld gelesen/beschrieben wird. Bei $56bc steht "bhi.w
+ * $448da" (4 Byte) -- faengt NUR den "Block zu klein"-Fall ab. Ist a4
+ * NULL, liest/schreibt der Code auf absolute Adresse $4 (Teil der nach
+ * dem Boot ungenutzten Reset-Vektortabelle, von csl selbst als
+ * globale "eigene a6"-Zelle zweckentfremdet) -- beobachteter Absturz
+ * (Vektor 10, A6 um exakt die angeforderte Groesse verfaelscht).
+ *
+ * Fix: die 4 Byte bei $56bc ("bhi.w $448da") werden durch "bsr.w
+ * <Stub>" ersetzt (exakt 4 Byte, passt ohne jede Verschiebung). Der
+ * Stub (28 Byte, in einem frisch allozierten Block -- im Modulabbild
+ * selbst ist kein Platz) tut GENAU dasselbe wie vorher, PLUS die
+ * fehlende NULL-Pruefung davor:
+ *   tst.l   a4
+ *   beq.w   .grow          ; a4==0 -> wie "Freiliste komplett
+ *                             durchlaufen", zum "mehr Speicher"-Pfad
+ *   cmp.l   $4(a4),d3      ; urspruengliche Pruefung nachgeholt
+ *                             (Flags durch tst.l ueberschrieben)
+ *   bhi.w   .toosmall      ; Block zu klein -> wie vorher weiterschauen
+ *   rts                    ; sonst: normal zurueck, faellt in den
+ *                             (redundanten, harmlosen) zweiten
+ *                             Vergleich bei $56c0 -- setzt die Flags
+ *                             fuer die dortige Entscheidung frisch
+ * .toosmall:
+ *   addq.l  #4,a7          ; eigene, per bsr gepushte Ruecksprung-
+ *                             adresse verwerfen (sonst Stack-Leck)
+ *   bra.w   <$448da relativ zu hdr, zur Laufzeit berechnet>
+ * .grow:
+ *   addq.l  #4,a7
+ *   bra.w   <$448e2 relativ zu hdr, zur Laufzeit berechnet>
+ *
+ * "tst.l a4" (Byte-Muster 4A8C) ist NICHT geraten, sondern woertlich
+ * aus csl's eigenem, bereits vorhandenem Code kopiert (Dateiversatz
+ * $56aa, "tst.l a4" vor dem allerersten Schleifendurchlauf) -- belegt,
+ * dass diese Adressierungsart auf dieser CPU-Variante gueltig ist.
+ *
+ * Sicherheitsnetz: patcht NUR, wenn die 4 Byte an der Zielstelle EXAKT
+ * dem bekannten Original entsprechen (62 00 fe fc) -- bei jeder
+ * anderen csl-Version/-Edit-Stufe (oder wenn ueberhaupt kein csl
+ * vorliegt) bleibt der Patch aus, kein blindes Ueberschreiben. Reiner
+ * Laufzeit-Patch der geladenen RAM-Kopie -- die Datei csl.mod selbst
+ * bleibt unveraendert. */
+#define Q9K_CSL_PATCH_OFF     0x56bcUL   /* "bhi.w $448da", 4 Byte */
+#define Q9K_CSL_TOOSMALL_OFF  0x55baUL   /* Ziel "Block zu klein" */
+#define Q9K_CSL_GROW_OFF      0x55c2UL   /* Ziel "mehr Speicher noetig" */
+#define Q9K_MH_SIZE           0x04UL     /* M$Size, s. q9kernel_moddir.c/modsearch.c */
+
+static void Q9K_PatchCslFreelistBug(Q9_u32 hdr)
+{
+    Q9_u32 patchAddr = hdr + Q9K_CSL_PATCH_OFF;
+    Q9_u32 toosmallTarget = hdr + Q9K_CSL_TOOSMALL_OFF;
+    Q9_u32 growTarget     = hdr + Q9K_CSL_GROW_OFF;
+    Q9_u32 moduleSize;
+    Q9_u32 stub;
+    Q9_u32 disp;
+
+    /* Erst die Modulgroesse (M$Size) pruefen -- der Patch-Versatz muss
+     * WIRKLICH innerhalb des geladenen Moduls liegen, sonst ist es
+     * definitiv nicht dasselbe csl.mod (oder ueberhaupt kein Modul
+     * dieser Groessenordnung) und jeder weitere Bytezugriff waere ein
+     * Griff ins Leere -- auch fuer den Host-Test wichtig (dort ist der
+     * Fake-Modulpuffer klein). */
+    moduleSize = Q9K_TLinkReadU32BE(hdr + Q9K_MH_SIZE);
+    if (moduleSize < Q9K_CSL_PATCH_OFF + 4UL)
+        return;
+
+    if (Q9K_GetU8(patchAddr + 0) != 0x62UL || Q9K_GetU8(patchAddr + 1) != 0x00UL ||
+        Q9K_GetU8(patchAddr + 2) != 0xfeUL || Q9K_GetU8(patchAddr + 3) != 0xfcUL) {
+        return;   /* nicht das erwartete Bytemuster -- unangetastet lassen */
+    }
+
+    stub = Q9K_AllocMem(28UL);
+    if (stub == 0)
+        return;   /* kein Speicher fuer den Stub -- lieber unveraendert lassen */
+
+    Q9K_SetU8(stub + 0x00, 0x4A); Q9K_SetU8(stub + 0x01, 0x8C);  /* tst.l a4 */
+    Q9K_SetU8(stub + 0x02, 0x67); Q9K_SetU8(stub + 0x03, 0x00);  /* beq.w .grow */
+    Q9K_SetU8(stub + 0x04, 0x00); Q9K_SetU8(stub + 0x05, 0x12);  /* disp=$16-$04=$12 */
+    Q9K_SetU8(stub + 0x06, 0xB6); Q9K_SetU8(stub + 0x07, 0xAC);  /* cmp.l $4(a4),d3 */
+    Q9K_SetU8(stub + 0x08, 0x00); Q9K_SetU8(stub + 0x09, 0x04);
+    Q9K_SetU8(stub + 0x0A, 0x62); Q9K_SetU8(stub + 0x0B, 0x00);  /* bhi.w .toosmall */
+    Q9K_SetU8(stub + 0x0C, 0x00); Q9K_SetU8(stub + 0x0D, 0x04);  /* disp=$10-$0C=$04 */
+    Q9K_SetU8(stub + 0x0E, 0x4E); Q9K_SetU8(stub + 0x0F, 0x75);  /* rts */
+    Q9K_SetU8(stub + 0x10, 0x58); Q9K_SetU8(stub + 0x11, 0x8F);  /* .toosmall: addq.l #4,a7 */
+    Q9K_SetU8(stub + 0x12, 0x60); Q9K_SetU8(stub + 0x13, 0x00);  /* bra.w toosmallTarget */
+    disp = toosmallTarget - (stub + 0x14UL);
+    Q9K_SetU8(stub + 0x14, (Q9_u8)(disp >> 8)); Q9K_SetU8(stub + 0x15, (Q9_u8)disp);
+    Q9K_SetU8(stub + 0x16, 0x58); Q9K_SetU8(stub + 0x17, 0x8F);  /* .grow: addq.l #4,a7 */
+    Q9K_SetU8(stub + 0x18, 0x60); Q9K_SetU8(stub + 0x19, 0x00);  /* bra.w growTarget */
+    disp = growTarget - (stub + 0x1AUL);
+    Q9K_SetU8(stub + 0x1A, (Q9_u8)(disp >> 8)); Q9K_SetU8(stub + 0x1B, (Q9_u8)disp);
+
+    disp = stub - (patchAddr + 2UL);
+    Q9K_SetU8(patchAddr + 0, 0x61); Q9K_SetU8(patchAddr + 1, 0x00);  /* bsr.w stub */
+    Q9K_SetU8(patchAddr + 2, (Q9_u8)(disp >> 8)); Q9K_SetU8(patchAddr + 3, (Q9_u8)disp);
+}
+
 /* Real belegte Fehlercodes (MWOS/OS9/SRC/DEFS/funcs.a, per E$UnkSvc/
  * E$BPAddr/E$BPNam als Anker ausgezaehlt, s. docs/OWN_KERNEL_STATUS.md). */
 #define Q9K_ERR_MODBSY 0x00D1U   /* E$ModBsy, Module Busy */
@@ -276,6 +381,10 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
          * Speicher bereitgestellt wurde (staticPtr!=0, s. "size==0"-Fall
          * oben) -- ohne eigenen Speicher gibt es kein Ziel zum Kopieren. */
         Q9K_ApplyInitializedData(hdr, staticPtr);
+        /* NACHTRAG 2026-09-13 (Fortsetzung 58): patcht bei Bedarf den in
+         * Fortsetzung 56/57 gefundenen csl-eigenen Freilisten-Bug --
+         * Selbstschutz per Bytemuster-Pruefung, s. Kopfkommentar dort. */
+        Q9K_PatchCslFreelistBug(hdr);
     }
     *outStaticPtr = staticPtr;
 

@@ -38,6 +38,7 @@ cp "$SRCDIR"/q9kernel_entry.a "$SRCDIR"/q9kernel_cinit.c "$SRCDIR"/q9kernel_modc
    "$SRCDIR"/q9kernel_moddir.c "$SRCDIR"/q9kernel_sched.c "$SRCDIR"/q9kernel_procend.c \
    "$SRCDIR"/q9kernel_procsleep.c "$SRCDIR"/q9kernel_sysmem.c \
    "$SRCDIR"/q9kernel_ssvc.c "$SRCDIR"/q9kernel_iopath.c "$SRCDIR"/q9kernel_procapi.c "$SRCDIR"/q9kernel_traplink.c \
+   "$SRCDIR"/q9kernel_setsys.c \
    "$SRCDIR"/q9kernel_config.h .
 # NACHTRAG (2026-09-13): Pfad an die Repo-Reorganisation angepasst --
 # q9sysglob.h liegt jetzt unter Q9-KERNEL/common/src/ (fuer den
@@ -51,7 +52,7 @@ source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh
 CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_ALLOC_STANDARD"
 cat > makefile <<EOF
 CFLAGS = -b -O7 -cq -cw $CDEFS
-all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r
+all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r
 q9kernel_cinit.r: q9kernel_cinit.c
 q9kernel_modcheck.r: q9kernel_modcheck.c
 q9kernel_initext.r: q9kernel_initext.c
@@ -69,6 +70,7 @@ q9kernel_ssvc.r: q9kernel_ssvc.c
 q9kernel_iopath.r: q9kernel_iopath.c
 q9kernel_procapi.r: q9kernel_procapi.c
 q9kernel_traplink.r: q9kernel_traplink.c
+q9kernel_setsys.r: q9kernel_setsys.c
 EOF
 
 echo "== C-Dateien kompilieren (Development/Standard-Variante, s. q9kernel_config.h) =="
@@ -76,7 +78,7 @@ echo "== C-Dateien kompilieren (Development/Standard-Variante, s. q9kernel_confi
 # Programm "all" zu linken) -- das ist erwartet, die acht echten .r-
 # Ziele sind zu diesem Zeitpunkt schon fertig. Deshalb || true.
 mwos-build . all < /dev/null || true
-for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r; do
+for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r; do
     [ -f "$f" ] || { echo "FEHLER: $f wurde nicht erzeugt"; exit 1; }
 done
 
@@ -93,6 +95,7 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
     q9kernel_entry.r q9kernel_cinit.r q9kernel_modcheck.r q9kernel_modsearch.r q9kernel_initext.r \
     q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r \
     q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r \
+    q9kernel_setsys.r \
     < /dev/null
 
 echo "== Fertig: $OUTDIR/q9kernel =="
