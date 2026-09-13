@@ -11,8 +11,17 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 59 —
+## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 60 —
 HIER ZUERST LESEN, ersetzt die Übergabe direkt darunter vollständig)
+
+**Fortsetzung 60 (direkter Anschluss an 58/59): `F$SetSys` gehaertet.**
+Unbekannte Systemvariablen meldeten bisher still `0` + Erfolg (in
+Fortsetzung 58 als offene Einschraenkung dokumentiert) -- melden jetzt
+sauber `E$UnkSvc` (`$D0`, aus der realen Fehlercode-Tabelle gezaehlt,
+nicht geraten). Die eine bekannte Variable (`$7C`, csl-Malloc-
+Zuwachsgroesse) bleibt unveraendert erfolgreich -- `echo Hallo` weiterhin
+korrekt live verifiziert. Alle 16 Host-Testsuiten gruen (Testfall
+erweitert). Details in Fortsetzung 60 unten.
 
 **Fortsetzung 59 (direkter Anschluss an 58): `echo` produziert
 NACHWEISLICH KORREKTE Ausgabe, nicht nur absturzfrei.** `F$Fork("echo")`
@@ -7671,3 +7680,58 @@ Alle 16 Host-Testsuiten weiterhin gruen (reine Testcode-Aenderung in
 **Weiterhin unverifiziert (unveraendert gegenueber Fortsetzung 58):**
 andere `csl`-Funktionen, andere Programme, andere `F$SetSys`-Variablen
 jenseits der einen bekannten (`$7C`) -- s. dortige Einschraenkungen.
+
+---
+
+## Fortsetzung 60: `F$SetSys` gehaertet -- unbekannte Variablen melden
+jetzt einen sauberen Fehlschlag statt still `0` + Erfolg vorzutaeuschen
+(2026-09-13, elfte Sitzung, auf "F$SetSys robuster machen")
+
+### Anlass
+
+Selbst in Fortsetzung 58 als Einschraenkung dokumentiert: `F$SetSys`
+lieferte fuer JEDE unbekannte Systemvariable still `0` UND meldete
+trotzdem Erfolg. Ein Programm, das eine andere Variable als die eine
+bekannte (`$7C`) braucht, haette dadurch einen STILLEN FALSCHWERT
+bekommen statt eines erkennbaren Fehlers -- gefaehrlicher als ein
+sauberer Fehlschlag, weil ein Aufrufer, der die Carry-Flagge tatsaechlich
+prueft, auf einen klaren Fehler reagieren kann (z. B. eigenen
+Standardwert verwenden), auf einen unbemerkt falschen Wert aber nicht.
+
+### Aenderung
+
+`q9kernel_setsys.c`: `Q9K_ProcSetSys` um einen `outError`-Parameter
+erweitert, liefert bei "Lesen einer unbekannten Variable" jetzt `0`
+(Fehlschlag) mit Fehlercode **E$UnkSvc = `$D0`** (MWOS/OS9/SRC/DEFS/
+funcs.a Zeile 1011 -- Wert NICHT geraten, sondern rueckwaerts aus der
+Fehlercode-Tabelle gezaehlt: `E$ModBsy=$D1`/`E$BPAddr=$D2` waren
+bereits an anderer Stelle in diesem Kernel belegt und bestaetigt, davor
+in der Tabelle stehen `E$MemFul/E$UnkSvc/E$ModBsy`, macht `E$UnkSvc=
+$D0`). "Schreiben" bleibt UNVERAENDERT (bestaetigt, nicht gespeichert)
+-- der eine bekannte Aufrufer liest nur, ein Fehlschlag beim Schreiben
+haette keinen bekannten Nutzen.
+
+Neue Scratch-Zellen `Q9K_SetSysScratch_Error`/`_Success` bei
+`$1664`/`$1668` -- BEWUSST NICHT bei `$1650` (das ist
+`Q9K_VMODUL_RETBUF`s Start, `q9kernel_moddir.c`, hätte sonst genau die
+in Fortsetzung 52/58 dokumentierte Kollisionsfalle wiederholt), sondern
+im naechsten wirklich freien Bereich ($1664-$168F, vor
+`Q9K_TLinkScratch_*` bei `$1690`) -- gegen den GESAMTEN belegten
+Adressbereich gegengeprueft, nicht nur Startadressen.
+
+`Q9K_SysFSetSys` (`q9kernel_entry.a`): setzt jetzt bedingt Carry
+(Erfolg/Fehlschlag je nach `Q9K_SetSysScratch_Success`), liefert bei
+Fehlschlag `d1.w`=Fehlercode -- gleiches Muster wie
+`Q9K_SysFAllPD_Fail` u. a.
+
+### Ergebnis
+
+Host-Test `test_q9kernel_setsys.c` erweitert (5 Faelle: bekannte
+Variable inkl. Fehlercode-Feld, unbekannte Variable jetzt Fehlschlag
+mit `E$UnkSvc`, Schreiben unveraendert, Scratch-Bruecke Erfolgs- UND
+Fehlerfall). Alle 16 Host-Testsuiten gruen. Live erneut verifiziert:
+`echo Hallo` erscheint weiterhin korrekt, `Vektor=0` (kein Absturz) --
+die Haertung aendert nichts am bereits funktionierenden Fall (`$7C`
+bleibt erfolgreich), schliesst nur die dokumentierte Luecke fuer
+kuenftige, andere Aufrufer. Sicherheitsabstand (Fortsetzung 37/38)
+erneut geprueft, unveraendert korrekt.

@@ -363,6 +363,12 @@ Q9K_SRqCMemFrameScratch   equ $1640      * Q9_u32, Rahmenbasis oder 0
 Q9K_SetSysScratch_VarCode equ $1644      * Q9_u32, d0.l EIN
 Q9K_SetSysScratch_Flags   equ $1648      * Q9_u32, d1.l EIN
 Q9K_SetSysScratch_Value   equ $164C      * Q9_u32, d2.l EIN (Schreiben)/AUS (Lesen)
+* NACHTRAG 2026-09-13 (Fortsetzung 60): Erfolgs-/Fehlerzellen NICHT bei
+* $1650 fortsetzen (das ist Q9K_VMODUL_RETBUF's Start,
+* q9kernel_moddir.c) -- naechster freier Bereich ist $1664-$168F, vor
+* Q9K_TLinkScratch_* bei $1690.
+Q9K_SetSysScratch_Error   equ $1664      * Q9_u32, d1.w AUS bei Fehlschlag
+Q9K_SetSysScratch_Success equ $1668      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 
 * F$TLink (Callcode $21) -- Scratch-Bruecke fuer Q9K_SysTLinkImpl
 * (q9kernel_traplink.c), freier Bereich hinter Q9K_VMODUL_RETBUF
@@ -3629,6 +3635,10 @@ Q9K_SysFSRtMem:
 * (Fortsetzung 56/58-Lehre: die reale Konvention "OUT: keine" [bzw.
 * hier nur d2 als Ausgabe] verlangt, ALLE anderen Register unveraendert
 * zu lassen -- der Aufrufer (csl.mod) liest d1 NACH dem trap #0 erneut).
+* NACHTRAG 2026-09-13 (Fortsetzung 60): jetzt echter Erfolg/Fehlschlag
+* statt immer "Erfolg" -- s. q9kernel_setsys.c Kopfkommentar
+* (unbekannte Variablen melden jetzt E$UnkSvc, statt still einen
+* moeglicherweise falschen Wert vorzutaeuschen).
 Q9K_SysFSetSys:
         movem.l d0-d1/d3-d7/a0-a1/a3-a5,-(sp)
         move.l  a6,-(sp)                     * eingehendes a6 sichern (kann 0 sein)
@@ -3641,7 +3651,15 @@ Q9K_SysFSetSys:
         movea.l (sp)+,a6                     * eingehendes a6 wiederherstellen
         movem.l (sp)+,d0-d1/d3-d7/a0-a1/a3-a5
 
-        andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg" (s. Kopfkommentar q9kernel_setsys.c)
+        tst.l   Q9K_SetSysScratch_Success
+        beq     Q9K_SysFSetSys_Fail
+
+        andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg
+        rts
+
+Q9K_SysFSetSys_Fail:
+        move.w  Q9K_SetSysScratch_Error+2,d1
+        ori     #1,ccr                            * Carry setzen -- Fehlschlag
         rts
 
 *******************************************************************************
