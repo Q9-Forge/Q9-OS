@@ -54,10 +54,20 @@ KEINER dieser spaeteren Werte erklaert `$5567f` — der tatsaechliche
 A6-Wert zur Absturzzeit muss auf REGISTER-Ebene entstehen (vermutlich
 `echo`s eigener Code veraendert A6 selbst kurzzeitig, ein Timer-
 Interrupt trifft in dieses Fenster). Reine Speicheradressen-Beobachtung
-kann das nicht mehr aufloesen. Bewusst NICHT weiter verfolgt (sechster
-eigenstaendiger Fund dieser sehr langen Sitzung) — konkreter Plan
-(Instruktions-Trace-Hook um eine `a6`-Spalte erweitern, gegen
-`Q9K_RaceRing`/Timer-Interrupt-Eintritte gegenpruefen) in Fortsetzung 54.
+kann das nicht mehr aufloesen.
+
+**A6-Kantenverfolgung umgesetzt (Fortsetzung 55):** die ersten 13
+beobachteten A6-Uebergaenge zeigen ein VOLLSTAENDIG korrektes,
+wiederholtes `echo`⇄`csl`-Umschaltmuster (a6 wechselt sauber zwischen
+`$556a0` und csl's eigenem `$3df10` und wieder zurueck) -- die
+grundsaetzliche a6-Umschaltung beim Aufruf einer Trap-Bibliotheks-
+funktion ist damit ebenfalls als korrekt bestaetigt. Der Uebergang zum
+tatsaechlichen Fehlerwert (`$5567f`) selbst bleibt unbeobachtet: die
+Instrumentierung bringt den EMULATOR-HOST-PROZESS (nicht nur die
+emulierte CPU) reproduzierbar kurz danach zum Absturz, Ursache nicht
+ermittelt. Bewusst NICHT weiter verfolgt (sechster eigenstaendiger Fund
+dieser sehr langen Sitzung) — konkreter Plan (robustere, ringpuffer-
+basierte A6-Verfolgung statt live `fprintf`) in Fortsetzung 55.
 
 **Vorheriger Meilenstein (weiterhin gültig, unverändert stabil):** der
 seit 2026-09-04 verfolgte "kernelgrößenabhängige Interrupt-Race"-Absturz
@@ -7177,3 +7187,56 @@ Alle 15 Host-Testsuiten gruen (unveraendert). Reine Diagnose in dieser
 Fortsetzung -- die beiden Pfad-Fixes (`build.sh`/`mkbootfile.sh`) sind
 die einzige inhaltliche Aenderung, beide reine Anpassungen an die
 Repo-Reorganisation.
+
+## Fortsetzung 55: A6-Kantenverfolgung -- echte, legitime csl/echo-Uebergabe bestaetigt, aber der Absturzuebergang selbst bleibt unbeobachtbar (2026-09-13, elfte Sitzung, auf "ja mach bitte weiter")
+
+**Umgesetzt:** der in Fortsetzung 54 skizzierte Plan -- den Emulator-
+eigenen Instruktions-Trace-Hook (`Q9-Flux-68k/src/kernel/m68krt.c`)
+TEMPORAER um eine kantengetriggerte A6-Verfolgung erweitert (protokolliert
+NUR bei AENDERUNG, gefiltert auf den Wertebereich um echos erwartete
+Datenbereichsbasis `$54000`-`$57000`). Nach Gebrauch wieder vollstaendig
+zurueckgesetzt (`git checkout`).
+
+**Positives Ergebnis:** Die ERSTEN 13 beobachteten A6-Uebergaenge zeigen
+ein VOLLSTAENDIG korrektes, sich wiederholendes Aufruf-/Ruecksprung-
+Muster zwischen `echo` (a6=`$556a0`) und `csl` (a6=`$3df10`, csl's
+eigener statischer Bereich aus `F$TLink`) -- `csl`s Code an Datei-
+Offset `$3f40e` schaltet a6 korrekt auf seinen EIGENEN Bereich um,
+Offset `$3f524` schaltet es korrekt WIEDER auf `echo`s Wert zurueck.
+Dieses Muster wiederholt sich sauber ueber mehrere Aufrufe (Eintraege
+6-12) -- **die grundsaetzliche a6-Umschaltung beim Aufruf einer Trap-
+Bibliotheksfunktion funktioniert also nachweislich korrekt.**
+
+**Blockiert:** der Uebergang zum tatsaechlichen Fehlerwert (`$5567f`)
+selbst konnte NICHT beobachtet werden -- die Protokollierung bricht
+REPRODUZIERBAR (zweimal exakt gleich) unmittelbar nach Eintrag #13
+(derselbe `csl`-Ruecksprungpunkt `$3f524`) ab, weil der EMULATOR-
+PROZESS SELBST (nicht nur die emulierte CPU) an dieser Stelle
+abstuerzt -- kein sauberes "Host-Escape"/Dump-Ende, der Prozess
+verschwindet einfach aus der Prozessliste. Der eigentliche
+`Q9K_ExcTrap`-Dump (mit `A6=$5567f`) wird davor noch korrekt
+geschrieben, das Verhalten des `q9dbg_dump.txt`-Mechanismus selbst ist
+also nicht betroffen -- nur meine ZUSAETZLICHE, temporaere
+Instrumentierung bringt den Host-Prozess irgendwann danach zum
+Absturz (Ursache nicht ermittelt: entweder eine Wechselwirkung mit dem
+bereits eingefrorenen Trace-Ring, oder eine sehr hohe Aufruffrequenz
+meines `fprintf`, die mit dem laufenden Absturz-/Spinzustand
+kollidiert). **Bewusst nicht weiterverfolgt** -- ein Debug-Werkzeug,
+das selbst instabil wird, ist kein tragfaehiger Weg fuer den letzten
+Schritt dieser Untersuchung.
+
+**Stand am Ende dieser Sitzung:** Die Ursache des Vektor-10-Absturzes
+ist auf einen sehr kleinen, klar umrissenen Rest eingegrenzt -- ALLE
+kernel-seitigen Mechanismen (`F\$Load`, `Q9K_ApplyInitializedData`,
+`Q9K_ProcFork`s A6-Bias-Fix, UND jetzt auch das grundsaetzliche
+`csl`/`echo`-a6-Umschaltmuster) sind nachweislich korrekt. Der Fehler
+muss in einem SPAETEREN, bisher nicht beobachteten a6-Uebergang
+liegen -- entweder einer WEITEREN `csl`-Aufruf/Ruecksprung-Runde (nach
+Eintrag 13) mit einem subtilen Fehler, oder einer Interrupt-bedingten
+Verfaelschung genau in diesem Fenster. Fuer eine Folgesitzung: dieselbe
+A6-Kantenverfolgung erneut versuchen, aber ROBUSTER umgesetzt (z. B.
+in einen Ringpuffer statt live `fprintf`, erst beim naechsten Ctrl-^-Dump
+ausgegeben -- vermeidet die vermutete Host-Instabilitaetsursache).
+
+Alle 15 Host-Testsuiten gruen (unveraendert), keine Kernel-Codeaenderung
+in dieser Fortsetzung, Emulator-Repo sauber zurueckgesetzt.
