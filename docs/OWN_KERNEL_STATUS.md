@@ -15,23 +15,21 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 HIER ZUERST LESEN, ersetzt die Übergabe direkt darunter vollständig)
 
 **Fortsetzung 61 (zweites echtes Kommandomodul "date" getestet):
-ECHTER, BISHER UNBEKANNTER SPEICHERZUTEILUNGS-BUG gefunden (noch NICHT
-behoben).** `date` (zweites, von `echo` unabhaengiges Testprogramm)
-druckt `**** csl traphandler mismatch ****` und bricht ab (kein
-Absturz). Drei Hypothesen geprueft und widerlegt (Trap-15-Mechanismus,
-gemeinsamer Prozess-Speicherbereich, Scheduler rettet A6 nicht) --
-ECHTE Ursache: `date`s EIGENER Prozessspeicherbereich (`$4f690`) liegt
-INNERHALB von `csl`s zu diesem Zeitpunkt noch aktivem statischem
-Bereich (`$4d6a0`-`$4fd30`, allozieren fuer `echo`s `F\$TLink`-Instanz)
--- `Q9K_AllocMem` hat also ZWEI GLEICHZEITIG AKTIVEN Prozessen
-ueberlappende Speicherbloecke gegeben. Live per Freilisten-
-Schreibzugriffen bestaetigt (`csl`s ganzer Block UND `date`s eigener,
-noch aktiver Bereich werden beide in dieselbe Kernel-Freiliste
-eingetragen). EXAKTER Ausloeser (welcher `F\$SRtMem`-Aufruf das
-verursacht) noch NICHT isoliert -- naechster Schritt fuer eine
-Folgesitzung. Betrifft grundsaetzlich JEDES Szenario mit zwei
-gleichzeitig laufenden, `csl`-nutzenden Prozessen. Details in
-Fortsetzung 61 unten.
+"csl traphandler mismatch" gefunden, Ursache NACH ANFAENGLICHER
+FEHLDEUTUNG NOCH OFFEN.** `date` (zweites, von `echo` unabhaengiges
+Testprogramm) druckt `**** csl traphandler mismatch ****` und bricht
+ab (kein Absturz). Drei Hypothesen geprueft und widerlegt (Trap-15-
+Mechanismus, gemeinsamer Prozess-Speicherbereich, Scheduler rettet A6
+nicht). Eine VIERTE These ("Arena-Ueberlappung zwischen `echo`s und
+`date`s Speicherbloecken") wurde noch INNERHALB DERSELBEN SITZUNG per
+Nachrechnung und genauerer Pruefung WIDERLEGT und ZURUECKGEZOGEN --
+s. "NACHTRAG/KORREKTUR" am Ende von Fortsetzung 61. Die tatsaechliche
+Ursache bleibt OFFEN. **Eine unabhaengig davon gueltige, echte
+Erkenntnis:** `F\$Exit` (`q9kernel_procend.c`) gibt den primaeren
+Prozessblock automatisch an die Arena zurueck -- korrigiert die
+bisherige Annahme "Speicher-Ruecknahme bei Prozessende nicht
+implementiert" (galt nur fuer per `F\$SRqMem` angeforderte
+Zusatzbloecke). Details in Fortsetzung 61 unten.
 
 **Fortsetzung 60 (direkter Anschluss an 58/59): `F$SetSys` gehaertet.**
 Unbekannte Systemvariablen meldeten bisher still `0` + Erfolg (in
@@ -7878,3 +7876,46 @@ punktuell an einer vermuteten Stelle zu suchen.
   nachgewiesen, aber NOCH NICHT behoben (exakter Ausloeser offen, s. o.).
   Betrifft NICHT nur `date` -- jedes Szenario mit zwei parallel
   laufenden, `csl` nutzenden Prozessen waere potenziell betroffen.
+
+### NACHTRAG/KORREKTUR (direkter Anschluss, selbe Sitzung): die
+"Arena-Ueberlappung" oben ist NICHT haltbar -- zurueckgezogen
+
+Bei der Suche nach dem EXAKTEN Ausloeser (geplanter naechster Schritt
+oben) zwei Dinge gefunden, die die obige Schlussfolgerung widerlegen:
+
+1. **Nachrechnung von `echo`s tatsaechlichem Blockende:** `totalSize =
+   M\$Mem($76c) + M\$Stack($c00) + Parametergroesse($b) = $1377`. `echo`s
+   Block (`$4d6a0`) endet damit bei `$4ea17` -- erreicht `date`s Block
+   (`$4f690`) NICHT. Die beiden Bloecke ueberlappen sich nach dieser
+   Rechnung gar nicht.
+2. **Der vermeintliche "Beweis" (identischer Speicherinhalt an beiden
+   Adressen) war eine Fehldeutung:** der Wert (`e317cde6`) ist
+   hoechstwahrscheinlich ein generisches Stack-Fuellmuster, das JEDE
+   Prozessinitialisierung gleich schreibt (an ihre JEWEILS EIGENE,
+   getrennte Adresse) -- keine echte Adressueberlappung.
+
+**Die "Arena-Ueberlappung"-Schlussfolgerung aus dieser Fortsetzung ist
+damit ZURUECKGEZOGEN.** Die tatsaechliche Ursache von "csl traphandler
+mismatch" bleibt ungeklaert.
+
+**Eine echte, verlaessliche Erkenntnis bleibt aber bestehen** (aus dem
+Quellcode gelesen, nicht aus fragilem Live-Raten): `q9kernel_procend.c`
+(`F\$Exit`) gibt den PRIMAEREN Prozessblock (die bei `F\$Fork`
+registrierte statische Flaeche) automatisch an die Arena zurueck
+(`Q9K_FreeMem(base, size)`, Zeile 188) -- das WIDERSPRICHT der
+bisherigen, an mehreren Stellen dokumentierten Annahme "Speicher-
+Ruecknahme bei Prozessende nicht implementiert" (die bezog sich, wie
+sich jetzt zeigt, nur auf EXPLIZIT per `F\$SRqMem` angeforderte
+Zusatzbloecke, nicht auf den Primaerblock selbst). Diese Erkenntnis
+ist unabhaengig von der zurueckgezogenen Ueberlappungs-These und bleibt
+gueltig.
+
+**Lehre fuer kuenftige Live-Untersuchungen in diesem Kernel:** ohne
+ein echtes, funktionsgrenzen-genaues Listing (r68/l68-Map-Datei) ist
+die Ruecksprungadressen-/Blockgrenzen-Rekonstruktion aus reiner
+Laufzeitbeobachtung fehleranfaellig -- mehrere Zwischenschluesse in
+dieser Fortsetzung mussten deshalb bereits INNERHALB derselben Sitzung
+wieder verworfen werden. Fuer eine Folgesitzung: zuerst ein
+Adress-zu-Funktion-Mapping (Map-Datei oder sorgfaeltig von Hand
+gezaehlte Funktionsgrenzen) beschaffen, BEVOR neue Ursachenthesen
+aufgestellt werden.
