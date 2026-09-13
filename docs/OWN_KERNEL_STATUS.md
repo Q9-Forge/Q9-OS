@@ -11,8 +11,38 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-11, elfte Arbeitssitzung — HIER ZUERST LESEN,
-ersetzt die Übergabe direkt darunter vollständig)
+## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 56/57 —
+HIER ZUERST LESEN, ersetzt die Übergabe direkt darunter vollständig)
+
+**MEILENSTEIN: Vektor-10-Absturz (`PC=$4e25e`, `A6=$5567f`) VOLLSTAENDIG
+bis zur auslösenden Instruktion aufgeklärt (Fortsetzung 56).** Die
+echte Ursache liegt NICHT im Q9-OS-Kernel, sondern in `csl`s EIGENEM,
+privatem Freispeicher-Verwalter (ein Teil des echten, closed-source
+Microware-`csl.mod`, nicht von Q9-OS nachgebaut): dessen interne
+Freiliste läuft über einen NULL-"Next"-Zeiger, OHNE das vor dem
+Dereferenzieren zu prüfen, und behandelt Adresse `$0` danach als
+vermeintlich gültigen Freiblock. Die Instruktion `sub.l d3,$4(a4)` mit
+`a4=0` schreibt dadurch auf ABSOLUTE ADRESSE `$4` (Teil der nach dem
+Boot ungenutzten 68000-Reset-Vektortabelle) — just die Zelle, die
+`csl` selbst (nach demselben `a0=0`-Konventionsmuster) als GLOBALEN,
+system­weiten Cache für "meine eigene a6" benutzt. Live gemessen:
+`d3=$21`(=33), Zelle vorher `$556a0`, danach `$556a0-$21=$5567f` —
+exakt der spätere Absturzwert, bis auf die letzte Nachkommastelle
+reproduzierbar. Zwei zuvor versuchte Kernel-seitige Fixes (Arena-
+Interrupt-Sperre, `F$SRqMem`/`F$SRtMem`-Registerrettung) behoben DAHER
+folgerichtig nichts — beide bleiben trotzdem als eigenständig
+gerechtfertigte Härtungen im Kernel (alle 15 Host-Testsuiten grün,
+committet). Offen: ob Q9-OS' `F$TLink`/`F$SRqMem`-Groessenvergabe an
+`csl` (`M$Mem=$2690`) von der echten Hardware abweicht und dadurch
+diesen an sich in `csl` latenten Bug ueberhaupt erst ausloest, oder ob
+das ein waehrend echter OS-9-Nutzung nie erreichter csl-eigener
+Randfall ist. Neue, wiederverwendbare Diagnosewerkzeuge im Emulator
+(`Q9_A6TRACE_LO/_HI/_FREEZE`, `Q9_PCHIT_ADDR`) committet, s.
+Fortsetzung 56 fuer Details und die vollstaendige Herleitung.
+
+---
+
+## ÜBERGABE (2026-09-11, elfte Arbeitssitzung — historisch, s. oben)
 
 **MEILENSTEIN: `M$IData`/`M$IRefs` implementiert (Fortsetzung 49) UND
 die gesamte `echo`/`csl`-Adressbeziehungssaga seit Fortsetzung 44 auf
@@ -7240,3 +7270,156 @@ ausgegeben -- vermeidet die vermutete Host-Instabilitaetsursache).
 
 Alle 15 Host-Testsuiten gruen (unveraendert), keine Kernel-Codeaenderung
 in dieser Fortsetzung, Emulator-Repo sauber zurueckgesetzt.
+
+---
+
+## Fortsetzung 56: Vektor-10-Absturz VOLLSTAENDIG aufgeklaert -- echte
+Ursache liegt in `csl`s EIGENEM privaten Freispeicher-Verwalter, nicht
+im Q9-OS-Kernel (2026-09-13, elfte Sitzung, auf "ok, du kannst weiter
+machen es ist noh frueh")
+
+### Ausgangslage
+
+Zwei Kandidaten-Fixes aus der vorigen Sitzungshaelfte zuerst live
+geprueft:
+
+1. **Arena-Interrupt-Sperre** (`Q9K_IntLock`/`Q9K_IntUnlock` in
+   `q9kernel_entry.a`, um `Q9K_AllocMem`/`Q9K_FreeMem`/
+   `Q9K_AllocLargest` gelegt, `q9kernel_arena.c`): rebuilt, live
+   getestet -- IDENTISCHER Absturz (`PC=$4e25e A6=$5567f`). Nicht die
+   Ursache, aber als eigenstaendige Haertung (verhindert eine echte,
+   wenn auch hier nicht ausschlaggebende Racebedingung) BEHALTEN.
+2. **`F\$SRqMem`/`F\$SRtMem`-Registerrettung** (`Q9K_SysFSRqMem`/
+   `Q9K_SysFSRtMem` in `q9kernel_entry.a` retteten bisher nur `a6` um
+   ihren internen C-Aufruf, nicht die anderen laut Konvention noetigen
+   Register -- derselbe Fehlerklasse, bereits einmal fuer `F\$TLink` in
+   Fortsetzung 45 gefixt): `movem.l`-Rettung ergaenzt, rebuilt, live
+   getestet -- ERNEUT IDENTISCHER Absturz. Auch das BEHALTEN (echte,
+   unabhaengig gerechtfertigte Korrektur), aber nicht die Ursache.
+
+Beide Fixes bauen weiterhin sauber (`build.sh`, Exit=0), alle 15
+Host-Testsuiten weiterhin gruen (neuer Testfall in
+`test_q9kernel_arena.c`: `Q9K_IntLock`/`_Unlock`-Aufrufbilanz).
+
+### Neue Diagnosewerkzeuge im Emulator
+
+Die bestehende A6-Kantenverfolgung (Fortsetzung 55, Ringpuffer statt
+`fprintf` im heissen Pfad -- vermeidet den dort dokumentierten
+Host-Absturz) um zwei Bausteine erweitert (`Q9-Flux-68k/src/kernel/
+m68krt.c`/`m68krt.h`/`q9boardrun.c`):
+
+- **`Q9_A6TRACE_LO`/`Q9_A6TRACE_HI`** (Wertebereichsfilter) +
+  **`Q9_A6TRACE_FREEZE=<Wert>`** (Ringpuffer wird eingefroren, sobald
+  dieser A6-Wert zum ersten Mal auftritt -- haelt die ZUFUEHRENDEN
+  Eintraege fest, statt sie durch spaeteres Rauschen zu ueberschreiben).
+  Zusaetzlich `a0` je Eintrag mitprotokolliert.
+- **`Q9_PCHIT_ADDR=<Adresse>`**: eigener, unabhaengiger Ringpuffer, der
+  bei JEDEM Erreichen einer festen PC-Adresse Registerinhalte (frei
+  waehlbar im Hook-Code, hier zuletzt `a4`/`d3`/`d4` + ein
+  Speicherwort) mitschneidet -- generisch fuer "was liegt in Register
+  X, wenn Code Y erreicht wird" ohne Host-Absturzrisiko (kein I/O im
+  heissen Pfad, Ausgabe erst beim Ctrl-^-Dump).
+
+Beide vollstaendig `Q9_TRACE_INSTR=1`-gebunden (der Hook wird nur bei
+gesetzter Variable ueberhaupt registriert, `m68k_set_instr_hook_
+callback` in `m68krt.c` -- beim ersten Versuch OHNE dieses Flag lief
+der Ringpuffer leer, `q9_dbg_a6_n=0`, Falle notiert).
+
+### Herleitung (Schritt fuer Schritt, alles live gemessen)
+
+1. **A6-Ringpuffer mit Freeze** (`Q9_A6TRACE_LO=0x30000 Q9_A6TRACE_HI=
+   0x60000 Q9_A6TRACE_FREEZE=0x5567f`): zeigt 6 vollstaendig korrekte
+   `echo`⇄`csl`-Rundtrips (`a6` wechselt sauber zwischen `$3df10` und
+   `$556a0`, ueber die Instruktionen bei `csl+0xee`/`csl+0x202`), dann
+   ZWEI Interrupt-Durchlaeufe (`pc=$780c`/`$782e`, der generische
+   ISR-Ein-/Austritts-Wrapper -- NICHT csl-spezifisch), und danach der
+   7. Eintrittsversuch liefert sofort den korrupten Wert `$5567f`.
+2. **`a0`-Mitschnitt an genau dieser Stelle**: `a0=0` bei ALLEN acht
+   Durchlaeufen (den 7 guten und dem fehlschlagenden) -- das bedeutet,
+   die Adressierung `4(a0)` in der `csl`-Austrittsroutine (Disassemblat
+   `csl+0x1e0`ff, `movea.l \$4(a0),a1` gefolgt von `movea.l a1,a6`)
+   rechnet mit `a0=0`, greift also auf die ABSOLUTE ADRESSE `\$4` zu --
+   kein dynamischer Listenknoten, sondern eine FESTE, GLOBALE Zelle.
+3. **`Q9_WATCH_ADDR=0x4 Q9_WATCH_LEN=4`** (Schreibzugriffe auf genau
+   diese Adresse ueber den gesamten Lauf): 8 Treffer von `pc=\$3f4be`
+   (schreibt korrekt `\$556a0` -- das ist die `csl`-Eintrittsroutine,
+   die beim allerersten Aufruf ihre eigene a6-Adresse dort ablegt),
+   dann EIN Treffer von einer VOELLIG ANDEREN Adresse: `pc=\$449ec`
+   schreibt `\$5567f`.
+4. **Disassemblat um `\$449ec`** (`csl.mod`, `capstone`): Teil von
+   `csl`s EIGENEM privaten Freispeicher-Verwalter (Freiliste INNERHALB
+   des von `F\$TLink` gewaehrten statischen Bereichs, komplett getrennt
+   von den Kernel-Aufrufen `F\$SRqMem`/`F\$SRtMem`). Ausschnitt:
+   ```
+   000449c4: move.l -$64c0(a6), d5      ; Freilisten-Kopf
+   000449c8: movea.l d5, a4
+   000449ca: tst.l a4
+   000449cc: bne.b $449d2               ; NULL-Pruefung -- nur EINMAL, am Kopf
+   000449d2: move.l a4, d4
+   000449d6: movea.l (a0), a4           ; a4 = *(a4)  ("naechster" Zeiger)
+                                        ; -- HIER KEINE erneute NULL-Pruefung!
+   000449d8: cmp.l $4(a4), d3           ; a4 kann jetzt 0 sein
+   ...
+   000449ec: sub.l d3, $4(a4)           ; a4=0 -> schreibt auf ABSOLUT $4
+   ```
+   Der Bug: nach dem Weiterruecken zum "naechsten" Freiblock (Zeile
+   `$449d6`) wird NICHT erneut auf `a4==0` (Listenende) geprueft, bevor
+   der vermeintliche Block benutzt wird.
+5. **`Q9_PCHIT_ADDR=0x449ec`** mit `a4`/`d3`/Speicherwort mitgeschnitten
+   (eigener Zusatz, s. o.): `a4=$00000000`, `d3=$00000021` (=33),
+   `*(a4+4)=$556a0`. `$556a0 - $21 = $5567f` -- exakt der spaetere
+   Absturzwert, auf das Byte genau nachvollzogen. Kein Verdacht mehr,
+   sondern arithmetisch bewiesen.
+
+### Bewertung -- wessen Bug ist das?
+
+`csl.mod` ist das ECHTE, closed-source Microware-Modul (nicht von
+Q9-OS nachgebaut, s. Kopfkommentare in `q9kernel_traplink.c`). Der
+Freispeicher-Verwalter darin gehoert NICHT zum Q9-OS-Kernel -- der
+Q9-OS-Anteil endet bei `F\$TLink`, das `csl` genau `M\$Mem=\$2690`
+(9872 Byte, aus dem Modulkopf gelesen, `q9kernel_traplink.c`) an
+statischem Speicher zuteilt. Ob das der Groesse entspricht, die echte
+OS-9/68K-Hardware fuer dasselbe `csl.mod` zuteilen wuerde (dieselbe
+`M\$Mem`-Konvention, real dokumentiert), oder ob Q9-OS an anderer
+Stelle (z. B. `F\$SRqMem`-Aufrufsequenz waehrend `echo`s Ablauf) ein
+anderes Allokationsmuster erzeugt als reale Hardware und dadurch
+`csl`s privaten Allocator frueher/anders an diese Kante fuehrt als im
+Normalbetrieb, ist NICHT geklaert und braecht eine eigene, neue
+Untersuchung (Vergleich der exakten Allokationsgroessen-Sequenz mit
+echter OS-9-Dokumentation/-Hardware). Die beiden zuvor versuchten
+Kernel-Fixes (Interrupt-Sperre, Registerrettung) waren beide sinnvolle,
+unabhaengig gerechtfertigte Haertungen, konnten dieses Ergebnis aber
+denknotwendig NICHT aendern, weil die Fehlerursache ausserhalb ihrer
+Reichweite liegt (in `csl`s eigenem Code, nicht im Kernel-Trampolin
+oder -Allocator).
+
+### Ergebnis dieser Fortsetzung
+
+- Kernel: `Q9K_IntLock`/`Q9K_IntUnlock` + Arena-Sperre, `F\$SRqMem`/
+  `F\$SRtMem`-Registerrettung -- beide committet, alle 15 Host-
+  Testsuiten gruen, Sicherheitsabstand (Fortsetzung 37/38) erneut
+  ueberprueft (weiterhin exakt an Datei-Offset `\$3aa`-`\$3b5`).
+- Emulator: `Q9_A6TRACE_LO/_HI/_FREEZE` (mit `a0`-Mitschnitt) und
+  `Q9_PCHIT_ADDR` (generischer PC-Treffer-Ringpuffer) als dauerhafte,
+  wiederverwendbare Diagnosewerkzeuge committet -- kein Host-
+  Absturzrisiko (reines Ringpuffer-Schreiben, Ausgabe erst beim
+  Ctrl-^-Dump, exakt wie die bereits bestehenden Werkzeuge).
+- Vektor-10-Absturz: Ursache VOLLSTAENDIG UND BEWEISBAR auf
+  Instruktionsebene geklaert, liegt aber ausserhalb des Q9-OS-Kernels
+  (im privaten Freispeicher-Verwalter des echten `csl.mod`). Keine
+  weitere Kernel-seitige Reparatur ohne eine neue, eigene Untersuchung
+  moeglich/sinnvoll -- naechster Schritt waere ein Vergleich mit
+  realer OS-9-Dokumentation/-Hardware zur exakten `F\$TLink`/
+  `F\$SRqMem`-Groessenvergabe, nicht mehr die bisherige "Kernel-Bug"-
+  Annahme.
+
+### Randnotiz (Werkzeugbau)
+
+Beim Bau der Host-Testsuiten in dieser Sitzung eine Umgebungs-Falle
+entdeckt: `gcc ... $DEFS ...` (Flags aus einer Shell-Variable) wurde
+in dieser Shell-Umgebung NICHT wortweise gesplittet -- `-D"A B"`
+landete als EIN zusammenhaengendes, falsches `-D`-Argument bei gcc.
+Direktes Ausschreiben der Flags in der Kommandozeile (statt ueber eine
+Variable) umgeht das zuverlaessig. Fuer kuenftige Sitzungen: bei
+scheinbar grundlosen `#error`-Abbruechen trotz "richtig gesetzter"
+Flags zuerst genau DAS pruefen.
