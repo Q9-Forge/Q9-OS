@@ -1,7 +1,9 @@
 # Eigener Q9-Kernel — Stand und offene Punkte
 
-Fortlaufender Status des in `src/kernel/` neu geschriebenen, OS-9/68K-
-kompatiblen Kernels. Ergänzt [`OWN_KERNEL_INIT_PLAN.md`](OWN_KERNEL_INIT_PLAN.md)
+Fortlaufender Status des in `Q9-KERNEL/68k/src/kernel/` (bis
+2026-09-13: `src/kernel/`, s. Fortsetzung 54 zur Repo-Reorganisation)
+neu geschriebenen, OS-9/68K-kompatiblen Kernels. Ergänzt
+[`OWN_KERNEL_INIT_PLAN.md`](OWN_KERNEL_INIT_PLAN.md)
 (dem Plan) um das, was davon **real läuft** — nachgewiesen im
 Q9-Flux-Emulator, nicht bloß implementiert.
 
@@ -35,24 +37,27 @@ SCRATCH_*`. Fix: Tabelle auf 12 Einträge verkleinert (endet bei
 `$15F0`, vor der ersten echten Nachbarzelle `$1600`). Live verifiziert:
 der `PC=$7002`-Absturz tritt nicht mehr auf.
 
-**Vierter Fund (Vektor 10, `PC=$4e25e`) EINGEGRENZT, ECHTE URSACHE
-NOCH OFFEN (Fortsetzung 53 + Nachtrag):** kein Sprung durch einen
-Nullzeiger — die Adressrechnung des zweiten `jsr -$78a0(a6)`-Aufrufs
-(Fortsetzung 51) stimmt exakt (dreifach reproduzierbar: `PC=$4e25e`,
-`A6=$5567f`, byteidentisch über drei unabhängige, unveränderte
-Boot-Läufe). Die Zielzelle in `echo`s eigenem `M$IData`-Bereich enthält
-zur Laufzeit aber keinen gültigen `jmp.l`-Stub mehr. **Die Kopier-
-schleife (`Q9K_ApplyInitializedData`, `q9kernel_firstproc.c`) selbst
-wurde Instruktion für Instruktion gegen den kompilierten Maschinencode
-geprüft und ist NACHWEISLICH KORREKT** — sie kopiert exakt den
-falschen Wert, der schon VORHER an dieser Stelle in `echo`s geladenem
-Modulabbild im RAM steht (33 Byte Versatz gegenüber der Datei, an
-GENAU der `M$IData`-Startadresse). Verdacht: Speicherkorruption
-zwischen `F$Load` und `F$Fork` (am ehesten `F$Load` selbst oder
-`F$VModul`s CRC-Prüfung), NICHT ein Fehler in der `M$IData`/`M$IRefs`-
-Anwendung. Bewusst NICHT weiter verfolgt (sechster eigenständiger Fund
-dieser sehr langen Sitzung) — konkreter Plan (Modulabbild VOR jedem
-Kopiervorgang gegen die Datei vergleichen) in Fortsetzung 53.
+**Vierter Fund (Vektor 10, `PC=$4e25e`) WEITER EINGEGRENZT, ECHTE
+URSACHE NOCH OFFEN (Fortsetzung 53+54) — Fortsetzung-53-Verdacht
+("`echo`s Modulabbild bereits vor dem Kopieren korrumpiert") WIDERLEGT:**
+per gezielter Live-Prüfung (Fortsetzung 54) direkt nachgewiesen, dass
+sowohl `F$Load` (schreibt den Stub byte-genau korrekt) als auch
+`Q9K_ApplyInitializedData`s Kopierschleife als auch `Q9K_ProcFork`s
+`Q9K_SetFrameReg`-Aufruf (schreibt beim Fork korrekt `block+$8000` in
+den A6-Slot) alle drei NACHWEISLICH KORREKT arbeiten — keiner der drei
+Verdaechtigen aus den Fortsetzungen 49-51 ist die Ursache. Trotzdem
+zeigt die Absturz-Mitschrift `A6=$5567f` statt des beim Fork korrekt
+gesetzten `$556a0` (Differenz weiterhin exakt `$21`=33 Byte). Die
+Speicherzelle, die den Wert urspruenglich hielt, wird spaeter von
+`echo`s eigenem, normalem Stack-Betrieb ueberschrieben (kein Bug), aber
+KEINER dieser spaeteren Werte erklaert `$5567f` — der tatsaechliche
+A6-Wert zur Absturzzeit muss auf REGISTER-Ebene entstehen (vermutlich
+`echo`s eigener Code veraendert A6 selbst kurzzeitig, ein Timer-
+Interrupt trifft in dieses Fenster). Reine Speicheradressen-Beobachtung
+kann das nicht mehr aufloesen. Bewusst NICHT weiter verfolgt (sechster
+eigenstaendiger Fund dieser sehr langen Sitzung) — konkreter Plan
+(Instruktions-Trace-Hook um eine `a6`-Spalte erweitern, gegen
+`Q9K_RaceRing`/Timer-Interrupt-Eintritte gegenpruefen) in Fortsetzung 54.
 
 **Vorheriger Meilenstein (weiterhin gültig, unverändert stabil):** der
 seit 2026-09-04 verfolgte "kernelgrößenabhängige Interrupt-Race"-Absturz
@@ -7091,3 +7096,84 @@ danach (z.B. durch `F$VModul`s CRC-Berechnung, die denselben
 Speicherbereich liest) hinzukommt.
 
 Keine Codeaenderung. Alle 15 Host-Testsuiten weiterhin gruen.
+
+## Fortsetzung 54: Repo-Reorganisation nachvollzogen + Vektor-10-Fund WEITER PRAEZISIERT -- Q9K_ApplyInitializedData vollstaendig entlastet, echte Ursache liegt in A6 selbst zur Laufzeit (2026-09-13, elfte Sitzung, auf "ok, dann mach damit bitte weiter")
+
+**Repo-Reorganisation (ausserhalb dieser Sitzung geschehen):** `fix/
+a4-aufruferabhaengig` wurde nach `main` gemerged; der Kernel liegt
+jetzt unter `Q9-KERNEL/68k/src/kernel/` (vorher `src/kernel/`), der
+Emulator unter `Q9-Forge/Q9-Flux/Q9-Flux-68k/` (vorher `Q9-Forge/
+Q9-Flux-68k/` direkt) -- Q9-Flux-x86/-Devices als Geschwisterverzeichnisse
+angelegt (fuer geplante Ports). Zwei dadurch zerbrochene relative Pfade
+gefunden+gefixt (waren schlicht nicht an die neue Struktur angepasst):
+`Q9-KERNEL/68k/src/kernel/build.sh` (`q9sysglob.h` liegt jetzt unter
+`Q9-KERNEL/common/src/`, nicht mehr eine Ebene ueber `src/kernel/`) und
+`tools/mkbootfile.sh` (`BUILD`-Pfad). Alle 15 Host-Testsuiten UND der
+Live-Test laufen am neuen Ort unveraendert.
+
+**Vektor-10-Fund (Fortsetzung 53) weiter eingegrenzt:** die dortige
+Vermutung "`echo`s Modulabbild weicht schon vor dem Kopieren von der
+Datei ab" hat sich NICHT bestaetigt -- eine gezielte Ueberpruefung
+zeigt das Gegenteil:
+
+1. **Der `F$Load`-Ladevorgang schreibt den Stub-Bereich BYTE-GENAU
+   korrekt** (per `Q9_WATCH_ADDR` auf die exakte Zieladresse in `echo`s
+   Modulabbild direkt verifiziert: `4e f9 00 00 00 00`, exakt wie in
+   der Datei).
+2. **`Q9K_ApplyInitializedData`s Kopierschleife ist ebenfalls
+   vollstaendig korrekt** -- diesmal per TEMPORAERER, gezielter
+   Erweiterung des Emulator-eigenen Instruktions-Trace-Hooks
+   (`Q9-Flux-68k/src/kernel/m68krt.c`, NACH Gebrauch wieder entfernt)
+   direkt nachgewiesen: `a2` (= `block`, der Kopierziel-Basisparameter)
+   ist zur Laufzeit `$4d6a0` -- die vorherige Fortsetzung-53-Annahme
+   `$4d67f` (hergeleitet aus `A6-$8000` DES ABSTURZES) war schlicht die
+   FALSCHE Referenzadresse fuer DIESEN Zweck. Mit dem echten `a2`
+   stimmen Quelle UND Ziel der Kopierschleife fuer JEDES `i` exakt
+   ueberein (`payload[i]` landet korrekt bei `block+dstOff+i`).
+3. **`Q9K_SetFrameReg` schreibt beim Fork ebenfalls den korrekten
+   Wert** in den A6-Slot des Fake-Rahmens: per `Q9_WATCH_ADDR` auf die
+   berechnete Slot-Adresse (`frameBase+$38`) verifiziert -- der ALLERERSTE
+   Schreibzugriff dort ist `$0005556a0` = `block+$8000`, exakt der
+   erwartete, korrekte Wert. **Der Fortsetzung-51-Fix (A6-`$8000`-Bias)
+   ist damit beim Fork nachweislich vollstaendig korrekt.**
+
+**Der eigentliche Widerspruch:** Trotz alledem zeigt die Absturz-
+Mitschrift `A6=$5567f` -- NICHT `$556a0`. Differenz weiterhin exakt
+`$21` (33 Byte). Per Watch auf denselben Speicherplatz (`frameBase+$38`)
+gezeigt: NACH dem korrekten Erstschreiben wird genau diese Adresse noch
+MEHRFACH von `echo`s eigenem, laufendem Code beschrieben (Adressen
+innerhalb `echo`s Modul: `$3e5a6`, `$3e5ae`, `$3ea76`) -- das ist
+schlicht NORMALE Stack-Nutzung (diese Adresse liegt oberhalb von
+`echo`s eigenem `M$Stack`-Bereich, wird also im Laufe der Ausfuehrung
+ganz gewoehnlich fuer lokale Variablen/gerettete Register wiederverwendet,
+sobald der anfaengliche "Fake-Rahmen" beim allerersten Prozessstart
+konsumiert ist). **Keiner dieser spaeteren Schreibzugriffe ergibt
+jedoch `$5567f` oder `$4d67f`** -- der beim Absturz tatsaechlich im
+CPU-Register befindliche A6-Wert stammt also NICHT (mehr) aus dieser
+Speicherzelle.
+
+**Schlussfolgerung:** Der Fehler ist NICHT (mehr) in `Q9K_ProcFork`,
+`Q9K_ApplyInitializedData` oder dem A6-Bias-Fix zu suchen -- alle drei
+sind jetzt zweifelsfrei als korrekt verifiziert. Der tatsaechliche
+A6-Wert zur Absturzzeit muss auf REGISTER-Ebene entstehen (vermutlich:
+`echo`s eigener, compilierter Code veraendert A6 irgendwann waehrend
+der Ausfuehrung -- unklar, ob legitim mit anschliessender Wiederher-
+stellung, dabei aber von einem Timer-Interrupt genau in diesem Fenster
+unterbrochen, oder aus einem anderen Grund) -- eine reine Speicher-
+adressen-Beobachtung (wie in dieser gesamten Sitzung verwendet) kann
+das NICHT mehr aufloesen, weil der Wert nie (wieder) an eine feste
+Adresse geschrieben werden muss, um im Register zu stehen.
+
+**Fuer eine Folgesitzung, konkret:** den Emulator-eigenen Instruktions-
+Trace-Hook (`m68krt.c`, `q9_dbg_instr_hook`) TEMPORAER um eine
+zusaetzliche Spalte `a6` erweitern (analog zur bereits bestehenden
+Erweiterung fuer dieses Fortsetzung, die NACH Gebrauch wieder entfernt
+wurde) -- damit laesst sich der GENAUE Zeitpunkt/PC finden, an dem A6
+erstmals von `$556xx` auf `$5567f`-aehnliche Werte wechselt, und ob das
+mit einem Timer-Interrupt-Eintritt zusammenfaellt (per `Q9K_RaceRing`,
+bereits vorhanden, im selben Dump gegenpruefen).
+
+Alle 15 Host-Testsuiten gruen (unveraendert). Reine Diagnose in dieser
+Fortsetzung -- die beiden Pfad-Fixes (`build.sh`/`mkbootfile.sh`) sind
+die einzige inhaltliche Aenderung, beide reine Anpassungen an die
+Repo-Reorganisation.
