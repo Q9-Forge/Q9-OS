@@ -11,8 +11,17 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 
 ---
 
-## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 58 —
+## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 59 —
 HIER ZUERST LESEN, ersetzt die Übergabe direkt darunter vollständig)
+
+**Fortsetzung 59 (direkter Anschluss an 58): `echo` produziert
+NACHWEISLICH KORREKTE Ausgabe, nicht nur absturzfrei.** `F$Fork("echo")`
+im Testcode lief bisher IMMER mit Parametergroesse 0 ("kein argv") --
+deshalb war nie echo-eigener Text zu sehen. Jetzt mit echtem Parameter
+(`"echo Hallo"`) getestet: die Terminal-Mitschrift zeigt danach
+woertlich **`echo Hallo`** -- korrekt durch `csl`s Laufzeitbibliothek
+verarbeitet und ausgegeben, weiterhin `Vektor=0` (kein Absturz). Details
+in Fortsetzung 59 unten.
 
 **GROSSER MEILENSTEIN: `echo`/`csl` laeuft jetzt VOLLSTAENDIG UND
 ABSTURZFREI durch (Fortsetzung 58) — das seit Fortsetzung 44
@@ -7618,3 +7627,47 @@ kompletten Fehlschlag ueber die A6-Bias-Entdeckung (Fortsetzung 51),
 reales, unveraendertes Microware-C-Programm samt seiner echten,
 closed-source C-Laufzeitbibliothek laeuft jetzt absturzfrei auf dem
 selbstgeschriebenen Q9-OS-Kernel.
+
+---
+
+## Fortsetzung 59: `echo` produziert nachweislich KORREKTE Ausgabe --
+nicht nur absturzfrei, sondern auch inhaltlich richtig (2026-09-13,
+elfte Sitzung, auf "Erst echo mit echtem Argument testen")
+
+### Anlass
+
+Beim Reporting von Fortsetzung 58 selbst aufgefallen: die Terminal-
+Mitschrift zeigte NIE echo-eigenen Text, nur den `lctE`-Marker gefolgt
+von der Idle-Schleife. Ursache gefunden: der Testcode forkt `echo`
+seit jeher mit `clr.l d2 * Parametergroesse 0 -- kein argv` (eigener
+Kommentar im Code) -- ein `echo` ganz ohne Argument hat nichts
+auszugeben, das Fehlen von Text war also erwartungsgemaess, aber
+dadurch blieb "gibt `echo` inhaltlich das Richtige aus" bisher
+UNGEPRUEFT (nur "stuerzt nicht ab" war belegt).
+
+### Aenderung
+
+`q9kernel_entry.a`, `F$Fork("echo")`-Testaufruf: `d2`/`a1` jetzt auf
+einen echten Parameterbereich gesetzt (`"echo Hallo"` + `$0d`,
+11 Byte) statt leer -- reale Konvention (`Q9K_ProcFork`,
+`q9kernel_firstproc.c`: Parameterbereich = rohe Kommandozeile wie
+eingetippt).
+
+### Ergebnis
+
+Live verifiziert: in der Terminal-Mitschrift erscheint jetzt, direkt
+nach dem `lctE`-Marker, woertlich **`echo Hallo`** -- exakt der
+uebergebene Parameterinhalt, korrekt durch `csl`s Laufzeitbibliothek
+verarbeitet und ausgegeben. `Q9K_ExcTrap-Mitschrift` weiterhin
+`Vektor=0` (kein Absturz). Damit ist nicht nur "stuerzt nicht ab",
+sondern auch "verhaelt sich inhaltlich korrekt" fuer den getesteten
+Fall handfest belegt -- die in Fortsetzung 58 offen gelassene Frage
+ist geklaert.
+
+Alle 16 Host-Testsuiten weiterhin gruen (reine Testcode-Aenderung in
+`q9kernel_entry.a`, keine Kernel-Logik betroffen). Sicherheitsabstand
+(Fortsetzung 37/38) erneut geprueft, unveraendert korrekt.
+
+**Weiterhin unverifiziert (unveraendert gegenueber Fortsetzung 58):**
+andere `csl`-Funktionen, andere Programme, andere `F$SetSys`-Variablen
+jenseits der einen bekannten (`$7C`) -- s. dortige Einschraenkungen.

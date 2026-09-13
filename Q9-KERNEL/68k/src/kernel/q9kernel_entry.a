@@ -1473,11 +1473,11 @@ Q9K_TestTLinkDone:
 * hellosvc/forkchild bewaehrt).
         clr.w   d0
         clr.l   d1
-        clr.l   d2                          * Parametergroesse 0 -- kein argv
+        move.l  #Q9K_TestEchoParamLen,d2    * NACHTRAG Fortsetzung 59: echtes Argument statt "kein argv"
         clr.w   d3
         clr.w   d4
         lea     Q9K_TestEchoName(pc),a0
-        suba.l  a1,a1
+        lea     Q9K_TestEchoParam(pc),a1     * NACHTRAG Fortsetzung 59
         trap    #0
         dc.w    3                           * F$Fork
         bcs     Q9K_TestForkEchoFail
@@ -1575,6 +1575,20 @@ Q9K_TestCslBareName:
 * garantiert, unabhaengig davon, ob F$TLink selbst korrekt arbeitet.
         dc.b    "csl",0
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+
+
+* NACHTRAG 2026-09-13 (Fortsetzung 59, Anschluss an Fortsetzung 58):
+* echo bisher IMMER mit Parametergroesse 0 geforkt ("kein argv") -- das
+* erklaert, warum bisher NIE eine echo-eigene Ausgabe zu sehen war (kein
+* Absturz heisst noch nicht "funktioniert wie erwartet"). Jetzt mit
+* echtem Parameter getestet: die Parameterflaeche ist laut realer
+* Konvention (Q9K_ProcFork, q9kernel_firstproc.c) die rohe Kommandozeile
+* wie eingetippt, $0d-abgeschlossen (OS-9-Zeilenende) -- Wortausrichtung
+* per Fuellbyte gesichert.
+Q9K_TestEchoParam:
+        dc.b    "echo Hallo",$0d
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+Q9K_TestEchoParamLen equ 11
 
 Q9K_TestEchoName:
         dc.b    "echo",0
