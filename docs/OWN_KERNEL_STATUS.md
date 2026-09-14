@@ -689,7 +689,7 @@ Prozess-ID **`$6105`** an — `$61` ist `'a'` (unser `STATE_ACTIVE`), `$05` die
 Priorität des Testprozesses. Der Treiber liest `P$ID` als Wort bei Offset
 `$00` und bekam dort unsere State- und Prioritäts-Bytes.
 
-Maßgeblich ist internem Referenzmaterial. Angeglichen wurde alles, was
+Maßgeblich ist internes Referenzmaterial. Angeglichen wurde alles, was
 fremde Module lesen können:
 
 | Feld | Offset | vorher |
@@ -2090,7 +2090,7 @@ Fehlermarker, ohne jeden weiteren Trap.
 
 ### IRQ-Hypothese geprüft und verworfen — mit echtem Quellcode
 
-`MWOS/OS9/68030/PORTS/common/RBF/cfide/cfide_v42.a` liegt vor (passt zur
+Internes Referenzmaterial zum cfide-Treiber liegt vor (passt zur
 Boot-Meldung „build 42"). `CF_Read`/`CF_Write`/`ChkInit`/`SetDev` benutzen
 ausschließlich das `WaitStatus`-Makro: Software-Timeout (~1,2 Mio.
 Durchläufe), reines `btst.b`-Polling auf BSY/DRQ — **kein `F$IRQ`, kein
@@ -5316,8 +5316,8 @@ Text-Konstante des Moduls selbst, "...sed Me!SysBoot Used..." -- die
 eigene Fehlerbehandlung von `echo` springt dort offenbar auf einen nie
 initialisierten Funktionszeiger).
 
-**Warum das erwartbar ist, keine Regression:** `csl` (`MWOS/OS9/68000/
-CMDS/csl`, $BCEE = 48366 Byte) ist selbst ein reales OS-9-Modul, aber
+**Warum das erwartbar ist, keine Regression:** `csl` ($BCEE = 48366
+Byte) ist selbst ein reales OS-9-Modul, aber
 vom Typ **"Trap Hnlr" (Trap Handler/"ghost machine language trap
 library")** -- ein völlig anderer Mechanismus als die bisher
 implementierten `F$`/`I$`-Syscalls (`TRAP #0`). OS-9 reserviert
@@ -7606,7 +7606,7 @@ internem Wrapper (`$49d18`, `trap #0`/Callcode `$27`) eine
 Systemvariable ab, um die minimale Speicherblock-Zuwachsgroesse zu
 bestimmen (`d0.l`=Variablennummer `$7C`, `d1.l`=Flags mit Bit 31
 gesetzt fuer "lesen"). Callcode `$27` = `F$SetSys` laut
-`Q9-KERNEL/.os9-original/SYSCALL_MODULE_MAP.md` -- bei Q9-OS bisher
+internem Referenzmaterial -- bei Q9-OS bisher
 GAR NICHT registriert. Der Wrapper erkennt den Fehlschlag zwar korrekt
 (Carry gesetzt), ABER sein Aufrufer prueft das Ergebnis NICHT und liest
 die lokale Ausgabevariable trotzdem -- die bleibt dadurch `0`, und
