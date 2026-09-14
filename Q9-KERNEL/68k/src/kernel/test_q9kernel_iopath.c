@@ -107,7 +107,7 @@ int main(void)
     checkU32("F5: Pool erschoepft -- Rueckgabe 0", num5, 0);
 
     /* --- F$AllPD (Callcode $30), 2026-09-02 -------------------------
-     * Konvention und DBT-Aufbau sind aus IOMans Disassemblierung
+     * Konvention und DBT-Aufbau sind aus IOMans Analyse
      * abgelesen, s. Kopfkommentar von Q9K_ProcAllPD. Geprueft werden:
      * Index 0 wird uebersprungen, der Deskriptor traegt seine eigene
      * Nummer big-endian an Offset 0 (IOMan vergleicht das), der Zeiger

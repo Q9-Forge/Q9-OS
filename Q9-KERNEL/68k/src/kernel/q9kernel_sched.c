@@ -132,7 +132,7 @@ typedef unsigned char  Q9_u8;
 
 /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-06): Q9K_PROCDESC_AGE_OFF stand auf
  * $1B. Das Feld ist 2 Byte breit und belegte damit $1B UND $1C -- und $1C ist
- * im echten Layout P$State (Wort, MWOS/OS9/SRC/DEFS/process.a). Jedes Altern
+ * im echten Layout P$State (Wort, internem Referenzmaterial). Jedes Altern
  * schrieb also ins obere Byte von P$State.
  *
  * Das hat den ganzen Lesepfad blockiert: sc68681 prueft nach dem Aufwachen

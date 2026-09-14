@@ -6,8 +6,7 @@ hinaus noch an Infrastruktur dazu?** Es ist die "Stückliste" zu
 [`OWN_KERNEL_INIT_PLAN.md`](OWN_KERNEL_INIT_PLAN.md) (dort steht das *Wie*
 und *Warum* je Entwurfsentscheidung) — hier steht nur, *was* am Ende als
 Modul/Funktion existieren muss. Grundlage ausschließlich bereits
-verifizierte Funde aus dem [Kernel-Walkthrough](kernel-walkthrough/)
-(Themen 00-11) und `modules/SYSCALL_MODULE_MAP.md`.
+verifizierte, intern dokumentierte Funde.
 
 **Zählweise:** die Referenz-Zahlen (61/24/6/1/4/1 = 97 Syscalls) stammen
 aus **einem** konkreten 68K-Boot-Image (`dker030s`, Development-Kernel,
@@ -22,12 +21,12 @@ Abschnitt 4, Bauphasen).
 
 | Modul | Rolle | Bedient Syscalls | Muss/Kann | Quelle |
 |---|---|---|---|---|
-| **Boot-Lader** (kein OS-9-Modul im engeren Sinn) | Legt den System-Global-Bereich an, nullt ihn (16-Byte-Schritte), validiert die Bootdatei-Modulkette (Sync-Wort + 24-Word-XOR-Prüfsumme), springt in den Kernel | keine | **Muss** | [Thema 10](kernel-walkthrough/10-boot-vorkette/) |
-| **Kernel** | Bootstrap, Exception-/Trap-Dispatch, Scheduler, Speicherallokator, Prozess-Lifecycle | 61 `F$`-Codes (Abschnitt 2a) | **Muss** | [Thema 01](kernel-walkthrough/01-kernel-bootstrap/), [04](kernel-walkthrough/04-scheduler-prozesslebenszyklus/), [05](kernel-walkthrough/05-speicherverwaltung/), [06](kernel-walkthrough/06-exception-handler/) |
-| **init** (Konfigurationsmodul) | Nicht ausführbar, Typ `Systm`; trägt nur vier Größenfelder (`M$PollSz`/`M$DevCnt`/`M$Procs`/`M$Paths`) für Tabellengrößen beim Kernelstart | keine | **Muss** (auch wenn winzig) | `docs/KERNEL.md` |
-| **IOMan** | Dreiklang-Linker (`I$Attach` linkt Descriptor→Driver→Fmgr mit Typfiltern `0xF00`/`0xE00`/`0xD00`), `F$Load`, gemeinsamer I$-Dispatcher zum Treiber | 24 `F$`/`I$`-Codes (Abschnitt 2b) | **Muss** | [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/), [03](kernel-walkthrough/03-dreiklang/), [11](kernel-walkthrough/11-programm-laden/) |
-| **SysCache** | Cache-Steuerung | 1 `F$`-Code (`F$CCtl`) | Kann (später) | nur Adressbereich bekannt, nicht disassembliert |
-| **SSM** ("System Security Module") | MMU-/Speicherschutz-Init, als **eigenständiges, optional nachladbares** Modul — nicht Kernel, nicht Treiber | 6 `F$`-Codes (Abschnitt 2c) | Kann (Atomic-Kernel kommt laut Manual ganz ohne aus) | [Thema 07](kernel-walkthrough/07-ssm-mmu/) |
+| **Boot-Lader** (kein OS-9-Modul im engeren Sinn) | Legt den System-Global-Bereich an, nullt ihn (16-Byte-Schritte), validiert die Bootdatei-Modulkette (Sync-Wort + 24-Word-XOR-Prüfsumme), springt in den Kernel | keine | **Muss** | Thema 10 |
+| **Kernel** | Bootstrap, Exception-/Trap-Dispatch, Scheduler, Speicherallokator, Prozess-Lifecycle | 61 `F$`-Codes (Abschnitt 2a) | **Muss** | Thema 01, 04, 05, 06 |
+| **init** (Konfigurationsmodul) | Nicht ausführbar, Typ `Systm`; trägt nur vier Größenfelder (`M$PollSz`/`M$DevCnt`/`M$Procs`/`M$Paths`) für Tabellengrößen beim Kernelstart | keine | **Muss** (auch wenn winzig) | intern dokumentiert |
+| **IOMan** | Dreiklang-Linker (`I$Attach` linkt Descriptor→Driver→Fmgr mit Typfiltern `0xF00`/`0xE00`/`0xD00`), `F$Load`, gemeinsamer I$-Dispatcher zum Treiber | 24 `F$`/`I$`-Codes (Abschnitt 2b) | **Muss** | Thema 02, 03, 11 |
+| **SysCache** | Cache-Steuerung | 1 `F$`-Code (`F$CCtl`) | Kann (später) | nur Adressbereich bekannt, nicht analysiert |
+| **SSM** ("System Security Module") | MMU-/Speicherschutz-Init, als **eigenständiges, optional nachladbares** Modul — nicht Kernel, nicht Treiber | 6 `F$`-Codes (Abschnitt 2c) | Kann (Atomic-Kernel kommt laut Manual ganz ohne aus) | Thema 07 |
 
 ### 1b. Der Dreiklang — pro Gerät/Dateisystem, beliebig oft
 
@@ -37,9 +36,9 @@ intern ihre eigene, callcode-indizierte Sprungtabelle:
 
 | Modul-Art | Rolle | Beispiel (Referenz) | Quelle |
 |---|---|---|---|
-| **Descriptor** | Reine Daten — beschreibt "was für ein Gerät", verweist per Namen auf Driver + Fmgr | gerätespezifisch, nicht einzeln analysiert | [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/) |
-| **Driver** | Spricht die Hardware direkt an | `cfide` (68K, lehrbuchmäßiger ATA/IDE-PIO-Treiber) / `scllio` (x86, **kein** Port-I/O — stattdessen `INT 0xFF`-Syscall-Trampolin + 3 indirekte Calls über eine Handler-Liste) | [Thema 09](kernel-walkthrough/09-treiber-hardware/) |
-| **File-Manager** | Definiert Dateisystem-Semantik, eigene Callcode-Tabelle (68K: 13 Slots ab `M$Exec`, Basis `0x83`; x86: 16 Slots im `m_idata`-Bereich, Basis `Callcode−0x95`) | `RBF` (Block-/Dateisystem) — `I$Write` delegiert komplett an eine Laufzeit-Liste aus (Geräte-ID, Handler-Zeiger)-Paaren (`Q9X_rbf_driver_dispatch`, x86) bzw. ~10 interne `bsr`-Hilfsroutinen (68K) | [Thema 03](kernel-walkthrough/03-dreiklang/), [08](kernel-walkthrough/08-rbf-handler/) |
+| **Descriptor** | Reine Daten — beschreibt "was für ein Gerät", verweist per Namen auf Driver + Fmgr | gerätespezifisch, nicht einzeln analysiert | Thema 02 |
+| **Driver** | Spricht die Hardware direkt an | `cfide` (68K, lehrbuchmäßiger ATA/IDE-PIO-Treiber) / `scllio` (x86, **kein** Port-I/O — stattdessen `INT 0xFF`-Syscall-Trampolin + 3 indirekte Calls über eine Handler-Liste) | Thema 09 |
+| **File-Manager** | Definiert Dateisystem-Semantik, eigene Callcode-Tabelle (68K: 13 Slots ab `M$Exec`, Basis `0x83`; x86: 16 Slots im `m_idata`-Bereich, Basis `Callcode−0x95`) | `RBF` (Block-/Dateisystem) — `I$Write` delegiert komplett an eine Laufzeit-Liste aus (Geräte-ID, Handler-Zeiger)-Paaren (`Q9X_rbf_driver_dispatch`, x86) bzw. ~10 interne `bsr`-Hilfsroutinen (68K) | Thema 03, 08 |
 
 Weitere File-Manager (z. B. `SCF` für zeichenorientierte/serielle Geräte)
 sind aus OS-9-Praxis bekannt, aber in dieser Session **nicht** analysiert
@@ -50,7 +49,7 @@ sie bei Bedarf nachgezogen werden (gleiche Vorgehensweise wie bei RBF).
 
 | Modul | Rolle | Quelle |
 |---|---|---|
-| `vectx86` | Trägt feste Handler-Adressen in Kernel-Globals-Felder ein — kein Dreiklang-Mitglied, sondern ein eigenständiger **Bootstrap-Baustein**, den es beim 68K nicht als separates Modul gibt (dort macht das Boot-ROM es implizit) | [Thema 10](kernel-walkthrough/10-boot-vorkette/) |
+| `vectx86` | Trägt feste Handler-Adressen in Kernel-Globals-Felder ein — kein Dreiklang-Mitglied, sondern ein eigenständiger **Bootstrap-Baustein**, den es beim 68K nicht als separates Modul gibt (dort macht das Boot-ROM es implizit) | Thema 10 |
 
 ### 1d. Eigene, neue Modularten
 
@@ -105,7 +104,7 @@ ein interner Weiterreiche-Mechanismus, kein Widerspruch.
 
 ### 2d. SysCache (1 Code)
 
-`F$CCtl` — Zielmodul nur über Adressbereich bekannt, nie disassembliert.
+`F$CCtl` — Zielmodul nur über Adressbereich bekannt, nie analysiert.
 
 ### 2e. Im Referenz-Build nicht registriert (4 Codes)
 
@@ -127,16 +126,16 @@ der Bauliste sein muss — jeweils mit Fundstelle:
 
 | Baustein | Kurzbeschreibung | Quelle |
 |---|---|---|
-| Modul-Header-Parser | Sync-Wort/Größe/Name/Typ/Einsprungpunkt für alle drei bekannten Layouts (6809/68K/OS-9000) plus einen vierten, eigenen Sync-Wert | [Thema 00](kernel-walkthrough/00-modul-aufbau-und-header/), bereits als `src/q9moduleheader.h`/`.a` vorbereitet |
-| Exception-/Trap-Dispatch-Tabelle | Kompakte Quelltabelle im Modul → beim Boot zur vollen, direkt indizierbaren Tabelle expandiert; 8 gemeinsame Dispatcher-Funktionen für alle CPU-Vektoren | [Thema 01](kernel-walkthrough/01-kernel-bootstrap/), [06](kernel-walkthrough/06-exception-handler/) |
-| Scheduler-Kern | Zirkuläre, doppelt verkettete Ready-Queue mit Sentinel-Kopf, Prioritäts-Aging, interrupt-maskierte Queue-Operationen | [Thema 04](kernel-walkthrough/04-scheduler-prozesslebenszyklus/) |
-| Speicherallokator | Pool → Arena (nach Adressbereich) → Freiliste (nach Größe), Boundary-Tag-Coalescing, Template-Kopie für neue Arena-Deskriptoren | [Thema 05](kernel-walkthrough/05-speicherverwaltung/) |
-| Dreiklang-Linkmechanismus | `F$Link` mit Typfiltern `0xF00`/`0xE00`/`0xD00`, in genau dieser Reihenfolge Descriptor→Driver→Fmgr | [Thema 02](kernel-walkthrough/02-io-manager-syscall-dispatch/), [03](kernel-walkthrough/03-dreiklang/) |
-| Callcode-Dispatch je File-Manager | `(Callcode − Basiswert)` als Index in eine modulinterne Sprungtabelle | [Thema 03](kernel-walkthrough/03-dreiklang/) |
-| Treiber-Dispatch-Pattern | Laufzeit-Liste aus (Geräte-/Treiber-ID, Handler-Zeiger)-Paaren, indirekter Aufruf (x86-Vorbild, Übernahme-Empfehlung für eigene neue Fmgr/Treiber) | [Thema 08](kernel-walkthrough/08-rbf-handler/), [09](kernel-walkthrough/09-treiber-hardware/) |
-| `F$Load`-Suchreihenfolge | Erst In-Memory-Modulverzeichnis (Namensvergleich), dann Pfad-vs-Suchlisten-Unterscheidung (`'/'`-Test), erst dann Mass-Storage | [Thema 11](kernel-walkthrough/11-programm-laden/) |
-| Syscall-Auslöser | 68K: `TRAP #0` (naheliegend für Q9-Flux). Für x86-Binärkompatibilität zusätzlich: `INT 0xFF`-Gate | [Thema 06](kernel-walkthrough/06-exception-handler/), [09](kernel-walkthrough/09-treiber-hardware/) |
-| MMU/Speicherschutz | Optional, als eigenständiges SSM-artiges Modul (nicht Kernel-Pflicht) | [Thema 07](kernel-walkthrough/07-ssm-mmu/) |
+| Modul-Header-Parser | Sync-Wort/Größe/Name/Typ/Einsprungpunkt für alle drei bekannten Layouts (6809/68K/OS-9000) plus einen vierten, eigenen Sync-Wert | Thema 00, bereits als `src/q9moduleheader.h`/`.a` vorbereitet |
+| Exception-/Trap-Dispatch-Tabelle | Kompakte Quelltabelle im Modul → beim Boot zur vollen, direkt indizierbaren Tabelle expandiert; 8 gemeinsame Dispatcher-Funktionen für alle CPU-Vektoren | Thema 01, 06 |
+| Scheduler-Kern | Zirkuläre, doppelt verkettete Ready-Queue mit Sentinel-Kopf, Prioritäts-Aging, interrupt-maskierte Queue-Operationen | Thema 04 |
+| Speicherallokator | Pool → Arena (nach Adressbereich) → Freiliste (nach Größe), Boundary-Tag-Coalescing, Template-Kopie für neue Arena-Deskriptoren | Thema 05 |
+| Dreiklang-Linkmechanismus | `F$Link` mit Typfiltern `0xF00`/`0xE00`/`0xD00`, in genau dieser Reihenfolge Descriptor→Driver→Fmgr | Thema 02, 03 |
+| Callcode-Dispatch je File-Manager | `(Callcode − Basiswert)` als Index in eine modulinterne Sprungtabelle | Thema 03 |
+| Treiber-Dispatch-Pattern | Laufzeit-Liste aus (Geräte-/Treiber-ID, Handler-Zeiger)-Paaren, indirekter Aufruf (x86-Vorbild, Übernahme-Empfehlung für eigene neue Fmgr/Treiber) | Thema 08, 09 |
+| `F$Load`-Suchreihenfolge | Erst In-Memory-Modulverzeichnis (Namensvergleich), dann Pfad-vs-Suchlisten-Unterscheidung (`'/'`-Test), erst dann Mass-Storage | Thema 11 |
+| Syscall-Auslöser | 68K: `TRAP #0` (naheliegend für Q9-Flux). Für x86-Binärkompatibilität zusätzlich: `INT 0xFF`-Gate | Thema 06, 09 |
+| MMU/Speicherschutz | Optional, als eigenständiges SSM-artiges Modul (nicht Kernel-Pflicht) | Thema 07 |
 
 ## 4. Vorgeschlagene Baureihenfolge
 
@@ -171,11 +170,7 @@ x86-CPU-Interpreter (Musashi deckt nur 68K ab) — siehe
 ## Quellen
 
 Wie `OWN_KERNEL_INIT_PLAN.md` — ausschließlich Synthese bereits
-verifizierter Funde, keine neuen Behauptungen:
-
-- [`kernel-walkthrough/`](kernel-walkthrough/) (Themen 00-11)
-- [`modules/SYSCALL_MODULE_MAP.md`](../modules/SYSCALL_MODULE_MAP.md)
-- [`docs/KERNEL.md`](KERNEL.md)
-- [`docs/OWN_KERNEL_INIT_PLAN.md`](OWN_KERNEL_INIT_PLAN.md)
+verifizierter, intern dokumentierter Funde, keine neuen Behauptungen.
+Siehe außerdem [`docs/OWN_KERNEL_INIT_PLAN.md`](OWN_KERNEL_INIT_PLAN.md).
 
 **Erstellt**: 2026-08-15

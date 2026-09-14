@@ -3,7 +3,7 @@
  *                        per Namen in einer Speicherregion-Liste.
  *
  * Andreas, 2026-08-18: "suchen wir nur init, oder auch noch andere?"
- * Antwort (s. docs/kernel-walkthrough/01-kernel-bootstrap/README.md):
+ * Antwort (s. intern dokumentiert):
  * der echte Kernel sucht an DIESER Stelle im Bootstrap nur "init" --
  * der Kernel selbst laeuft schon (braucht sich nicht selbst zu finden),
  * andere Systemmodule kommen laut Thema 10 ueber die separate, simple

@@ -3,15 +3,15 @@
 *                System-Global-Bereichs und der Exception-Sprung-
 *                tabelle.
 *
-* Eigenstaendig per Disassemblierung des Original-Kernels (dker030s,
-* Development/Standard-Allocator, siehe vendor/68020/dker030s)
+* Eigenstaendig per Analyse des Original-Kernels (dker030s,
+* Development/Standard-Allocator, intern dokumentiert)
 * rekonstruiert. Offsets/Groessen sind funktionale Fakten, die fuer
 * Interoperabilitaet mit echten OS-9/68K-Kernelmodulen notwendig sind.
 * Alle Namen und Beschreibungstexte sind eigene Formulierungen, kein
 * Abdruck der Microware-Originalquelle.
 *
 * Statuskennzeichnung je Feld:
-*   VERIFIZIERT   -- per eigener Disassemblierung bestaetigt
+*   VERIFIZIERT   -- per eigener Analyse bestaetigt
 *   HANDBUCH      -- aus dem oeffentlichen OS-9/68K Technical Manual bekannt
 *   PLATZHALTER   -- Struktur uebernommen, einzeln noch nicht verifiziert
 *
@@ -25,7 +25,7 @@
 Q9_D_Id:        do.w 1    Sync-Kennzeichen, nach Coldstart gesetzt [PLATZHALTER]
 Q9_D_NoSleep:   do.w 1    Ungleich 0 verhindert, dass der Systemprozess schlafen geht [PLATZHALTER]
                 do.b 28   reserviert [PLATZHALTER]
-Q9_D_Init:      do.l 1    Zeiger auf das Init-Konfigurationsmodul [VERIFIZIERT, 2026-08-17 -- move.l A5,(0x20,A6) bei $6a06 in dker030s, s. docs/kernel-walkthrough/01-kernel-bootstrap/README.md]
+Q9_D_Init:      do.l 1    Zeiger auf das Init-Konfigurationsmodul [VERIFIZIERT, 2026-08-17 -- move.l A5,(0x20,A6) bei $6a06 in dker030s, s. intern dokumentiert]
 Q9_D_Clock:     do.l 1    Adresse der Tick-Routine [PLATZHALTER]
 Q9_D_TckSec:    do.w 1    Ticks pro Sekunde [PLATZHALTER]
 Q9_D_Year:      do.w 1    Jahr [PLATZHALTER]
@@ -49,14 +49,14 @@ Q9_D_AbtStk:    do.l 1    Abort-Stackpointer/Ruecksprungadresse fuer Systemzusta
 Q9_D_SysStk:    do.l 1    System-IRQ-Stackpointer [PLATZHALTER]
 Q9_D_SysRom:    do.l 1    Einsprungpunkt des Boot-ROMs [VERIFIZIERT -- (0x64,A6), Konsolen-Ausgabe ueber (0x8,A1)-Funktionszeiger in 0x850/0x868 bestaetigt]
 Q9_D_ExcJmp:    do.l 1    Zeiger auf die Exception-Sprungtabelle (siehe Q9_T_*-Struktur) [VERIFIZIERT]
-Q9_D_TotRam:    do.l 1    vom Boot-ROM ermittelte Gesamt-RAM-Groesse [VERIFIZIERT -- Register D0 beim Boot direkt hierher kopiert, siehe docs/kernel-walkthrough/01-kernel-bootstrap/]
+Q9_D_TotRam:    do.l 1    vom Boot-ROM ermittelte Gesamt-RAM-Groesse [VERIFIZIERT -- Register D0 beim Boot direkt hierher kopiert, siehe intern dokumentiert]
 Q9_D_MinBlk:    do.l 1    minimale allozierbare Blockgroesse pro Prozess [PLATZHALTER]
 Q9_D_FreMem:    do.b 8    Kopf der freien Speicherliste [PLATZHALTER]
 Q9_D_BlkSiz:    do.l 1    minimale allozierbare Systemblockgroesse [PLATZHALTER]
 Q9_D_DevTbl:    do.l 1    Zeiger auf die I/O-Gerätetabelle [PLATZHALTER]
 Q9_D_SpurIrq:   do.l 1    Zaehler fuer Spurious IRQs [PLATZHALTER]
 Q9_D_AutIrq2:   do.b 28   Polling-Tabellenkoepfe fuer On-Chip-Autovektor-IRQs (68070) [PLATZHALTER]
-* KONFLIKT (noch ungeloest, intern dokumentiert): Per Disassemblierung
+* KONFLIKT (noch ungeloest, intern dokumentiert): Per Analyse
 * wurde der Kopf der Ready-Queue (zirkulaere doppelt verkettete Liste, von
 * Q9_scheduler_183a benutzt) zweifelsfrei bei Offset 0x37c gefunden -- das
 * liegt MITTEN in diesem 768-Byte-Bereich, nicht bei Q9_D_ActivQ (0x3ac) wie
@@ -67,11 +67,11 @@ Q9_D_AutIrq2:   do.b 28   Polling-Tabellenkoepfe fuer On-Chip-Autovektor-IRQs (6
 Q9_D_VctIrq:    do.b 768  Zeigertabelle fuer vektorisierte Interrupt-Geraete [PLATZHALTER -- Groesse/Lage unsicher, siehe Konflikt-Kommentar oben]
 Q9_D_SysDis:    do.l 1    Zeiger auf die System-Service-Dispatch-Tabelle [VERIFIZIERT -- (0x3a4,A6), Syscall-Tabelle fuer verschachtelte/Supervisor-Aufrufe, siehe Q9_disp_488]
 Q9_D_UsrDis:    do.l 1    Zeiger auf die User-Service-Dispatch-Tabelle [VERIFIZIERT -- (0x3a8,A6), Syscall-Tabelle fuer normale User-Aufrufe, siehe Q9_disp_488]
-Q9_D_ActivQ:    do.b 8    Kopf der Warteschlange aktiver Prozesse [KONFLIKT -- per Disassemblierung liegt die echte Ready-Queue bei Offset 0x37c (siehe Kommentar bei Q9_D_VctIrq), NICHT hier bei 0x3ac; (0x3ac,A4) ist stattdessen ein VERIFIZIERTES Prozessdeskriptor-Feld (Verschachtelungstiefe fuer Syscalls/IRQs, siehe Q9_disp_488)]
+Q9_D_ActivQ:    do.b 8    Kopf der Warteschlange aktiver Prozesse [KONFLIKT -- per Analyse liegt die echte Ready-Queue bei Offset 0x37c (siehe Kommentar bei Q9_D_VctIrq), NICHT hier bei 0x3ac; (0x3ac,A4) ist stattdessen ein VERIFIZIERTES Prozessdeskriptor-Feld (Verschachtelungstiefe fuer Syscalls/IRQs, siehe Q9_disp_488)]
 Q9_D_SleepQ:    do.b 8    Kopf der Warteschlange schlafender Prozesse [PLATZHALTER]
 Q9_D_WaitQ:     do.b 8    Kopf der Warteschlange wartender Prozesse [PLATZHALTER]
 Q9_D_ActAge:    do.l 1    Alterungszaehler der aktiven Warteschlange [VERIFIZIERT -- (0x3c4,A6), Countdown-Zaehler fuer Prioritaets-Aging in Q9_scheduler_183a bestaetigt]
-Q9_D_MpuTyp:    do.l 1    erkannter CPU-Typ (68000/010/020/030/040/060/070/CPU32) [VERIFIZIERT -- Register D1 beim Boot direkt hierher kopiert, siehe docs/kernel-walkthrough/01-kernel-bootstrap/]
+Q9_D_MpuTyp:    do.l 1    erkannter CPU-Typ (68000/010/020/030/040/060/070/CPU32) [VERIFIZIERT -- Register D1 beim Boot direkt hierher kopiert, siehe intern dokumentiert]
 Q9_D_EvTbl:     do.b 8    Start-/Endzeiger der System-Event-Tabelle [PLATZHALTER]
 Q9_D_EvId:      do.l 1    naechste, fortlaufende Event-ID [PLATZHALTER]
 Q9_D_SpuMem:    do.l 1    Zeiger auf SPU-Globaldaten (0 = nicht aktiv) [PLATZHALTER]
@@ -80,7 +80,7 @@ Q9_D_Compat2:   do.b 1    Cache-Kompatibilitaets-/Konfigurationsflags [PLATZHALT
 Q9_D_SnoopD:    do.b 1    ungleich 0, wenn alle Daten-Caches kohaerent/snoopy sind [PLATZHALTER]
 Q9_D_ProcSz:    do.w 1    Groesse eines Prozessdeskriptors [PLATZHALTER]
 Q9_D_PolTbl:    do.b 32   Polling-Tabellenkoepfe fuer Autovektor-IRQs [PLATZHALTER -- Byte 24-31 dieses Blocks (=$3FC-$403) sind vermutlich Teil des Arena-Kontrollblocks, siehe naechste Zeile]
-Q9_D_FreeMem:   do.b 8    Kopf/Ende (je 4 Byte) des Arena-/Freispeicher-Listen-Kontrollblocks (Basis $3FC, dieses Feld = Basis+8); selbstreferenzierend beim Boot initialisiert (Q9_kernel_init_67a0, $6879-$6885), referenziert von Q9_arena_alloc_526c [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/]
+Q9_D_FreeMem:   do.b 8    Kopf/Ende (je 4 Byte) des Arena-/Freispeicher-Listen-Kontrollblocks (Basis $3FC, dieses Feld = Basis+8); selbstreferenzierend beim Boot initialisiert (Q9_kernel_init_67a0, $6879-$6885), referenziert von Q9_arena_alloc_526c [VERIFIZIERT -- intern dokumentiert]
 Q9_D_Ipid:      do.w 1    Multiprozessor-Identifikationsnummer [PLATZHALTER]
                 do.w 1    reserviert (Multiprozessor) [PLATZHALTER]
 Q9_D_Cpus:      do.l 1    Zeiger auf ein Array von CPU-Deskriptor-Listenkoepfen [PLATZHALTER]
@@ -140,8 +140,8 @@ Q9_D_IrqHeads:  do.b 32   IRQ-Kopfregionen (fuer Nicht-MSP-Kernel) [PLATZHALTER]
 
 * Absolute Offsets (nicht sequentiell aus dem obigen Feldstrom herleitbar,
 * deshalb als eigenstaendige EQUs statt do.b -- analog zu Q9_D_End unten):
-Q9_D_AlmQ1:     equ $774  F$Alarm-Warteschlange 1 (sofortige/D1=0-Variante, Q9_alarm_set_157e), sortiert nach Faelligkeit (Knotenfelder +$20/+$24), Verkettung ueber +$C/+$10; beim Boot als leere Ringliste initialisiert (Q9_kernel_init_67a0, $6886-$688e); Walk/Insert in Q9_alarm_insert_15c4 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/]
-Q9_D_AlmQ2:     equ $77C  F$Alarm-Warteschlange 2 (intervallbasierte Variante, Q9_alarm_set_1580), sonst identischer Aufbau zu Q9_D_AlmQ1 [VERIFIZIERT -- docs/kernel-walkthrough/01-kernel-bootstrap/]
+Q9_D_AlmQ1:     equ $774  F$Alarm-Warteschlange 1 (sofortige/D1=0-Variante, Q9_alarm_set_157e), sortiert nach Faelligkeit (Knotenfelder +$20/+$24), Verkettung ueber +$C/+$10; beim Boot als leere Ringliste initialisiert (Q9_kernel_init_67a0, $6886-$688e); Walk/Insert in Q9_alarm_insert_15c4 [VERIFIZIERT -- intern dokumentiert]
+Q9_D_AlmQ2:     equ $77C  F$Alarm-Warteschlange 2 (intervallbasierte Variante, Q9_alarm_set_1580), sonst identischer Aufbau zu Q9_D_AlmQ1 [VERIFIZIERT -- intern dokumentiert]
 Q9_D_BootFlags: equ $93C  NEU GEFUNDEN 2026-08-17 [VERIFIZIERT] -- Boot-Zeit-Flags, komplettes Register D3 bei $681e gesichert (fuenftes Boot-Register neben D0/D1/A1/A5). Bit 4 (bei $67a0): wenn gesetzt, ueberspringt der Kernel das eigene Interrupt-Maskieren. Bit 3 (bei $69dc, NACH einem erfolgreichen Namenstreffer): wenn gesetzt, bricht die Suche sofort mit diesem Treffer ab statt bei mehreren "init"-Kandidaten den mit der hoechsten Revisionsnummer (M$Rev, Header-Offset $15) zu waehlen. D3 wird ab $698a mehrfach als gewoehnliches Scratch-Register wiederverwendet -- die Flags-Bedeutung gilt nur bis dahin.
 
 Q9_D_End:		equ $1000			Ende des System-Global-Bereichs

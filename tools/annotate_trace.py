@@ -14,7 +14,7 @@ Voraussetzung: der Dump wurde mit Q9_TRACE_INSTR=1 erzeugt (s.
 docs/OWN_KERNEL_STATUS.md, "Werkzeug" Q9_TRACE_INSTR/Q9_FREEZE_PC).
 Die Moduldirectory (Ladeadressen) wird IMMER frisch aus dem Dump
 gelesen, nie von Hand eingetragen -- nur die Wahl, WELCHE .mod-Dateien
-fuer die Disassemblierung herangezogen werden, ist Kommandozeilensache.
+fuer die Analyse herangezogen werden, ist Kommandozeilensache.
 
 Kernel-Symbol-Map erzeugen (falls "--kernel-map" fehlt, wird sie NICHT
 automatisch neu gebaut -- s. Q9-OS/src/kernel/build.sh, Abschnitt

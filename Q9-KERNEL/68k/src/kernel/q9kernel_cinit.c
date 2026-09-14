@@ -34,7 +34,7 @@
  *
  * In dieser Runde implementiert: die sechs leeren, zirkulaeren
  * Bereitschafts-/Warteschlangen (Kopf=Schwanz=sich selbst), exakt nach
- * dem verifizierten Fund aus docs/kernel-walkthrough/01-kernel-bootstrap/
+ * dem verifizierten Fund aus intern dokumentiert
  * README.md ("Zweiter Bonus-Fund"). ALLES Weitere aus der Boot-Reihenfolge
  * (Abschnitt 2 in OWN_KERNEL_INIT_PLAN.md: Speichergroesse/Arena richtig
  * aufsetzen -- nicht nur die leere Liste --, Dispatch-Tabelle, Init-Modul-

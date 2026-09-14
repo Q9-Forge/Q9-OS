@@ -10,7 +10,7 @@
  * Ehrlich offene Einschraenkung: Big-Endian-Sync $4AFC wird IMMER als 68K
  * erkannt, nie als Big-Endian-OS-9000 (PowerPC/ARM) -- fuer dieses Projekt
  * aktuell kein echtes Problem, weil hier nur 68K (BE) und x86-OS-9000 (LE)
- * als reale Dateien vorliegen (siehe modules/os9000-x86/vendor-live/), kein
+ * als reale Dateien vorliegen (intern dokumentiert), kein
  * PowerPC/ARM-OS-9000-Sample. Eine echte Unterscheidung braeuchte die
  * Pruefsummen-Verifikation gegen beide Kandidaten-Headerlaengen (46 vs. 88
  * Byte) -- absichtlich noch nicht implementiert, nicht stillschweigend
@@ -92,7 +92,7 @@ uint16_t Q9_ComputeModuleChecksum68K(const uint8_t *rawBytes, uint32_t available
  * Schreibt NICHT in rawBytes -- reine Berechnung, der Aufrufer setzt den
  * zurueckgegebenen Wert selbst an Offset Q9_MH68K_PARITY (Trennung von
  * Berechnung und Schreibzugriff). Empirisch verifiziert (2026-08-18)
- * gegen alle acht echten 68K-Kernel-Varianten in vendor/68020/ -- der
+ * gegen alle acht echten 68K-Kernel-Varianten (intern dokumentiert) -- der
  * berechnete Wert trifft exakt den echten, eingebetteten M$Parity-Wert
  * in jeder einzelnen Datei. */
 uint16_t Q9_ComputeRequiredParity68K(const uint8_t *rawBytes, uint32_t availableLen)

@@ -36,7 +36,7 @@
  *         Reaktivierung (kein Blockieren) -- unser "Zombie-Scan zuerst,
  *         dann erst blockieren"-Ablauf
  *       - Fehler NUR, wenn der Aufrufer UEBERHAUPT keine Kindprozesse hat
- *         (E$NoChld, MWOS/SRC/DEFS/errno.h: "#define E_NOCHLD 0xe2")
+ *         (E$NoChld = 0xe2, intern dokumentiert)
  *       - hat der Aufrufer MEHRERE Kinder, wird er beim ERSTEN sterbenden
  *         aktiviert -- ein F$Wait pro Kind noetig, um alle zu erfassen
  *         (passt exakt zu unserem Pool-Scan: findet IRGENDEIN Zombie-Kind,
@@ -143,7 +143,7 @@ extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size); /* q9kernel_arena.c */
 #define Q9_D_PROC 0x04CUL
 #endif
 
-/* Real, MWOS/SRC/DEFS/errno.h: "#define E_NOCHLD 0xe2" -- gleiche
+/* Real, intern dokumentiert (E_NOCHLD = 0xe2) -- gleiche
  * Primaerquelle wie schon fuer E_MNF/E_MEMFUL/E_PRCFUL/E_UNKSVC an
  * anderer Stelle in diesem Kernel verwendet. */
 #define Q9K_E_NOCHLD 0x00E2U

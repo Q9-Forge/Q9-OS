@@ -14,7 +14,7 @@
  * zusaetzlicher Bounds-Check hier noetig, Aufrufer-Verantwortung.
  *
  * SYSDIS/USRDIS-Groesse (0x800 Byte je Tabelle) und Modulverzeichnis-
- * Eintragsgroesse (16 Byte) sind reale, per Disassemblierung verifizierte
+ * Eintragsgroesse (16 Byte) sind reale, per Analyse verifizierte
  * Werte (intern dokumentiert, Fund: "Q9_disp_488" bzw. Thema 01
  * Modulverzeichnis-Nachtrag) -- keine Q9-Erfindung.
  *
