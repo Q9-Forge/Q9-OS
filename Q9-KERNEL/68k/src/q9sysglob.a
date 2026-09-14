@@ -15,11 +15,11 @@
 *   HANDBUCH      -- aus dem oeffentlichen OS-9/68K Technical Manual bekannt
 *   PLATZHALTER   -- Struktur uebernommen, einzeln noch nicht verifiziert
 *
-* Siehe docs/REVERSE_ENGINEERING.md fuer den Analyse-Hintergrund.
+* Analyse-Hintergrund intern dokumentiert (nicht Teil dieses Repos).
 *****************************************************************
 
 *-------------------------------------------------------------
-* System-Global-Bereich (Basis: *(VBR-Inhalt), siehe REVERSE_ENGINEERING.md)
+* System-Global-Bereich (Basis: *(VBR-Inhalt))
 *-------------------------------------------------------------
 			org 0
 Q9_D_Id:        do.w 1    Sync-Kennzeichen, nach Coldstart gesetzt [PLATZHALTER]
@@ -56,7 +56,7 @@ Q9_D_BlkSiz:    do.l 1    minimale allozierbare Systemblockgroesse [PLATZHALTER]
 Q9_D_DevTbl:    do.l 1    Zeiger auf die I/O-Gerätetabelle [PLATZHALTER]
 Q9_D_SpurIrq:   do.l 1    Zaehler fuer Spurious IRQs [PLATZHALTER]
 Q9_D_AutIrq2:   do.b 28   Polling-Tabellenkoepfe fuer On-Chip-Autovektor-IRQs (68070) [PLATZHALTER]
-* KONFLIKT (noch ungeloest, siehe REVERSE_ENGINEERING.md): Per Disassemblierung
+* KONFLIKT (noch ungeloest, intern dokumentiert): Per Disassemblierung
 * wurde der Kopf der Ready-Queue (zirkulaere doppelt verkettete Liste, von
 * Q9_scheduler_183a benutzt) zweifelsfrei bei Offset 0x37c gefunden -- das
 * liegt MITTEN in diesem 768-Byte-Bereich, nicht bei Q9_D_ActivQ (0x3ac) wie

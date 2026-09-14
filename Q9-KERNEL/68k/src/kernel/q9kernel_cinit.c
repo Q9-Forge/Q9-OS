@@ -344,8 +344,8 @@ void Q9K_CInit(void)
                     Q9_u32 usrdisBase = *(volatile Q9_u32 *)Q9_D_USRDIS;
                     /* NACHTRAG 2026-08-31 (Abschnitt "IOMan-Einbindung, Punkt 1"):
                      * Q9_D_SYSDIS ($3a4) MUSS ebenfalls befuellt werden -- real
-                     * per Ghidra-Disassemblierung gefunden (docs/
-                     * REVERSE_ENGINEERING.md, Fund "Q9_disp_488"): welche der
+                     * per eigener Analyse gefunden (intern dokumentiert,
+                     * Fund "Q9_disp_488"): welche der
                      * beiden Tabellen ein TRAP #0 benutzt, haengt vom
                      * Supervisor-Bit im geretteten SR ab (schon dokumentiert,
                      * "wir haben noch keine echte User-/Supervisor-Trennung" --
@@ -354,10 +354,9 @@ void Q9K_CInit(void)
                      * bereits-supervisor-state Systm-Module wie IOMan rufen
                      * F$-Primitive INTERN NIE ueber TRAP #0, sondern ueber
                      * einen eigenen A6-relativen PEA+RTS-Tabellensprung DIREKT
-                     * auf Q9_D_SYSDIS (s. modules/ioman/docs/
-                     * REVERSE_ENGINEERING.md, Fund "IOMan ruft Kernel-Primitive
-                     * ueber dieselbe Trampolin-Tabelle wie der Kernel selbst
-                     * auf"). Ohne diese Befuellung blieb Q9_D_SYSDIS auf dem
+                     * auf Q9_D_SYSDIS (intern dokumentiert, Fund "IOMan ruft
+                     * Kernel-Primitive ueber dieselbe Trampolin-Tabelle wie
+                     * der Kernel selbst auf"). Ohne diese Befuellung blieb Q9_D_SYSDIS auf dem
                      * genullten Anfangszustand (s. q9kernel_tables.c) --
                      * IOMans eigener Trampolin sprang dadurch real auf Adresse
                      * 0 (per Boot-Test als Fehlschlag/Q9K_StkHandler-Ausloesung
@@ -428,12 +427,12 @@ void Q9K_CInit(void)
                      * alle NOCH NICHT registrierten Slots (Wert 0) mit
                      * Q9K_SysUnimplemented befuellen, statt sie auf 0 zu
                      * lassen -- der reale, ECHTE Microware-Kernel macht
-                     * das ebenfalls (gemeinsamer Fehler-Stub, s.
-                     * REVERSE_ENGINEERING.md). Grund: der PEA+RTS-
+                     * das ebenfalls (gemeinsamer Fehler-Stub, intern
+                     * dokumentiert). Grund: der PEA+RTS-
                      * Trampolin-Mechanismus (den externe Module wie
                      * IOMan fuer performancekritische Primitive DIREKT
-                     * nutzen, s. modules/ioman/docs/REVERSE_ENGINEERING.md
-                     * "Runde 2") liest den Primaerarray-Wert und macht ein
+                     * nutzen, intern dokumentiert, Fund "Runde 2") liest
+                     * den Primaerarray-Wert und macht ein
                      * "rts" DAHIN -- bei 0 waere das ein Sprung zu
                      * physischer Adresse 0, mitten in die eigenen Kernel-
                      * Global-DATEN. */

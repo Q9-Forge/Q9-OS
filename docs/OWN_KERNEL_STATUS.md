@@ -2134,7 +2134,7 @@ alloziert und `V_PORT` — Offset `$00`, „Required by kernel in static storage
 of all devices", `MWOS/OS9/SRC/DEFS/iodev.a` — aus dem Deskriptor einträgt)
 fehlt bei uns (`$64` nicht in der `q9kernel_cinit.c`-Tabelle, fällt auf
 `Q9K_SysUnimplemented`). **Das ist aber eine Sackgasse:** Laut
-`docs/REVERSE_ENGINEERING.md` (Zeile 2169) ist `$64`–`$70` auch im **echten,
+unseren internen Analysenotizen zufolge ist `$64`–`$70` auch im **echten,
 unveränderten** Microware-Kernel nicht registriert — der Dienst wird also nie
 per `trap #0` angefordert, auch nicht real. (Eine frühere Sitzung ist exakt
 dieser Spur schon einmal gefolgt und hat sie widerlegt — dort stellte sich
@@ -4532,7 +4532,7 @@ gemessen. Die naheliegendsten verbleibenden Erklärungen:
    vermessen werden.
 3. **Ohne echten RBF-Assembler-Quelltext** (Microware-Eigentum, nicht
    im Projekt vorhanden) bleibt die vollständige Auflösung dieses
-   Widerspruchs eine Blackbox-Reverse-Engineering-Aufgabe, die trotz
+   Widerspruchs eine Blackbox-Analyseaufgabe, die trotz
    erheblichen, sorgfältig dokumentierten Aufwands über mehrere
    Sitzungen hinweg nicht abschließend gelöst werden konnte.
 

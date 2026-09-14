@@ -48,7 +48,7 @@
 #define Q9_D_VCTIRQ         0x00A4  /* Zeigertabelle fuer vektorisierte Interrupt-Geraete [KONFLIKT -- Groesse/Lage unsicher, echte Ready-Queue liegt bei 0x37C mitten in diesem Bereich, siehe q9sysglob.a] */
 #define Q9_D_SYSDIS         0x03A4  /* Zeiger auf die System-Service-Dispatch-Tabelle [VERIFIZIERT -- Syscall-Tabelle fuer verschachtelte Aufrufe, siehe Q9_disp_488] */
 #define Q9_D_USRDIS         0x03A8  /* Zeiger auf die User-Service-Dispatch-Tabelle [VERIFIZIERT -- Syscall-Tabelle fuer normale User-Aufrufe, siehe Q9_disp_488] */
-#define Q9_D_ACTIVQ         0x03AC  /* Kopf der Warteschlange aktiver Prozesse [KONFLIKT -- echte Ready-Queue per Disassemblierung bei 0x37C gefunden, siehe q9sysglob.a und REVERSE_ENGINEERING.md] */
+#define Q9_D_ACTIVQ         0x03AC  /* Kopf der Warteschlange aktiver Prozesse [KONFLIKT -- echte Ready-Queue per Disassemblierung bei 0x37C gefunden, siehe q9sysglob.a] */
 #define Q9_D_SLEEPQ         0x03B4  /* Kopf der Warteschlange schlafender Prozesse [PLATZHALTER] */
 #define Q9_D_WAITQ          0x03BC  /* Kopf der Warteschlange wartender Prozesse [PLATZHALTER] */
 #define Q9_D_ACTAGE         0x03C4  /* Alterungszaehler der aktiven Warteschlange [VERIFIZIERT -- Aging-Countdown in Q9_scheduler_183a bestaetigt] */

@@ -1,7 +1,6 @@
 /*
  * q9kernel_setsys.c -- Q9-OS eigener Kernel: F$SetSys (Callcode 0x27,
- *                      s. modules/SYSCALL_MODULE_MAP.md und
- *                      docs/REVERSE_ENGINEERING.md "F$SetSys").
+ *                      intern dokumentiert, "F$SetSys").
  *
  * NACHTRAG 2026-09-13 (Fortsetzung 58, direkter Anschluss an den
  * csl-Freilisten-Patch, s. q9kernel_traplink.c

@@ -13,8 +13,8 @@
  * Algorithmus empirisch verifiziert (2026-08-18, Python-Vorabtest gegen
  * die echten Binaries, nicht nur aus der Doku uebernommen): 24 Big-
  * Endian-Words XOR-verknuepft ueber Offset 0x00-0x2F (Standard-68K-
- * Headerlaenge), muss 0xFFFF ergeben -- die aus REVERSE_ENGINEERING.md/
- * Thema 00/10 bekannte "24-Word-XOR-Pruefsumme". Gegen alle acht echten
+ * Headerlaenge), muss 0xFFFF ergeben -- die intern dokumentierte
+ * "24-Word-XOR-Pruefsumme" (Thema 00/10). Gegen alle acht echten
  * 68K-Kernel-Varianten in vendor/68020/ (dker/aker x 020/030 x s/b)
  * getestet: alle exakt 0xFFFF; eine einzelne verfaelschte Byte ergibt
  * nachweislich etwas anderes (Korruptionserkennung funktioniert).

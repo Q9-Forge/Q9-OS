@@ -7,9 +7,8 @@
  *
  * Reale Register-/Verhaltenskonvention ECHT per Read gelesen (nicht
  * geraten), 68k_tech.pdf S. 508-510 (Callcode 0x32, s.
- * modules/SYSCALL_MODULE_MAP.md -- ZUSAETZLICH real per echtem
- * Kernel-Adress-Dump bestaetigt, docs/REVERSE_ENGINEERING.md "Komplette
- * Syscall-Tabelle": D_SysDis-Eintrag hat eine ECHTE Adresse (kein
+ * intern dokumentiert -- ZUSAETZLICH real per echtem
+ * Kernel-Adress-Dump bestaetigt ("Komplette Syscall-Tabelle"): D_SysDis-Eintrag hat eine ECHTE Adresse (kein
  * Fehler-Stub), D_UsrDis-Eintrag ist der Fehler-Stub -- "nur
  * Supervisor-Tabelle", passt exakt zur dokumentierten "Attributes:
  * State: System"):
