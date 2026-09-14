@@ -379,7 +379,7 @@ hat sich bewährt.
 **Wiederverwendbares Testabbild-Rezept** (ersetzt alle älteren Hinweise
 zu `OS9SYS.q9test.hda` — WICHTIG, mehrfach live verifiziert):
 ```
-export OS9=/Volumes/SSD1TB/projects/MWOS/tools/macos/bin/os9
+export OS9=<lokaler Referenzpfad>/tools/macos/bin/os9
 IMG=/Volumes/SSD1TB/projects/Q9-Forge/Q9-Flux-68k/local_images/OS9SYS.q9test.hda
 rm -f "$IMG"
 "$OS9" format -q -k -nQ9TEST -bs512 -l32768 -c32 "$IMG"   # OHNE -e, s.u.!
@@ -2148,7 +2148,7 @@ trägt `$FFFFE000`, exakt die konfigurierte Onboard-CF-Basis.
 **Damit bleibt offen, WIE V_PORT in einem echten Microware-Kernel gesetzt
 wird**, wenn nicht über `F$DAttach`. Vermutlich direkt in IOMans/RBFs eigenem
 Code (kein separater Syscall) — RBF selbst liegt nur als Binärmodul vor
-(kein Quellcode im MWOS-Baum gefunden, anders als die Gerätetreiber), das
+(kein Quellcode im Referenzbaum gefunden, anders als die Gerätetreiber), das
 wäre die nächste Analyserunde.
 
 **Stand:** Kein Fixversuch. `F$DAttach` NICHT implementieren (Sackgasse,
@@ -2877,7 +2877,7 @@ $364d0 ff.: Nullen (Rest bis Verzeichnisende)
 
 Das reale Wurzelverzeichnis (per `os9 dir OS9SYS.hda,` am Host
 verifiziert) lautet vollständig: `C CMDS CMDS_NEW DEFS GDP IO KERMIT
-LIB MWOS README SYS **startup** reinstall.old reinstall.ultra OldBoot
+LIB REF README SYS **startup** reinstall.old reinstall.ultra OldBoot
 HOME PROJECTS netmods ETC xterms rtc72421 startspf bash mbrscan
 cfboot_os9.bl OS9Boot CPM`.
 
@@ -4012,7 +4012,7 @@ zurückgesetzt.
 
 ## Fortsetzung 16: DURCHBRUCH bei der Doku-Recherche -- echter Spec-Bug gefunden und gefixt, $D8 bleibt trotzdem (contradiction aufgedeckt)
 
-**Meilenstein:** `/Volumes/SSD1TB/projects/MWOS/DOC/PDF/68k_tech.pdf`
+**Meilenstein:** `<lokaler Referenzpfad>/DOC/PDF/68k_tech.pdf`
 (die echte "OS-9 for 68K Processors Technical Manual", per
 `pdftotext` durchsuchbar!) enthält die offizielle `F$PrsNam`-Spezifikation
 (Anhang D). Zitat, wortwörtlich:
@@ -7927,7 +7927,7 @@ gezaehlte Funktionsgrenzen) beschaffen, BEVOR neue Ursachenthesen
 aufgestellt werden.
 
 **Konkret geprueft und bestaetigt (noch in derselben Sitzung):** der
-Assembler `r68.exe` (MWOS-Toolchain) kennt den Schalter **`-s`** und
+Assembler `r68.exe` (Referenz-Werkzeugkette) kennt den Schalter **`-s`** und
 liefert damit eine VOLLSTAENDIGE Symboltabelle mit Adressen/Offsets
 fuer JEDES Label -- direkt getestet gegen `q9kernel_entry.a`:
 ```
