@@ -3,7 +3,7 @@
 *
 * ERSTER ENTWURF, 2026-08-17 -- ERFOLGREICH gegen den echten Microware-
 * Assembler getestet (r68, "Microware OS-9/68020 Cross Macro Assembler
-* V2.9.1", lokal unter MWOS/tools/macos/bin/r68 als Wine-Wrapper um die
+* V2.9.1", lokal unter dem Referenzpfad tools/macos/bin/r68 als Wine-Wrapper um die
 * echte DOS-exe): "Errors: 00000", echte 68K-Opcode-Bytes erzeugt (z.B.
 * movea.l #x,a6 -> $2c7c..., dbra -> $51ca, move.l d0,off(a6) -> $2d40...).
 * Erwartbare Warnungen, kein Fehler (Stand 2026-08-17, nach Ergaenzung der
@@ -27,15 +27,15 @@
 * Pruefsumme inklusive) -- deshalb hier KEINE manuellen dc.w/dc.l-Felder
 * mehr, anders als im allerersten (verworfenen) Entwurf.
 *
-* psect-Parameterreihenfolge empirisch aus zwei echten Referenzdateien
+* psect-Parameterreihenfolge empirisch aus zwei Referenzquellen
 * rekonstruiert (kein lokal dokumentiertes r68-Handbuch gefunden):
-*   src/kernel/kernel.r        (Ghidra-Rekonstruktion von dker030s)
-*   MWOS/TMP/q9_cstart.a       (Andreas' eigenes Q9-C-Startmodul)
+*   internes Analysematerial zum Original-Kernel (nicht Teil dieses Repos)
+*   Referenz-TMP/q9_cstart.a   (eigenes Q9-C-Startmodul)
 * Format: psect name,tylang,attrrev,edition,mem/stack,exec-label,trap-label
 * -- Systm-Module (wie hier) nutzen laut Manual kein M$Mem/M$Stack, beide
 * Referenzdateien bestaetigen das mit 0 an dieser Stelle.
 *
-* Konstantenwerte gegen MWOS/TMP/q9defs.d gegengeprueft (Andreas' eigene,
+* Konstantenwerte gegen Referenz-TMP/q9defs.d gegengeprueft (eigene,
 * schon etablierte Definitionsdatei) -- Q9Systm=12, Q9Objct=1, Q9ReEnt=$80,
 * Q9SupStat=$20 stimmen exakt mit Q9_MT_SYSTEM/Q9_ML_OBJECT/Q9_MA_REENT/
 * Q9_MA_SUPER aus src/q9moduleheader.h ueberein. Hier trotzdem eigene,
@@ -44,7 +44,7 @@
 * Q9-eigene Definitionsdatei ersetzt"), diese Datei soll nicht fragil
 * davon abhaengen.
 *
-* Registerkonvention beim Einsprung (verifiziert, docs/kernel-walkthrough/
+* Registerkonvention beim Einsprung (verifiziert, intern dokumentiert
 * 01-kernel-bootstrap/README.md, Thema 01): d0=Gesamt-RAM-Groesse,
 * d1=erkannter CPU-Typ, a1=Boot-ROM-Einsprungpunkt, a5=vorbereiteter
 * Speicherblock fuer die Exception-Sprungtabelle, d3=Boot-Zeit-Flags
@@ -55,8 +55,8 @@
 * uebernommen/gesichert, s. TODO unten.
 *
 * Kernel-Global-Basis: fest auf Adresse 0 (niedrigste RAM-Adresse nach
-* Remap, s. Q9-Flux/docs/BOARD.md) -- Entscheidung aus
-* OWN_KERNEL_INIT_PLAN.md Abschnitt 5 Punkt 3 (32K reserviert, absolute
+* Remap, s. Q9-Flux/docs/BOARD.md) -- intern dokumentierte
+* Entscheidung (32K reserviert, absolute
 * Basisadresse frei waehlbar, da echte Module nur A6-relativ zugreifen).
 *
 * Offene Punkte, bewusst nicht in diesem ersten Entwurf geloest:
@@ -251,9 +251,8 @@ Q9K_ForkScratch_ErrorCode  equ $1298       * Q9_u16, d1.w AUS (Fehlschlag)
 Q9K_ForkScratch_Success    equ $129C       * Q9_u16, 0=Fehlschlag/1=Erfolg
 
 * Reale Panic-Codes fuer F$Panic (Abschnitt "F$Panic", 2026-08-30, echt
-* per MWOS/SRC/DEFS/funcs.h verifiziert: "#define K_IDLE 0x01 /* last
-* 'official' process has exited */", "#define K_PFAIL 0x02 /* power
-* failure occurred */"). K_PFAIL wird von diesem Kernel selbst NIE
+* per internem Referenzmaterial verifiziert (K_IDLE=0x01, K_PFAIL=0x02).
+* K_PFAIL wird von diesem Kernel selbst NIE
 * ausgeloest (keine Stromausfall-Erkennung, s. 68k_tech.pdf S. 471 Note
 * -- "OS-9 kernel does not detect power failure" -- nur echte, externe
 * F$Panic(K$PFail)-Aufrufer waeren betroffen, werden identisch wie jeder
@@ -444,6 +443,26 @@ Q9K_RaceRingBase          equ $1440C0
 Q9K_RaceRingSlots         equ 8192
 Q9K_RaceRingEntSz         equ 8
 Q9K_RaceRingIdx           equ $1540C0    * Base + Slots*EntSz (8192*8=$10000), Literal wegen r68
+
+* F$TLink/M$Init-Messpunkt fuer den Vergleich echter C-Programme.
+* Dieser Bereich liegt direkt hinter dem Interrupt-Ring und wird weder von
+* Kernel-Globals noch von Fremdmodulen verwendet. Er zeichnet bewusst nur
+* Registerwerte auf (keine Dereferenzierung im kritischen Pfad): so kann
+* die Emulatorseite den Sentinel-Zeiger erst verifizieren, bevor ein
+* gezielter Schreib-Watch gesetzt wird.
+Q9K_TLinkTrace_Proc       equ $154100
+Q9K_TLinkTrace_EntryA3    equ $154104
+Q9K_TLinkTrace_EntryA6    equ $154108
+Q9K_TLinkTrace_PreInitA3  equ $15410C
+Q9K_TLinkTrace_PreInitA6  equ $154110
+Q9K_TLinkTrace_PostInitA3 equ $154114
+Q9K_TLinkTrace_PostInitA6 equ $154118
+Q9K_TLinkTrace_ModPtr    equ $15411C
+Q9K_TLinkTrace_InitEntry equ $154120
+Q9K_TLinkTrace_ExecEntry equ $154124
+Q9K_TLinkTrace_StaticPtr equ $154128
+Q9K_TLinkTrace_Error     equ $15412C
+Q9K_TLinkTrace_Success   equ $154130
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -502,6 +521,12 @@ Q9K_SRqMemFrameScratch    equ $13A4      * Q9_u32, Rahmenbasis oder 0
 * VORNE korrigieren -- s. Bugfix "kein A" 2026-09-01 dort fuer Details
 * zur Herleitung.
 Q9K_ModuleHeaderSize equ $3C            * generierte Modulkopfgroesse, per l68-Map verifiziert
+
+* Boot-Selbsttest-Auswahl. Die drei Modi machen reale Programmtests
+* reproduzierbar vergleichbar, ohne den Kernel- oder Emulatorpfad zu
+* veraendern: 1 = nur echo, 2 = nur date, 3 = echo gefolgt von date.
+* Der eingecheckte Standard bleibt der umfassende Test 3.
+Q9K_TestPrograms equ 3
 Q9K_ModuleStart:
 
 * ===== Assembler-Einstieg =====
@@ -511,10 +536,10 @@ Q9K_ModuleStart:
 * dann nach C springen. Kein direkter Registerzugriff aus C moeglich,
 * deshalb muss das hier in Assembler passieren -- gleiches Prinzip wie
 * der reale x86-OS-9000-Kernel (5-Byte-JMP-Trampolin -> C-Init-Funktion,
-* s. modules/os9000-x86/docs/KERNEL_INIT.md).
+* intern dokumentiert).
 
 * ===== TEMPORAERE DIAGNOSE (2026-08-18) =====
-* Auf Andreas' Wunsch beim ersten echten Q9-Flux-Boot-Test eingebaut, um
+* Auf Wunsch beim ersten echten Q9-Flux-Boot-Test eingebaut, um
 * einen unerklaerten einzelnen Muellzeichen-Fund auf der Konsole
 * aufzuklaeren (s. Session-Notizen) -- schreibt an mehreren
 * Checkpoints je EIN festes Zeichen direkt auf die Q9-Konsole (68681-
@@ -896,8 +921,8 @@ Q9K_HaltLoopSpin:
 * Fassung legte _stklimit als gewoehnliches psect-Datum mit einem
 * absoluten Wert ab -- funktional falsch, weil der Compiler dafuer
 * IMMER eine kleine, A6-relative vsect-Verschiebung erzeugt, keinen
-* Verweis auf eine feste Adresse. vsect matcht Andreas' eigenem
-* MWOS/TMP/q9_cstart.a (dort Teil des dritten vsect-Blocks
+* Verweis auf eine feste Adresse. vsect matcht dem eigenen
+* Referenz-TMP/q9_cstart.a (dort Teil des dritten vsect-Blocks
 * _fcbs/_ofcbs/environ/_stklimit) -- hier bewusst nur das tatsaechlich
 * referenzierte Feld, da wir keine eigene "echte" OS-9-C-Runtime
 * nachbilden, nur das, was unser eigener Compiler-Output braucht.
@@ -946,7 +971,7 @@ Q9K_CRuntimeData:
 * (Format<<12)|(Vektor*4); fuer TRAP #n ist Vektor=32+n, also
 * Format/Vektor-Wort = $80+4n (n=(Wort-$80)/4) -- exakt dieselbe
 * Rechnung, die echo.mod SELBST in seiner eigenen M$Excpt-Routine
-* benutzt (per Disassemblierung bestaetigt, s. docs/OWN_KERNEL_STATUS.md).
+* benutzt (per Analyse bestaetigt, s. docs/OWN_KERNEL_STATUS.md).
 *
 * Trap-Tabelle: pro Prozess, s. q9kernel_traplink.c
 * Q9K_PROCDESC_TRAPTBL_OFF ($1CC, 15 Eintraege a 12 Byte: Modulzeiger/
@@ -1076,7 +1101,7 @@ Q9K_ExcTrap:
 * Ruecksprungadressen im Stack ergeben einen Backtrace -- damit liess
 * sich der Aufrufpfad des fehlgeschlagenen Sprungs in einem einzigen Lauf
 * rekonstruieren (ioman+$1560 -> scf+$190 -> scf+$1f4 -> scf+$352),
-* nachdem statische Disassemblierung daran gescheitert war.
+* nachdem statische Analyse daran gescheitert war.
         movem.l a2/a3/a4,Q9K_ExcInfo_A2
         movem.l d0-d7,Q9K_ExcInfo_D0
         move.l  sp,-(sp)
@@ -1152,7 +1177,7 @@ __multiply:
 * Abschnitt "Scheduler" (2026-08-21): der reale Nachweis von echtem
 * preemptivem Multitasking. Beide laufen in einer Endlosschleife und
 * geben dabei periodisch je ein eigenes ASCII-Zeichen aus ('A'/'B'),
-* dazwischen eine sichtbare Leerschleife -- das mit Andreas etablierte
+* dazwischen eine sichtbare Leerschleife -- das etablierte
 * Kriterium gegen Fake-Fortschritt: nur ein wirklich vom Timer-Interrupt
 * (Q9K_TimerIRQHandler unten) getriebener Kontextwechsel kann im
 * Konsolen-Ausgabestrom ein GEMISCHTES Muster wie "AABAABBA..." erzeugen
@@ -1203,7 +1228,7 @@ Q9K_TestProcA:
 * Ersatzlos gestrichen -- fuer Diagnose sind der Syscall-Ringpuffer und
 * Q9K_ExcTrap ohnehin die besseren Werkzeuge.
 * Zwei zusaetzliche Vtable-Felder (Offset 0/4) NICHT bekannt/genutzt --
-* IOMan liest laut Disassemblierung nur Offset 8, s. o. -- bleiben 0.
+* IOMan liest laut Analyse nur Offset 8, s. o. -- bleiben 0.
 
 * WIEDERHERGESTELLT 2026-09-03, mit jetzt BELEGTER Begruendung. Die hier
 * zuvor entfernte Ausgabe-Vtable war an der RICHTIGEN Adresse; die
@@ -1215,7 +1240,7 @@ Q9K_TestProcA:
 * Q9_D_DevTbl liegt deutlich weiter hinten (hinter Q9_D_BlkSiz), wird von
 * dieser Zuweisung also gar nicht beruehrt.
 *
-* Unabhaengig davon per Disassemblierung von ioman_DEV bestaetigt -- das
+* Unabhaengig davon per Analyse von ioman_DEV bestaetigt -- das
 * Modul enthaelt GENAU EINEN "jsr d16(a1)", und das ist seine
 * Zeichenausgabe:
 *   $0296: movea.l $64(a6),a1
@@ -1456,7 +1481,7 @@ Q9K_TestCslDone:
 * Modulname. OUT (Erfolg): Carry geloescht. Schlug F$Load(csl) oben schon
 * fehl, bleibt dieser Test aussagekraeftig fehlschlagend (E$MNF erwartet) --
 * kein Sonderpfad noetig.
-        moveq   #13,d0                      * Trap-Nummer 13 (per Disassemblierung von echo.mod verifiziert)
+        moveq   #13,d0                      * Trap-Nummer 13 (per Analyse von echo.mod verifiziert)
         clr.l   d1                           * kein Speicher-Override -- M$Mem des Moduls entscheidet
         lea     Q9K_TestCslBareName(pc),a0     * NACKTER Name, s. Kommentar bei Q9K_TestCslBareName
         trap    #0
@@ -1471,6 +1496,13 @@ Q9K_TestTLinkFail:
         move.l  d1,d5
         bsr     Q9K_DiagWriteHex32
 Q9K_TestTLinkDone:
+
+* Fuer den isolierten date-Test den ansonsten identischen echo-Aufruf
+* ueberspringen. Dadurch unterscheiden sich die beiden Vergleichslaeufe
+* nur in der gestarteten Anwendung, nicht in Image, Kernel oder csl.
+        ifeq    Q9K_TestPrograms-2
+        bra     Q9K_TestLoadDate
+        endc
 
 * Das per F$Load geladene Modul jetzt auch wirklich AUSFUEHREN -- der
 * eigentliche Zweck des Meilensteins. "echo" steht jetzt (per
@@ -1489,7 +1521,11 @@ Q9K_TestTLinkDone:
         bcs     Q9K_TestForkEchoFail
         moveq   #'E',d7                     * DIAGNOSE: echo geforkt
         bsr     Q9K_DiagWriteD7
-        bra     Q9K_TestLoadDate            * NACHTRAG Fortsetzung 61: weiter zum date-Test statt direkt in die Idle-Schleife
+        ifeq    Q9K_TestPrograms-1
+        bra     Q9K_TestProcA_Loop          * isolierter echo-Test
+        else
+        bra     Q9K_TestLoadDate            * Kombi-Test: anschliessend date
+        endc
 Q9K_TestForkEchoFail:
         moveq   #'e',d7                     * DIAGNOSE: F$Fork("echo") fehlgeschlagen
         bsr     Q9K_DiagWriteD7
@@ -1609,7 +1645,7 @@ Q9K_TestCslName:
 Q9K_TestCslBareName:
 * ECHTER BUG GEFUNDEN + GEFIXT (Fortsetzung 33, eigener Testcode, nicht
 * der Kernel selbst): F$TLink braucht den NACKTEN Modulnamen (genau wie
-* echo.mod ihn per Disassemblierung nachweislich benutzt), keinen Pfad --
+* echo.mod ihn per Analyse nachweislich benutzt), keinen Pfad --
 * Q9K_ModDirLinkByName sucht nach dem Namen AUS DEM MODULKOPF ("csl"),
 * nie nach "/dd/CMDS/csl". Erster Versuch nutzte faelschlich
 * Q9K_TestCslName (den F$Load-Pfad) auch fuer F$TLink -- E$MNF war damit
@@ -1656,7 +1692,7 @@ Q9K_TestHelloName:
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
 * Einbindung", DRITTER Versuch) -- Minimale "Ausgabe-Vtable" fuer IOMans
 * eigene Diagnose-Ausgabe-Infrastruktur (s. Kopfkommentar beim
-* Aufrufer). IOMan liest laut Disassemblierung NUR Offset +8 (Zeiger auf
+* Aufrufer). IOMan liest laut Analyse NUR Offset +8 (Zeiger auf
 * eine PutChar-Routine); die Felder bei +0/+4 bleiben ungenutzt/0 --
 * trotzdem als vollstaendige 12-Byte-Struktur angelegt (statt nur ein
 * einzelnes Datum), falls ein spaeterer Aufrufpfad doch mehr liest.
@@ -1675,8 +1711,8 @@ Q9K_TestHelloName:
 * IOMan-Start brach beim ersten auszugebenden Zeichen ab.
         align
 Q9K_IOManOutVtable:
-        dc.l    0                          * +0x0, ungenutzt (laut Disassemblierung)
-        dc.l    0                          * +0x4, ungenutzt (laut Disassemblierung)
+        dc.l    0                          * +0x0, ungenutzt (laut Analyse)
+        dc.l    0                          * +0x4, ungenutzt (laut Analyse)
 * +0x8 ist KEIN Funktionszeiger, sondern ein CODE-Einsprungpunkt.
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-03): hier stand ein "dc.l 0", in das
 * der Aufrufer zur Laufzeit die Adresse von Q9K_IOManPutChar schrieb. IOMan
@@ -1693,7 +1729,7 @@ Q9K_IOManOutVtable:
 * Konsequenz: die Routine SELBST muss bei +0x8 liegen -- die Vtable ist
 * deshalb nur noch 8 Byte lang, und der Aufrufer traegt nichts mehr ein.
 Q9K_IOManPutChar:
-* Aufruf-Konvention (per Disassemblierung von ioman_DEV verifiziert):
+* Aufruf-Konvention (per Analyse von ioman_DEV verifiziert):
 * IN d0.b = auszugebendes Zeichen. Aufrufer (IOMan-Offset $2a2/$2c8)
 * erwartet a0 (String-Iterator) und a1 (Vtable-Basis selbst) UNVERAENDERT
 * zurueck -- deshalb alle beruehrten Register sichern.
@@ -1852,7 +1888,7 @@ Q9K_TimerIRQ_Resume:
 *******************************************************************************
 * Q9K_TrapDispatch -- TRAP #0, der echte OS-9-Systemaufruf-Mechanismus
 * (2026-08-21, Abschnitt "F$Link/F$UnLink"). Reale, verifizierte
-* Konvention (docs/REVERSE_ENGINEERING.md, "Fund: Q9_disp_488"): direkt
+* Konvention (intern dokumentiert, Fund: "Q9_disp_488"): direkt
 * nach der TRAP #0-Instruktion steht im Code ein Wort mit dem
 * Funktionscode (0-255); der Handler liest es ueber den geretteten PC
 * auf dem Exception-Frame, erhoeht den geretteten PC um 2 (damit RTE
@@ -2053,7 +2089,7 @@ Q9K_TrapCallForeignCaller:
         bra     Q9K_TrapAfterCall
 Q9K_TrapCallExternal:
 * Registerrahmen im ECHTEN OS-9-Layout anlegen (72 Byte). Maszgeblich ist
-* MWOS/OS9/SRC/DEFS/process.a, "User Register Stack Image":
+* internem Referenzmaterial, "User Register Stack Image":
 *   R$d0=$00 ... R$d7=$1C, R$a0=$20 ... R$a6=$38, R$a7=$3C (Stackzeiger
 *   des Aufrufers), R$sr=$40 (Wort), R$pc=$42, R$fmt=$46, R$Size=$48.
 * Vorher wurden nur 44 Byte (d0-d7/a0-a2) abgelegt -- ab A3 war das
@@ -2181,7 +2217,7 @@ Q9K_TrapExtInvoke:
         rts                                                     * springt in den Handler
 Q9K_TrapAfterCall:
 * NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor"): ECHTE Konvention per
-* Read direkt im Kernel-Fund gelesen (docs/REVERSE_ENGINEERING.md, Fund
+* Read direkt im Kernel-Fund gelesen (intern dokumentiert, Fund
 * "Syscall-Tabellen sind KEIN statisches Zeiger-Array" -- der dort
 * zitierte gemeinsame Fehler-Stub bei $1380 endet mit "move.w #0xd0,D1w;
 * ori #1,CCR; rts"). Reale F$-Handler-Subroutinen signalisieren Erfolg/
@@ -2268,11 +2304,11 @@ Q9K_TrapUnknown:
         ori.w   #1,(sp)                         * Carry im geretteten SR setzen -- unbekannter/unregistrierter Funktionscode
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21, Abschnitt "F$Fork", beim
 * Nachschlagen echter Fehlercodes fuer E_MEMFUL aufgefallen): $00CE war
-* NIE der echte E_UNKSVC-Wert -- MWOS/SRC/DEFS/errno.h definiert
-* "#define E_UNKSVC 0xd0" (nicht 0xce). $CE gehoert zu keinem dort
+* NIE der echte E_UNKSVC-Wert -- intern dokumentiert ist E_UNKSVC=0xd0
+* (nicht 0xce). $CE gehoert zu keinem dort
 * definierten Fehlercode, war also schlicht falsch abgeschrieben. Fix:
 * echten Wert $00D0 uebernommen.
-        move.w  #$00d0,d1                        * d1.w = E_UNKSVC (Unknown Service Code, MWOS/SRC/DEFS/errno.h)
+        move.w  #$00d0,d1                        * d1.w = E_UNKSVC (Unknown Service Code, internem Referenzmaterial)
         rte
 
 *******************************************************************************
@@ -2284,8 +2320,8 @@ Q9K_TrapUnknown:
 * ENGINEERING.md fuer genau diesen Zweck einen "gemeinsamen Fehler-Stub"
 * im Modul bei Offset 0x1380 vorbelegt). Der PEA+RTS-Trampolin-
 * Mechanismus, ueber den externe Module wie IOMan performancekritische
-* Primitive DIREKT ansprechen (ohne TRAP #0, s. modules/ioman/docs/
-* REVERSE_ENGINEERING.md "Runde 2"), liest den Primaerarray-Wert des
+* Primitive DIREKT ansprechen (ohne TRAP #0, intern dokumentiert,
+* Fund "Runde 2"), liest den Primaerarray-Wert des
 * Slots und macht ein "rts" DAHIN -- bei einem unregistrierten Slot
 * (Wert 0) waere das ein Sprung zu physischer Adresse 0, mitten in die
 * eigenen Kernel-Global-DATEN (keine gueltigen Instruktionen), die dann
@@ -2381,7 +2417,7 @@ Q9K_SysFSend_Fail:
 * Q9K_SysFRetPD -- Handler fuer F$RetPD (Callcode $31, "Return Process/Path
 * Descriptor"), Gegenstueck zu Q9K_SysFAllPD.
 *
-* Konvention aus der IOMan-Disassemblierung ABGELESEN (2026-09-05,
+* Konvention aus der IOMan-Analyse ABGELESEN (2026-09-05,
 * Aufrufstelle ioman+$1206), nicht geraten:
 *   IN  d0.w = Deskriptornummer (IOMan holt sie per "move.w $0(a1),d0" aus
 *              dem Deskriptor selbst -- dort legt F$AllPD sie ab)
@@ -2513,8 +2549,8 @@ Q9K_SysFLink:
 * A6=Q9K_CRuntimeData voraussetzt -- galt bisher stillschweigend immer,
 * WEIL dieser Handler nur ueber TRAP #0 aus dem EIGENEN Testcode heraus
 * aufgerufen wurde (dort ist A6 laut Kopfkommentar bei Q9K_TrapDispatch
-* fest richtig gesetzt). Laut modules/ioman/docs/REVERSE_ENGINEERING.md
-* ruft IOMan F$Link aber NICHT nur ueber TRAP #0, sondern auch DIREKT
+* fest richtig gesetzt). Laut interner Analyse ruft IOMan F$Link aber
+* NICHT nur ueber TRAP #0, sondern auch DIREKT
 * ueber dasselbe PEA+RTS-Trampolin, das intern performancekritische
 * Primitive anspringt -- IOMan laeuft dabei mit A6=0 (sein eigener,
 * externer Kontext). A6=0 fuehrt den Compiler-Stack-Check dann auf
@@ -2739,7 +2775,7 @@ Q9K_SysFFork_Fail:
 * 535, echt per Read gelesen): IN keine. OUT (sofortiger Erfolg): d0.w=ID
 * des beendeten Kindprozesses, d1.w=dessen Exit-Status, Carry im
 * geretteten SR geloescht. OUT (Fehlschlag): Carry gesetzt, d1.w=E_NOCHLD
-* ($E2, MWOS/SRC/DEFS/errno.h) -- NUR falls der Aufrufer UEBERHAUPT
+* ($E2, internem Referenzmaterial) -- NUR falls der Aufrufer UEBERHAUPT
 * keine Kindprozesse hat. Hat der Aufrufer Kinder, aber noch keins ist
 * Zombie: blockiert (kein Rueckkehrpfad hier -- Wiederaufnahme spaeter
 * ueber den ganz normalen "movem.l (sp)+,.../rte"-Mechanismus, wenn ein
@@ -3261,8 +3297,8 @@ Q9K_SysFIRQ_Fail:
 * ECHTER Aufrufer dieses Slots ist NICHT nur unser eigener
 * Q9K_TrapDispatch (dort a6 IMMER schon Q9K_CRuntimeData) -- reale,
 * externe Systm-Module wie IOMan rufen F$SRqMem auch DIREKT ueber einen
-* eigenen A6-relativen PEA+RTS-Tabellensprung auf (s. modules/ioman/docs/
-* REVERSE_ENGINEERING.md), dabei erwartungsgemaess mit a6=0 (echte
+* eigenen A6-relativen PEA+RTS-Tabellensprung auf (intern dokumentiert),
+* dabei erwartungsgemaess mit a6=0 (echte
 * Kernel-Global-Basis, s. Kopfkommentar bei der geplanten IOMan-
 * Einsprungstelle in Q9K_TestProcA weiter unten). Der C-Aufruf
 * (Q9K_SysSRqMemImpl) braucht aber ZWINGEND a6=Q9K_CRuntimeData (eigener
@@ -3274,8 +3310,8 @@ Q9K_SysFIRQ_Fail:
 * Code -- erwartet sein EIGENES a6 danach unveraendert vorzufinden).
 * Q9K_SysFAllPD -- F$AllPD (Callcode $30, "Allocate Process/Path
 * Descriptor"; in OS-9/6809 hiess derselbe Dienst F$All64, 1985 umbenannt,
-* s. MWOS/OS9/SRC/DEFS/funcs.a Zeile 35). Konvention aus IOMans
-* Disassemblierung abgelesen (Modul-Offset $135e ff.): IN a0 = Basis der
+* s. internem Referenzmaterial). Konvention aus IOMans
+* Analyse abgelesen (Modul-Offset $135e ff.): IN a0 = Basis der
 * Deskriptor-Blocktabelle (DBT, von IOMan selbst angelegt und in D_PthDBT
 * $48 abgelegt). OUT a1 = neuer Deskriptor, d0.w = dessen Nummer, Carry
 * bei Fehler.
@@ -3560,6 +3596,9 @@ Q9K_SysFTLink:
 * grosszuegig d1-d7/a3-a5 ab (a0/a1/a2/a6 bekommen ohnehin bewusst neue,
 * dokumentierte Werte fuer M$Init, s. unten -- KEIN Aufrufer-Wert dort
 * noetig).
+        move.l  Q9_D_Proc,Q9K_TLinkTrace_Proc
+        move.l  a3,Q9K_TLinkTrace_EntryA3
+        move.l  a6,Q9K_TLinkTrace_EntryA6
         movem.l d1-d7/a3-a5,-(sp)
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
@@ -3570,12 +3609,22 @@ Q9K_SysFTLink:
         movea.l (sp)+,a6
         movem.l (sp)+,d1-d7/a3-a5
 
+        move.l  Q9K_TLinkScratch_ModPtr,Q9K_TLinkTrace_ModPtr
+        move.l  Q9K_TLinkScratch_InitEntry,Q9K_TLinkTrace_InitEntry
+        move.l  Q9K_TLinkScratch_ExecEntry,Q9K_TLinkTrace_ExecEntry
+        move.l  Q9K_TLinkScratch_StaticPtr,Q9K_TLinkTrace_StaticPtr
+        move.l  Q9K_TLinkScratch_Error,Q9K_TLinkTrace_Error
+        move.l  Q9K_TLinkScratch_Success,Q9K_TLinkTrace_Success
+
         tst.l   Q9K_TLinkScratch_Success
         beq     Q9K_SysFTLink_Fail
 
         movea.l Q9K_TLinkScratch_InitEntry,a4
         tst.l   Q9K_TLinkScratch_InitEntry
         beq     Q9K_SysFTLink_NoInit             * kein M$Init -- selten, aber laut Manual erlaubt
+
+        move.l  a3,Q9K_TLinkTrace_PreInitA3
+        move.l  a6,Q9K_TLinkTrace_PreInitA6
 
         pea     Q9K_SysFTLink_AfterInit(pc)       * Rahmen: Ruecksprung-PC (liegt am Ende bei +8)
         clr.l   -(sp)                              * Rahmen: Fuellwortpaar 0000/0000 (bei +4)
@@ -3586,6 +3635,8 @@ Q9K_SysFTLink:
         movea.l Q9K_TLinkScratch_ModPtr,a2           * a2 = Modulzeiger
         jmp     (a4)                                  * M$Init -- KEIN jsr, s.o.
 Q9K_SysFTLink_AfterInit:
+        move.l  a3,Q9K_TLinkTrace_PostInitA3
+        move.l  a6,Q9K_TLinkTrace_PostInitA6
         andi    #$fe,ccr                            * Carry loeschen -- Erfolg (a0/a1/a2 unveraendert von M$Init erwartet)
         rts
 
@@ -3721,8 +3772,8 @@ Q9K_SysFSetSys_Fail:
 * Validierungs-Framework, gleiche Begruendung wie bei F$SRtMem).
 *
 * IOMans ALLERERSTER Aufruf beim Booten (echtes TRAP #0, direkt am
-* Modul-Einsprungpunkt, s. modules/ioman/docs/REVERSE_ENGINEERING.md/
-* real per Byte-Disassemblierung gefunden) -- deshalb GENAU WIE
+* Modul-Einsprungpunkt, intern dokumentiert, real per genauer
+* Byte-Analyse gefunden) -- deshalb GENAU WIE
 * Q9K_SysFSRqMem: eingehendes a6 kann 0 sein (IOMan laeuft zu diesem
 * Zeitpunkt bereits mit a6=0, s. Kopfkommentar dort), muss fuer den
 * C-Aufruf gesichert/umgeschaltet/wiederhergestellt werden.
@@ -3781,7 +3832,7 @@ Q9K_SysFIOpen:
 
 * (a0) laut Manual nur im Erfolgsfall garantiert, schadet aber nicht --
 * s. Kopfkommentar q9kernel_iopath.c. d1.w=E_PTHFUL (Path Table full,
-* MWOS/SRC/DEFS/errno.h) -- einziger bisher moeglicher Fehlerfall.
+* internem Referenzmaterial) -- einziger bisher moeglicher Fehlerfall.
 Q9K_SysFIOpen_Fail:
         movea.l Q9K_IOpenScratch_PastName,a0
         move.w  #$00c8,d1                        * d1.w = E_PTHFUL
@@ -3844,8 +3895,8 @@ Q9K_SysFGProcP_Fail:
 * liegt (*Q9_D_EXCJMP) -- die CPU vektorisiert also durch die eigene,
 * GENULLTE Adresse-0-Region, nicht durch die von uns befuellte Tabelle.
 * Anders als beim ECHTEN Referenzkernel (der VBR nur PER "movec VBR,A6"
-* LIEST, s. docs/REVERSE_ENGINEERING.md "Fund: System-Global-Zeiger
-* ueber VBR" -- setzt es dort vermutlich der Boot-ROM bereits korrekt
+* LIEST, intern dokumentiert, Fund: "System-Global-Zeiger ueber VBR"
+* -- setzt es dort vermutlich der Boot-ROM bereits korrekt
 * vor, fuer UNSEREN eigenen Kernel gilt diese Annahme offenbar nicht)
 * muessen WIR VBR selbst setzen. "movec" ist eine privilegierte
 * Instruktion (nur im Supervisor-Zustand erlaubt, hier unproblematisch,

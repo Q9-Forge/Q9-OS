@@ -19,8 +19,9 @@
 #     Messnotizen (auch das hat schon in die Irre gefuehrt).
 #
 # Aufruf:  tools/mkbootfile.sh [--disk] <referenz-bootdatei> <ziel-image>
-#          --disk  nimmt zusaetzlich RBF, den CompactFlash-Treiber und die
-#                  Geraetedeskriptoren auf (fuer F$Load von Platte)
+#          --disk  ergaenzt die per Q9_DISK_MODULES angegebenen
+#                  Diskmodule. Bereits in der Referenz vorhandene Module
+#                  werden anhand ihres Modulnamens nicht doppelt angehaengt.
 set -e
 
 WITH_DISK=0
@@ -35,30 +36,78 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 # NACHTRAG (2026-09-13): Pfad an die Repo-Reorganisation angepasst --
 # der Kernel liegt jetzt unter Q9-KERNEL/68k/src/kernel/, nicht mehr
 # direkt unter src/kernel/.
-BUILD="$HERE/Q9-KERNEL/68k/src/kernel/build"
+# Ein explizites Build-Verzeichnis erlaubt reproduzierbare Wegwerf-Boots,
+# ohne das langlebige Standard-Artefakt im Quellbaum zu ueberschreiben.
+BUILD=${Q9K_BUILD_DIR:-"$HERE/Q9-KERNEL/68k/src/kernel/build"}
+if [ ! -f "$BUILD/q9kernel" ]; then
+    echo "Kernel-Build fehlt: $BUILD/q9kernel" >&2
+    exit 1
+fi
 OS9=${OS9:-/Volumes/SSD1TB/projects/MWOS/tools/macos/bin/os9}
 OUT=$(mktemp -t os9boot)
 
-# Offsets der Referenz-Bootdatei: davor steht der (zu ersetzende) Kernel,
-# dahinter die unveraenderten Microware-Module.
-REF_TAIL_START=${REF_TAIL_START:-0x3092}   # hinter dem Kernel
-REF_TAIL_SPLIT=${REF_TAIL_SPLIT:-0x328e}   # hinter init/forkchild
-
-python3 - "$REF" "$BUILD" "$OUT" "$WITH_DISK" "$REF_TAIL_START" "$REF_TAIL_SPLIT" <<'PY'
-import sys, os
-ref, build, out, withdisk, a, b = sys.argv[1:7]
-a, b = int(a, 0), int(b, 0)
+# Die Referenz-Bootdatei beginnt mit altem Kernel, init und forkchild. Die
+# Grenzen werden aus M$Size gelesen; feste Offsets wurden bei jeder
+# Kernelvergroesserung zu einer stillen und gefaehrlichen Fehlerquelle.
+python3 - "$REF" "$BUILD" "$OUT" "$WITH_DISK" <<'PY'
+import sys, os, struct
+ref, build, out, withdisk = sys.argv[1:5]
 d = open(ref, 'rb').read()
-parts = [open(os.path.join(build, 'q9kernel'), 'rb').read(), d[a:b]]
+
+def module_size(offset):
+    if offset + 8 > len(d) or d[offset:offset + 2] != b'\x4a\xfc':
+        raise SystemExit('Referenz-Bootdatei: ungueltiger Modulanfang bei 0x%x' % offset)
+    size = struct.unpack('>I', d[offset + 4:offset + 8])[0]
+    if size < 16 or offset + size > len(d):
+        raise SystemExit('Referenz-Bootdatei: ungueltige Modulgroesse 0x%x bei 0x%x' % (size, offset))
+    return size
+
+kernel_size = module_size(0)
+init_size = module_size(kernel_size)
+fork_offset = kernel_size + init_size
+fork_size = module_size(fork_offset)
+tail_start = fork_offset + fork_size
+parts = [open(os.path.join(build, 'q9kernel'), 'rb').read(), d[kernel_size:tail_start]]
 hello = os.path.join(build, 'hellosvc')
 if os.path.exists(hello):
     parts.append(open(hello, 'rb').read())
-parts.append(d[b:])
+parts.append(d[tail_start:])
+def module_name(offset):
+    name_offset = struct.unpack('>I', d[offset + 0x0c:offset + 0x10])[0]
+    end = d.find(b'\0', offset + name_offset)
+    if end < 0:
+        raise SystemExit('Referenz-Bootdatei: nicht terminiertes Modulnamenfeld bei 0x%x' % offset)
+    return d[offset + name_offset:end].decode('ascii', 'replace')
+
+def module_name_bytes(module):
+    if len(module) < 0x10 or module[:2] != b'\x4a\xfc':
+        return None
+    name_offset = struct.unpack('>I', module[0x0c:0x10])[0]
+    end = module.find(b'\0', name_offset)
+    if end < 0:
+        return None
+    return module[name_offset:end].decode('ascii', 'replace')
+
 if withdisk == '1':
     extra = os.environ.get('Q9_DISK_MODULES', '')
+    present = set()
+    offset = 0
+    while offset < len(d) and d[offset:offset + 2] == b'\x4a\xfc':
+        size = module_size(offset)
+        present.add(module_name(offset).lower())
+        offset += size
     for m in extra.split():
-        parts.append(open(m, 'rb').read())
+        module = open(m, 'rb').read()
+        name = module_name_bytes(module)
+        if name is not None:
+            name = name.lower()
+        if name is None or name not in present:
+            parts.append(module)
+            if name is not None:
+                present.add(name)
 open(out, 'wb').write(b''.join(parts))
+print('Referenzgrenzen: kernel=0x%x init=0x%x forkchild=0x%x tail=0x%x' %
+      (kernel_size, init_size, fork_size, tail_start))
 print('Bootdatei:', sum(len(p) for p in parts), 'Byte')
 PY
 

@@ -1,0 +1,44 @@
+#!/usr/bin/expect -f
+# run_kernel_test.exp -- run a temporary Q9 kernel image until one
+# expected console marker is observed, then terminate only that emulator.
+#
+# Usage: run_kernel_test.exp <flux-root> <image> <marker> <logfile>
+
+set flux   [lindex $argv 0]
+set image  [lindex $argv 1]
+set marker [lindex $argv 2]
+set logfile [lindex $argv 3]
+set timeout 55
+if {[info exists env(Q9_TEST_TIMEOUT)]} {
+    set timeout $env(Q9_TEST_TIMEOUT)
+}
+
+log_file -noappend $logfile
+spawn "$flux/build/macos/q9.exe" --rom "$flux/local_images/roms/romimage.dev.running.BIN" --cf $image
+expect {
+    -exact $marker { set result "marker" }
+    timeout       { set result "timeout" }
+    eof           { set result "eof" }
+}
+
+# Ctrl-^ asks Q9-Flux to write its kernel-memory dump before the temporary
+# emulator is terminated.  The dump is only requested after the marker, so
+# it describes the state relevant to this test rather than an arbitrary boot
+# phase.
+# A timeout is still diagnostically useful: it captures the state after the
+# complete boot/test window instead of losing the evidence when no failure
+# marker is emitted.
+if {![string equal $result "eof"]} {
+    send "\x1e"
+    sleep 1
+}
+
+# The emulator has no reliable terminal quit sequence in every diagnostic
+# boot state.  It is a child of this harness and uses a disposable image,
+# so terminate it explicitly instead of leaving a background process.
+if {![string equal $result "eof"]} {
+    catch {exec kill -TERM [exp_pid]}
+    expect eof
+}
+puts "kernel-test-result=$result"
+exit [expr {[string equal $result "marker"] ? 0 : 1}]

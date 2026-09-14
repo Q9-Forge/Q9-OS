@@ -383,7 +383,6 @@ export OS9=<lokaler Referenzpfad>/tools/macos/bin/os9
 IMG=/Volumes/SSD1TB/projects/Q9-Forge/Q9-Flux-68k/local_images/OS9SYS.q9test.hda
 rm -f "$IMG"
 "$OS9" format -q -k -nQ9TEST -bs512 -l32768 -c32 "$IMG"   # OHNE -e, s.u.!
-export REF_TAIL_START=0x33d6 REF_TAIL_SPLIT=0x35d2
 export Q9_DISK_MODULES="<jobtmp>/rbf.mod <jobtmp>/cfide.mod <jobtmp>/dd.mod <jobtmp>/c0.mod"
 tools/mkbootfile.sh --disk <jobtmp>/ref.boot "$IMG"        # ERST die Bootkette, auf leerem Abbild!
 "$OS9" makdir "$IMG,/CMDS"
@@ -597,7 +596,8 @@ direkt weiterverwendbar. Rezept zum Neubauen (z. B. nach einer
 Kernel-Änderung) ganz unten in diesem Dokument bzw. in den
 `Fortsetzung`-Abschnitten — kurz: `cp -c OS9SYS.hda OS9SYS.<name>.hda`,
 dann
-`Q9_DISK_MODULES="<rbf.mod> <cfide.mod> <dd.mod> <c0.mod>" REF_TAIL_START=0x33d6 REF_TAIL_SPLIT=0x35d2 tools/mkbootfile.sh --disk <ref.boot> <image>`
+`Q9_DISK_MODULES="<rbf.mod> <cfide.mod> <dd.mod> <c0.mod>" tools/mkbootfile.sh --disk <ref.boot> <image>`
+(die Modulgrenzen werden automatisch aus der Referenz gelesen)
 (die vier `.mod`-Dateien und `ref.boot` liegen im `$CLAUDE_JOB_DIR/tmp/`
 dieses Jobs, `a6da3b59` — persistiert über Sessions hinweg, solange
 der Job nicht gelöscht wird; sonst erneut aus
@@ -1650,8 +1650,7 @@ bekannt ist, lohnt ein sechster Anlauf.
 **Messaufbau, reproduzierbar:**
 
     # Bootfile bauen (Referenz ohne hellosvc, das fuegt mkbootfile.sh frisch ein)
-    REF_TAIL_START=0x33d6 REF_TAIL_SPLIT=0x35d2 \
-        tools/mkbootfile.sh <ref.boot> <image>
+    tools/mkbootfile.sh <ref.boot> <image>
     # Lauf mit Syscall-Mitschrift -- BEIDE Variablen noetig:
     Q9_TRAP_TRACE=<datei> Q9_TRAP_TRACE_ALL=1 expect run.exp <image> <log>
 
@@ -3484,7 +3483,7 @@ Gebrauch per `git checkout` zurückgesetzt; gehört ab jetzt zum
 
 Kernel neu gebaut (Quelltext seit dem letzten Stand unverändert, Größe
 `0x37d4`), Testabbild nach dem dokumentierten Rezept neu erzeugt
-(`REF_TAIL_START=0x33d6 REF_TAIL_SPLIT=0x35d2`, Disk-Module aus der
+(`tools/mkbootfile.sh --disk`, Disk-Module aus der
 letzten Session weiterverwendet). Rohspeicher an `$D2DC` per
 `Q9_DUMP_ADDR` gelesen: `4a fc 00 01 00 00 25 a6` -- `M$ID` gefolgt von
 `M$Size=$25A6`, exakt `rbf.mod`s reale Größe. **`RBF_BASE=$D2DC`

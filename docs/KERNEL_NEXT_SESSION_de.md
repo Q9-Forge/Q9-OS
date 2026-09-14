@@ -1,0 +1,104 @@
+# Kernel: Analyse und nächste Arbeitspakete
+
+Stand: 14.09.2026. Analysierter Stand: `main`, `3681010`.
+Basis: Quellcode, Buildskript, aktuelle Übergabe in
+`OWN_KERNEL_STATUS.md` und erneuter Lauf aller 16 Hosttests (alle bestanden).
+Am 14.09.2026 wurde zusätzlich ein frischer 68k-Build im Emulator gestartet;
+die F$TLink-Spur wurde um Modul-, Init-, Exec-, Static- und Fehlerwerte
+erweitert. Die Testauswahl steht im Quellbaum wieder auf dem kombinierten
+Fall `echo` gefolgt von `date`.
+
+## Einschätzung
+
+Der 68k-Kernel ist ein laufender Integrationsprototyp mit Modulverwaltung,
+Prozessverwaltung, Scheduler, Speicherverwaltung und Anbindung an fremde
+OS-9-Komponenten. Laut letzter Übergabe läuft `echo` mit `csl`; `date`
+endet mit `csl traphandler mismatch`. Das ist der aktuelle Engpass.
+Die vermutete Arena-Überlappung wurde im letzten Commit zurückgezogen:
+Sie darf nicht als bestätigte Ursache weiterverwendet werden.
+Der x86-Bereich enthält vor allem Analyse- und Bootreferenzen; Schwerpunkt
+der nächsten Sitzung sollte der eigene 68k-Kernel bleiben.
+
+Die bisherigen grünen Tests sind nützlich, beweisen aber nicht den realen
+Trap-/Interrupt-Ablauf. Besonders `test_q9kernel_traplink.c` testet die
+C-Buchhaltung mit Stubs; es führt `M$Init` und den Assemblerübergang nicht aus.
+Außerdem verwendet dieser Hosttest bewusst 64-Bit-`unsigned long` für
+32-Bit-Zielfelder und kompensiert die Abweichung mit anderen Abständen.
+
+## Kleine Roadmap, in dieser Reihenfolge
+
+| Priorität | Paket | Fertig, wenn … |
+|---|---|---|
+| 1 | Reproduzierbaren Boot-Test und Symbolzuordnung herstellen | Frischer Build, Kernel-/Emulator-Commit, Modul- und Image-Hashes, Link-Map und vollständiges Log gehören zu demselben Lauf. `echo` allein, `date` allein, beide nacheinander und beide gleichzeitig sind getrennte Fälle. |
+| 2 | `date` / `F$TLink` / `M$Init` untersuchen und korrigieren | Der erste abweichende Register- oder Speicherwert gegenüber dem funktionierenden Fall ist belegt; `date` liefert nachvollziehbare Ausgabe und Exitstatus ohne mismatch. |
+| 3 | Trap-/Interrupt-Grundlage stabilisieren | Der dokumentierte Schutz durch 12 Byte Totraum ist durch eine ursächliche Korrektur ersetzt; wiederholte Zwei-Prozess-Läufe funktionieren unabhängig von Codeverschiebungen. |
+| 4 | Tests und ABI-Abbildung stärken | 32-Bit-Werte, Hostzeiger und Big-Endian-Zielspeicher sind explizit getrennt; Trap-Aufruf/Rückkehr, Fehlerpfade und getrennte Trap-Daten zweier Prozesse sind abgedeckt. |
+| 5 | Kleine echte Programmsuite und Ressourcenprüfung | Mehrere reale Programme laufen wiederholt mit geprüfter Ausgabe/Exitstatus; Modulreferenzen, Trap-Slots und Speicherverbrauch bleiben nachvollziehbar. Erst danach weitere Syscalls oder Shell-Integration ausbauen. |
+
+## Konkreter Beginn der nächsten Sitzung
+
+1. In einem neuen Buildverzeichnis bauen. `build.sh` ignoriert momentan
+   `mwos-build`-Fehler und prüft danach nur, ob Objektdateien existieren.
+   Alte Objekte dürfen deshalb keinen vermeintlich erfolgreichen Neubau
+   vortäuschen. Symboltabellen aus `r68 -s` mit der tatsächlichen Link-Map
+   verbinden: Objekt-Offsets sind noch keine Laufzeitadressen.
+2. Isolierte Imagekopie verwenden und das wirklich gestartete Modul prüfen.
+   Einen vollständigen Prozessabschluss abwarten; kein vorzeitiger Erfolg
+   beim ersten Prompt-ähnlichen Zeichen oder allein bei fehlender Exception.
+3. Bei `date` den Sentinel an der vom Aufrufer übergebenen A3-Adresse
+   verfolgen: vor `F$TLink`, unmittelbar vor `M$Init`, unmittelbar danach
+   und an der mismatch-Prüfung. Dazu PID, PC, SR, A3/A4/A6 und Trap-Slot
+   erfassen. Kleiner Ringpuffer statt unbeschränkter Konsolenausgabe.
+4. Besonders den Vertrag in `Q9K_SysFTLink` prüfen: A4 wird nach der
+   Registerwiederherstellung mit der Init-Adresse überschrieben; nach
+   `M$Init` wird Carry bedingungslos gelöscht. Ferner erzeugt
+   `Q9K_ProcTLink` auch bei Init-Offset 0 zunächst `hdr + 0`, während
+   der Assembler nur auf eine absolute Nulladresse prüft. Das sind
+   konkrete Prüfkandidaten, keine nachgewiesene Ursache des date-Fehlers.
+5. Erst nach dem ersten belegten Unterschied einen kleinen Fix vornehmen
+   und denselben Test wiederholen. Eine neue Hypothese muss einen messbaren
+   Unterschied vorhersagen; widerlegte Hypothesen nicht als Befund übernehmen.
+
+## Technische Schulden, die nicht verloren gehen dürfen
+
+- `Q9K_PatchCslFreelistBug` verändert die geladene fremde Runtime im RAM.
+  Den Patch als Kompatibilitätsmaßnahme kennzeichnen und gegen den
+  Referenzkernel prüfen; ein erfolgreicher gepatchter Lauf allein beweist
+  keinen Fehler in der originalen Runtime.
+- Globale Scratch-Adressen und die IRQ-Sperre im Trap-Pfad erfordern eine
+  klare Regel für Verschachtelung und Kontextwechsel. Bekannte
+  Adresskollisionen sprechen für eine zentral geprüfte Speicherbelegung.
+- `Q9K_ApplyInitializedData` braucht Grenzenprüfungen für Modul und
+  Zielspeicher. Aktuell wird unter anderem ein IRefs-Gruppenwort verworfen.
+  Den unterstützten Relokationsumfang explizit festlegen und testen.
+- Fehlerpfade von `F$TLink` auf Rückgabe bereits erworbener Modulreferenzen,
+  statischen Speichers und Trap-Slots prüfen.
+- Primärer Prozessspeicher wird bei `F$Exit` bereits freigegeben;
+  prozessbezogenes Tracking zusätzlicher Speicheranforderungen bleibt offen.
+- Aktuellen Status kurz halten und historische Untersuchungen separat
+  archivieren. Die große Statusdatei enthält überholte und korrigierte
+  Aussagen; ihr Kopf und die letzten Korrekturen sind maßgeblich.
+
+## Zwischenstand 14.09.2026
+
+- `Q9-KERNEL/68k/src/kernel/build.sh <verzeichnis>` erzeugt jetzt einen
+  reproduzierbaren Wegwerf-Build; `tools/mkbootfile.sh` kann ihn über
+  `Q9K_BUILD_DIR` verwenden.
+- `tools/mkbootfile.sh` ermittelt die Grenzen von Kernel, `init` und
+  `forkchild` jetzt direkt aus den Modulköpfen. Die vorher fest verdrahteten
+  Offsets stammten aus einem älteren Kernelstand und schnitten die aktuelle
+  Referenz-Bootdatei mitten im Kernel auf.
+- Ein frischer Emulatorlauf mit der korrigierten Bootkette findet wieder ein
+  gültiges OS-9-Bootfile und startet `hellosvc` als echtes Programm. Der
+  separate IOMan-Hinweis `can't chgdir to system device: $00DD` ist weiterhin
+  sichtbar und muss als nächster I/O-/Pfadauflösungspunkt untersucht werden.
+- `tools/run_kernel_test.exp` beendet den zugehörigen Emulator nach Marker
+  oder Timeout und fordert davor einen Dump an. Für einen Dump muss der
+  Harness aus dem Q9-Flux-Verzeichnis gestartet werden, weil Q9-Flux den
+  relativen Pfad `local_images/q9dbg_dump.txt` verwendet.
+- Der vollständige `echo`/`date`-Lauf ist noch nicht abschließend bewertet;
+  der Testlauf muss nach der Bootfile-Korrektur erneut mit längerer Laufzeit
+  und sauberem Abschlussprotokoll erfolgen.
+
+Für die nächste Sitzung reichen Paket 1 und der belegte Fix aus Paket 2.
+Weitere Architekturports und neue Funktionsgruppen sind dafür nicht nötig.
