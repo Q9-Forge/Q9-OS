@@ -3,8 +3,8 @@
  *                        Tabelle aus kompakter Quelltabelle expandieren.
  *
  * Abschnitt 2, Punkt 4 (s. q9kernel_cinit.c). Mechanismus 1:1 wie am
- * echten Kernel verifiziert (docs/REVERSE_ENGINEERING.md, "Fund:
- * Trap-/Exception-Tabellen-Initialisierung"): Q9_D_EXCJMP zeigt auf
+ * echten Kernel verifiziert (intern dokumentiert, Fund:
+ * "Trap-/Exception-Tabellen-Initialisierung"): Q9_D_EXCJMP zeigt auf
  * einen vom Boot-ROM bereitgestellten Speicherblock (256 Eintraege x
  * 4 Byte = 1024 Byte, s. Q9_T_END in q9sysglob.h); statt 256 einzelne
  * Adressen im Modul zu speichern, wird eine KOMPAKTE Quelltabelle
@@ -52,7 +52,7 @@
  * enthalten (muss ROM-faehig/positionsunabhaengig bleiben). Genau DAS
  * ist der eigentliche Grund, warum der echte Kernel in seiner
  * Quelltabelle bei 0x3802 vorzeichenbehaftete PC-relative OFFSETS statt
- * absoluter Adressen speichert (s. docs/REVERSE_ENGINEERING.md) -- keine
+ * absoluter Adressen speichert (intern dokumentiert) -- keine
  * Design-Vorliebe, sondern dieselbe harte Modultyp-Beschraenkung.
  * Deshalb hier umgebaut: die Quelltabelle enthaelt NUR noch Integer-
  * Zaehler (echte, unproblematische const-Daten), keine Zeiger. Die

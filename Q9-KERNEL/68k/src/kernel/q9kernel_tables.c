@@ -15,7 +15,7 @@
  *
  * SYSDIS/USRDIS-Groesse (0x800 Byte je Tabelle) und Modulverzeichnis-
  * Eintragsgroesse (16 Byte) sind reale, per Disassemblierung verifizierte
- * Werte (docs/REVERSE_ENGINEERING.md, "Fund: Q9_disp_488" bzw. Thema 01
+ * Werte (intern dokumentiert, Fund: "Q9_disp_488" bzw. Thema 01
  * Modulverzeichnis-Nachtrag) -- keine Q9-Erfindung.
  *
  * Prozess-/Pfad-DESKRIPTOR-Groesse (Q9K_PROCDESC_SIZE/PATHDESC_SIZE):
@@ -234,8 +234,8 @@ Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod)
     cursor = block;
 
     /* SYSDIS/USRDIS: noch OHNE Inhalt (kein Syscall-Registrierungs-
-     * mechanismus vorhanden, s. docs/REVERSE_ENGINEERING.md "Fund
-     * (Korrektur einer Fehlannahme)") -- genullt statt uninitialisiert
+     * mechanismus vorhanden, intern dokumentiert, Fund
+     * "(Korrektur einer Fehlannahme)") -- genullt statt uninitialisiert
      * gelassen, damit ein versehentlicher Aufruf ins Leere (Nullzeiger)
      * statt in Zufallsspeicher springt. TODO: echte Registrierungs-
      * funktion, sobald F$Link/Modul-Laden existiert. */
