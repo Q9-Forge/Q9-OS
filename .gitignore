@@ -10,3 +10,6 @@ src/kernel/kernel_body_auto.r
 # Original OS-9 binaries and source material are local analysis input.
 .os9-original/
 **/.os9-original/
+
+# Claude Code: local tool settings, never versioned.
+.claude/
