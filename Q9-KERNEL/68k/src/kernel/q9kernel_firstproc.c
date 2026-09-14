@@ -165,7 +165,7 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskriptor -> PID */
 
 /* P$ID -- Prozess-ID als WORT bei Offset $00, exakt wie im echten OS-9
- * (MWOS/OS9/SRC/DEFS/process.a). Fremde Module lesen sie dort: die
+ * (internem Referenzmaterial). Fremde Module lesen sie dort: die
  * sc68681-ISR holt sich von hier die ID des wartenden Lesers, um ihn per
  * F$Send zu wecken. Vor der Angleichung standen an dieser Stelle unsere
  * State- und Prioritaets-Bytes, weshalb der Treiber die ID $6105 sah
@@ -298,7 +298,7 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_PROCPOOL_BASE_ADDR 0x1204UL
 #endif
 
-/* Echte Fehlercodes, MWOS/SRC/DEFS/errno.h (gleiche Primaerquelle wie
+/* Echte Fehlercodes, internem Referenzmaterial (gleiche Primaerquelle wie
  * schon fuer E_MNF/E_MODBSY/E_BNAM bei F$Link/F$UnLink verwendet). */
 #define Q9K_E_MNF     0x00DDU   /* Module Not Found */
 #define Q9K_E_MEMFUL  0x00CFU   /* Process Memory Full */

@@ -4,7 +4,7 @@
  * Andreas, 2026-08-18: "Plan schon mal mit, denke frueher oder spaeter
  * wird es kommen" -- Grundlage fuer spaetere Atomic/Development- und
  * Allocator-Varianten, analog zur echten Microware-Namenskonvention
- * (s. vendor/README.md: "[a|d]ker<CPU-Suffix>[s|b]").
+ * (intern dokumentiert: "[a|d]ker<CPU-Suffix>[s|b]").
  *
  * Zwei unabhaengige Achsen, BEIDE muessen beim Bauen explizit per -D
  * gesetzt werden -- kein stiller Default, um nicht aus Versehen die

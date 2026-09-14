@@ -299,7 +299,7 @@ static void Q9K_PatchCslFreelistBug(Q9_u32 hdr)
     Q9K_SetU8(patchAddr + 2, (Q9_u8)(disp >> 8)); Q9K_SetU8(patchAddr + 3, (Q9_u8)disp);
 }
 
-/* Real belegte Fehlercodes (MWOS/OS9/SRC/DEFS/funcs.a, per E$UnkSvc/
+/* Real belegte Fehlercodes (internem Referenzmaterial, per E$UnkSvc/
  * E$BPAddr/E$BPNam als Anker ausgezaehlt, s. docs/OWN_KERNEL_STATUS.md). */
 #define Q9K_ERR_MODBSY 0x00D1U   /* E$ModBsy, Module Busy */
 #define Q9K_ERR_MNF    0x00DDU   /* E$MNF, Module Not Found */

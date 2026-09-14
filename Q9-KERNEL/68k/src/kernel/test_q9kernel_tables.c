@@ -28,7 +28,7 @@ static unsigned long g_fakePoolNext;
  * wuerde direkt benachbarte Felder ueberschreiben (gleicher Fund wie
  * beim Arena-Test). Da diese Testdatei nur die Slicing-/Freiliste-Logik
  * von q9kernel_tables.c prueft (die echten Offsets sind bereits per
- * Disassemblierung verifiziert, nicht Gegenstand dieses Tests), einfach
+ * Analyse verifiziert, nicht Gegenstand dieses Tests), einfach
  * grosszuegig auf 0x10-Schritten platziert. */
 #define Q9_D_SYSDIS             ((unsigned long)(g_fakeGlobals + 0x000))
 #define Q9_D_USRDIS             ((unsigned long)(g_fakeGlobals + 0x010))

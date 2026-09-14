@@ -35,7 +35,7 @@
  * = Updated past pathname") und verbindet JEDEN geoeffneten Pfad
  * pauschal mit der einzigen echten Ausgabe, die dieser Kernel kennt --
  * dem DUART (Q9K_DiagWriteD7-Mechanismus). Fuer den konkreten Anlass
- * (IOMan versucht laut Disassemblierung + Live-Diagnose von D_Init
+ * (IOMan versucht laut Analyse + Live-Diagnose von D_Init
  * "/term" zu oeffnen, s. Session-Notizen 2026-08-31) ist das inhaltlich
  * korrekt -- "/term" IST die Konsole.
  */
@@ -60,7 +60,7 @@ typedef unsigned char  Q9_u8;
  *
  * Das trifft ausgerechnet die Felder, die scf beim Lesen auswertet. Der
  * reale Pfaddeskriptor ist 256 Byte gross (PDSIZE in
- * MWOS/OS9/SRC/DEFS/io.a), die ersten 128 Byte gehoeren dem File-Manager
+ * internem Referenzmaterial), die ersten 128 Byte gehoeren dem File-Manager
  * ("do.b 128 File manager variables"), ab +$80 stehen die Optionen. scfs
  * ReadLn liest daraus u.a. +$81 (Grossschreibung -- danach wandelt es
  * $61..$7a um) und die neun Sonderzeichen ab +$89, und es holt den
@@ -82,7 +82,7 @@ typedef unsigned char  Q9_u8;
  *              gefuellt -- u.a. +$81 Grossschreibung, ab +$89 die
  *              Sonderzeichen.
  */
-/* Kopf des Pfaddeskriptors, real belegt in MWOS/OS9/SRC/DEFS/sysio.a:
+/* Kopf des Pfaddeskriptors, real belegt in internem Referenzmaterial:
  *   PD_PD  ($00, Wort) Pfadnummer
  *   PD_MOD ($02, Byte) Zugriffsmodus (read/write/update)
  *
@@ -193,9 +193,9 @@ static void Q9K_WriteU32BE_At(Q9_u32 addr, Q9_u32 value)
 
 /* Q9K_ProcAllPD -- echte F$AllPD-Kernlogik (Callcode $30, "Allocate
  * Process/Path Descriptor"; in OS-9/6809 hiess derselbe Dienst F$All64,
- * 1985 umbenannt, s. MWOS/OS9/SRC/DEFS/funcs.a Zeile 35).
+ * 1985 umbenannt, s. internem Referenzmaterial).
  *
- * Aufrufkonvention aus der IOMan-Disassemblierung abgelesen (Modul-Offset
+ * Aufrufkonvention aus der IOMan-Analyse abgelesen (Modul-Offset
  * $135e ff.): IN a0 = Basis der Deskriptor-Blocktabelle (DBT), die IOMan
  * beim Init selbst anlegt und in D_PthDBT ($48) ablegt. OUT a1 = Zeiger
  * auf den neuen Deskriptor, d0.w = dessen Nummer, Carry bei Fehler.
@@ -262,7 +262,7 @@ int Q9K_ProcAllPD(Q9_u32 dbtAddr, Q9_u32 *outDesc, Q9_u16 *outNum, Q9_u16 *outEr
 /* Q9K_ProcRetPD -- echte F$RetPD-Kernlogik (Callcode $31, "Return
  * Process/Path Descriptor"), exaktes Gegenstueck zu Q9K_ProcAllPD oben.
  *
- * Aufrufkonvention aus der IOMan-Disassemblierung abgelesen (2026-09-05,
+ * Aufrufkonvention aus der IOMan-Analyse abgelesen (2026-09-05,
  * Aufrufstelle Modul-Offset $1206 ff.), NICHT geraten:
  *     move.w  $0(a1),d0        * d0.w = Nummer, aus dem Deskriptor selbst
  *     movea.l $48(a6),a0       * a0   = D_PthDBT, die Blocktabelle

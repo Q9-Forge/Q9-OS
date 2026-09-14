@@ -24,7 +24,7 @@
  * Sitzung -- anders als bei den anderen Syscalls in diesem Kernel
  * also NICHT woertlich aus dem Handbuch zitiert, s. docs/
  * OWN_KERNEL_STATUS.md Fortsetzung 58 fuer die vollstaendige
- * Herleitung per Live-Disassemblierung):
+ * Herleitung per Live-Analyse):
  *   IN  d0.l = Systemvariablen-Nummer
  *       d1.l = Bit 31 gesetzt = "lesen" (sonst "schreiben"), untere
  *              Bits = erwartete/gemeldete Groesse in Byte (1/2/4)
@@ -47,7 +47,7 @@
  *
  * NACHTRAG 2026-09-13 (Fortsetzung 60, auf Wunsch robuster gemacht):
  * "Lesen" einer ANDEREN, unbekannten Variable liefert jetzt E$UnkSvc
- * ($D0, MWOS/OS9/SRC/DEFS/funcs.a Zeile 1011 -- Position in der
+ * ($D0, internem Referenzmaterial -- Position in der
  * Fehlercode-Tabelle rueckwaerts von den bereits bekannten Werten
  * E$ModBsy=$D1/E$BPAddr=$D2 gezaehlt, nicht geraten) statt still 0 UND
  * Erfolg vorzutaeuschen. Begruendung: ein stiller Falschwert ist

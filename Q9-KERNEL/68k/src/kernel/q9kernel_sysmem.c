@@ -85,7 +85,7 @@ static Q9_u32 Q9K_RoundUp16(Q9_u32 n)
     return (n + (Q9K_ALLOC_GRANULARITY - 1)) & ~(Q9_u32)(Q9K_ALLOC_GRANULARITY - 1);
 }
 
-/* Reale Fehlercodes, MWOS/SRC/DEFS/errno.h (gleiche Primaerquelle wie
+/* Reale Fehlercodes, internem Referenzmaterial (gleiche Primaerquelle wie
  * ueberall in diesem Kernel). E_MEMFUL bereits an anderer Stelle
  * (q9kernel_firstproc.c) verwendet, hier lokal dupliziert. */
 #define Q9K_E_MEMFUL  0x00CFU   /* Process Memory Full */

@@ -62,7 +62,7 @@ typedef unsigned long Q9_u32;
 #endif
 /* Feldabstand hier bewusst hartkodiert "0x08"/"0x0C" (NICHT sizeof-
  * basiert wie beim internen Freiblock-Header oben) -- das sind ECHTE,
- * an der realen Kernel-Disassemblierung verifizierte Offsets (Thema 01,
+ * an der realen Kernel-Analyse verifizierte Offsets (Thema 01,
  * Q9_D_FREEMEM = Q9_D_ARENA+8), auf dem echten 32-Bit-Zielsystem korrekt
  * (Felder dort genuin 4 Byte breit). Per #ifndef ueberschreibbar, weil
  * ein Host-Test mit einem breiteren Q9_u32 (s. Q9_D_ARENA-Kommentar
@@ -77,7 +77,7 @@ typedef unsigned long Q9_u32;
 #define Q9K_ARENA_TAIL  (Q9_D_ARENA + 0x0C)
 #endif
 
-#define Q9K_ALLOC_GRANULARITY 16   /* Standard-Allocator, s. vendor/README.md */
+#define Q9K_ALLOC_GRANULARITY 16   /* Standard-Allocator, intern dokumentiert */
 #define Q9K_MIN_SPLIT_REMAINDER 16 /* kleinster Rest, der noch als eigener Freiblock lohnt */
 
 /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-13, Fortsetzung 56): die

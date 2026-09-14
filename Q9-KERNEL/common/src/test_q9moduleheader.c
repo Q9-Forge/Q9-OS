@@ -3,9 +3,10 @@
  *                          Q9_ReadModuleName.
  *
  * Erster Baustein einer Testkonvention fuer Q9-OS-Host-Tooling (gab es
- * bisher nicht, nur Build-Artefakte unter build/). Prueft gegen echte,
- * bereits im Repo liegende Vendor-Dateien (modules/os9000-x86/vendor-live/,
- * vendor/68020/) UND synthetische Grenzfaelle.
+ * bisher nicht, nur Build-Artefakte unter build/). Prueft optional gegen
+ * externe Referenzdateien (nicht Teil dieses Repos, separat gehalten --
+ * fehlen sie lokal, werden die betroffenen Einzeltests sauber uebersprungen,
+ * s. u.) UND synthetische Grenzfaelle.
  *
  * Aufruf: test_q9moduleheader (kein Argument -- Pfade sind repo-relativ
  * fest verdrahtet, ueber REPO_ROOT ueberschreibbar falls das Skript aus

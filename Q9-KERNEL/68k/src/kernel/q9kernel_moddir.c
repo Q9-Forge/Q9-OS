@@ -7,7 +7,7 @@
  * die In-Memory-Seite (F$Link durchsucht laut Manual, 68k_tech.pdf
  * S. 461, AUSSCHLIESSLICH das In-Memory-Modulverzeichnis, nie
  * Mass-Storage -- F$Load waere ein separater, spaeterer Schritt,
- * s. docs/kernel-walkthrough/11-programm-laden/).
+ * s. intern dokumentiert).
  *
  * Speicherformat: eigene, KEIN-Kompat-Erfordernis-Festlegung (wie schon
  * bei den Prozess-/Pfad-Deskriptoren, q9kernel_firstproc.c) -- externe
@@ -347,7 +347,7 @@ Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList)
  * haette den Dreiklang (Descriptor->Driver->File-Manager) sofort brechen
  * lassen. Beleg, empirisch an den ECHTEN Modulen aus dem Original-Image
  * (CMDS/BOOTOBJS) nachgemessen, gegen die real verwendeten Filterwerte
- * $F00/$E00/$D00 (s. docs/kernel-walkthrough/03-dreiklang/):
+ * $F00/$E00/$D00 (s. intern dokumentiert):
  *
  *   Rolle          Modul              M$TyLang   Filter   exakt?
  *   Descriptor     term/t1/c0          $0F00      $F00     ja (zufaellig)
@@ -502,14 +502,14 @@ Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr)
  * Implementierung braucht ihn beim Laden eines neuen Moduls von
  * Mass-Storage, s. docs/OWN_KERNEL_STATUS.md.
  *
- * Pruefung in drei real belegten Stufen (MWOS/OS9/SRC/DEFS/funcs.a, per
+ * Pruefung in drei real belegten Stufen (internem Referenzmaterial, per
  * E$UnkSvc/E$BPAddr/E$BPNam als Anker ausgezaehlt, s.
  * docs/OWN_KERNEL_STATUS.md):
  *   1. Sync-Wort ($4AFC)                -> sonst E$BMID  ($CD)
  *   2. 24-Word-XOR-Kopfpruefsumme       -> sonst E$BMHP  ($EC)
  *   3. 24-Bit-Modul-CRC ueber das GANZE Modul (inkl. des CRC-Feldes
  *      selbst) -- Polynom $800063, Akkumulator-Start $FFFFFF, muss am
- *      Ende genau CRCCon ($00800FE3, MWOS/OS9/SRC/DEFS/module.a Zeile
+ *      Ende genau CRCCon ($00800FE3, internem Referenzmaterial Zeile
  *      248) ergeben. NICHT aus der Doku geraten (die nennt nur den
  *      Algorithmus in Worten, keinen Code) -- empirisch gegen sechs
  *      echte, unveraenderte Microware-Module verifiziert (rbf/cfide/

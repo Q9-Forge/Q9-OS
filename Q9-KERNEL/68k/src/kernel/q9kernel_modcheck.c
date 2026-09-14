@@ -15,7 +15,7 @@
  * Endian-Words XOR-verknuepft ueber Offset 0x00-0x2F (Standard-68K-
  * Headerlaenge), muss 0xFFFF ergeben -- die intern dokumentierte
  * "24-Word-XOR-Pruefsumme" (Thema 00/10). Gegen alle acht echten
- * 68K-Kernel-Varianten in vendor/68020/ (dker/aker x 020/030 x s/b)
+ * 68K-Kernel-Varianten (dker/aker x 020/030 x s/b, intern dokumentiert)
  * getestet: alle exakt 0xFFFF; eine einzelne verfaelschte Byte ergibt
  * nachweislich etwas anderes (Korruptionserkennung funktioniert).
  *

@@ -100,7 +100,7 @@ extern Q9_u32 Q9K_SchedFirstPick(void);        /* q9kernel_sched.c -- "naechsten
 #define Q9K_SLEEP_INFINITE 0xFFFFFFFFUL
 
 /* S$Wake -- reales OS-9-Signal Nr. 1 ("wake up the process"), s.
- * MWOS/OS9/SRC/DEFS/funcs.a. Weckt nur, wird nicht zugestellt. */
+ * internem Referenzmaterial Weckt nur, wird nicht zugestellt. */
 #define Q9K_SIGNAL_WAKE 1U
 
 /* Fuer den Ticks-Umrechnungsfaktor -- s. Kopfkommentar */
@@ -259,7 +259,7 @@ int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError)
         return 0;
     }
     /* Signalcode in P$Signal ablegen. Das Feld ist im echten OS-9-Layout
-     * genau dafuer vorgesehen (Offset $26, s. MWOS/OS9/SRC/DEFS/process.a);
+     * genau dafuer vorgesehen (Offset $26, s. internem Referenzmaterial);
      * ein Empfaenger kann dort nachsehen, WARUM er geweckt wurde. Eine
      * ZUSTELLUNG im vollen Sinn ist das noch nicht -- dafuer fehlen
      * Signalwarteschlange und Intercept-Vektor (P$SigVec, F$Icpt).

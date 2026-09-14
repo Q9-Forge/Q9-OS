@@ -14,8 +14,8 @@
  * (OS-9 System Programmer's Manual 1983, Kapitel 4, fuer 6809; OS-9 for
  * 68K Processors Technical Manual, Table 1-6/1-7/1-8, fuer 68K; OS-9000
  * Technical Manual, Kapitel 1 (mh_com-Struct), fuer OS-9000) sowie durch
- * eigene Disassemblierung realer Kernel-Binaries verifiziert (siehe
- * docs/kernel-walkthrough/00-modul-aufbau-und-header/). KEIN Abdruck der
+ * eigene Analyse realer Kernel-Binaries verifiziert (siehe
+ * intern dokumentiert). KEIN Abdruck der
  * proprietaeren Microware-Quelldateien module.h/oskdefs.d (copyright-
  * geschuetzt, "Reproduction... strictly prohibited") -- nur die
  * (nicht schutzfaehigen) strukturellen Fakten Offset/Groesse/Bedeutung
@@ -53,7 +53,7 @@
 /* ====================================================================
  * Modultyp-Codes -- ueber ALLE drei Generationen und ~28 Jahre hinweg
  * wortwoertlich unveraendert (bemerkenswerteste Konstante der ganzen
- * OS-9-Familie, siehe kernel-walkthrough Thema 00)
+ * OS-9-Familie, intern dokumentiert)
  * ==================================================================== */
 #define Q9_MT_ANY           0x0
 #define Q9_MT_PROGRAM       0x1

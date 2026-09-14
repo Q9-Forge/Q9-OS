@@ -13,8 +13,8 @@
 * rekonstruiert (OS-9 System Programmer's Manual 1983, Kapitel 4, fuer
 * 6809; OS-9 for 68K Processors Technical Manual, Table 1-6/1-7/1-8,
 * fuer 68K; OS-9000 Technical Manual, Kapitel 1 (mh_com-Struct), fuer
-* OS-9000), verifiziert durch eigene Disassemblierung realer Kernel-
-* Binaries (siehe docs/kernel-walkthrough/00-modul-aufbau-und-header/).
+* OS-9000), verifiziert durch eigene Analyse realer Kernel-
+* Binaries (siehe intern dokumentiert).
 * KEIN Abdruck der proprietaeren Microware-Quelldateien module.h/
 * oskdefs.d (copyright-geschuetzt) -- nur die (nicht schutzfaehigen)
 * strukturellen Fakten Offset/Groesse/Bedeutung uebernommen, alle Namen
