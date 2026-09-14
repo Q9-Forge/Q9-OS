@@ -3,7 +3,7 @@
  *                        Validierung fuer Modul-Kandidaten (68K).
  *
  * Bewusst in eine eigene, kleine Datei ausgelagert statt in
- * q9kernel_cinit.c mit aufgenommen -- Andreas' Hinweis (2026-08-18): der
+ * q9kernel_cinit.c mit aufgenommen -- Hinweis (2026-08-18): der
  * QCC-Compiler hat aktuell ein Problem ab einer bestimmten Modulgroesse.
  * Vermutlich weit jenseits von Kernel-Groessenordnungen, aber
  * vorsichtshalber lieber kleine, fokussierte Uebersetzungseinheiten als
@@ -21,7 +21,7 @@
  *
  * Erfolgreich gegen die echte xcc-Pipeline kompiliert (2026-08-18, alle
  * Stufen exit status = 0, urspruenglich 316-Byte-Objekt). Danach auf
- * Andreas' Nachfrage in Q9K_CheckSyncWord (billige Vorpruefung fuer die
+ * Nachfrage in Q9K_CheckSyncWord (billige Vorpruefung fuer die
  * Scan-Schleife) und Q9K_ValidModuleHeader (volle Pruefung, ruft die
  * erste intern auf) aufgeteilt -- erneut getestet, weiterhin exit status
  * = 0 durch alle Stufen (424-Byte-Objekt). Noch nicht mit
@@ -55,7 +55,7 @@ static Q9_u16 Q9K_ReadU16BE(const Q9_u8 *addr)
 }
 
 /* Billige Vorpruefung fuer eine Scan-Schleife, die viele Kandidaten-
- * adressen abklappert (Andreas, 2026-08-18: "der vereinfachte Header-
+ * adressen abklappert (2026-08-18: "der vereinfachte Header-
  * Check, der zuerst beim Scannen laeuft") -- nur der Sync-Wort-Vergleich,
  * KEINE Pruefsumme. Genau das Muster, das laut Thema 10 auch der reale
  * Boot-ROM faehrt: erst CMPI.W #$4AFC an der Kandidatenadresse, teure

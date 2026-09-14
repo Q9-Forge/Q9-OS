@@ -70,7 +70,7 @@ static void checkU16(const char *label, uint16_t got, uint16_t want)
 }
 
 /* Prueft Q9_ComputeModuleChecksum68K/Q9_ComputeRequiredParity68K gegen
- * eine echte 68K-Datei -- ergaenzt 2026-08-18 auf Andreas' Nachfrage nach
+ * eine echte 68K-Datei -- ergaenzt 2026-08-18 auf Nachfrage nach
  * einer "CRC setzen"-Methode. */
 static void testChecksum68K(const char *repoRoot, const char *relPath)
 {

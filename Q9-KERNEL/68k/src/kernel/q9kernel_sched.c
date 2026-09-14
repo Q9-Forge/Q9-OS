@@ -34,7 +34,7 @@
  * Prozess-Deskriptor (Q9_D_PROC) und die Ready-Queue (Q9K_READYQ_SENTINEL_ADDR),
  * kennt den Registersatz selbst nicht.
  *
- * KEIN SMP hier (2026-08-21, mit Andreas besprochen): echte
+ * KEIN SMP hier (2026-08-21, so besprochen): echte
  * Mehrprozessor-Hardware existiert fuer 68K nicht und ist fuer den
  * eigenen Kernel auf absehbare Zeit auch nicht geplant -- die Ready-
  * Queue-Manipulation ist deshalb bewusst NUR ueber Interrupt-Maskierung

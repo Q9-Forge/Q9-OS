@@ -2,7 +2,7 @@
  * q9kernel_initext.c -- Q9-OS eigener Kernel: optionale Init-Modul-
  *                       Erweiterung (SMP-CPU-Anzahl u.a.).
  *
- * Andreas, 2026-08-18: "Das muesste aber optional sein. Wenn die fehlen
+ * Vorgabe, 2026-08-18: "Das muesste aber optional sein. Wenn die fehlen
  * nehmen wir sinnige Default-Werte an... vielleicht definieren wir eine
  * zusaetzliche Groesse (z.B. 64 Byte), wenn es das ist dann haben wir
  * dafuer eine feste Struktur, bis die 64 Byte voll sind... dann koennen
@@ -25,7 +25,7 @@
  * Bewusst noch minimal (nur cpuCount) -- 64 Byte lassen viel Raum fuer
  * spaetere Felder, ohne die Groesse (und damit die Versionserkennung)
  * zu aendern. Was passiert, wenn die 64 Byte irgendwann voll sind,
- * bewusst noch nicht entschieden (Andreas: "dann koennen wir ggf. eine
+ * bewusst noch nicht entschieden ("dann koennen wir ggf. eine
  * zweite Erweiterung definieren") -- spaeter klaeren, wenn der Bedarf
  * wirklich da ist, nicht spekulativ vorwegnehmen.
  *

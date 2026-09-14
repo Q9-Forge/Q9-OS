@@ -2,7 +2,7 @@
  * q9kernel_moddir.c -- Q9-OS eigener Kernel: Modulverzeichnis (Abschnitt
  *                      "F$Link/F$UnLink", 2026-08-21).
  *
- * Andreas: "fangen wir mit dem Link an und dementsprechend den unlink...
+ * Vorgabe: "fangen wir mit dem Link an und dementsprechend den unlink...
  * machen wir erst alles fertig ohne I/Os" -- dieser Schritt baut NUR
  * die In-Memory-Seite (F$Link durchsucht laut Manual, 68k_tech.pdf
  * S. 461, AUSSCHLIESSLICH das In-Memory-Modulverzeichnis, nie

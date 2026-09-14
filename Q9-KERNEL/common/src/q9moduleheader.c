@@ -61,7 +61,7 @@ Q9_ModHeadFormat Q9_DetectModuleHeaderFormat(const uint8_t *rawBytes, uint32_t a
  * klassischen 68K-Modul-Headers (Standard-Header + typabhaengige
  * Erweiterung bis Q9_MH68K_STDLEN). Fuer ein GUELTIGES, unveraendertes
  * Modul muss das Ergebnis $FFFF sein (rawBytes inkl. des echten
- * M$Parity-Feldes) -- Andreas, 2026-08-18: "brauchen wir auch eine
+ * M$Parity-Feldes) -- Bedarf, 2026-08-18: "brauchen wir auch eine
  * Methode um den CRC zu setzen". Diese Funktion ist die Verifikations-
  * Haelfte; Q9_ComputeRequiredParity68K (unten) die Setz-Haelfte. Gehoert
  * bewusst hierher (Host-Tooling), nicht in den Kernel selbst -- der

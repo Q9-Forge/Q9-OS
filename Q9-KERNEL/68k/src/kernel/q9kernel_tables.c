@@ -7,7 +7,7 @@
  * Init-Modul-Feldoffsets $38 (M$Procs), $3A (M$Paths), $62 (M$MDirSz)
  * stammen aus dem OFFIZIELLEN Manual (68k_tech.pdf, Table 2-4 "Init
  * Module Values") -- nicht reverse-engineert, direkt nachgeschlagen
- * (s. Andreas' Standing-Guidance: Manuals zuerst pruefen). Alle drei
+ * (Grundsatz: Manuals zuerst pruefen). Alle drei
  * liegen unterhalb von Offset $7C, sind also durch dieselbe Bounds-
  * Pruefung (initAvailableLen >= 0x7C) abgedeckt, die q9kernel_cinit.c
  * bereits fuer M$Compat/M$Compat2/M$SysConf durchfuehrt -- kein
