@@ -13,3 +13,7 @@ src/kernel/kernel_body_auto.r
 
 # Claude Code: local tool settings, never versioned.
 .claude/
+
+# AI working-instructions files stay local, never public.
+AGENTS.md
+PROJECT.md
