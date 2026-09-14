@@ -3,7 +3,7 @@
 Dieses Dokument beantwortet konkret: **welche Module braucht der eigene
 Kernel, welche Systemaufrufe bedient jedes davon, und was gehört darüber
 hinaus noch an Infrastruktur dazu?** Es ist die "Stückliste" zu
-[`OWN_KERNEL_INIT_PLAN.md`](OWN_KERNEL_INIT_PLAN.md) (dort steht das *Wie*
+einem intern dokumentierten Begleitdokument (dort steht das *Wie*
 und *Warum* je Entwurfsentscheidung) — hier steht nur, *was* am Ende als
 Modul/Funktion existieren muss. Grundlage ausschließlich bereits
 verifizierte, intern dokumentierte Funde.
@@ -54,7 +54,7 @@ sie bei Bedarf nachgezogen werden (gleiche Vorgehensweise wie bei RBF).
 ### 1d. Eigene, neue Modularten
 
 Von Andreas ausdrücklich gewünscht ("da bin ich offen für"), aber ohne
-Eingrenzung — offene Entscheidung, siehe `OWN_KERNEL_INIT_PLAN.md`
+Eingrenzung — offene Entscheidung, intern dokumentiert
 Abschnitt 5, Punkt 5.
 
 ## 2. Vollständiger Syscall-Katalog
@@ -159,18 +159,18 @@ voraus, nicht umgekehrt:
    Programme von "Platte" starten, nicht nur vorgelinkt im Speicher
 7. **Optionale Module**: SSM (MMU), SysCache, weitere File-Manager/Treiber,
    restliche Kernel-Syscalls (Abschnitt 2e/2f)
-8. **Eigene, neue Modularten** (offen, s. `OWN_KERNEL_INIT_PLAN.md`
+8. **Eigene, neue Modularten** (offen, intern dokumentiert
    Abschnitt 5)
 
 **Nicht Teil dieser Liste, weil eine separate, größere Entscheidung:**
 echte OS-9000/x86-Module binär auszuführen bräuchte zusätzlich einen
 x86-CPU-Interpreter (Musashi deckt nur 68K ab) — siehe
-`OWN_KERNEL_INIT_PLAN.md`, Statusabschnitt und Abschnitt 5, Punkt 1.
+intern dokumentiert.
 
 ## Quellen
 
-Wie `OWN_KERNEL_INIT_PLAN.md` — ausschließlich Synthese bereits
+Wie das Begleitdokument dazu — ausschließlich Synthese bereits
 verifizierter, intern dokumentierter Funde, keine neuen Behauptungen.
-Siehe außerdem [`docs/OWN_KERNEL_INIT_PLAN.md`](OWN_KERNEL_INIT_PLAN.md).
+
 
 **Erstellt**: 2026-08-15
