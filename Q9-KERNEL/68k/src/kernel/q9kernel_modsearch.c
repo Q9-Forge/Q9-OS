@@ -2,7 +2,7 @@
  * q9kernel_modsearch.c -- Q9-OS eigener Kernel: generische Modulsuche
  *                        per Namen in einer Speicherregion-Liste.
  *
- * Andreas, 2026-08-18: "suchen wir nur init, oder auch noch andere?"
+ * Frage, 2026-08-18: "suchen wir nur init, oder auch noch andere?"
  * Antwort (s. intern dokumentiert):
  * der echte Kernel sucht an DIESER Stelle im Bootstrap nur "init" --
  * der Kernel selbst laeuft schon (braucht sich nicht selbst zu finden),

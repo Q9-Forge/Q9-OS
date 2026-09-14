@@ -12,7 +12,7 @@
  * indizierbare Tabelle expandiert.
  *
  * Die Gruppierung selbst ist KEINE Q9-Erfindung, sondern die reale
- * MC68030-Standard-Exception-Vektortabelle (per Skript gegen dker030s
+ * MC68030-Standard-Exception-Vektortabelle (per Skript gegen den echten Original-Kernel
  * verifiziert, s. o.) -- deshalb hier unveraendert uebernommen, inkl.
  * der beiden reservierten Reset-Vektoren (0/1: initialer SSP/PC), die
  * NICHT Teil der Quelltabelle sind (der echte Kernel startet seinen

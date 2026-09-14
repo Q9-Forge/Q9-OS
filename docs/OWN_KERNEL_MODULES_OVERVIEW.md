@@ -9,7 +9,7 @@ Modul/Funktion existieren muss. Grundlage ausschließlich bereits
 verifizierte, intern dokumentierte Funde.
 
 **Zählweise:** die Referenz-Zahlen (61/24/6/1/4/1 = 97 Syscalls) stammen
-aus **einem** konkreten 68K-Boot-Image (`dker030s`, Development-Kernel,
+aus **einem** konkreten 68K-Boot-Image (Development-Kernel,
 Standard-Allocator). Das ist der vollständigste bekannte Datensatz dieser
 Session und deshalb die Basis hier — nicht jeder Syscall muss beim
 eigenen Kernel gleich beim ersten Bootfähig-Meilenstein existieren (s.
@@ -53,7 +53,7 @@ sie bei Bedarf nachgezogen werden (gleiche Vorgehensweise wie bei RBF).
 
 ### 1d. Eigene, neue Modularten
 
-Von Andreas ausdrücklich gewünscht ("da bin ich offen für"), aber ohne
+Ausdrücklich gewünscht ("da bin ich offen für"), aber ohne
 Eingrenzung — offene Entscheidung, intern dokumentiert
 Abschnitt 5, Punkt 5.
 

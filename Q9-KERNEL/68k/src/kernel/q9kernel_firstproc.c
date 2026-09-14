@@ -6,7 +6,7 @@
  *                         "Scheduler" 2026-08-21 auf ECHTE
  *                         Mehrfach-Prozess-Erzeugung erweitert).
  *
- * URSPRUENGLICHER Umfang (2026-08-18, mit Andreas abgestimmt): nur den
+ * URSPRUENGLICHER Umfang (2026-08-18, so abgestimmt): nur den
  * MECHANISMUS zeigen (Deskriptor aus dem Punkt-5/6-Pool holen, Kontext-
  * wechsel durchfuehren) -- OHNE echten Scheduler, nur EIN Kontext,
  * Sprung per rohem "jmp" (Q9K_JumpToFirstProc) auf einen reinen

@@ -17,14 +17,14 @@
  * eigene Analyse realer Kernel-Binaries verifiziert (siehe
  * intern dokumentiert). KEIN Abdruck der
  * proprietaeren Microware-Quelldateien module.h/oskdefs.d (copyright-
- * geschuetzt, "Reproduction... strictly prohibited") -- nur die
+ * geschuetzt) -- nur die
  * (nicht schutzfaehigen) strukturellen Fakten Offset/Groesse/Bedeutung
  * uebernommen, alle Namen und Beschreibungstexte eigene Formulierungen.
  * Fuer die Level-2-Variante (Modul-DAT-Image etc.) siehe NitrOS-9s
  * offenen Quelltext, hier nicht benoetigt.
  *
  * Statuskennzeichnung je Feld:
- *   [VERIFIZIERT] -- an einem echten Binary geprueft (68K: dker030s,
+ *   [VERIFIZIERT] -- an einem echten Binary geprueft (68K: Original-Kernel,
  *                    OS-9000: live extrahierter x86-Kernel)
  *   [HANDBUCH]    -- aus dem jeweiligen offiziellen Manual, nicht an
  *                    einem eigenen Binary nachgeprueft (betrifft vor
@@ -105,7 +105,7 @@
 
 /* ====================================================================
  * Header-Layout 2: OS-9/68K (klassisch -- dieses Projekts Hauptziel,
- * dker030s). 46 Byte Standard-Header + optionale, typabhaengige
+ * Original-Kernel). 46 Byte Standard-Header + optionale, typabhaengige
  * Erweiterung. Quelle: OS-9 for 68K Processors Technical Manual,
  * Table 1-6/1-7/1-8.
  * ==================================================================== */

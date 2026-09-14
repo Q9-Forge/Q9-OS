@@ -1,7 +1,7 @@
 /*
  * q9kernel_config.h -- Q9-OS eigener Kernel: Build-Zeit-Variantenauswahl.
  *
- * Andreas, 2026-08-18: "Plan schon mal mit, denke frueher oder spaeter
+ * Vorgabe, 2026-08-18: "Plan schon mal mit, denke frueher oder spaeter
  * wird es kommen" -- Grundlage fuer spaetere Atomic/Development- und
  * Allocator-Varianten, analog zur echten Microware-Namenskonvention
  * (intern dokumentiert: "[a|d]ker<CPU-Suffix>[s|b]").
@@ -17,7 +17,7 @@
  *                              keine Modul/User-ID-Pruefung.
  *   Q9K_KERNEL_DEVELOPMENT  -- voll: alles davon vorhanden. Aktueller
  *                              Q9-Flux/CB030-Entwicklungsstand zielt auf
- *                              das reale dker030s-Aequivalent, also ist
+ *                              das reale Original-Kernel-Aequivalent, also ist
  *                              das hier der aktuelle Standardfall.
  *
  *   Q9K_ALLOC_STANDARD      -- klassischer 16-Byte-Aufloesungs-Allocator.
