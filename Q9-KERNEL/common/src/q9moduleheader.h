@@ -258,7 +258,7 @@ typedef struct {
  *
  * 1. 16-Bit-taugliches `type`-Feld statt Nibble: Werte 0x00-0x0F sind
  *    WORT-IDENTISCH zu Q9_MT_* oben (0x0C-0x0F bleiben fuer den Dreiklang
- *    zwingend reserviert, siehe Abschnitt 1 von OWN_KERNEL_INIT_PLAN.md).
+ *    zwingend reserviert, intern dokumentiert).
  *    0x10 = Q9_MT_BOOTLOADER, die bisher einzige zusaetzliche Top-Level-
  *    Modulart [ENTWURF, 2026-08-16] -- fuer alles andere Neue (Netzwerk,
  *    Systemmonitor-Streaming, /proc) reicht ein gewoehnliches Fmgr (0x0D)
@@ -342,14 +342,13 @@ typedef struct {
 #define Q9_ARCH_X86_32    4
 #define Q9_ARCH_X86_64    5
 
-/* Adressierungsmodell (Erweiterungsblock) -- siehe OWN_KERNEL_INIT_PLAN.md
- * Abschnitt 2d/6 */
+/* Adressierungsmodell (Erweiterungsblock) -- intern dokumentiert */
 #define Q9_ADDRMODEL_FLAT_SSM_COMPAT  0  /* SSM-kompatibel, Legacy-Treiber */
 #define Q9_ADDRMODEL_Q9_NATIVE_PAGED  1  /* eigenes Paging-Modell */
 
 /* SMP-Flags (Erweiterungsblock) -- Praefix SMP_, bewusst NICHT MP_
  * (MP_ ist real schon Module Permission in os9k_tech.pdf, siehe
- * OWN_KERNEL_INIT_PLAN.md Abschnitt 6) */
+ * intern dokumentiert) */
 #define Q9_SMP_SAFE            0x0001  /* Code ist selbst SMP-sicher */
 #define Q9_SMP_NEEDS_LOCK      0x0002  /* braucht externe Synchronisation */
 #define Q9_SMP_UP_ONLY         0x0004  /* nur Single-Core, z.B. Legacy-Shim */

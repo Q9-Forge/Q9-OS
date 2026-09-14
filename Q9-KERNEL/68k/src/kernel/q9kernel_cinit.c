@@ -36,7 +36,7 @@
  * Bereitschafts-/Warteschlangen (Kopf=Schwanz=sich selbst), exakt nach
  * dem verifizierten Fund aus intern dokumentiert
  * README.md ("Zweiter Bonus-Fund"). ALLES Weitere aus der Boot-Reihenfolge
- * (Abschnitt 2 in OWN_KERNEL_INIT_PLAN.md: Speichergroesse/Arena richtig
+ * (intern dokumentiert: Speichergroesse/Arena richtig
  * aufsetzen -- nicht nur die leere Liste --, Dispatch-Tabelle, Init-Modul-
  * Suche/Schritt 6a, Prozess-/Pfad-Tabellen, Scheduler-Sprung) ist bewusst
  * NICHT implementiert, klar als TODO markiert, keine Attrappen/Fake-Logik.
@@ -124,7 +124,7 @@ extern void Q9K_Diag6(void);
  *                                             existiert bisher) --
  *                                             trotzdem schon ein
  *                                             permanenter Platz dafuer,
- *                                             s. OWN_KERNEL_INIT_PLAN.md
+ *                                             intern dokumentiert,
  *                                             SMP-Abschnitt. */
 #define Q9K_BOOTLIST_ADDR   0x1000UL
 #define Q9K_CPUCOUNT_ADDR   0x1200UL

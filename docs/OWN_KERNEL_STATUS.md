@@ -3,8 +3,7 @@
 Fortlaufender Status des in `Q9-KERNEL/68k/src/kernel/` (bis
 2026-09-13: `src/kernel/`, s. Fortsetzung 54 zur Repo-Reorganisation)
 neu geschriebenen, OS-9/68K-kompatiblen Kernels. Ergänzt
-[`OWN_KERNEL_INIT_PLAN.md`](OWN_KERNEL_INIT_PLAN.md)
-(dem Plan) um das, was davon **real läuft** — nachgewiesen im
+einem intern dokumentierten Plan um das, was davon **real läuft** — nachgewiesen im
 Q9-Flux-Emulator, nicht bloß implementiert.
 
 **Stand: 2026-09-04**, Branch `fix/ccr-error-signaling-flink-funlink` (PR #7).
