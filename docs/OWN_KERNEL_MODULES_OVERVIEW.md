@@ -59,7 +59,7 @@ Abschnitt 5, Punkt 5.
 
 ## 2. Vollständiger Syscall-Katalog
 
-Quelle: `modules/SYSCALL_MODULE_MAP.md` (per Adressvergleich aus einem
+Quelle: intern dokumentiert (per Adressvergleich aus einem
 Live-Boot-Image ermittelt, alle 97 im Kernel-Build definierten Codes).
 Hier funktional gruppiert statt nach Callcode sortiert — für den
 Nachbau ist "was gehört zusammen" hilfreicher als die reine Nummer.
@@ -90,7 +90,7 @@ anderes Modul sinnvoll arbeiten kann.
 | I/O-Queue | `F$IOQu`, `F$IODel` |
 | Geräte-/Dateizugriff (`I$`-Familie, 16 Codes) | `I$Attach`, `I$Detach`, `I$Dup`, `I$Create`, `I$Open`, `I$MakDir`, `I$ChgDir`, `I$Delete`, `I$Seek`, `I$Read`, `I$Write`, `I$ReadLn`, `I$WritLn`, `I$GetStt`, `I$SetStt`, `I$Close`, `I$SGetSt` |
 
-**Wichtig (Caveat aus `SYSCALL_MODULE_MAP.md`):** "Modul = IOMan" heißt nur
+**Wichtig (Caveat, intern dokumentiert):** "Modul = IOMan" heißt nur
 "hier landet der `TRAP #0`/`INT 0xFF` zuerst" — die eigentliche Datei-/
 Geräte-Logik der `I$`-Familie läuft über den gemeinsamen Dispatcher direkt
 in die Dreiklang-Module weiter (Abschnitt 1b), nicht in IOMan selbst.
