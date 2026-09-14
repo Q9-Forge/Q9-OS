@@ -17,7 +17,7 @@
 * verwalteten dritten Prozess gestartet hat (echtes Dreier-Interleaving
 * A/B/F statt nur der bisherigen zwei internen Testprozesse).
 *
-* psect-Format (empirisch aus MWOS/TMP/q9_cstart.a rekonstruiert, s.
+* psect-Format (empirisch aus dem Referenz-Startmodul rekonstruiert, s.
 * ausfuehrlichen Fund-Kommentar in q9kernel_entry.a):
 *   psect name,tylang,attrrev,edition,STACKSIZE,exec-label
 * -- die 5. Zahl ist NICHT "mem/stack" gemeinsam, sondern EXPLIZIT NUR
