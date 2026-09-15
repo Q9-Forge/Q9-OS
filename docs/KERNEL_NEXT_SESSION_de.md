@@ -119,6 +119,23 @@ vollständig im Modulverzeichnis sichtbar; `F$TLink(13,"csl")` endet mit
 
 ## Zwischenstand 14.09.2026
 
+## Nachtrag 16.09.2026
+
+- Der TrapEnt-Stackaufbau wurde erneut gegen die OS-9-Dokumentation geprüft:
+  bei `A7` liegt das Caller-A6, danach folgen Funktionscode, Vektor und
+  Rücksprungadresse. `Q9K_TCallDispatch` erzeugt diese Reihenfolge korrekt.
+- Der verbleibende Adressfehler ist reproduzierbar: `csl` setzt A6 auf
+  `0x56539` statt `0x56540`. Ein Schreibzugriff auf das betroffene
+  Kontextfeld wurde bei `PC=0x17c38` innerhalb von `csl` gefunden; der
+  Kernel schreibt an dieser Stelle nicht.
+- Der vorhandene Laufzeitpatch `Q9K_PatchCslFreelistBug` greift auf dem
+  aktuell gebooteten `csl`-Modul nicht, weil dessen erwartetes Bytemuster an
+  `hdr+$56bc` fehlt. Vor einer Anpassung muss der entsprechende Pfad in
+  dieser konkreten `csl`-Version identifiziert werden.
+- Der breitere Registerschutz in `Q9K_SysFSRqMem` wurde gebaut und getestet,
+  verändert den Fehler jedoch nicht. Es gibt deshalb noch keinen neuen
+  Kernel-Fix oder Commit aus dieser Untersuchung.
+
 ## Nachtrag 15.09.2026
 
 - Das Testabbild verwendet jetzt einen Extended-Boot: `tools/mkbootfile.sh`
@@ -179,3 +196,37 @@ vollständig im Modulverzeichnis sichtbar; `F$TLink(13,"csl")` endet mit
 
 Für die nächste Sitzung reichen Paket 1 und der belegte Fix aus Paket 2.
 Weitere Architekturports und neue Funktionsgruppen sind dafür nicht nötig.
+
+## Nachtrag 16.09.2026 – Prozessblock-Zuordnung geklärt
+
+- Die frühere Zuordnung des Schreibzugriffs zu `csl` bei `PC=0x17c38` war
+  falsch. Der relevante Watch-Treffer liegt bei `PC=0x096fa` im Kernel-
+  Kopierloop für `M$IData`.
+- Der konkrete Kopiervorgang lautet: Quelle `0x30c14`, Ziel `0x4ff42`,
+  Länge mindestens vier Bytes. Quelle und Ziel enthalten dabei Nullen.
+- Der Prozesspool zeigt: Slot 1 (`D_Proc=0x32940`) gehört zu `mshell` und
+  besitzt den Block `0x4e540` mit `0x5072` Bytes. `0x4f5b2` ist dessen
+  Blockende und zugleich die Basis des gerade neu allokierten Kindblocks;
+  der Schreibzugriff liegt somit im neuen Kindblock, nicht im laufenden
+  Elternblock.
+- Die Modulwerte von `mshell` sind konsistent: `M$Mem=0x1c3a`,
+  `M$Stack=0x3400`, ergänzt um angeforderten Speicher und Parameter ergibt
+  die beobachtete Allokationsgröße `0x5072`. Der `M$IData`-Kopiervorgang
+  überschreibt daher nicht außerhalb der angeforderten Kind-Allokation.
+- Ergebnis dieser Zwischenmessung: Dieser konkrete Watch-Treffer ist ein
+  normaler Initialisierungsschreibzugriff und kein neuer Beleg für die
+  A6-/csl-Korruption. Der damals noch offene Adressfehler wurde im folgenden
+  Nachtrag durch die Korrektur des F$TLink-A6-Bias behoben.
+
+## Nachtrag 16.09.2026 – F$TLink-A6-Bias korrigiert
+
+- Die direkte Analyse von `csl`'s `M$Init` zeigt den Zugriff
+  `movea.l -$7ffc(a6),a6`. Der F$TLink-Trampolin übergab bislang den rohen
+  statischen Speicherzeiger als A6.
+- Das ist für ein reentrant gelinktes OS-9-Modul falsch: `M$Init` erwartet
+  den statischen Datenzeiger mit dem OS-9-Bias von `$8000`. Der Trampolin
+  addiert nun vor dem Sprung zu `M$Init` explizit `$8000`.
+- Mit einem neu gebauten Kernel und einem neu erzeugten Bootfile verschwindet
+  der bisher reproduzierbare Adressfehler vollständig: kein `Vektor=11`, kein
+  `A6=0x56539`. Der Lauf bleibt danach ohne Exception im noch offenen
+  Startup-/Shell-Pfad hängen; das ist ein nachgelagerter, separater Testpunkt.

@@ -3588,10 +3588,10 @@ Q9K_SysFSRqMem_FrameDone:
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-13, Fortsetzung 56, gleiches
 * Muster wie Q9K_SysFTLink/Fortsetzung 45): bisher wurde NUR a6 um den
 * internen C-Aufruf herum gerettet -- die reale Konvention laesst aber
-* NUR d0/d1/a0/a1/a2 als Scratch gelten (s. Kopfkommentar oben), alle
-* ANDEREN Register (d2-d7/a3-a5) MUESSEN erhalten bleiben. A1 muss fuer
-* externe csl-Aufrufer ebenfalls erhalten bleiben, da csl den Wert nach
-* F$SRqMem als Teil seines Aufrufkontexts weiterverwendet. Der interne
+* F$SRqMem hat nur D0 und A2 als Ausgaben; D1, A0, A1 und alle weiteren
+* Register muessen ueber den internen C-Aufruf erhalten bleiben. Besonders
+* csl verwendet D1 und A1 nach der Rueckkehr als Teil seines Aufrufkontexts.
+* Der interne
 * C-Aufruf (Q9K_SysSRqMemImpl -> Q9K_ProcSRqMem -> Q9K_AllocMem) kann
 * sie als gewoehnliche Compiler-Arbeitsregister benutzen. GEFUNDEN per
 * Instruktions-/A6-Aenderungs-Ringpuffer: `csl`s eigener, ueber F$SRqMem/
@@ -3599,13 +3599,13 @@ Q9K_SysFSRqMem_FrameDone:
 * korrekten Durchlaeufen einen falschen Wert zurueck (s.
 * docs/OWN_KERNEL_STATUS.md Fortsetzung 55/56).
         movem.l d2-d7/a3-a5,-(sp)
-        move.l  a1,-(sp)                    * A1 hat keine Ausgabe; Originalwert bis zur Rueckkehr sichern
+        movem.l d1/a0-a1,-(sp)               * D1/A0/A1 haben keine Ausgabe; Originalwerte bis zur Rueckkehr sichern
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf, sonst Q9K_CRuntimeData)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  d0,Q9K_SRqMemScratch_SizeIn
         bsr     Q9K_SysSRqMemImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen -- WICHTIG fuer externe Aufrufer wie IOMan
-        move.l  (sp)+,a1                        * unveraenderten A1-Wert wiederherstellen
+        movem.l (sp)+,d1/a0-a1                 * unveraenderte D1/A0/A1-Werte wiederherstellen
         movem.l (sp)+,d2-d7/a3-a5
 
         tst.w   Q9K_SRqMemScratch_Success
@@ -3630,7 +3630,7 @@ Q9K_SysFSRqMem_NoFrameOut:
 
 Q9K_SysFSRqMem_Fail:
         move.w  Q9K_SRqMemScratch_Error,d1
-        move.l  (sp)+,a1                        * auch im Fehlerfall A1 wiederherstellen
+        movem.l (sp)+,d1/a0-a1                 * auch im Fehlerfall D1/A0/A1 wiederherstellen
         ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
         rts
 
@@ -3824,7 +3824,8 @@ Q9K_SysFTLink:
         pea     Q9K_SysFTLink_AfterInit(pc)       * Rahmen: Ruecksprung-PC (liegt am Ende bei +8)
         clr.l   -(sp)                              * Rahmen: Fuellwortpaar 0000/0000 (bei +4)
         move.l  a6,-(sp)                            * Rahmen: Aufrufer-a6 (bei +0, oben)
-        movea.l Q9K_TLinkScratch_StaticPtr,a6        * a6 = frische statische Speicherzelle
+        movea.l Q9K_TLinkScratch_StaticPtr,a6        * A6 = static data base plus OS-9 bias
+        adda.l  #$8000,a6                            * M$Init expects the reentrant A6 bias
         movea.l Q9K_TLinkScratch_PastName,a0         * a0 = Name, hinter den Namen aktualisiert
         movea.l Q9K_TLinkScratch_ExecEntry,a1        * a1 = Ausfuehrungs-Einsprung
         movea.l Q9K_TLinkScratch_ModPtr,a2           * a2 = Modulzeiger
