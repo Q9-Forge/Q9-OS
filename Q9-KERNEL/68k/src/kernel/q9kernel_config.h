@@ -48,6 +48,12 @@
 #if !defined(Q9K_KERNEL_ATOMIC) && !defined(Q9K_KERNEL_DEVELOPMENT)
 #error "Kernel-Variante nicht gewaehlt -- -DQ9K_KERNEL_ATOMIC oder -DQ9K_KERNEL_DEVELOPMENT beim Bauen setzen"
 #endif
+
+/* Select the first real startup experiment.  Set to 0 to use the
+ * established scheduler/diagnostic processes instead. */
+#ifndef Q9K_BOOT_STARTUP
+#define Q9K_BOOT_STARTUP 1
+#endif
 #if defined(Q9K_KERNEL_ATOMIC) && defined(Q9K_KERNEL_DEVELOPMENT)
 #error "Q9K_KERNEL_ATOMIC und Q9K_KERNEL_DEVELOPMENT schliessen sich gegenseitig aus"
 #endif

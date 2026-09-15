@@ -78,6 +78,7 @@ extern void   Q9K_SchedRun(void);          /* q9kernel_entry.a, kein Ruecksprung
 extern void   Q9K_TimerActivate(void);     /* q9kernel_entry.a -- aktiviert den Board-Timer (Level 6, Autovector 30) */
 extern void   Q9K_TestProcA(void);         /* q9kernel_entry.a -- Test-"Prozess" A, s. dortigen Kommentar */
 extern void   Q9K_TestProcB(void);         /* q9kernel_entry.a -- Test-"Prozess" B, s. dortigen Kommentar */
+extern void   Q9K_StartupProc(void);       /* q9kernel_entry.a -- minimal sysgo-style startup test */
 extern Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList); /* q9kernel_moddir.c */
 extern void   Q9K_SysFLink(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Link (Callcode 0x00) */
 extern void   Q9K_SysFUnLink(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$UnLink (Callcode 0x02) */
@@ -104,6 +105,7 @@ extern void   Q9K_SysFSRqCMem(void);      /* q9kernel_entry.a, F$SRqCMem (Callco
 extern void   Q9K_SysFTLink(void);        /* q9kernel_entry.a, F$TLink   (Callcode 0x21) */
 extern void   Q9K_SysFCCtl(void);         /* q9kernel_entry.a, F$CCtl  (Callcode 0x5a) */
 extern void   Q9K_SysFSetSys(void);       /* q9kernel_entry.a, F$SetSys (Callcode 0x27) */
+extern void   Q9K_SysFTime(void);         /* q9kernel_entry.a, F$Time (Callcode 0x15) */
 extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
  * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
@@ -392,6 +394,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x5cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqCMem);
                     Q9K_PutU32(usrdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
                     Q9K_PutU32(usrdisBase + 0x10UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPrsNam);
+                    Q9K_PutU32(usrdisBase + 0x15UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTime);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
                     Q9K_PutU32(usrdisBase + 0x08UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSend);
@@ -418,6 +421,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x5cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqCMem);
                     Q9K_PutU32(sysdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
                     Q9K_PutU32(sysdisBase + 0x10UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPrsNam);
+                    Q9K_PutU32(sysdisBase + 0x15UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTime);
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(sysdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
                     Q9K_PutU32(sysdisBase + 0x08UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSend);
@@ -487,8 +491,13 @@ void Q9K_CInit(void)
     {
         Q9_u32 picked;
 
+#if Q9K_BOOT_STARTUP
+        /* Let the initialized IOMan process launch the real startup path. */
+        Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
+#else
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcB, 3);
+#endif
 
         picked = Q9K_SchedFirstPick();
 

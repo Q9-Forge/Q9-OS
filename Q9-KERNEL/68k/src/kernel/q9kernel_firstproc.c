@@ -173,6 +173,9 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_PROCDESC_ID_OFF      0x00UL
 #define Q9K_PROCDESC_PATH_OFF    0x168UL
 #define Q9K_PROCDESC_PATH_COUNT  32UL
+#ifndef Q9K_FORK_SCRATCH_NUMPATHS
+#define Q9K_FORK_SCRATCH_NUMPATHS 0x1284UL
+#endif
 #endif
 #ifndef Q9K_PROCDESC_ENTRYPC_OFF
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x1C8UL
@@ -742,7 +745,11 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetFrameReg(frameBase, 0, pid);        /* d0.w = Process ID */
     Q9K_SetFrameReg(frameBase, 1, 0);          /* d1.l = Group/user number -- kein User-System */
     Q9K_SetFrameReg(frameBase, 2, priority);   /* d2.w = Priority */
-    Q9K_SetFrameReg(frameBase, 3, 0);          /* d3.w = Anzahl geerbter Pfade -- kein Pfadsystem */
+    /* Preserve the F$Fork path-count contract.  The path table itself is
+     * copied below; external programs also receive the requested count in
+     * d3.w and may use it when initializing their standard paths. */
+    Q9K_SetFrameReg(frameBase, 3,
+                    Q9K_GetU16(Q9K_FORK_SCRATCH_NUMPATHS));
     Q9K_SetFrameReg(frameBase, 4, 0);          /* d4.l = Undefined */
     Q9K_SetFrameReg(frameBase, 5, paramSize);  /* d5.l = Parameter size */
     Q9K_SetFrameReg(frameBase, 6, totalSize);  /* d6.l = Total initial memory allocation */

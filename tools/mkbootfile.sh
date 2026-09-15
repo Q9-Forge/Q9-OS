@@ -22,10 +22,22 @@
 #          --disk  ergaenzt die per Q9_DISK_MODULES angegebenen
 #                  Diskmodule. Bereits in der Referenz vorhandene Module
 #                  werden anhand ihres Modulnamens nicht doppelt angehaengt.
+#          Q9_BOOT_MODULES ergaenzt unabhaengige Bootmodule wie Trap-
+#                  Bibliotheken (z. B. math), ebenfalls ohne Duplikate.
 set -e
 
 WITH_DISK=0
-if [ "$1" = "--disk" ]; then WITH_DISK=1; shift; fi
+CONFIG=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --disk) WITH_DISK=1; shift ;;
+        --config)
+            [ "$#" -ge 2 ] || { echo "--config erwartet eine Datei" >&2; exit 1; }
+            CONFIG="$2"; shift 2 ;;
+        --) shift; break ;;
+        *) break ;;
+    esac
+done
 REF="$1"; IMG="$2"
 if [ -z "$REF" ] || [ -z "$IMG" ]; then
     echo "Aufruf: $0 [--disk] <referenz-bootdatei> <ziel-image>" >&2
@@ -44,6 +56,11 @@ if [ ! -f "$BUILD/q9kernel" ]; then
     exit 1
 fi
 OS9=${OS9:-/Volumes/SSD1TB/projects/MWOS/tools/macos/bin/os9}
+if [ -n "$CONFIG" ]; then
+    [ -f "$CONFIG" ] || { echo "Boot-Konfiguration fehlt: $CONFIG" >&2; exit 1; }
+    # shellcheck disable=SC1090
+    . "$CONFIG"
+fi
 OUT=$(mktemp -t os9boot)
 
 # Die Referenz-Bootdatei beginnt mit altem Kernel, init und forkchild. Die
@@ -89,14 +106,15 @@ def module_name_bytes(module):
     return module[name_offset:end].decode('ascii', 'replace')
 
 if withdisk == '1':
-    extra = os.environ.get('Q9_DISK_MODULES', '')
+    extra = (os.environ.get('Q9_DISK_MODULES', '') + ' ' +
+             os.environ.get('Q9_BOOT_MODULES', '')).split()
     present = set()
     offset = 0
     while offset < len(d) and d[offset:offset + 2] == b'\x4a\xfc':
         size = module_size(offset)
         present.add(module_name(offset).lower())
         offset += size
-    for m in extra.split():
+    for m in extra:
         module = open(m, 'rb').read()
         name = module_name_bytes(module)
         if name is not None:

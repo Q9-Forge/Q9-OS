@@ -527,6 +527,10 @@ Q9K_ModuleHeaderSize equ $3C            * generierte Modulkopfgroesse, per l68-M
 * veraendern: 1 = nur echo, 2 = nur date, 3 = echo gefolgt von date.
 * Der eingecheckte Standard bleibt der umfassende Test 3.
 Q9K_TestPrograms equ 3
+* Optionaler Diagnosetest: Ein manueller F$TLink im Elternprozess wird
+* vom Kindprozess geerbt und wuerde dessen eigenen csl-F$TLink doppeln.
+* Standardmaessig bleibt dieser kuenstliche Doppeltest deshalb aus.
+Q9K_TestCslManualLink equ 0
 Q9K_ModuleStart:
 
 * ===== Assembler-Einstieg =====
@@ -1280,6 +1284,53 @@ Q9K_TestProcA:
         moveq   #'R',d7                     * DIAGNOSE: aus IOMans Einsprungpunkt zurueckgekehrt
         bsr     Q9K_DiagWriteD7
 
+* Start a sysgo-style shell after IOMan has initialized the process paths.
+* The smaller classic shell is loaded first, matching the sysgo order.
+        moveq   #'T',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #1,d0
+        lea     Q9K_StartupShellPath(pc),a0
+        trap    #0
+        dc.w    $0001                         * F$Load shell
+        bcs     Q9K_BootStartupLoadFail
+        move.w  #$0001,d0
+        lea     Q9K_StartupFilePath(pc),a0
+        trap    #0
+        dc.w    $0084                         * I$Open /dd/SYS/startup
+        bcs     Q9K_BootStartupOpenFail
+        move.w  d0,$168(a4)                   * replace standard input
+        clr.w   d0
+        clr.l   d1
+        moveq   #5,d2                         * "-npxt" plus CR
+        moveq   #3,d3
+        clr.w   d4
+        lea     Q9K_StartupShellName(pc),a0
+        lea     Q9K_StartupShellParams(pc),a1
+        trap    #0
+        dc.w    3                             * F$Fork mshell
+        bcs     Q9K_BootStartupForkFail
+        moveq   #'K',d7
+        bsr     Q9K_DiagWriteD7
+        trap    #0
+        dc.w    4                             * F$Wait for startup shell
+        moveq   #'W',d7
+        bsr     Q9K_DiagWriteD7
+Q9K_BootStartupDone:
+        bra     Q9K_BootStartupDone
+Q9K_BootStartupOpenFail:
+        moveq   #'o',d7
+        bra     Q9K_BootStartupFail
+Q9K_BootStartupForkFail:
+        moveq   #'f',d7
+Q9K_BootStartupFail:
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+        bra     Q9K_TestProcA_Loop
+Q9K_BootStartupLoadFail:
+        moveq   #'l',d7
+        bra     Q9K_BootStartupFail
+
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-03, Abschnitt "erste echte
 * Programmausgabe"): IOMans I$Open ist erfolgreich, die IRQ-Zustellung
 * steht -- damit muss ein Schreibversuch auf den geoeffneten Pfad
@@ -1481,6 +1532,7 @@ Q9K_TestCslDone:
 * Modulname. OUT (Erfolg): Carry geloescht. Schlug F$Load(csl) oben schon
 * fehl, bleibt dieser Test aussagekraeftig fehlschlagend (E$MNF erwartet) --
 * kein Sonderpfad noetig.
+        ifne    Q9K_TestCslManualLink
         moveq   #13,d0                      * Trap-Nummer 13 (per Analyse von echo.mod verifiziert)
         clr.l   d1                           * kein Speicher-Override -- M$Mem des Moduls entscheidet
         lea     Q9K_TestCslBareName(pc),a0     * NACKTER Name, s. Kommentar bei Q9K_TestCslBareName
@@ -1496,6 +1548,7 @@ Q9K_TestTLinkFail:
         move.l  d1,d5
         bsr     Q9K_DiagWriteHex32
 Q9K_TestTLinkDone:
+        endc
 
 * Fuer den isolierten date-Test den ansonsten identischen echo-Aufruf
 * ueberspringen. Dadurch unterscheiden sich die beiden Vergleichslaeufe
@@ -1614,6 +1667,74 @@ Q9K_TestProcB_Wait:
         subq.l  #1,d6
         bne     Q9K_TestProcB_Wait
         bra     Q9K_TestProcB_Loop
+
+*******************************************************************************
+* Q9K_StartupProc -- first sysgo-style startup experiment.
+*
+* Loads mshell, opens /dd/SYS/startup, replaces standard input with that
+* path, and forks mshell with the startup script as its input.  The path
+* table is still intentionally simplified: I$Close/restore is not available
+* yet, so this process waits for the child and then remains idle.  This keeps
+* the experiment explicit and reversible while exercising the real shell.
+Q9K_StartupProc:
+        movea.l Q9_D_Proc,a4
+
+* Load the shell module from the filesystem so F$Fork can find it.
+        moveq   #1,d0
+        lea     Q9K_StartupShellPath(pc),a0
+        trap    #0
+        dc.w    $0001                         * F$Load
+        bcs     Q9K_StartupLoadFail
+
+* Open the real OS-9 startup script and make it standard input.
+        move.w  #$0001,d0                     * Read_
+        lea     Q9K_StartupFilePath(pc),a0
+        trap    #0
+        dc.w    $0084                         * I$Open
+        bcs     Q9K_StartupOpenFail
+        move.w  d0,$168(a4)                   * P$Path[0] = startup file
+
+* F$Fork mshell.  The compact parameter is sufficient for this first
+* integration test; the full sysgo argc/environment block follows later.
+        clr.w   d0
+        clr.l   d1
+        moveq   #5,d2                         * "-npxt" plus CR
+        moveq   #3,d3                         * standard paths
+        clr.w   d4
+        lea     Q9K_StartupShellName(pc),a0
+        lea     Q9K_StartupShellParams(pc),a1
+        trap    #0
+        dc.w    3                             * F$Fork
+        bcs     Q9K_StartupForkFail
+        trap    #0
+        dc.w    4                             * F$Wait
+        bra     Q9K_StartupIdle
+
+Q9K_StartupLoadFail:
+        moveq   #'L',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_StartupIdle
+Q9K_StartupOpenFail:
+        moveq   #'O',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_StartupIdle
+Q9K_StartupForkFail:
+        moveq   #'F',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_StartupIdle
+Q9K_StartupIdle:
+        moveq   #'S',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_StartupIdle
+
+Q9K_StartupShellPath:
+        dc.b    "/dd/CMDS/shell",0
+Q9K_StartupFilePath:
+        dc.b    "/dd/SYS/startup",0
+Q9K_StartupShellName:
+        dc.b    "shell",0
+Q9K_StartupShellParams:
+        dc.b    "-npxt",$0d
 
 * Leerschleifen-Zaehler fuer Q9K_TestProcA/B -- Groessenordnung
 * experimentell gewaehlt: lang genug, dass mehrere Timer-Ticks (10ms,
@@ -3626,6 +3747,7 @@ Q9K_SysFTLink:
         move.l  a3,Q9K_TLinkTrace_PreInitA3
         move.l  a6,Q9K_TLinkTrace_PreInitA6
 
+        move.l  a6,-(sp)                            * caller A6, restore after M$Init
         pea     Q9K_SysFTLink_AfterInit(pc)       * Rahmen: Ruecksprung-PC (liegt am Ende bei +8)
         clr.l   -(sp)                              * Rahmen: Fuellwortpaar 0000/0000 (bei +4)
         move.l  a6,-(sp)                            * Rahmen: Aufrufer-a6 (bei +0, oben)
@@ -3637,6 +3759,7 @@ Q9K_SysFTLink:
 Q9K_SysFTLink_AfterInit:
         move.l  a3,Q9K_TLinkTrace_PostInitA3
         move.l  a6,Q9K_TLinkTrace_PostInitA6
+        movea.l (sp)+,a6                            * restore caller data base
         andi    #$fe,ccr                            * Carry loeschen -- Erfolg (a0/a1/a2 unveraendert von M$Init erwartet)
         rts
 
@@ -3695,6 +3818,68 @@ Q9K_SysFCCtl:
 * q9kernel_sysmem.c), schlaegt also nie "sauber" fehl, sondern haette
 * bei einem echten Fehlaufruf ohnehin nur die Freiliste korrumpiert --
 * ein Carry-Check haette hier keinen echten Schutz geboten.
+*******************************************************************************
+* Q9K_SysFTime -- F$Time (callcode $15).
+*
+* Read the coherent BCD latch provided by the Q9-Flux RTC72421 at $FFFFD000.
+* Return the OS-9 time value (seconds since midnight) in D0 and the
+* Gregorian date YYYYMMDD in D1.  All non-result registers are preserved.
+*******************************************************************************
+Q9K_SysFTime:
+        movem.l d2-d4/a0/a3-a5,-(sp)
+        lea     $ffffd000,a0
+
+        moveq   #0,d0
+        move.b  (a0),d0
+        bsr     Q9K_BcdToBinary
+        move.l  d0,d2
+        moveq   #0,d0
+        move.b  2(a0),d0
+        bsr     Q9K_BcdToBinary
+        move.l  d0,d3
+        moveq   #0,d0
+        move.b  4(a0),d0
+        bsr     Q9K_BcdToBinary
+        move.l  d0,d4
+        mulu    #60,d3
+        mulu    #3600,d4
+        add.l   d3,d4
+        add.l   d4,d2
+        move.l  d2,d0
+
+        moveq   #0,d0
+        move.b  10(a0),d0
+        bsr     Q9K_BcdToBinary
+        addi.l  #2000,d0
+        mulu    #10000,d0
+        move.l  d0,d1
+        moveq   #0,d0
+        move.b  8(a0),d0
+        bsr     Q9K_BcdToBinary
+        mulu    #100,d0
+        add.l   d0,d1
+        moveq   #0,d0
+        move.b  6(a0),d0
+        bsr     Q9K_BcdToBinary
+        add.l   d0,d1
+
+        movem.l (sp)+,d2-d4/a0/a3-a5
+        andi    #$fe,ccr
+        rts
+
+* Convert one packed BCD byte in D0 to binary; preserve D1.
+Q9K_BcdToBinary:
+        move.l  d1,-(sp)
+        moveq   #0,d1
+        move.b  d0,d1
+        andi    #$0f,d0
+        lsr.l   #4,d1
+        andi    #$0f,d1
+        mulu    #10,d1
+        add.l   d1,d0
+        move.l  (sp)+,d1
+        rts
+
 Q9K_SysFSRtMem:
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, gleiches Muster wie bei
 * Q9K_SysFLink/SysFUnLink/SysFFork/SysFWait oben): A6-Schutz fuer den
