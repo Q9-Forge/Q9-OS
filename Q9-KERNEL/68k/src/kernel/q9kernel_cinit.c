@@ -187,7 +187,13 @@ extern void Q9K_Diag6(void);
  * Fix: Arena-Basis auf $10000 (64K) verschoben -- deutlich oberhalb von
  * Q9K_StackTop ($C000), mit Sicherheitsmarge fuer kuenftiges
  * Stack-Wachstum (Q9K_StackSize koennte spaeter erhoeht werden, ohne
- * dass die Arena-Basis wieder verschoben werden muss). */
+ * dass die Arena-Basis wieder verschoben werden muss).
+ *
+ * Nachtrag 2026-09-15: Der Bootmodulbereich ist nicht auf eine feste
+ * Groesse begrenzt. Grosse residente Module wie csl koennen bis in den
+ * bisherigen Arena-Bereich reichen. Die tatsaechliche Arena-Basis wird
+ * deshalb unten mindestens hinter das Ende der Bootlist-RAM-Region
+ * verschoben; dieser Wert bleibt nur die Untergrenze fuer kleine Boots. */
 /* NACHTRAG 2026-09-01 (BUGFIX "IOMan-Modul wird zur Laufzeit zerschossen",
  * s. ausfuehrlichen Kommentar bei Q9K_StackBase in q9kernel_entry.a): Der
  * Boot-Stack musste ueber die Bootkette ($7100..~$C400) hinaus verschoben
@@ -266,9 +272,30 @@ void Q9K_CInit(void)
      * mit einer negativ/riesig unterlaufenden Groesse zu rechnen. */
     {
         Q9_u32 totalRam = *(volatile Q9_u32 *)Q9_D_TOTRAM;
+        Q9_u32 freeBase = Q9K_FREEMEM_BASE;
+        Q9_u32 i;
 
-        if (totalRam > Q9K_FREEMEM_BASE) {
-            Q9K_ArenaInit(Q9K_FREEMEM_BASE, totalRam - Q9K_FREEMEM_BASE);
+        /* Boot modules occupy the RAM regions reported by the ROM.  Start
+         * the private arena after the highest such region, not at a fixed
+         * address that may cut through a large resident module. */
+        for (i = 0; i < 64UL; i++) {
+            Q9_u32 base = Q9K_GetU32(Q9K_BOOTLIST_ADDR + i * 8UL);
+            Q9_u32 size = Q9K_GetU32(Q9K_BOOTLIST_ADDR + i * 8UL + 4UL);
+            Q9_u32 end;
+
+            if (base == 0)
+                break;
+            if (totalRam != 0 && base >= totalRam)
+                continue;
+            end = base + size;
+            if (end > freeBase)
+                freeBase = end;
+        }
+
+        /* Keep allocator blocks 16-byte aligned. */
+        freeBase = (freeBase + 15UL) & ~15UL;
+        if (totalRam > freeBase) {
+            Q9K_ArenaInit(freeBase, totalRam - freeBase);
         }
     }
 
