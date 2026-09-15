@@ -116,10 +116,14 @@ Außerdem verwendet dieser Hosttest bewusst 64-Bit-`unsigned long` für
 - Der erste sysgo-artige Startup-Versuch ist inzwischen reproduzierbar:
   `F$Load("/dd/CMDS/shell")`, `I$Open("/dd/SYS/startup")` und
   `F$Fork("shell")` erreichen den Kindprozess ohne Exception. `F$Wait`
-  blockiert anschließend jedoch; der Startup-Text erscheint nicht. Die
+  blockiert zunächst; nach Korrektur der A4-Wiederherstellung liest die
+  Shell tatsächlich, erhält aber wiederholt `Read I/O error $0201`. Der
+  Startup-Text erscheint deshalb noch nicht. Die
   Übergabe von `d3=3` wurde an die F$Fork-Konvention angepasst, ändert das
-  Verhalten aber nicht. Als nächstes muss der tatsächliche Pfaddeskriptor
-  im Kindprozess (nicht nur der P$Path-Tabelleneintrag) geprüft werden.
+  Verhalten aber nicht. Der aktuelle `I$Open`-Stub reserviert zwar einen
+  Kernel-Pfadpool-Eintrag, erzeugt aber noch keinen vollständig an IOMan/
+  den File-Manager gebundenen Dateipfad. Als nächstes muss dieser reale
+  Pfaddeskriptor-/DBT-Vertrag hergestellt werden.
 
 Für die nächste Sitzung reichen Paket 1 und der belegte Fix aus Paket 2.
 Weitere Architekturports und neue Funktionsgruppen sind dafür nicht nötig.
