@@ -1298,6 +1298,7 @@ Q9K_TestProcA:
         trap    #0
         dc.w    $0084                         * I$Open /dd/SYS/startup
         bcs     Q9K_BootStartupOpenFail
+        movea.l Q9_D_Proc,a4                   * Trap/IOMan may clobber A4
         move.w  d0,$168(a4)                   * replace standard input
         clr.w   d0
         clr.l   d1
