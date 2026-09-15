@@ -64,6 +64,23 @@ blockiert aber in diesem frühen Pfad und bleibt deshalb nicht im Kernel.
 Der nächste sinnvolle Fix ist die gemeinsame Ursache im Bootmodul- bzw.
 Modulverzeichnispfad: ein großes residentes Trapmodul muss nach dem Boot
 mit seinem echten Namen auffindbar sein, bevor `mshell` gestartet wird.
+
+Die anschließende A6-Spur zeigt nach dem Arena-Fix die nächste Ursache:
+`csl` wird gefunden und `F$TLink` erfolgreich abgeschlossen, danach wechselt
+A6 im externen Trap-Rückweg mehrfach korrekt zwischen der `csl`-Statik
+(`0x56240`) und der `mshell`-Datenbasis (`0x591c0`). Beim letzten Rückweg
+entsteht jedoch `0x591b9` (ungerade und sieben Bytes zu klein), worauf der
+Adressfehler in `mshell` folgt. Das testweise überschriebenе `R$a7`-Feld im
+externen Registerrahmen wurde entfernt; der Fehler bleibt bestehen. Als
+nächster Prüfkandidat bleibt damit die Rückgabe-/Rahmenbehandlung des
+installierten `csl`-Trap-Handlers selbst.
+
+Dieser Fix ist inzwischen umgesetzt: Die Arena-Basis wird beim Bootstrap
+auf das Ende der höchsten belegten RAM-Bootregion angehoben und anschließend
+16-Byte-ausgerichtet. Im frischen Emulatorlauf sind `csl` und `mshell` nun
+vollständig im Modulverzeichnis sichtbar; `F$TLink(13,"csl")` endet mit
+`ok=1` und `err=0`. Der nächste Fehler liegt daher erst danach im echten
+`mshell`-Lauf: Vektor 11 (Adressfehler), mit einem PC in einem Textbereich.
    Einen vollständigen Prozessabschluss abwarten; kein vorzeitiger Erfolg
    beim ersten Prompt-ähnlichen Zeichen oder allein bei fehlender Exception.
 3. Bei `date` den Sentinel an der vom Aufrufer übergebenen A3-Adresse

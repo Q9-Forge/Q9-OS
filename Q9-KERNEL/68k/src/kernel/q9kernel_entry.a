@@ -2276,10 +2276,6 @@ Q9K_TrapCallExternal:
         movem.l d0-d7/a0-a6,(sp)                 * R$d0..R$a6 (60 Byte, aufsteigend)
         move.l  sp,$3c(sp)
         addi.l  #72,$3c(sp)                       * R$a7 = Stackzeiger des Aufrufers
-* TEST: Callcode als Wort bei $3c ablegen. scf liest ihn dort
-* ("move.w $3c(a5),d1 / subi.w #$83,d1"), obwohl $3c im dokumentierten
-* R$-Layout R$a7 waere -- empirisch pruefen, welche Deutung stimmt.
-        move.w  ($1370).w,$3c(sp)
         move.w  72(sp),$40(sp)                     * R$sr  aus dem Exception-Frame
         move.l  74(sp),$42(sp)                      * R$pc
         move.w  78(sp),$46(sp)                       * R$fmt (Format/Vektor)
@@ -3593,7 +3589,9 @@ Q9K_SysFSRqMem_FrameDone:
 * Muster wie Q9K_SysFTLink/Fortsetzung 45): bisher wurde NUR a6 um den
 * internen C-Aufruf herum gerettet -- die reale Konvention laesst aber
 * NUR d0/d1/a0/a1/a2 als Scratch gelten (s. Kopfkommentar oben), alle
-* ANDEREN Register (d2-d7/a3-a5) MUESSEN erhalten bleiben. Der interne
+* ANDEREN Register (d2-d7/a3-a5) MUESSEN erhalten bleiben. A1 muss fuer
+* externe csl-Aufrufer ebenfalls erhalten bleiben, da csl den Wert nach
+* F$SRqMem als Teil seines Aufrufkontexts weiterverwendet. Der interne
 * C-Aufruf (Q9K_SysSRqMemImpl -> Q9K_ProcSRqMem -> Q9K_AllocMem) kann
 * sie als gewoehnliche Compiler-Arbeitsregister benutzen. GEFUNDEN per
 * Instruktions-/A6-Aenderungs-Ringpuffer: `csl`s eigener, ueber F$SRqMem/
@@ -3601,11 +3599,13 @@ Q9K_SysFSRqMem_FrameDone:
 * korrekten Durchlaeufen einen falschen Wert zurueck (s.
 * docs/OWN_KERNEL_STATUS.md Fortsetzung 55/56).
         movem.l d2-d7/a3-a5,-(sp)
+        move.l  a1,-(sp)                    * A1 hat keine Ausgabe; Originalwert bis zur Rueckkehr sichern
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf, sonst Q9K_CRuntimeData)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  d0,Q9K_SRqMemScratch_SizeIn
         bsr     Q9K_SysSRqMemImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen -- WICHTIG fuer externe Aufrufer wie IOMan
+        move.l  (sp)+,a1                        * unveraenderten A1-Wert wiederherstellen
         movem.l (sp)+,d2-d7/a3-a5
 
         tst.w   Q9K_SRqMemScratch_Success
@@ -3630,6 +3630,7 @@ Q9K_SysFSRqMem_NoFrameOut:
 
 Q9K_SysFSRqMem_Fail:
         move.w  Q9K_SRqMemScratch_Error,d1
+        move.l  (sp)+,a1                        * auch im Fehlerfall A1 wiederherstellen
         ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
         rts
 
