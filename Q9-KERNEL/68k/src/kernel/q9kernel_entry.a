@@ -463,6 +463,12 @@ Q9K_TLinkTrace_ExecEntry equ $154124
 Q9K_TLinkTrace_StaticPtr equ $154128
 Q9K_TLinkTrace_Error     equ $15412C
 Q9K_TLinkTrace_Success   equ $154130
+Q9K_FLinkTrace_Status    equ $154140
+Q9K_FLinkTrace_D0        equ $154144
+Q9K_FLinkTrace_D1        equ $154148
+Q9K_FLinkTrace_A0        equ $15414C
+Q9K_FLinkTrace_A1        equ $154150
+Q9K_FLinkTrace_A2        equ $154154
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -1286,6 +1292,9 @@ Q9K_TestProcA:
 
 * Start a sysgo-style shell after IOMan has initialized the process paths.
 * The smaller classic shell is loaded first, matching the sysgo order.
+* The current test image stores the startup file in the root directory.
+* Original sysgo reaches it as relative "startup" after changing to CMDS;
+* use the explicit equivalent here.
         moveq   #'T',d7
         bsr     Q9K_DiagWriteD7
         moveq   #1,d0
@@ -1293,20 +1302,28 @@ Q9K_TestProcA:
         trap    #0
         dc.w    $0001                         * F$Load shell
         bcs     Q9K_BootStartupLoadFail
+        moveq   #0,d0                          * duplicate standard input
+        trap    #0
+        dc.w    $0082                         * I$Dup
+        bcs     Q9K_BootStartupDupFail
+        move.w  d0,Q9K_StartupSavedStdin      * preserve original stdin path
+        moveq   #0,d0
+        trap    #0
+        dc.w    $008f                         * I$Close standard input
+        bcs     Q9K_BootStartupCloseFail
         move.w  #$0001,d0
         lea     Q9K_StartupFilePath(pc),a0
         trap    #0
-        dc.w    $0084                         * I$Open /dd/SYS/startup
+        dc.w    $0084                         * I$Open /dd/startup
         bcs     Q9K_BootStartupOpenFail
-        movea.l Q9_D_Proc,a4                   * Trap/IOMan may clobber A4
-        move.w  d0,$168(a4)                   * replace standard input
         clr.w   d0
         clr.l   d1
-        moveq   #5,d2                         * "-npxt" plus CR
+        clr.l    d2
+        move.w  #Q9K_StartupParamsSize,d2
         moveq   #3,d3
         clr.w   d4
         lea     Q9K_StartupShellName(pc),a0
-        lea     Q9K_StartupShellParams(pc),a1
+        lea     Q9K_StartupParams(pc),a1
         trap    #0
         dc.w    3                             * F$Fork mshell
         bcs     Q9K_BootStartupForkFail
@@ -1316,6 +1333,12 @@ Q9K_TestProcA:
         dc.w    4                             * F$Wait for startup shell
         moveq   #'W',d7
         bsr     Q9K_DiagWriteD7
+        moveq   #0,d0
+        trap    #0
+        dc.w    $008f                         * I$Close redirected startup path
+        move.w  Q9K_StartupSavedStdin,d0      * restore original stdin
+        trap    #0
+        dc.w    $0082                         * I$Dup original stdin
 Q9K_BootStartupDone:
         bra     Q9K_BootStartupDone
 Q9K_BootStartupOpenFail:
@@ -1330,6 +1353,12 @@ Q9K_BootStartupFail:
         bra     Q9K_TestProcA_Loop
 Q9K_BootStartupLoadFail:
         moveq   #'l',d7
+        bra     Q9K_BootStartupFail
+Q9K_BootStartupDupFail:
+        moveq   #'d',d7
+        bra     Q9K_BootStartupFail
+Q9K_BootStartupCloseFail:
+        moveq   #'c',d7
         bra     Q9K_BootStartupFail
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-03, Abschnitt "erste echte
@@ -1680,12 +1709,8 @@ Q9K_TestProcB_Wait:
 Q9K_StartupProc:
         movea.l Q9_D_Proc,a4
 
-* Load the shell module from the filesystem so F$Fork can find it.
-        moveq   #1,d0
-        lea     Q9K_StartupShellPath(pc),a0
-        trap    #0
-        dc.w    $0001                         * F$Load
-        bcs     Q9K_StartupLoadFail
+* mshell is resident in the boot module directory, as in the original
+* sysgo path.  Do not F$Load it again from the child process context.
 
 * Open the real OS-9 startup script and make it standard input.
         move.w  #$0001,d0                     * Read_
@@ -1695,15 +1720,16 @@ Q9K_StartupProc:
         bcs     Q9K_StartupOpenFail
         move.w  d0,$168(a4)                   * P$Path[0] = startup file
 
-* F$Fork mshell.  The compact parameter is sufficient for this first
-* integration test; the full sysgo argc/environment block follows later.
+* F$Fork mshell.  The parameter block follows the OS-9 sysgo convention:
+* command flags, SHELL environment entry, and the argv/argc magic block.
         clr.w   d0
         clr.l   d1
-        moveq   #5,d2                         * "-npxt" plus CR
+        clr.l    d2
+        move.w  #Q9K_StartupParamsSize,d2
         moveq   #3,d3                         * standard paths
         clr.w   d4
         lea     Q9K_StartupShellName(pc),a0
-        lea     Q9K_StartupShellParams(pc),a1
+        lea     Q9K_StartupParams(pc),a1
         trap    #0
         dc.w    3                             * F$Fork
         bcs     Q9K_StartupForkFail
@@ -1711,10 +1737,6 @@ Q9K_StartupProc:
         dc.w    4                             * F$Wait
         bra     Q9K_StartupIdle
 
-Q9K_StartupLoadFail:
-        moveq   #'L',d7
-        bsr     Q9K_DiagWriteD7
-        bra     Q9K_StartupIdle
 Q9K_StartupOpenFail:
         moveq   #'O',d7
         bsr     Q9K_DiagWriteD7
@@ -1729,13 +1751,21 @@ Q9K_StartupIdle:
         bra     Q9K_StartupIdle
 
 Q9K_StartupShellPath:
-        dc.b    "/dd/CMDS/shell",0
+        dc.b    "/dd/CMDS/mshell",0
 Q9K_StartupFilePath:
         dc.b    "/dd/SYS/startup",0
 Q9K_StartupShellName:
-        dc.b    "shell",0
-Q9K_StartupShellParams:
-        dc.b    "-npxt",$0d
+        dc.b    "mshell",0
+        align   4
+Q9K_StartupParams:
+        dc.b    "-npxt",0
+        dc.b    $0d
+        dc.b    "SHELL=mshell",0
+        dc.b    252,1,0,0,0,26,"mshell",0,0,0,$0d
+        dc.l    0,0,0,7,0
+Q9K_StartupParamsSize equ *-Q9K_StartupParams
+Q9K_StartupSavedStdin:
+        dc.w    0
 
 * Leerschleifen-Zaehler fuer Q9K_TestProcA/B -- Groessenordnung
 * experimentell gewaehlt: lang genug, dass mehrere Timer-Ticks (10ms,
@@ -2699,7 +2729,13 @@ Q9K_SysFLink:
 * Muelladresse und meldete E_MNF ($DD).
 * Stattdessen: A5 als Rahmen akzeptieren, wenn er ueberhaupt plausibel
 * ist -- gerade Adresse, innerhalb des RAM, oberhalb der Vektortabelle.
+* A real TRAP #0 has a hardware exception frame. Its A5 is the caller's
+* normal process register and may point into RAM (the shell uses it for
+* its parameter boundary). Only the direct PEA+RTS path may supply the
+* external return frame.
         movem.l d0/a0,-(sp)
+        tst.w   Q9K_InTrapPath
+        bne     Q9K_SysFLink_NoFrame
         move.l  a5,d0
         beq     Q9K_SysFLink_NoFrame
         btst    #0,d0                   * ungerade Adresse -> kein Rahmen
@@ -2708,6 +2744,25 @@ Q9K_SysFLink:
         bcs     Q9K_SysFLink_NoFrame
         cmpi.l  #$1000000,d0
         bcc     Q9K_SysFLink_NoFrame
+* The external register frame stores the F$Link call code at $3c.
+* A process stack can look like a valid address but has unrelated data
+* there; reject such false positives before writing output fields.
+        tst.w   $3c(a5)
+        bne     Q9K_SysFLink_NoFrame
+* A normal process may also have a plausible A5. Use the return address
+* of this JSR, which is at 8(sp) after the saved d0/a0 pair: a return into
+* this kernel means a normal dispatch, while a return into another module
+* identifies the direct external trampoline path.
+        move.l  8(sp),d1
+        lea     Q9K_ModuleStart(pc),a1
+        suba.l  #Q9K_ModuleHeaderSize,a1
+        move.l  a1,d0
+        add.l   4(a1),d0
+        cmp.l   a1,d1
+        bcs     Q9K_SysFLink_FrameCandidate
+        cmp.l   d0,d1
+        bcs     Q9K_SysFLink_NoFrame
+Q9K_SysFLink_FrameCandidate:
         move.l  a5,Q9K_LinkFrameScratch
         bra     Q9K_SysFLink_FrameDone
 Q9K_SysFLink_NoFrame:
@@ -2744,8 +2799,12 @@ Q9K_SysFLink_FrameDone:
 
         movea.l (sp)+,a0                        * a0 = urspruenglicher Namenszeiger zurueck
 Q9K_SysFLink_SkipName:
-        tst.b   (a0)+                             * (a0) hinter den Namen aktualisieren (bis zum NUL-Byte)
-        bne     Q9K_SysFLink_SkipName
+* OS-9 marks the final module-name character with bit 7. Accept a NUL
+* terminator as well because kernel-internal callers may use C strings.
+        tst.b   (a0)+
+        beq     Q9K_SysFLink_NameDone
+        bpl     Q9K_SysFLink_SkipName
+Q9K_SysFLink_NameDone:
 * Rahmen des Trampolin-Aufrufers versorgen: d0 = Typ/Sprache (+$00),
 * d1 = Attribut/Revision (+$04), a0 = hinter dem Namen (+$20),
 * a1 = Einsprungadresse (+$24), a2 = Modulkopf (+$28).
@@ -2763,6 +2822,12 @@ Q9K_SysFLink_NoFrameOut:
         move.l  (sp)+,d7
 
         move.l  (sp)+,d7                            * eigenes Scratch wiederherstellen
+        move.l  #1,Q9K_FLinkTrace_Status
+        move.l  d0,Q9K_FLinkTrace_D0
+        move.l  d1,Q9K_FLinkTrace_D1
+        move.l  a0,Q9K_FLinkTrace_A0
+        move.l  a1,Q9K_FLinkTrace_A1
+        move.l  a2,Q9K_FLinkTrace_A2
         andi    #$fe,ccr                          * Carry im CCR loeschen -- Erfolg
         rts
 
@@ -2777,6 +2842,8 @@ Q9K_SysFLink_Fail:
         addq.l  #4,sp                    * gemerkten Namenszeiger verwerfen (auf Fehlerpfad nicht gebraucht)
         move.l  (sp)+,d7                   * eigenes Scratch wiederherstellen
         move.w  #$00dd,d1                     * d1.w = E_MNF (Module Not Found)
+        move.l  #0,Q9K_FLinkTrace_Status
+        move.l  d1,Q9K_FLinkTrace_D1
         ori     #1,ccr                     * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
 
@@ -2881,8 +2948,12 @@ Q9K_SysFFork:
         move.w  Q9K_ForkScratch_ChildPID,d0
         movea.l Q9K_ForkScratch_NamePtr,a0
 Q9K_SysFFork_SkipName:
-        tst.b   (a0)+                             * (a0) hinter den Namen aktualisieren (bis zum NUL-Byte)
-        bne     Q9K_SysFFork_SkipName
+* OS-9 marks the final module-name character with bit 7. Accept a NUL
+* terminator as well because kernel-internal callers may use C strings.
+        tst.b   (a0)+
+        beq     Q9K_SysFFork_NameDone
+        bpl     Q9K_SysFFork_SkipName
+Q9K_SysFFork_NameDone:
         andi    #$fe,ccr                        * Carry im CCR loeschen -- Erfolg
         rts
 

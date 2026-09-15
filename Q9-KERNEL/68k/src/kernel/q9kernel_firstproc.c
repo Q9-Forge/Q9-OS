@@ -701,9 +701,9 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     }
 
     /* Speicherlayout, Figure D-3 (68k_tech.pdf S. 431), HOCH->NIEDRIG:
-     *   [blockTop]     Parameter-Bereichsende -- (a1) zeigt hierher
+     *   [blockTop]     Parameter-Bereichsende -- (a1) und (a5) zeigen hierher
      *   Parameter-Bereich (paramSize Byte)
-     *   [spBoundary]   (a5), Anfangs-SP (a7) -- s. u.
+     *   [spBoundary]   Anfangs-SP (a7) -- s. u.
      *   Stack-Bereich (stackSize Byte)
      *   Daten-Bereich (dataSize Byte)
      *   [block]        (a6), niedrigste Adresse
@@ -759,7 +759,10 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetFrameReg(frameBase, 10, 0);         /* a2 = Undefined */
     Q9K_SetFrameReg(frameBase, 11, hdrAddr);   /* a3 = Primary (forked) module pointer */
     Q9K_SetFrameReg(frameBase, 12, 0);         /* a4 = Undefined */
-    Q9K_SetFrameReg(frameBase, 13, spBoundary);/* a5 = (a5),(a7)-Grenze */
+    /* OS-9 passes the parameter area through A5 as a pointer to its upper
+     * boundary.  The shell walks back from that boundary using D5, while
+     * the initial A7 still resumes at spBoundary below the parameters. */
+    Q9K_SetFrameReg(frameBase, 13, blockTop);   /* a5 = parameter boundary */
     /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, Fortsetzung 51) -- Manual
      * WOERTLICH (68k_tech.pdf, Table 2-6 UND Table D-7, beide Stellen
      * gegengeprueft): "(a6) is always biased by $8000 ... the OS-9 linker

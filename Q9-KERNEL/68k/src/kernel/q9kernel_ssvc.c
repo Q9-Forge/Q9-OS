@@ -97,6 +97,25 @@ static Q9_u16 Q9K_ReadHdrU16BE(Q9_u32 addr)
     return (Q9_u16)((p[0] << 8) | p[1]);
 }
 
+/* Return non-zero for services owned by the Q9 kernel itself.  A resident
+ * system module may submit a broad F$SSvc table, but it must not replace
+ * these kernel primitives with an external handler. */
+static int Q9K_IsKernelService(Q9_u32 code)
+{
+    switch (code) {
+    case 0x00UL: case 0x02UL: case 0x03UL: case 0x04UL:
+    case 0x06UL: case 0x08UL: case 0x0AUL: case 0x0CUL:
+    case 0x10UL: case 0x15UL: case 0x21UL: case 0x27UL:
+    case 0x28UL: case 0x29UL: case 0x2AUL: case 0x2EUL:
+    case 0x30UL: case 0x31UL: case 0x32UL: case 0x37UL:
+    case 0x38UL: case 0x58UL: case 0x5AUL: case 0x5CUL:
+    case 0x5EUL: case 0x84UL:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 /* Q9K_ProcSSvc -- echte F$SSvc-Kernlogik (s. Kopfkommentar). Wandert
  * durch die Tabelle bei tablePtr bis zum Endmarker (Codewort $ffff = -1
  * als Q9_u16), registriert jeden Eintrag in Q9_D_SYSDIS (immer) und
@@ -149,6 +168,13 @@ void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
          * wurde bestaetigt, dass die Rechnung unten stimmt und die Slots
          * exakt das enthalten, was IOMans Tabelle vorgibt -- ein vermeintlicher
          * Off-by-2 entpuppte sich als veraltete Laufzeitbasis. */
+        if (Q9K_IsKernelService(realCode)) {
+            /* Kernel-owned slots are installed during C initialization.
+             * Keep both dispatch entries and their internal calling ABI. */
+            entryAddr += 4UL;
+            continue;
+        }
+
         *(volatile unsigned char *)(Q9K_SSVC_EXTERNAL_BASE + realCode) = 1U;
 
         Q9K_SetU32(sysdisBase + realCode * 4UL, routineAddr);

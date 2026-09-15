@@ -492,8 +492,8 @@ void Q9K_CInit(void)
         Q9_u32 picked;
 
 #if Q9K_BOOT_STARTUP
-        /* Let the initialized IOMan process launch the real startup path. */
-        Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
+        /* Run the dedicated sysgo-style startup process after IOMan init. */
+        Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_StartupProc, 5);
 #else
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcB, 3);

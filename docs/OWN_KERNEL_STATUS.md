@@ -391,6 +391,11 @@ tools/mkbootfile.sh --disk <jobtmp>/ref.boot "$IMG"        # ERST die Bootkette,
 "$OS9" attr -e "$IMG,/CMDS/echo"
 "$OS9" attr -e "$IMG,/CMDS/csl"
 ```
+`mkbootfile.sh` verwendet fuer das grosse `OS9Boot` intern den Extended-
+Boot-Modus (`os9 gen -e -b=`). Dadurch wird der Bootfile-Dateideskriptor
+verwendet und der Bootloader liest alle Segmente statt einer veralteten,
+festen Laenge aus dem Identification-Sektor.
+
 Zwei live erlebte Fallen: **`-e` bei `format`** (volles Abbild sofort
 materialisieren) lässt den emulierten CompactFlash-Treiber nicht mehr
 sauber booten (endlose Zeichenflut) — IMMER ohne `-e` formatieren, die

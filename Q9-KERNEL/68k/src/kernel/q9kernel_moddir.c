@@ -154,6 +154,7 @@ static int Q9K_ModDirNamesMatch(const Q9_u8 *moduleName, Q9_u32 nameMaxLen, cons
     for (i = 0; i < nameMaxLen; i++) {
         Q9_u8 a = moduleName[i];
         Q9_u8 b = (Q9_u8)targetName[i];
+        Q9_u8 aEnd = (Q9_u8)(a & 0x80U);
         Q9_u8 aLower;
         Q9_u8 bLower;
 
@@ -170,11 +171,18 @@ static int Q9K_ModDirNamesMatch(const Q9_u8 *moduleName, Q9_u32 nameMaxLen, cons
         if (a == 0)
             return Q9K_ModDirIsNameChar(b) ? 0 : 1;
 
+        a = (Q9_u8)(a & 0x7fU);
+        b = (Q9_u8)(b & 0x7fU);
         aLower = (a >= 'A' && a <= 'Z') ? (Q9_u8)(a + ('a' - 'A')) : a;
         bLower = (b >= 'A' && b <= 'Z') ? (Q9_u8)(b + ('a' - 'A')) : b;
 
         if (aLower != bLower)
             return 0;
+
+        if (aEnd) {
+            b = (Q9_u8)targetName[i + 1U];
+            return b == 0 || !Q9K_ModDirIsNameChar((Q9_u8)(b & 0x7fU));
+        }
     }
     return 0;
 }

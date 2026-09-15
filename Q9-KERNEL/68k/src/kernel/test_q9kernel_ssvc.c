@@ -142,6 +142,27 @@ int main(void)
     checkU32("F2: Code 7 -- UsrDis-Primaerarray bleibt UNVERAENDERT (nur Supervisor-Tabelle)",
              Q9K_GetU32(usrdisBase + 7UL * 4UL), usrdisSlot7Before);
 
+    /* Fall 2b: a resident module must not replace a kernel-owned service.
+     * F$Link is the first practical case: IOMan's registration table must
+     * never redirect it away from the Q9 kernel implementation. */
+    {
+        static unsigned char kernelTable[8];
+        Q9_u32 kernelHandler = 0x12345678UL;
+
+        putEntry((Q9_u32)(unsigned long)kernelTable, 0, 100);
+        putEnd((Q9_u32)(unsigned long)kernelTable + 4UL);
+        memset(g_ssvcExternal, 0, sizeof(g_ssvcExternal));
+        Q9K_SetU32(sysdisBase + 0UL * 4UL, kernelHandler);
+        Q9K_SetU32(usrdisBase + 0UL * 4UL, kernelHandler);
+        Q9K_ProcSSvc((Q9_u32)(unsigned long)kernelTable, dataPtr);
+        checkU32("F2b: F$Link bleibt im SysDis beim Kernel-Handler",
+                 Q9K_GetU32(sysdisBase), kernelHandler);
+        checkU32("F2b: F$Link bleibt im UsrDis beim Kernel-Handler",
+                 Q9K_GetU32(usrdisBase), kernelHandler);
+        checkU32("F2b: F$Link wird nicht als externer Dienst markiert",
+                 g_ssvcExternal[0], 0);
+    }
+
     /* Fall 3: leere Tabelle (sofortiges Ende) -- darf nichts veraendern,
      * kein Absturz. Vergleich gegen eine VORHER gelesene Kopie statt
      * eines hartkodierten Hex-Literals -- vermeidet dieselbe
