@@ -43,6 +43,27 @@ Außerdem verwendet dieser Hosttest bewusst 64-Bit-`unsigned long` für
    vortäuschen. Symboltabellen aus `r68 -s` mit der tatsächlichen Link-Map
    verbinden: Objekt-Offsets sind noch keine Laufzeitadressen.
 2. Isolierte Imagekopie verwenden und das wirklich gestartete Modul prüfen.
+
+### Nachtrag 15.09.2026: Startup-Fehler auf den Rückgabecode eingegrenzt
+
+Der bisherige `mshell`-Fehlertext lautet:
+
+    **** can't call csl ****
+
+Der Trap-Trace zeigt unmittelbar davor `F$TLink(13,"csl")` mit `E$MNF`
+(`$DD`, Modul nicht gefunden). Es handelt sich an dieser Stelle nicht um
+einen Trap-Handler-Mismatch. Ein frisches Image enthält zwar ein großes
+residentes `csl`-Bootmodul, dessen Modulname ist im aktuellen
+Boot-/Modulverzeichnispfad jedoch nicht zuverlässig für `F$TLink`
+auffindbar. Das frühere isolierte `echo`-Ergebnis war deshalb nicht
+widersprüchlich: dort wurde `csl` zuvor erfolgreich per `F$Load` aus dem
+Dateisystem geladen.
+
+Ein Vorab-`F$Load` im neuen Startup-Prozess wurde probeweise getestet,
+blockiert aber in diesem frühen Pfad und bleibt deshalb nicht im Kernel.
+Der nächste sinnvolle Fix ist die gemeinsame Ursache im Bootmodul- bzw.
+Modulverzeichnispfad: ein großes residentes Trapmodul muss nach dem Boot
+mit seinem echten Namen auffindbar sein, bevor `mshell` gestartet wird.
    Einen vollständigen Prozessabschluss abwarten; kein vorzeitiger Erfolg
    beim ersten Prompt-ähnlichen Zeichen oder allein bei fehlender Exception.
 3. Bei `date` den Sentinel an der vom Aufrufer übergebenen A3-Adresse
@@ -80,6 +101,20 @@ Außerdem verwendet dieser Hosttest bewusst 64-Bit-`unsigned long` für
   Aussagen; ihr Kopf und die letzten Korrekturen sind maßgeblich.
 
 ## Zwischenstand 14.09.2026
+
+## Nachtrag 15.09.2026
+
+- Das Testabbild verwendet jetzt einen Extended-Boot: `tools/mkbootfile.sh`
+  ruft `os9 gen -e -b=` auf. Damit wird die vollstaendige Segmentliste von
+  `OS9Boot` verwendet; der bisherige feste Bootbereich von nur `$5264` Bytes
+  hatte den vergroesserten Kernel-/IOMan-Bereich abgeschnitten.
+- Ein frisches Image mit Kernel, IOMan, RBF, CF-Treibern, `math`, `csl`,
+  `mshell` und `shell` wurde im Emulator gestartet. Der Dump bestaetigt die
+  vollstaendige Bootregion (`$670da` Bytes) und alle genannten Module.
+- Der Emulatorlauf endet weiterhin im Startup-/Shell-Test ohne erwarteten
+  Erfolgsmarker; die Bootfile-Uebergabe ist damit repariert, der verbleibende
+  Fehler liegt jetzt im Laufzeitpfad von Startup/Shell und nicht mehr in der
+  abgeschnittenen Bootregion.
 
 - `Q9-KERNEL/68k/src/kernel/build.sh <verzeichnis>` erzeugt jetzt einen
   reproduzierbaren Wegwerf-Build; `tools/mkbootfile.sh` kann ihn über

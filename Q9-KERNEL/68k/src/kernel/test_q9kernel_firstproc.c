@@ -383,7 +383,7 @@ int main(void)
              * (realer Testfehlschlag, byte-vertauschte Werte). Deshalb
              * hier durchgehend getBE32 statt eines Pointer-Casts. */
             Q9_u32 a6val = getBE32(sp + 14 * 4);   /* Registerindex 14 = a6 */
-            Q9_u32 a5val = getBE32(sp + 13 * 4);   /* a5 = spBoundary */
+            Q9_u32 a5val = getBE32(sp + 13 * 4);   /* a5 = parameter boundary */
             Q9_u32 a3val = getBE32(sp + 11 * 4);   /* a3 = Modulkopfzeiger */
             Q9_u32 a1val = getBE32(sp + 9  * 4);   /* a1 = Top of memory */
             Q9_u32 d0val = getBE32(sp + 0  * 4);
@@ -410,7 +410,7 @@ int main(void)
              * weitergerechnet wird. */
             checkU32("F1: a6 (Datenbereichsbasis, $8000-Bias abgezogen) + Gesamtgroesse == a1 (Top of memory)",
                      (a6val - 0x8000UL) + totalSize, a1val);
-            checkU32("F1: a5 (SP-Grenze) == a1 - paramSize", a5val, a1val - sizeof(fakeParam));
+            checkU32("F1: a5 (Parametergrenze) == a1", a5val, a1val);
             checkU32("F1: d0.w == PID", d0val, pid1);
             checkU32("F1: d2.w == Prioritaet (9)", d2val, 9);
             checkU32("F1: d5.l == paramSize", d5val, sizeof(fakeParam));

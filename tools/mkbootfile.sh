@@ -10,9 +10,11 @@
 #   * Die Microware-Module werden LINEAR aus einer Referenz-Bootdatei
 #     uebernommen, nie per "os9 copy" einzeln geholt: die Bootdatei ist im
 #     Image fragmentiert, der Bootloader liest sie aber linear.
-#   * Zum Zurueckschreiben ist "os9 gen -b=" richtig -- es legt die Datei
-#     unfragmentiert an und zieht Start-LSN und Laenge im
-#     Identification-Sektor korrekt mit.
+#   * Zum Zurueckschreiben wird "os9 gen -e -b=" verwendet. Der Extended-
+#     Boot-Modus legt den Dateideskriptor des Bootfiles in den Bootsektor und
+#     erlaubt damit auch grosse oder fragmentierte Bootfiles. Der alte
+#     zusammenhaengende Modus "-b=" kann bei grossen Images einen zu kleinen
+#     Bootbereich im Identification-Sektor hinterlassen.
 #   * Die Modulreihenfolge bleibt wie in der Referenz; nur der Kernel wird
 #     ersetzt und eigene Module werden angehaengt. Wer die Reihenfolge
 #     aendert, verschiebt alle Ladeadressen -- und damit jede Adresse in
@@ -129,5 +131,5 @@ print('Referenzgrenzen: kernel=0x%x init=0x%x forkchild=0x%x tail=0x%x' %
 print('Bootdatei:', sum(len(p) for p in parts), 'Byte')
 PY
 
-"$OS9" gen -b="$OUT" "$IMG" | head -1
+"$OS9" gen -e -b="$OUT" "$IMG" | head -1
 rm -f "$OUT"
