@@ -49,7 +49,7 @@ sed -i.bak 's#"../q9sysglob.h"#"q9sysglob.h"#' q9kernel_cinit.c && rm q9kernel_c
 
 source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh
 
-CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_ALLOC_STANDARD"
+CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_ALLOC_STANDARD -dQ9K_BOOT_STARTUP"
 cat > makefile <<EOF
 CFLAGS = -b -O7 -cq -cw $CDEFS
 all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r

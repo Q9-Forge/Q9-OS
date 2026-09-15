@@ -90,15 +90,36 @@ Außerdem verwendet dieser Hosttest bewusst 64-Bit-`unsigned long` für
   Referenz-Bootdatei mitten im Kernel auf.
 - Ein frischer Emulatorlauf mit der korrigierten Bootkette findet wieder ein
   gültiges OS-9-Bootfile und startet `hellosvc` als echtes Programm. Der
-  separate IOMan-Hinweis `can't chgdir to system device: $00DD` ist weiterhin
-  sichtbar und muss als nächster I/O-/Pfadauflösungspunkt untersucht werden.
+  separate IOMan-Hinweis `can't chgdir to system device: $00DD` verschwindet,
+  sobald `rbf`, `cfide`, `dd` und `c0` ergänzt werden.
+- `date` benötigt zusätzlich die Runtime-Module `math` und `csl`; beide
+  müssen als residente Bootmodule mit `Q9_BOOT_MODULES` in die Bootkette
+  aufgenommen werden. Wird `csl` nur per `F$Load` geladen, aber nicht per
+  `F$TLink(13,"csl")` initialisiert, endet `date` reproduzierbar mit einer
+  Illegal-Instruction-Exception. Mit residentem `csl` läuft der isolierte
+  `date`-Test ohne Exception bis zum normalen Test-Timeout.
+- Dafür gibt es jetzt `tools/boot_modules_68k.conf`. Nach dem Laden der
+  Microware-Toolchain kann `tools/mkbootfile.sh --config
+  tools/boot_modules_68k.conf` verwendet werden. Die Datei verwendet
+  `MWOS_ROOT` und ergänzt `math`/`csl`/`mshell` reproduzierbar. `mshell`
+  wird für den Startup-Versuch resident aufgenommen, weil der aktuelle
+  große Modul-Ladepfad `F$Load("/dd/CMDS/mshell")` noch mit `E$MNF` endet.
 - `tools/run_kernel_test.exp` beendet den zugehörigen Emulator nach Marker
   oder Timeout und fordert davor einen Dump an. Für einen Dump muss der
   Harness aus dem Q9-Flux-Verzeichnis gestartet werden, weil Q9-Flux den
   relativen Pfad `local_images/q9dbg_dump.txt` verwendet.
 - Der vollständige `echo`/`date`-Lauf ist noch nicht abschließend bewertet;
-  der Testlauf muss nach der Bootfile-Korrektur erneut mit längerer Laufzeit
-  und sauberem Abschlussprotokoll erfolgen.
+  er muss mit `math` und `csl` in derselben Bootkette erneut geprüft werden.
+  Der künstliche manuelle
+  Doppelaufruf von `F$TLink("csl")` ist im Standardtest deaktiviert, weil der
+  geforkte Prozess den installierten Trap erbt.
+- Der erste sysgo-artige Startup-Versuch ist inzwischen reproduzierbar:
+  `F$Load("/dd/CMDS/shell")`, `I$Open("/dd/SYS/startup")` und
+  `F$Fork("shell")` erreichen den Kindprozess ohne Exception. `F$Wait`
+  blockiert anschließend jedoch; der Startup-Text erscheint nicht. Die
+  Übergabe von `d3=3` wurde an die F$Fork-Konvention angepasst, ändert das
+  Verhalten aber nicht. Als nächstes muss der tatsächliche Pfaddeskriptor
+  im Kindprozess (nicht nur der P$Path-Tabelleneintrag) geprüft werden.
 
 Für die nächste Sitzung reichen Paket 1 und der belegte Fix aus Paket 2.
 Weitere Architekturports und neue Funktionsgruppen sind dafür nicht nötig.
