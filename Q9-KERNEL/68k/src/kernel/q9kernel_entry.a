@@ -556,6 +556,10 @@ Q9K_TestPrograms equ 3
 * vom Kindprozess geerbt und wuerde dessen eigenen csl-F$TLink doppeln.
 * Standardmaessig bleibt dieser kuenstliche Doppeltest deshalb aus.
 Q9K_TestCslManualLink equ 0
+* Optional direct attach regression mode.  When enabled, Q9K_TestProcA
+* skips the shell/date/echo sequence and forks iattachsvc immediately after
+* IOMan returns.  The checked-in default keeps the normal boot test.
+Q9K_TestDirectAttach equ 0
 Q9K_ModuleStart:
 
 * ===== Assembler-Einstieg =====
@@ -1502,6 +1506,27 @@ Q9K_TestProcA:
         moveq   #'R',d7                     * DIAGNOSE: aus IOMans Einsprungpunkt zurueckgekehrt
         bsr     Q9K_DiagWriteD7
 
+        ifne    Q9K_TestDirectAttach
+        clr.w   d0
+        clr.l   d1
+        clr.l   d2
+        clr.w   d3
+        clr.w   d4
+        lea     Q9K_TestAttachName(pc),a0
+        trap    #0
+        dc.w    3                             * F$Fork iattachsvc
+        bcs     Q9K_TestAttachForkFail
+        moveq   #'J',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestProcA_Loop
+Q9K_TestAttachForkFail:
+        moveq   #'j',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+        bra     Q9K_TestProcA_Loop
+        endc
+
 * Start a sysgo-style shell after IOMan has initialized the process paths.
 * The smaller classic shell is loaded first, matching the sysgo order.
 * The current test image stores the startup file in the root directory.
@@ -2069,6 +2094,10 @@ Q9K_TestEchoName:
 
 Q9K_TestHelloName:
         dc.b    "hellosvc",0
+        dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+
+Q9K_TestAttachName:
+        dc.b    "iattachsvc",0
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
