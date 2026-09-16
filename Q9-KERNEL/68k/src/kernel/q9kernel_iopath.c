@@ -100,6 +100,7 @@ typedef unsigned char  Q9_u8;
  * erreicht, waehrend Write ($c502) und WritLn ($c4fc) normal ansprangen. */
 #define Q9K_PATHDESC_NUM_OFF  0x00UL
 #define Q9K_PATHDESC_MODE_OFF 0x02UL
+#define Q9K_PATHDESC_REF_OFF  0x04UL       /* Q9-native open-reference count */
 
 /* Scratchzellen fuer F$RetPD -- gleiche Konvention wie ueberall in diesem
  * Kernel (Assembler-Trampolin legt die Eingaben ab, holt die Ausgaben). */
@@ -455,6 +456,7 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
     pathNum = (slot - Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR)) / Q9K_PATHDESC_SIZE + 3UL;
 
     Q9K_WriteU16BE(slot + Q9K_PATHDESC_NUM_OFF, (Q9_u16)pathNum);
+    Q9K_WriteU16BE(slot + Q9K_PATHDESC_REF_OFF, 1);
 
     /* Zugriffsmodus eintragen -- ohne ihn verweigert IOMan jeden Lese- und
      * Schreibzugriff auf diesen Pfad (s. Kopfkommentar oben). Faellt der

@@ -93,6 +93,14 @@ extern void   Q9K_SysFGProcP(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F
 extern void   Q9K_SysFIOpen(void);
 extern void   Q9K_SysFIDup(void);   /* q9kernel_entry.a, I$Dup (Callcode 0x82) */
 extern void   Q9K_SysFIWritLn(void); /* q9kernel_entry.a, I$WritLn (Callcode 0x8c) */
+extern void   Q9K_SysFIWrite(void);  /* q9kernel_entry.a, I$Write (Callcode 0x8a) */
+extern void   Q9K_SysFIRead(void);   /* q9kernel_entry.a, I$Read (Callcode 0x89) */
+extern void   Q9K_SysFIReadLn(void); /* q9kernel_entry.a, I$ReadLn (Callcode 0x8b) */
+extern void   Q9K_SysFIGetStt(void); /* q9kernel_entry.a, I$GetStt (Callcode 0x8d) */
+extern void   Q9K_SysFISGetSt(void); /* q9kernel_entry.a, I$SGetSt (Callcode 0x92) */
+extern void   Q9K_SysFISetStt(void); /* q9kernel_entry.a, I$SetStt (Callcode 0x8e) */
+extern void   Q9K_SysFISeek(void);   /* q9kernel_entry.a, I$Seek (Callcode 0x88) */
+extern void   Q9K_SysFIClose(void); /* q9kernel_entry.a, I$Close (Callcode 0x8f) */
 extern void   Q9K_SysFAllPD(void);   /* q9kernel_entry.a, F$AllPD (Callcode 0x30) */
 extern void   Q9K_SysFIRQ(void);     /* q9kernel_entry.a, F$IRQ  (Callcode 0x2a) */
 extern void   Q9K_SysFChkMem(void);  /* q9kernel_entry.a, F$ChkMem (Callcode 0x58) */
@@ -419,6 +427,14 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x84UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIOpen);
                     Q9K_PutU32(usrdisBase + 0x82UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIDup);
                     Q9K_PutU32(usrdisBase + 0x8cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIWritLn);
+                    Q9K_PutU32(usrdisBase + 0x8aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIWrite);
+                    Q9K_PutU32(usrdisBase + 0x89UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRead);
+                    Q9K_PutU32(usrdisBase + 0x8bUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIReadLn);
+                    Q9K_PutU32(usrdisBase + 0x8dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIGetStt);
+                    Q9K_PutU32(usrdisBase + 0x92UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFISGetSt);
+                    Q9K_PutU32(usrdisBase + 0x8eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFISetStt);
+                    Q9K_PutU32(usrdisBase + 0x88UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFISeek);
+                    Q9K_PutU32(usrdisBase + 0x8fUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIClose);
                     Q9K_PutU32(usrdisBase + 0x30UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllPD);
                     Q9K_PutU32(usrdisBase + 0x31UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFRetPD);
                     Q9K_PutU32(usrdisBase + 0x38UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMove);
@@ -448,6 +464,14 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x84UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIOpen);
                     Q9K_PutU32(sysdisBase + 0x82UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIDup);
                     Q9K_PutU32(sysdisBase + 0x8cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIWritLn);
+                    Q9K_PutU32(sysdisBase + 0x8aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIWrite);
+                    Q9K_PutU32(sysdisBase + 0x89UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRead);
+                    Q9K_PutU32(sysdisBase + 0x8bUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIReadLn);
+                    Q9K_PutU32(sysdisBase + 0x8dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIGetStt);
+                    Q9K_PutU32(sysdisBase + 0x92UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFISGetSt);
+                    Q9K_PutU32(sysdisBase + 0x8eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFISetStt);
+                    Q9K_PutU32(sysdisBase + 0x88UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFISeek);
+                    Q9K_PutU32(sysdisBase + 0x8fUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIClose);
                     Q9K_PutU32(sysdisBase + 0x30UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllPD);
                     Q9K_PutU32(sysdisBase + 0x31UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFRetPD);
                     Q9K_PutU32(sysdisBase + 0x38UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMove);

@@ -8029,3 +8029,166 @@ Lauf nicht mehr auf. Ein anschließender Stabilitätstest über rund 90 Sekunden
 produzierte etwa 560.000 `A`-Ausgaben, ohne Exception, Illegal Instruction
 oder `PC=$6c`; der Dump meldete `Vektor=0`. Der Rückweg ist damit im
 Emulator als behoben und stabil einzustufen.
+
+## Fortsetzung 65: Minimaler nativer I$Close-Pfad (2026-09-16)
+
+`I$Close` (`$8F`) ist jetzt als eigener Q9-Kernelhandler registriert. Der
+Handler validiert die Pfadnummer im aktuellen Prozessdeskriptor, löscht den
+Prozess-Pfadslot und gibt eine Referenz auf den zugehörigen Q9-nativen
+256-Byte-Pfaddeskriptor frei. Der Deskriptor wird erst nach dem letzten
+`I$Close` wieder in die Freiliste eingehängt. Standardpfade `0..2` werden
+nicht als Poolobjekte freigegeben; ungültige oder leere Pfade liefern
+`E$BPNUM`.
+
+Der Kernel baut ohne Fehler. Ein vollständiger CF-Emulatorlauf mit dem neuen
+Bootfile erzeugte etwa 537.000 Scheduler-Ausgaben und meldete `Vektor=0`; es
+gab keine Illegal Instruction und keinen Sprung zu `PC=$6c`. Damit ist der
+minimale native Pfadlebenszyklus `I$Open`/`I$Dup`/`I$WritLn`/`I$Close` im
+aktuellen Teststand funktionsfähig. Die Referenzzählung wurde im Hosttest
+geprüft; der Emulatorlauf bestätigt die Boot- und Rückwegstabilität. Die
+eigentliche Close-Weiterleitung an
+beliebige File Manager sowie die vollständige Trennung der Pfadpools pro
+Prozess bleiben noch offen.
+
+## Fortsetzung 66: Minimaler nativer I$Write-Pfad (2026-09-16)
+
+`I$Write` (`$8A`) ist jetzt als Q9-Kernelhandler registriert. Er schreibt die
+angegebene Bytezahl über den bestehenden Q9-Konsolenpfad und hält damit die
+aktuelle minimale native I/O-Schicht konsistent mit `I$WritLn`. Die vollständige
+geräteabhängige Write-Semantik und die Weiterleitung an echte File Manager sind
+weiterhin offen.
+
+Beim Absichern der Pfadverwaltung wurde außerdem ein Fehlerpfad in `I$Dup`
+korrigiert: Bei voller Pfadtabelle wird der gesicherte Registerrahmen jetzt
+auch vor der Fehlerrückkehr restauriert. `I$Close` verwirft zusätzlich leere
+oder inkonsistente native Deskriptoren, bevor die Referenzzählung verändert wird.
+
+Der Kernel-Build endet mit `Errors: 00000`. Der Host-Regressionslauf für
+`q9kernel_iopath.c` meldet `ALLE TESTS BESTANDEN`. Das aktualisierte Bootfile
+wurde im CF-Emulator getestet: etwa 494.000 Scheduler-Ausgaben, `Vektor=0`,
+keine Illegal Instruction, kein `PC=$6c` und kein Formatfehler.
+
+Damit ist die minimale native Schicht für `I$Open`/`I$Dup`/`I$Write`/`I$WritLn`/
+`I$Close` stabiler, aber noch kein vollständiger OS-9-I/O-Stack. Offen bleiben
+insbesondere `I$Read`, `I$ReadLn`, `I$GetStt`, `I$SetStt`, `I$Seek`, echte
+Pfad-/Geräteauflösung, File-Manager-Dispatch und die vollständige Trennung der
+Pfadpools pro Prozess.
+
+## Fortsetzung 67: Minimaler nativer I$Read-Pfad (2026-09-16)
+
+`I$Read` (`$89`) ist jetzt als Q9-Kernelhandler registriert. Der Handler liest
+die angeforderte Bytezahl blockierend über `SRA.RxRDY` und `RHRA` der emulierten
+DUART in den vom Aufrufer angegebenen Puffer. Damit ist der minimale native
+Konsolenpfad für Ausgabe und Eingabe symmetrisch erweitert. Eine Eingabeprüfung
+auf Pfadtyp, Geräteparameter und File-Manager-Zustand ist noch nicht enthalten.
+
+Der Kernel-Build endet weiterhin mit `Errors: 00000`. Der aktualisierte
+Bootfile-Stabilitätstest im CF-Emulator erzeugte etwa 529.000 Scheduler-
+Ausgaben und meldete `Vektor=0`; es gab keine Illegal Instruction, keinen
+Sprung zu `PC=$6c` und keinen Formatfehler. Der automatische Boottest ruft
+`I$Read` nicht ohne Eingabedaten auf, weil der korrekte Read-Aufruf dabei bis
+zum Eintreffen von Zeichen blockieren würde.
+
+## Fortsetzung 68: Minimaler nativer I$ReadLn-Pfad (2026-09-16)
+
+`I$ReadLn` (`$8B`) ist jetzt als eigener Q9-Kernelhandler registriert. Er liest
+blockierend Zeichen über die DUART, beendet die Zeile bei CR oder beim Erreichen
+der maximalen Pufferlänge und liefert die gespeicherte Bytezahl in `d1`. Der
+Puffer wird dabei nicht überschrieben; Zeichenecho, Backspace-Verarbeitung,
+Großschreibung und die übrigen gerätespezifischen Optionen bleiben bewusst dem
+späteren File-Manager überlassen.
+
+Der Kernel-Build endet mit `Errors: 00000`. Der anschließende CF-Emulatorlauf
+erzeugte etwa 559.000 Scheduler-Ausgaben und meldete `Vektor=0`; es gab keine
+Illegal Instruction, keinen Sprung zu `PC=$6c` und keinen Formatfehler. Der
+automatische Stabilitätstest löst den ReadLn-Aufruf weiterhin nicht interaktiv
+aus, damit der Bootlauf ohne Eingabedaten nicht absichtlich blockiert.
+
+## Fortsetzung 69: Minimaler nativer GetStt/SetStt-Pfad (2026-09-16)
+
+`I$GetStt` (`$8D`) und `I$SetStt` (`$8E`) sind jetzt registriert und
+unterstützen für Q9-native Pfade den Statuscode `SS_Opt`. Dabei werden die
+ersten 32 Bytes des SCF-Optionsbereichs zwischen dem Pfaddeskriptor und dem
+Aufruferpuffer kopiert. Das deckt insbesondere die Echo- und grundlegenden
+Zeilenoptionen ab. Nicht unterstützte Statuscodes liefern `E$UnkSvc`, ungültige
+Pfade `E$BPNUM` und ein Nullpuffer `E$BPADDR`.
+
+Die vollständige Statusstruktur, Standardpfade `0..2`, echte Geräteparameter
+und die Weiterleitung an den File Manager bleiben noch offen. Der Kernel-Build
+endet mit `Errors: 00000`. Der CF-Emulatorlauf mit dem aktualisierten Bootfile
+erzeugte etwa 492.000 Scheduler-Ausgaben und meldete `Vektor=0`; es gab keine
+Illegal Instruction, keinen Sprung zu `PC=$6c` und keinen Formatfehler.
+
+## Fortsetzung 70: Minimaler nativer I$Seek-Pfad (2026-09-16)
+
+`I$Seek` (`$88`) ist jetzt als eigener Q9-Kernelhandler registriert. Für
+Q9-native Konsolenpfade validiert er den Pfad und kehrt erfolgreich als No-op
+zurück. Das entspricht der OS-9-Semantik für sequenzielle File Manager, die
+keine zufällige Dateipositionierung anbieten. Eine echte logische
+Positionsverwaltung bleibt für RBF und andere Random-Access-File-Manager offen.
+
+Der Kernel-Build endet mit `Errors: 00000`, der Host-Regressionslauf meldet
+`ALLE TESTS BESTANDEN`. Der anschließende CF-Emulatorlauf mit dem aktualisierten
+Bootfile erzeugte 264.505 Scheduler-Ausgaben und meldete `Vektor=0`; es gab
+keine Illegal Instruction, keinen Sprung zu `PC=$6c` und keinen Formatfehler.
+
+## Fortsetzung 71: Minimaler nativer I$SGetSt-Pfad (2026-09-16)
+
+`I$SGetSt` (`$92`) ist jetzt als eigener Q9-Kernelhandler registriert. Im
+Unterschied zu `I$GetStt` wird die übergebene Nummer direkt als Systempfad
+interpretiert. Für einen belegten nativen Pfad unterstützt der Handler
+`SS_Opt` und kopiert die ersten 32 Optionsbytes. Andere Statuscodes, ungültige
+Pfade und Nullpuffer werden mit den üblichen Fehlercodes abgewiesen.
+
+Die Implementierung führt bewusst noch keine gruppen-/benutzerabhängige
+Berechtigungsprüfung, Geräte-Namensabfrage oder File-Manager-Weiterleitung
+durch. Diese Punkte müssen vor einer vollständigen OS-9-Kompatibilitätswertung
+noch ergänzt werden.
+
+## Fortsetzung 72: Einordnung von I$Attach und I$Detach (2026-09-16)
+
+Die Prüfung des vorhandenen I/O-Aufbaus bestätigt, dass `I$Attach` (`$80`) und
+`I$Detach` (`$81`) keine zusätzlichen nativen Kernelhandler für den aktuellen
+Q9-Ansatz benötigen. Die eigentliche Attach-/Detach-Logik gehört zum externen
+IOMan-/File-Manager-Dreiklang; der Kernel stellt dafür den externen Dispatch- und
+Registerrahmen bereit. `I$Attach` wird im bekannten `/term`-Pfad aus `scf`
+heraus aufgerufen und ist damit vom aktuellen externen Dispatcher grundsätzlich
+erreichbar. Ein eigener Stub würde diese Zuständigkeit verdecken und wäre daher
+kein sinnvoller Fortschritt.
+
+Offen bleibt ein separater Lebenszyklustest für `I$Detach` sowie die vollständige
+Gerätebindung für RBF/CF. Der nächste technische Schwerpunkt ist deshalb nicht
+ein weiterer allgemeiner I/O-Stub, sondern der Vergleich des funktionierenden
+SCF-Attach-Pfades mit dem noch blockierenden RBF/CF-Attach-Pfad.
+
+## Fortsetzung 73: Direkter Attach-Test und CF-Grenze (2026-09-17)
+
+Für den direkten Nachweis wurde ein kleines Modul `iattachsvc` ergänzt. Es ruft
+`I$Attach("c0")`, anschließend `I$Detach` mit dem von `I$Attach` gelieferten
+Gerätetabelleneintrag und danach `F$Exit` auf. Der Build des Testmoduls endet
+ohne Fehler.
+
+Der Testlauf mit `rbf`, `cfide`, `d0` und `c0` im Bootfile zeigt jedoch, dass
+der eigene Startup-Prozess den Test noch nicht erreicht: Der `cfide`-Treiber
+initialisiert erfolgreich, danach bleibt die vorhandene CF/RBF-Startkette vor
+dem Testprozess stehen. Es gibt dabei keinen Illegal-Instruction- oder
+Vektorfehler (`Vektor=0`). Damit ist die nächste Fehlergrenze klar eingegrenzt:
+Vor einem aussagekräftigen `I$Detach`-Test muss zuerst der externe CF/RBF-
+Initialisierungspfad bis zur Prozessausführung weiterlaufen.
+
+## Fortsetzung 74: F$Link-Schutz und erneuter Attach-Versuch (2026-09-17)
+
+Die Spur zeigte anschließend die konkrete Endlosschleife: `F$Link` lief beim
+Überlesen eines nicht OS-9-konformen Namens ohne Begrenzung weiter. Die
+Namenssuche ist jetzt auf 256 Bytes begrenzt und liefert in diesem Fall
+`E$MNF`, statt den Kernel festzusetzen. Der Kernel-Build endet weiterhin mit
+`Errors: 00000`.
+
+Der CF/RBF-Emulatorlauf kommt danach wieder aus dem IOMan-Aufruf zurück (`RT`);
+die verbleibenden `A`-Zeichen stammen aus der absichtlich laufenden
+Scheduler-Testschleife `Q9K_TestProcA`, nicht aus der früheren F$Link-Schleife.
+Ein erneuter Lauf mit `iattachsvc` als F$Fork-Ziel und geladenem Testmodul
+erzeugte jedoch noch keine `@`-/`#`-/`!`-Marker. Damit ist der direkte
+Attach-/Detach-Nachweis weiterhin offen; die nächste Untersuchung muss den
+F$Fork-/Prozessstartpfad bis zum tatsächlichen Einsprung in `iattachsvc`
+verfolgen.

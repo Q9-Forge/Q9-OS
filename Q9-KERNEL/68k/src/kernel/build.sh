@@ -133,3 +133,12 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
     -o=hellosvc -f=orowoe hellosvc.r < /dev/null
 echo "== Fertig: $OUTDIR/hellosvc =="
 file hellosvc || true
+
+echo "== iattachsvc.a bauen (I\$Attach/I\$Detach-Regressionstest) =="
+cp "$SRCDIR"/iattachsvc.a .
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+    -o=iattachsvc.r "iattachsvc.a" < /dev/null
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+    -o=iattachsvc -f=orowoe iattachsvc.r < /dev/null
+echo "== Fertig: $OUTDIR/iattachsvc =="
+file iattachsvc || true
