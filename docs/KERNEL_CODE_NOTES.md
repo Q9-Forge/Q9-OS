@@ -247,18 +247,53 @@ in dieser Sitzung bereits hergeleitet: der bekannte Zeichenketten-
 Fundort im laufenden Emulator abzüglich seiner Position in diesem
 Projekt ergibt die Ladebasis).
 
-**Nächster Ansatzpunkt:** die genaue Stelle innerhalb des
-CompactFlash-Treiber-Codes finden, an der `F$Exit` tatsächlich
-aufgerufen wird (die per Ausführungsspur gefundene Aufrufkette
-zurückverfolgen bis zu diesem Aufruf), und klären, welche Bedingung
-dort erfüllt sein muss – vermutlich eine Fallunterscheidung innerhalb
-der oben beschriebenen Tabellen-Klassifikation oder eine Prüfung nach
-dem zeichenweisen Einlesen des verglichenen Namens. Der Vergleich mit
-der Referenzumgebung müsste an exakt dieser Stelle ansetzen. Der noch
-nicht vollständig gelesene Codeblock bei Modul-Offset `0x554`–`0xbbf`
-im Kernel (Trap-Rückkehr-/Reschedule-Logik) ist für dieses Problem
-nach aktuellem Stand NICHT mehr der relevante Ansatzpunkt – das war
-die inzwischen verworfene Spur der vorherigen zwei Sitzungen.
+**Fortsetzung, vierte Folgesitzung – genaue `F$Exit`-Aufrufstelle
+gefunden, IDENTIFY-Antwort als Nebenschauplatz ausgeschlossen:**
+
+Zunächst wurde geprüft, ob die eigene IDENTIFY-Implementierung des
+CompactFlash-Ports (`Q9-Flux-68kQEMU/devices/cf/q9_cf.c`) vom
+Referenzverhalten abweicht – beide füllen nur die Sektorzahl
+(Byte 120–123) und lassen den Rest der 512-Byte-IDENTIFY-Antwort auf
+Null, wortgleicher Quelltext in beiden Portierungen. Kein Unterschied,
+diese Spur führt nicht weiter.
+
+Die exakte Trap-Instruktion für den dritten (folgenlosen) `F$Exit`-
+Aufruf wurde über eine frische `-d int`-Spur direkt gefunden (letzte
+Trap-Adresse im Treiberbereich vor dem Wechsel zu rein
+kernelinternen Adressen). Eine begleitende Ausführungsspur zeigt den
+unmittelbaren Kontext: Eine kleine Schleife durchläuft eine
+**32-Einträge-Tabelle (44 Byte pro Eintrag, Gesamtgröße exakt
+32×44=1408 Byte, klassische OS-9-Pfad-/Deskriptor-Tabellengröße)** –
+bei den ersten beiden (unauffälligen) `F$Exit`-Aufrufen wird die
+Schleife nach wenigen Durchläufen verlassen, beim dritten läuft sie
+bis zum Tabellenende durch.
+
+**Wichtige Korrektur zur vorherigen Einschätzung:** Diese Schleife ist
+**kein fehlschlagender Suchlauf** – die Kontrollflussanalyse ihrer
+Aufruferfunktion zeigt: Sie wird nur überhaupt betreten, wenn ein
+bestimmtes Flag-Bit (Bit 5, Offset `+20`) an einem separaten,
+außerhalb der Tabelle liegenden Objekt bereits gesetzt ist – andernfalls
+wird sie komplett übersprungen. Innerhalb der Schleife wird pro
+Tabelleneintrag nur ein anderes Bit (Bit 9, Offset `+12`) geprüft und
+bei Bedarf über zwei Hilfsaufrufe "ausgespült" (Flush-artiges Muster),
+danach gelöscht. Das Gesamtbild ist eine **geordnete Aufräum-Passage
+("alle offenen Pfad-/Deskriptor-Puffer zurückschreiben") über die
+komplette Tabelle, ausgelöst durch ein bereits vorher gesetztes
+"wird beendet"-Flag** – nicht die Ursache des Abbruchs, sondern dessen
+Konsequenz. `F$Exit` folgt direkt im Anschluss als letzter Schritt
+dieser bereits beschlossenen Beendigung.
+
+**Nächster Ansatzpunkt:** die eigentliche Ursache liegt VOR dieser
+Aufräum-Passage – dort, wo das auslösende Flag-Bit (Offset `+20`,
+Bit 5, am Objekt bei `%fp@(-32712)` zur Laufzeit) gesetzt wird. Das
+ist der nächste, noch nicht identifizierte Ansatzpunkt: finden, welche
+frühere Codestelle dieses Bit setzt und unter welcher Bedingung – und
+ob genau diese Bedingung zwischen Referenzumgebung und
+Q9-Flux-68kQEMU unterschiedlich ausfällt. Der noch nicht vollständig
+gelesene Codeblock bei Modul-Offset `0x554`–`0xbbf` im Kernel
+(Trap-Rückkehr-/Reschedule-Logik) bleibt weiterhin NICHT der relevante
+Ansatzpunkt für dieses Problem – das war die bereits verworfene Spur
+der ersten beiden Sitzungen.
 
 ## Werkzeugnotizen
 
