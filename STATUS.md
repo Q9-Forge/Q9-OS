@@ -16,6 +16,20 @@ The call-code names and the complete call-code set are based on
 mean that every OS-9 corner case or every hardware device is already
 supported.
 
+## Latest kernel verification (2026-09-16)
+
+The external `F$SSvc` trap return path was corrected: the 72-byte service
+register frame is now removed with the correct stack adjustment before the
+original exception frame is returned with `RTE`. The previous six-byte
+overrun caused sporadic returns to `PC=$6c`.
+
+The development kernel and CF bootfile were rebuilt and exercised in Q9-Flux.
+A subsequent approximately 90-second stability run produced about 560,000
+scheduler output characters without an exception, illegal instruction, or
+`PC=$6c`; the diagnostic dump reported `Vektor=0`. This validates the current
+external trap return path with the present Microware I/O modules. Native Q9
+I/O replacements remain future work.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |

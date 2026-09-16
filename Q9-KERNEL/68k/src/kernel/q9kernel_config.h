@@ -25,13 +25,11 @@
  *                              deterministischer, speicherineffizienter,
  *                              typisch fuer Atomic/Echtzeit.
  *
- * Aktuell (2026-08-18) noch OHNE Verhaltensunterschied -- es gibt noch
- * keinen variantenabhaengigen Code (weder Speicherverwaltung noch Debug-/
- * Schutz-Syscalls sind bisher implementiert, s. q9kernel_cinit.c TODOs).
- * Diese Datei legt nur die Achsen samt Erzwingung fest, damit kuenftiger
- * Code von Anfang an das richtige Muster vorfindet, statt es nachtraeglich
- * reinzufummeln. Jede Datei, die spaeter variantenabhaengigen Code
- * bekommt, bindet diesen Header ein.
+ * Development und Atomic unterscheiden sich inzwischen beim Diagnosepfad:
+ * Development kompiliert die DUART-Memory-/Modultrace aus, Atomic nicht.
+ * Die eigentlichen Speicher- und Schutzvarianten bleiben davon getrennt.
+ * Jede Datei, die variantenabhaengigen Code bekommt, bindet diesen Header
+ * ein und verwendet Q9K_MEMTRACE_COMPILETIME fuer reine Diagnoseausgaben.
  *
  * Alle vier Kombinationen (Atomic/Development x Standard/Buddy) UND der
  * Fehlerfall ohne Flags real gegen die echte xcc-Pipeline getestet
@@ -63,6 +61,13 @@
 #endif
 #if defined(Q9K_ALLOC_STANDARD) && defined(Q9K_ALLOC_BUDDY)
 #error "Q9K_ALLOC_STANDARD und Q9K_ALLOC_BUDDY schliessen sich gegenseitig aus"
+#endif
+
+/* Development-only diagnostics are compiled out of Atomic kernels. */
+#if defined(Q9K_KERNEL_DEVELOPMENT)
+#define Q9K_MEMTRACE_COMPILETIME 1
+#else
+#define Q9K_MEMTRACE_COMPILETIME 0
 #endif
 
 #endif /* Q9KERNEL_CONFIG_H */

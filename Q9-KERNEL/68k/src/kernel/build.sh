@@ -36,7 +36,7 @@ cp "$SRCDIR"/q9kernel_entry.a "$SRCDIR"/q9kernel_cinit.c "$SRCDIR"/q9kernel_modc
    "$SRCDIR"/q9kernel_modsearch.c "$SRCDIR"/q9kernel_initext.c "$SRCDIR"/q9kernel_arena.c \
    "$SRCDIR"/q9kernel_exctable.c "$SRCDIR"/q9kernel_tables.c "$SRCDIR"/q9kernel_firstproc.c \
    "$SRCDIR"/q9kernel_moddir.c "$SRCDIR"/q9kernel_sched.c "$SRCDIR"/q9kernel_procend.c \
-   "$SRCDIR"/q9kernel_procsleep.c "$SRCDIR"/q9kernel_sysmem.c \
+   "$SRCDIR"/q9kernel_procsleep.c "$SRCDIR"/q9kernel_sysmem.c "$SRCDIR"/q9kernel_debug.c \
    "$SRCDIR"/q9kernel_ssvc.c "$SRCDIR"/q9kernel_iopath.c "$SRCDIR"/q9kernel_procapi.c "$SRCDIR"/q9kernel_traplink.c \
    "$SRCDIR"/q9kernel_setsys.c \
    "$SRCDIR"/q9kernel_config.h .
@@ -49,10 +49,23 @@ sed -i.bak 's#"../q9sysglob.h"#"q9sysglob.h"#' q9kernel_cinit.c && rm q9kernel_c
 
 source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh
 
-CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_ALLOC_STANDARD -dQ9K_BOOT_STARTUP"
+KERNEL_VARIANT="${Q9K_KERNEL_VARIANT:-development}"
+case "$KERNEL_VARIANT" in
+    development)
+        CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_MEMTRACE_ARENA"
+        ;;
+    atomic)
+        CDEFS="-dQ9K_KERNEL_ATOMIC"
+        ;;
+    *)
+        echo "FEHLER: Q9K_KERNEL_VARIANT muss development oder atomic sein" >&2
+        exit 2
+        ;;
+esac
+CDEFS="$CDEFS -dQ9K_ALLOC_STANDARD -dQ9K_BOOT_STARTUP"
 cat > makefile <<EOF
 CFLAGS = -b -O7 -cq -cw $CDEFS
-all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r
+all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r
 q9kernel_cinit.r: q9kernel_cinit.c
 q9kernel_modcheck.r: q9kernel_modcheck.c
 q9kernel_initext.r: q9kernel_initext.c
@@ -66,6 +79,8 @@ q9kernel_sched.r: q9kernel_sched.c
 q9kernel_procend.r: q9kernel_procend.c
 q9kernel_procsleep.r: q9kernel_procsleep.c
 q9kernel_sysmem.r: q9kernel_sysmem.c
+
+q9kernel_debug.r: q9kernel_debug.c
 q9kernel_ssvc.r: q9kernel_ssvc.c
 q9kernel_iopath.r: q9kernel_iopath.c
 q9kernel_procapi.r: q9kernel_procapi.c
@@ -73,12 +88,12 @@ q9kernel_traplink.r: q9kernel_traplink.c
 q9kernel_setsys.r: q9kernel_setsys.c
 EOF
 
-echo "== C-Dateien kompilieren (Development/Standard-Variante, s. q9kernel_config.h) =="
+echo "== C-Dateien kompilieren ($KERNEL_VARIANT/Standard-Variante, s. q9kernel_config.h) =="
 # "all" selbst schlaegt am Ende fehl (os9make versucht danach ein
 # Programm "all" zu linken) -- das ist erwartet, die acht echten .r-
 # Ziele sind zu diesem Zeitpunkt schon fertig. Deshalb || true.
 mwos-build . all < /dev/null || true
-for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r; do
+for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r; do
     [ -f "$f" ] || { echo "FEHLER: $f wurde nicht erzeugt"; exit 1; }
 done
 
@@ -94,7 +109,7 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
     -o=q9kernel -f=orowoe \
     q9kernel_entry.r q9kernel_cinit.r q9kernel_modcheck.r q9kernel_modsearch.r q9kernel_initext.r \
     q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r \
-    q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r \
+    q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r \
     q9kernel_setsys.r \
     < /dev/null
 

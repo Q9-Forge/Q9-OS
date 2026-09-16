@@ -44,6 +44,14 @@ typedef unsigned char  Q9_u8;
  * Header, gleiche schlanke Konvention wie ueberall in diesem Verzeichnis. */
 extern int Q9K_CheckSyncWord(const Q9_u8 *addr, Q9_u32 availableLen);
 extern int Q9K_ValidModuleHeader(const Q9_u8 *addr, Q9_u32 availableLen);
+#if Q9K_MEMTRACE_COMPILETIME
+extern void Q9K_MemTraceSetModule(Q9_u32 header);
+extern void Q9K_MemTraceClearModule(void);
+extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
+                             Q9_u32 address, Q9_u32 size, Q9_u32 error,
+                             Q9_u32 freeHead);
+#define Q9K_MEMTRACE_OP_MODULE_LOAD 7UL
+#endif
 
 /* Modulheader-Offsets (s. src/q9moduleheader.h Q9_MH68K_*) -- lokal
  * dupliziert, gleiche Konvention wie q9kernel_modsearch.c. */
@@ -662,6 +670,12 @@ void Q9K_SysVModulImpl(void)
     Q9_u16 err = 0;
 
     entry = Q9K_ModDirValidateAndAdd((const Q9_u8 *)hdrAddr, size, &err);
+#if Q9K_MEMTRACE_COMPILETIME
+    Q9K_MemTraceSetModule(hdrAddr);
+    Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_MODULE_LOAD, size, hdrAddr, size,
+                     entry != 0 ? 0UL : (Q9_u32)err, 0UL);
+    Q9K_MemTraceClearModule();
+#endif
     if (entry != 0) {
         Q9K_SetU32(Q9K_VMODUL_SCRATCH_ENTRY, entry);
         Q9K_SetU32(Q9K_VMODUL_SCRATCH_SUCCESS, 1UL);

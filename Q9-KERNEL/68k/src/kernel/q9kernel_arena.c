@@ -52,6 +52,18 @@
 
 typedef unsigned long Q9_u32;
 
+#if defined(Q9K_MEMTRACE_ARENA)
+extern void Q9K_MemTraceEmit(Q9_u32 operation,
+                             Q9_u32 requested,
+                             Q9_u32 address,
+                             Q9_u32 size,
+                             Q9_u32 error,
+                             Q9_u32 freeHead);
+#define Q9K_MEMTRACE_OP_ALLOC   3UL
+#define Q9K_MEMTRACE_OP_FREE    4UL
+#define Q9K_MEMTRACE_OP_LARGEST 5UL
+#endif
+
 #ifndef Q9_D_ARENA
 #define Q9_D_ARENA      0x3FC   /* s. q9sysglob.h -- Kontrollblock-Basis; per
                                   * #ifndef ueberschreibbar, damit
@@ -147,6 +159,9 @@ Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize)
     Q9_u32 prevAddr = 0;
     Q9_u32 curAddr;
     Q9_u32 result = 0;
+#if defined(Q9K_MEMTRACE_ARENA)
+    Q9_u32 headAfter;
+#endif
     Q9_u32 savedSr = Q9K_IntLock();   /* s. Kopfkommentar oben -- ganze Funktion ist kritischer Abschnitt */
 
     curAddr = Q9K_GetU32(Q9K_ARENA_HEAD);
@@ -189,6 +204,11 @@ Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize)
     }
 
     Q9K_IntUnlock(savedSr);
+#if defined(Q9K_MEMTRACE_ARENA)
+    headAfter = Q9K_GetU32(Q9K_ARENA_HEAD);
+    Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_ALLOC, requestedSize, result, needed,
+                     0UL, headAfter);
+#endif
     return result;   /* 0 = kein ausreichend grosser Freiblock gefunden */
 }
 
@@ -206,6 +226,9 @@ Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize)
     Q9_u32 prevAddr = 0;
     Q9_u32 curAddr;
     Q9_u32 bestAddr = 0, bestSize = 0, bestPrev = 0, bestNext = 0;
+#if defined(Q9K_MEMTRACE_ARENA)
+    Q9_u32 headAfter;
+#endif
     Q9_u32 savedSr = Q9K_IntLock();   /* s. Kopfkommentar bei Q9K_AllocMem oben */
 
     curAddr = Q9K_GetU32(Q9K_ARENA_HEAD);
@@ -234,6 +257,11 @@ Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize)
     }
 
     Q9K_IntUnlock(savedSr);
+#if defined(Q9K_MEMTRACE_ARENA)
+    headAfter = Q9K_GetU32(Q9K_ARENA_HEAD);
+    Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_LARGEST, 0xFFFFFFFFUL, bestAddr,
+                     bestSize, 0UL, headAfter);
+#endif
     *outSize = bestSize;   /* bestAddr==0: bleibt 0, s. Kopfkommentar */
     return bestAddr;
 }
@@ -255,6 +283,12 @@ void Q9K_FreeMem(Q9_u32 addr, Q9_u32 size)
 
     savedSr = Q9K_IntLock();
     oldHead = Q9K_GetU32(Q9K_ARENA_HEAD);
+#if defined(Q9K_MEMTRACE_ARENA)
+    /* Log before changing the list.  This is essential when the old head is
+     * already corrupt: the post-write event may never be observable. */
+    Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_FREE, size, addr, size, oldHead,
+                     oldHead);
+#endif
     Q9K_SetU32(addr, oldHead);
     Q9K_SetU32(addr + sizeof(Q9_u32), size);
     Q9K_SetU32(Q9K_ARENA_HEAD, addr);

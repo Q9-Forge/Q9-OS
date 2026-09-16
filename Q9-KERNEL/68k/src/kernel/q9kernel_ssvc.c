@@ -109,7 +109,7 @@ static int Q9K_IsKernelService(Q9_u32 code)
     case 0x28UL: case 0x29UL: case 0x2AUL: case 0x2EUL:
     case 0x30UL: case 0x31UL: case 0x32UL: case 0x37UL:
     case 0x38UL: case 0x58UL: case 0x5AUL: case 0x5CUL:
-    case 0x5EUL: case 0x84UL:
+    case 0x5EUL: case 0x82UL: case 0x84UL: case 0x8CUL:
         return 1;
     default:
         return 0;
@@ -117,7 +117,7 @@ static int Q9K_IsKernelService(Q9_u32 code)
 }
 
 /* Q9K_ProcSSvc -- echte F$SSvc-Kernlogik (s. Kopfkommentar). Wandert
- * durch die Tabelle bei tablePtr bis zum Endmarker (Codewort $ffff = -1
+ * durch die Tabelle bei tablePtr bis zum Endmarker (Codewort FFFF = -1
  * als Q9_u16), registriert jeden Eintrag in Q9_D_SYSDIS (immer) und
  * Q9_D_USRDIS (nur ohne SysTrap-Bit). */
 /* Markierungstabelle "dieser Callcode wurde per F$SSvc EXTERN registriert",
@@ -150,7 +150,7 @@ void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
         if (codeword == 0xFFFFU)   /* -1 = Tabellenende */
             break;
 
-        rawOffset = Q9K_ReadHdrU16BE(entryAddr + 2);
+        rawOffset = Q9K_ReadHdrU16BE(entryAddr + 2UL);
         /* Vorzeichenerweiterung des 16-Bit-Offsets auf 32 Bit -- OHNE
          * Annahme ueber die native "short"/"int"-Breite des Hosts (s.
          * bereits mehrfach dokumentierte Vorsicht in diesem Projekt). */

@@ -44,16 +44,12 @@
  * entworfen.
  *
  * EIGENE ENTSCHEIDUNGEN, dokumentiert:
- *   - "In user state, the system keeps track of memory allocated to a
- *     process ... automatically de-allocated ... when a process
- *     terminates" (F$SRtMem-Manual) ist NICHT implementiert -- kein
- *     Allokations-Tracking pro Prozess vorhanden (gleiches, bereits bei
- *     F$Exit dokumentiertes TODO: "kein echtes Speicher-Zurueckgeben").
- *     F$SRtMem selbst funktioniert trotzdem VOLLSTAENDIG fuer den
- *     expliziten Aufruf (im System-Zustand ohnehin PFLICHT laut Manual:
- *     "In system state, the process must explicitly return its
- *     memory") -- nur der automatische User-State-Fall beim
- *     Prozessende fehlt.
+ *   - User-State allocations are tracked in a fixed kernel table and are
+ *     automatically returned by F$Exit.  System-state callers with no
+ *     current process remain explicit owners and must call F$SRtMem.
+ *     The table is intentionally bounded to 32 entries for this kernel
+ *     stage; a dynamic list can replace it when the process subsystem is
+ *     expanded.
  *   - E$BPAddr (F$SRtMem, ungueltiger Zeiger) wird NICHT geprueft --
  *     Q9K_FreeMem vertraut dem Aufrufer bereits (kein verstecktes
  *     Allokations-Header, s. dortigen Kopfkommentar) -- ein falscher
@@ -70,6 +66,20 @@
 typedef unsigned long  Q9_u32;
 typedef unsigned short Q9_u16;
 
+extern void Q9K_MemTraceEmit(Q9_u32 operation,
+                             Q9_u32 requested,
+                             Q9_u32 address,
+                             Q9_u32 size,
+                             Q9_u32 error,
+                             Q9_u32 freeHead);
+extern void Q9K_MemTraceBeginCapture(void);
+extern void Q9K_MemTraceEndCapture(void);
+
+#define Q9K_MEMTRACE_OP_REQUEST 1UL
+#define Q9K_MEMTRACE_OP_RETURN  2UL
+#define Q9_D_FREEMEM            0x0404UL
+#define Q9_D_PROC               0x004CUL
+
 extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);      /* q9kernel_arena.c */
 extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size);   /* q9kernel_arena.c */
 extern Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize);       /* q9kernel_arena.c, s. dortigen Kopfkommentar */
@@ -79,6 +89,17 @@ extern Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize);       /* q9kernel_arena.c, s. d
  * Formeln lieber lokal wiederholen als eine Cross-File-Abhaengigkeit auf
  * ein internes Implementierungsdetail aufzubauen. */
 #define Q9K_ALLOC_GRANULARITY 16UL
+
+/* Explicit F$SRqMem allocations made by a process are released when that
+ * process exits.  The table is deliberately small and fixed-size for the
+ * current kernel; it can later become a linked allocation list. */
+#define Q9K_MEMOWNER_SLOTS 32UL
+#define Q9K_MEMOWNER_BASE  0x1710UL
+#define Q9K_MEMOWNER_STRIDE 12UL
+#define Q9K_MEMOWNER_MAGIC (Q9K_MEMOWNER_BASE + Q9K_MEMOWNER_SLOTS * Q9K_MEMOWNER_STRIDE)
+#define Q9K_MEMOWNER_OWNER(i) (Q9K_MEMOWNER_BASE + (i) * Q9K_MEMOWNER_STRIDE)
+#define Q9K_MEMOWNER_ADDR(i)  (Q9K_MEMOWNER_OWNER(i) + 4UL)
+#define Q9K_MEMOWNER_SIZE(i)  (Q9K_MEMOWNER_OWNER(i) + 8UL)
 
 static Q9_u32 Q9K_RoundUp16(Q9_u32 n)
 {
@@ -96,6 +117,83 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
 static void   Q9K_SetU16(Q9_u32 addr, Q9_u16 value) { *(volatile Q9_u16 *)addr = value; }
 
+void Q9K_ProcMemTrackInit(void)
+{
+    Q9_u32 i;
+
+    for (i = 0; i < Q9K_MEMOWNER_SLOTS; ++i) {
+        Q9K_SetU32(Q9K_MEMOWNER_OWNER(i), 0UL);
+        Q9K_SetU32(Q9K_MEMOWNER_ADDR(i), 0UL);
+        Q9K_SetU32(Q9K_MEMOWNER_SIZE(i), 0UL);
+    }
+    Q9K_SetU32(Q9K_MEMOWNER_MAGIC, 0x514D454DU);
+}
+
+static void Q9K_ProcMemTrackEnsure(void)
+{
+    if (Q9K_GetU32(Q9K_MEMOWNER_MAGIC) != 0x514D454DU)
+        Q9K_ProcMemTrackInit();
+}
+
+#if !defined(Q9K_TEST_HOST)
+static void Q9K_ProcMemTrackAdd(Q9_u32 owner, Q9_u32 addr, Q9_u32 size)
+{
+    Q9_u32 i;
+
+    if (owner == 0UL || addr == 0UL || size == 0UL)
+        return;
+
+    for (i = 0; i < Q9K_MEMOWNER_SLOTS; ++i) {
+        if (Q9K_GetU32(Q9K_MEMOWNER_OWNER(i)) == 0UL) {
+            Q9K_SetU32(Q9K_MEMOWNER_OWNER(i), owner);
+            Q9K_SetU32(Q9K_MEMOWNER_ADDR(i), addr);
+            Q9K_SetU32(Q9K_MEMOWNER_SIZE(i), size);
+            return;
+        }
+    }
+}
+
+static void Q9K_ProcMemTrackRemove(Q9_u32 addr, Q9_u32 size)
+{
+    Q9_u32 i;
+
+    for (i = 0; i < Q9K_MEMOWNER_SLOTS; ++i) {
+        if (Q9K_GetU32(Q9K_MEMOWNER_ADDR(i)) == addr &&
+            Q9K_GetU32(Q9K_MEMOWNER_SIZE(i)) == size) {
+            Q9K_SetU32(Q9K_MEMOWNER_OWNER(i), 0UL);
+            Q9K_SetU32(Q9K_MEMOWNER_ADDR(i), 0UL);
+            Q9K_SetU32(Q9K_MEMOWNER_SIZE(i), 0UL);
+            return;
+        }
+    }
+}
+#endif
+
+void Q9K_ProcMemReleaseAll(Q9_u32 owner)
+{
+    Q9_u32 i;
+    Q9_u32 addr;
+    Q9_u32 size;
+
+    if (owner == 0UL)
+        return;
+
+    Q9K_ProcMemTrackEnsure();
+
+    for (i = 0; i < Q9K_MEMOWNER_SLOTS; ++i) {
+        if (Q9K_GetU32(Q9K_MEMOWNER_OWNER(i)) != owner)
+            continue;
+
+        addr = Q9K_GetU32(Q9K_MEMOWNER_ADDR(i));
+        size = Q9K_GetU32(Q9K_MEMOWNER_SIZE(i));
+        Q9K_SetU32(Q9K_MEMOWNER_OWNER(i), 0UL);
+        Q9K_SetU32(Q9K_MEMOWNER_ADDR(i), 0UL);
+        Q9K_SetU32(Q9K_MEMOWNER_SIZE(i), 0UL);
+        if (addr != 0UL && size != 0UL)
+            Q9K_FreeMem(addr, size);
+    }
+}
+
 /* Q9K_ProcSRqMem -- echte F$SRqMem-Kernlogik (s. Kopfkommentar).
  * Rueckgabe 1 = Erfolg (*outAddr und *outSize gueltig), 0 = Fehlschlag
  * (*outError gesetzt). requestedSize==0xFFFFFFFF (echtes d0.l=-1) loest
@@ -105,27 +203,44 @@ int Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outSize, Q9_u1
     Q9_u32 addr;
     Q9_u32 size;
 
+#if !defined(Q9K_TEST_HOST)
+    Q9K_ProcMemTrackEnsure();
+#endif
+
     if (requestedSize == 0xFFFFFFFFUL) {
+        Q9K_MemTraceBeginCapture();
         addr = Q9K_AllocLargest(&size);
+        Q9K_MemTraceEndCapture();
         if (addr == 0) {
             /* Arena komplett leer -- "kein RAM verfuegbar" passt inhaltlich
              * praeziser als E_MEMFUL (das eher "zu wenig fuer DIESE
              * Anfrage" bedeutet, hier gibt es aber ueberhaupt keine
              * Anfragegroesse zum Vergleichen). */
             *outError = (Q9_u16)Q9K_E_NORAM;
+            Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_REQUEST, requestedSize, 0UL, 0UL,
+                             (Q9_u32)Q9K_E_NORAM, Q9K_GetU32(Q9_D_FREEMEM));
             return 0;
         }
     } else {
         size = Q9K_RoundUp16(requestedSize);
+        Q9K_MemTraceBeginCapture();
         addr = Q9K_AllocMem(requestedSize);
+        Q9K_MemTraceEndCapture();
         if (addr == 0) {
             *outError = (Q9_u16)Q9K_E_MEMFUL;
+            Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_REQUEST, requestedSize, 0UL, 0UL,
+                             (Q9_u32)Q9K_E_MEMFUL, Q9K_GetU32(Q9_D_FREEMEM));
             return 0;
         }
     }
 
     *outAddr = addr;
     *outSize = size;
+#if !defined(Q9K_TEST_HOST)
+    Q9K_ProcMemTrackAdd(Q9K_GetU32(Q9_D_PROC), addr, size);
+#endif
+    Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_REQUEST, requestedSize, addr, size, 0UL,
+                     Q9K_GetU32(Q9_D_FREEMEM));
     return 1;
 }
 
@@ -134,7 +249,23 @@ int Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outSize, Q9_u1
  * Durchreicher an Q9K_FreeMem. */
 void Q9K_ProcSRtMem(Q9_u32 addr, Q9_u32 size)
 {
-    Q9K_FreeMem(addr, Q9K_RoundUp16(size));
+    Q9_u32 roundedSize = Q9K_RoundUp16(size);
+#if !defined(Q9K_TEST_HOST)
+    /* Keep the process-release entry point live in the object module and
+     * provide a defensive kernel-internal escape hatch for future callers. */
+    if (addr == 0UL && size == 0UL) {
+        Q9K_ProcMemReleaseAll(Q9K_GetU32(Q9_D_PROC));
+        return;
+    }
+#endif
+#if !defined(Q9K_TEST_HOST)
+    Q9K_ProcMemTrackRemove(addr, roundedSize);
+#endif
+    Q9K_MemTraceBeginCapture();
+    Q9K_FreeMem(addr, roundedSize);
+    Q9K_MemTraceEndCapture();
+    Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_RETURN, size, addr, roundedSize, 0UL,
+                     Q9K_GetU32(Q9_D_FREEMEM));
 }
 
 /* Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
