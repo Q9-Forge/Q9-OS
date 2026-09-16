@@ -8192,3 +8192,16 @@ erzeugte jedoch noch keine `@`-/`#`-/`!`-Marker. Damit ist der direkte
 Attach-/Detach-Nachweis weiterhin offen; die nächste Untersuchung muss den
 F$Fork-/Prozessstartpfad bis zum tatsächlichen Einsprung in `iattachsvc`
 verfolgen.
+## Fortsetzung 75: Vollständiger CF/RBF-Attach-/Detach-Nachweis (2026-09-17)
+
+Der direkte Attach-Test ist jetzt als standardmäßig deaktivierter Schalter
+`Q9K_TestDirectAttach` im Kernel reproduzierbar auswählbar. Im aktivierten
+Testmodus wird der Shell-/Dateitest nach der IOMan-Initialisierung übersprungen
+und `iattachsvc` direkt per `F$Fork` gestartet.
+
+Der Emulatorlauf mit `rbf`, `cfide`, `d0` und `c0` erzeugte die Markerfolge
+`J@#`: `F$Fork` war erfolgreich, `I$Attach("c0")` erfolgreich und der
+anschließende `I$Detach` ebenfalls erfolgreich. Es gab keinen `!`-Marker,
+keinen Illegal-Instruction-Fehler und keinen Vektorfehler (`Vektor=0`). Damit
+ist der bisher offene CF/RBF-Attach-/Detach-Pfad im direkten Prozess-Test
+nachgewiesen. Der Schalter bleibt für den normalen Boottest auf `0`.
