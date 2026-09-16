@@ -121,7 +121,7 @@ I/O replacements remain future work.
 |---|---:|---|---|
 | 🟡 | `0x80` | I$Attach | Microware path exists; no complete current Q9 emulator verification |
 | 🟡 | `0x81` | I$Detach | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x82` | I$Dup | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication is implemented and exercised during boot; full path-lifetime semantics remain open |
 | 🟡 | `0x83` | I$Create | Microware path exists; no complete current Q9 emulator verification |
 | 🔷 | `0x84` | I$Open | Microware console path exercised; Q9-native support remains open |
 | 🟡 | `0x85` | I$MakDir | Microware path exists; no complete current Q9 emulator verification |
@@ -131,7 +131,7 @@ I/O replacements remain future work.
 | 🟡 | `0x89` | I$Read | Microware path exists; no complete current Q9 emulator verification |
 | 🟡 | `0x8A` | I$Write | Microware path exists; no complete current Q9 emulator verification |
 | 🟡 | `0x8B` | I$ReadLn | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x8C` | I$WritLn | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output is implemented and exercised by `hellosvc`; full device semantics remain open |
 | 🟡 | `0x8D` | I$GetStt | Microware path exists; no complete current Q9 emulator verification |
 | 🟡 | `0x8E` | I$SetStt | Microware path exists; no complete current Q9 emulator verification |
 | 🟡 | `0x8F` | I$Close | Microware path exists; no complete current Q9 emulator verification |
