@@ -1712,6 +1712,18 @@ Q9K_StartupProc:
 * mshell is resident in the boot module directory, as in the original
 * sysgo path.  Do not F$Load it again from the child process context.
 
+* Match sysgo's directory setup before starting the shell.  mshell resolves
+* commands through the process execution directory, while startup scripts
+* commonly use the data directory for relative file names.
+        moveq   #3,d0                         * Read_ + Write_
+        lea     Q9K_StartupDataDir(pc),a0
+        trap    #0
+        dc.w    $0086                         * I$ChgDir data directory
+        moveq   #1,d0                         * Exec_
+        lea     Q9K_StartupExecDir(pc),a0
+        trap    #0
+        dc.w    $0087                         * I$ChgDir execution directory
+
 * Open the real OS-9 startup script and make it standard input.
         move.w  #$0001,d0                     * Read_
         lea     Q9K_StartupFilePath(pc),a0
@@ -1757,8 +1769,13 @@ Q9K_StartupFilePath:
 Q9K_StartupShellName:
         dc.b    "mshell",0
         align   4
+Q9K_StartupDataDir:
+        dc.b    "/dd",0
+Q9K_StartupExecDir:
+        dc.b    "/dd/CMDS",0
+        align   4
 Q9K_StartupParams:
-        dc.b    "-npxt",0
+        dc.b    "-npt",0
         dc.b    $0d
         dc.b    "SHELL=mshell",0
         dc.b    252,1,0,0,0,26,"mshell",0,0,0,$0d
