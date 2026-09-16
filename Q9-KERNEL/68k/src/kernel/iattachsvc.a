@@ -1,0 +1,68 @@
+*******************************************************************************
+* iattachsvc.a -- direct I$Attach/I$Detach regression module.
+*
+* This test deliberately exercises the external IOMan path.  It does not use
+* the native Q9 I$Open handler: I$Attach must resolve the descriptor named
+* "c0", link cfide and RBF, return the device-table address in A2, and allow
+* that entry to be detached again.
+*
+* The module uses the startup name "hellosvc" when selected for a boot run;
+* the build output remains named iattachsvc so it can replace the normal
+* hello test module temporarily without changing the kernel startup code.
+*
+* Result markers are written directly to the DUART so the test remains useful
+* even when the I/O path under test is the failing path:
+*   @ = I$Attach succeeded
+*   # = I$Detach succeeded
+*   ! = either operation failed
+*******************************************************************************
+Q9Prgrm                 equ     1
+Q9Objct                 equ     1
+Q9K_AttachEdition       equ     1
+Q9K_AttachStackSize     equ     $1000
+
+        psect   hellosvc,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_AttachEdition,Q9K_AttachStackSize,Q9K_AttachStart
+
+        vsect
+Q9K_AttachData:
+        ds.l    1
+        ends
+
+Q9K_AttachStart:
+        moveq   #3,d0                           * Read + write access
+        lea     Q9K_AttachName(pc),a0
+        trap    #0
+        dc.w    $0080                          * I$Attach
+        bcs     Q9K_AttachFailed
+
+        moveq   #'@',d7
+        move.b  d7,$FFFFF006
+
+        trap    #0
+        dc.w    $0081                          * I$Detach, A2 from I$Attach
+        bcs     Q9K_DetachFailed
+
+        moveq   #'#',d7
+        move.b  d7,$FFFFF006
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                               * F$Exit
+
+Q9K_AttachFailed:
+        moveq   #'!',d7
+        move.b  d7,$FFFFF006
+        bra     Q9K_AttachExit
+
+Q9K_DetachFailed:
+        moveq   #'!',d7
+        move.b  d7,$FFFFF006
+
+Q9K_AttachExit:
+        moveq   #1,d1
+        trap    #0
+        dc.w    6                               * F$Exit
+
+Q9K_AttachName:
+        dc.b    "c0",0
+
+        endsect

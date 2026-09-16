@@ -88,6 +88,8 @@ int main(void)
              (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_NUM_OFF), 3);
     checkU32("I$Open traegt den Zugriffsmodus in PD_MOD ein -- ohne ihn verweigert IOMan jeden Zugriff",
              (Q9_u32)*(volatile unsigned char *)(unsigned long)(poolBase + Q9K_PATHDESC_MODE_OFF), 3);
+    checkU32("I$Open startet die native Referenzzaehlung bei 1",
+             (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_REF_OFF), 1);
 
     /* Fall 2: zweiter, unabhaengiger Pfad -- naechste Pfadnummer = 4. */
     num2 = Q9K_ProcIOpen(1, name2Addr, &past);

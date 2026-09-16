@@ -119,23 +119,23 @@ I/O replacements remain future work.
 
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
-| 🟡 | `0x80` | I$Attach | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x81` | I$Detach | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication is implemented and exercised during boot; full path-lifetime semantics remain open |
+| 🟡 | `0x80` | I$Attach | External IOMan/SCF path; the Q9 external dispatcher supports the observed `/term` attach sequence, full device semantics remain open |
+| 🟡 | `0x81` | I$Detach | External IOMan/File-Manager path; standalone detach and device-lifetime verification remain open |
+| 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication and reference counting are implemented; full file-manager semantics remain open |
 | 🟡 | `0x83` | I$Create | Microware path exists; no complete current Q9 emulator verification |
-| 🔷 | `0x84` | I$Open | Microware console path exercised; Q9-native support remains open |
+| 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; full pathname/device semantics remain open |
 | 🟡 | `0x85` | I$MakDir | Microware path exists; no complete current Q9 emulator verification |
 | 🟡 | `0x86` | I$ChgDir | Microware path exists; no complete current Q9 emulator verification |
 | 🟡 | `0x87` | I$Delete | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x88` | I$Seek | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x89` | I$Read | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x8A` | I$Write | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x8B` | I$ReadLn | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x88` | I$Seek | Sequential Q9-native paths accept seek as a validated no-op; random-access semantics remain open |
+| 🟡 | `0x89` | I$Read | Minimal Q9-native blocking console input is implemented; full device semantics remain open |
+| 🟡 | `0x8A` | I$Write | Minimal Q9-native console output is implemented; full device semantics remain open |
+| 🟡 | `0x8B` | I$ReadLn | Minimal Q9-native blocking line input is implemented; editing and device semantics remain open |
 | 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output is implemented and exercised by `hellosvc`; full device semantics remain open |
-| 🟡 | `0x8D` | I$GetStt | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x8E` | I$SetStt | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x8F` | I$Close | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x92` | I$SGetSt | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x8D` | I$GetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
+| 🟡 | `0x8E` | I$SetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
+| 🟡 | `0x8F` | I$Close | Minimal Q9-native path release with reference counting is implemented; file-manager close semantics remain open |
+| 🟡 | `0x92` | I$SGetSt | Minimal Q9-native `SS_Opt` support for direct system paths; permission, device-name, and file-manager semantics remain open |
 
 ## Current interpretation
 
