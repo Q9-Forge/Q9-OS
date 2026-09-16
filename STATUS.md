@@ -8,7 +8,7 @@ IOMan integration, not to the original OS-9 implementation.
 |---|---|
 | ✅ | Implemented and exercised in the current kernel test path |
 | 🟡 | Partially implemented, limited, or not yet completely verified |
-| 🔷 | Microware-backed compatibility path exists or is planned; complete Q9 integration and verification are still open |
+| 🔷 | Works with Microware components in a current emulator test; Q9-native replacement is still open |
 | ❌ | Not implemented or still routed to the unimplemented-service stub |
 
 The call-code names and the complete call-code set are based on
@@ -21,7 +21,7 @@ supported.
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
 | ✅ | `0x00` | F$Link | Kernel module lookup/link path implemented and exercised |
-| 🔷 | `0x01` | F$Load | Microware IOMan path is available; Q9 kernel integration and full verification remain open |
+| 🟡 | `0x01` | F$Load | Microware path exists, but no complete current Q9 emulator verification |
 | ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
 | ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
@@ -35,12 +35,12 @@ supported.
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
 | ❌ | `0x0D` | F$SPrior | Not implemented |
 | ❌ | `0x0E` | F$STrap | Not implemented |
-| 🔷 | `0x0F` | F$PErr | Microware IOMan path is available; complete compatibility verification remains open |
+| 🟡 | `0x0F` | F$PErr | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
 | ❌ | `0x11` | F$CmpNam | Not implemented |
-| 🔷 | `0x12` | F$SchBit | Microware IOMan path is available; complete compatibility verification remains open |
-| 🔷 | `0x13` | F$AllBit | Microware IOMan path is available; complete compatibility verification remains open |
-| 🔷 | `0x14` | F$DelBit | Microware IOMan path is available; complete compatibility verification remains open |
+| 🟡 | `0x12` | F$SchBit | Microware path exists; current Q9 compatibility is not fully verified |
+| 🟡 | `0x13` | F$AllBit | Microware path exists; current Q9 compatibility is not fully verified |
+| 🟡 | `0x14` | F$DelBit | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x15` | F$Time | Handler exists; clock source and full validation remain open |
 | ❌ | `0x16` | F$STime | Not implemented |
 | ❌ | `0x17` | F$CRC | Not implemented |
@@ -63,7 +63,7 @@ supported.
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking and emulator test complete |
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |
 | 🟡 | `0x2A` | F$IRQ | Kernel path exists; complete interrupt-device coverage remains open |
-| 🔷 | `0x2B` | F$IOQu | Microware IOMan path is available; complete compatibility verification remains open |
+| 🟡 | `0x2B` | F$IOQu | Microware path exists; current Q9 compatibility is not fully verified |
 | ❌ | `0x2C` | F$AProc | Not implemented |
 | ❌ | `0x2D` | F$NProc | Not implemented |
 | 🟡 | `0x2E` | F$VModul | Validation path exists; complete loader integration remains open |
@@ -71,7 +71,7 @@ supported.
 | 🟡 | `0x30` | F$AllPD | Basic descriptor allocation path exists; full OS-9 semantics remain open |
 | 🟡 | `0x31` | F$RetPD | Basic descriptor return path exists; full validation remains open |
 | 🟡 | `0x32` | F$SSvc | Service registration path exists; broader service semantics remain open |
-| 🔷 | `0x33` | F$IODel | Microware IOMan path is available; complete compatibility verification remains open |
+| 🟡 | `0x33` | F$IODel | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x37` | F$GProcP | Basic process-property path exists; full property set remains open |
 | ✅ | `0x38` | F$Move | Memory move path implemented |
 | ❌ | `0x39` | F$AllRAM | Not implemented |
@@ -105,23 +105,23 @@ supported.
 
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
-| 🔷 | `0x80` | I$Attach | Microware IOMan/device-manager path exists; kernel integration and tests remain open |
-| 🔷 | `0x81` | I$Detach | Microware IOMan/device-manager path exists; kernel integration and tests remain open |
-| 🔷 | `0x82` | I$Dup | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x83` | I$Create | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x84` | I$Open | Kernel bridge exists; complete Microware compatibility and Q9-native support remain open |
-| 🔷 | `0x85` | I$MakDir | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x86` | I$ChgDir | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x87` | I$Delete | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x88` | I$Seek | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x89` | I$Read | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x8A` | I$Write | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x8B` | I$ReadLn | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x8C` | I$WritLn | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x8D` | I$GetStt | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x8E` | I$SetStt | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x8F` | I$Close | Microware IOMan path exists; kernel integration and tests remain open |
-| 🔷 | `0x92` | I$SGetSt | Microware IOMan path exists; kernel integration and tests remain open |
+| 🟡 | `0x80` | I$Attach | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x81` | I$Detach | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x82` | I$Dup | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x83` | I$Create | Microware path exists; no complete current Q9 emulator verification |
+| 🔷 | `0x84` | I$Open | Microware console path exercised; Q9-native support remains open |
+| 🟡 | `0x85` | I$MakDir | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x86` | I$ChgDir | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x87` | I$Delete | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x88` | I$Seek | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x89` | I$Read | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x8A` | I$Write | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x8B` | I$ReadLn | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x8C` | I$WritLn | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x8D` | I$GetStt | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x8E` | I$SetStt | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x8F` | I$Close | Microware path exists; no complete current Q9 emulator verification |
+| 🟡 | `0x92` | I$SGetSt | Microware path exists; no complete current Q9 emulator verification |
 
 ## Current interpretation
 
