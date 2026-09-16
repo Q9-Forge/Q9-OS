@@ -230,3 +230,19 @@ Weitere Architekturports und neue Funktionsgruppen sind dafür nicht nötig.
   der bisher reproduzierbare Adressfehler vollständig: kein `Vektor=11`, kein
   `A6=0x56539`. Der Lauf bleibt danach ohne Exception im noch offenen
   Startup-/Shell-Pfad hängen; das ist ein nachgelagerter, separater Testpunkt.
+
+## Nachtrag 16.09.2026 – Startup-/Shell-Parameter korrigiert
+
+- Der verbleibende `mshell`-Fehler `E$MNF` lag nicht an einem weiteren
+  fehlenden Kommandomodul. Die Parameterstruktur unseres `F$Fork`-Aufrufs
+  wich von der Referenz `sysgo_smart.a` ab: verwendet wurde `-npxt` statt
+  `-npt` sowie ein eigener, inkompatibler Parameterblock.
+- Der Startup-Prozess richtet jetzt vor dem Shell-Aufruf die Datenbasis
+  `/dd` und das Ausführungsverzeichnis `/dd/CMDS` ein und verwendet den
+  vollständigen, von `sysgo_smart` belegten Parameter-/Environment-/argv-
+  Block.
+- Verifiziert im Emulator mit neu gebautem Kernel und Bootfile:
+  `W00000000` – `mshell` startet und beendet den Startup-Aufruf ohne
+  Fehler. Der anschließende `S`-Loop ist der absichtliche aktuelle
+  `Q9K_StartupIdle`, keine Exception. Kein `Vektor=11` und kein
+  `E$MNF` mehr.
