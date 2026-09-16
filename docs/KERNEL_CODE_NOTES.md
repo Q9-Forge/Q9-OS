@@ -147,11 +147,51 @@ Fehlerindikator aus dem vorangegangenen Aufruf und verzweigt bei
 "Fehler angezeigt" direkt zum Exit, ansonsten (kein Fehler, aber ein
 bestimmtes Deskriptorfeld gesetzt) zu einer Ereigniszustellung, sonst
 zu einer normalen Weiterplanung (Ready-Queue-Insert + Scheduler, ohne
-Exit). Das legt nahe: der eigentliche Auslöser ist ein *fehlgeschlagener
-Aufruf* (vermutlich ein Modul-Lade- oder Verzeichnis-Zugriff) kurz vor
-diesem Nachlauf – die Fehlermeldung selbst wird korrekt weiterverarbeitet
-(Prozess wird sauber beendet, kein Absturz), aber sie tritt an dieser
-Stelle offenbar zu früh auf.
+Exit).
+
+**Korrektur, Folgesitzung:** Die vorstehende Vermutung ("eigentlicher
+Auslöser ist ein fehlgeschlagener Aufruf") wurde live widerlegt. Der
+unmittelbare Aufrufer des Nachlaufs bei `0x1a70` wurde gefunden: eine
+größere Routine ab Modul-Offset `~0x1900`, die ein neues
+Prozessdeskriptor-Feld initialisiert (u. a. die beiden Syscall-
+Sprungtabellenzeiger auf 0 setzt), danach über den öffentlichen
+Sprungtabellen-Mechanismus `F$Move` aufruft (Syscall `0x38`, live
+`0xa1a0`) und bei dessen Rückkehr direkt in eine weitere Hilfsroutine
+(Modul-Offset `0x1a26`) fällt, die ihrerseits einen manuell
+konstruierten Rücksprungrahmen auf den Stack der Zielroutine legt, der
+bei `0x1a70` "zurückkehrt". Das Gesamtmuster (Sprungtabellenzeiger neu
+setzen, `F$Move`, danach ein "Rücksprung mit D0=5") entspricht eher der
+**normalen Ausführung von `F$Fork` oder `F$Chain`** (Prozesserzeugung
+bzw. Bildwechsel) als einem Fehlerpfad – `F$Chain` liegt als
+öffentlicher Einstiegspunkt bei live `0x8a28`, unmittelbar in
+derselben Codeumgebung.
+
+Live-Verifikation (Haltepunkt direkt bei `0x1a70`, Register- und
+Flag-Zustand ausgelesen): Das Carry-Flag ist beim Eintritt **nicht**
+gesetzt, `D0=5`. Der Sprung "bei Fehler direkt zum Exit" wird an dieser
+Stelle also NICHT genommen – stattdessen läuft die Ausführung normal
+weiter über `F$AProc` (Ready-Queue-Insert) und `F$NProc` (Scheduler),
+exakt wie bei den ersten beiden, unauffälligen Prozess-Austritten. Das
+widerlegt die vorherige Annahme, genau dieser Codepfad sei für den
+Hänger verantwortlich.
+
+**Neue Beobachtung, noch nicht abschließend eingeordnet:** Trotz dieses
+erfolgreichen Durchlaufs landet derselbe Testlauf am Ende dennoch in
+derselben bekannten Leerlaufadresse – der Bootvorgang hängt also
+weiterhin, nur läuft der konkret beobachtete Prozessdeskriptor
+(`0xffcf30`) diesmal noch mindestens eine Runde weiter, bevor
+(vermutlich) ein anderer oder dieselbe Deskriptor-Adresse (durch
+Wiederverwendung im Speicherpool nicht immer derselbe *Prozess*) den
+tatsächlich folgenlosen Austritt macht. Die genaue Zuordnung "welcher
+Prozess-Austritt in welchem Testlauf genau der letzte ist" scheint
+also zwischen einzelnen Testläufen (Freilauf vs. Einzelschritt-
+Betrieb über die Debug-Schnittstelle) leicht zu variieren, während der
+Endzustand (Leerlauf an derselben Adresse) durchgehend gleich bleibt.
+Das spricht dafür, den nächsten Untersuchungsschritt nicht mehr auf
+eine einzelne, vermeintlich "die" fehlerhafte Deskriptor-Instanz zu
+fokussieren, sondern generischer zu fragen: an welcher Stelle wird
+letztendlich (gleich in welchem Testlauf) tatsächlich mit leerem
+Reaktivierungs-Feld ausgetreten, und welcher Aufrufer führt dorthin.
 
 **Bereits geprüfte und verworfene Nebenhypothese:** Die Wochentags-
 Berechnung des Echtzeituhr-Ports (`Q9-Flux-68kQEMU`) unterscheidet sich
@@ -165,16 +205,19 @@ zeitlich benachbart gefundene Schaltjahr-Arithmetik (`divsll`-basierte
 365/366-Tage-Verzweigung nahe dem Divergenzpunkt) einen Datumsbezug
 zunächst nahelegte.
 
-**Nächster Ansatzpunkt:** den unmittelbaren Aufrufer des Nachlaufs bei
-`0x1a70` identifizieren (vermutlich Teil der `F$Load`-Implementierung
-oder eines Verzeichnis-Suchpfads, live-Adresse der `F$Load`-
-Tabelleneintrags ist `0xe712`) und dessen Fehlerbedingung mit der
-Referenzumgebung an derselben Stelle vergleichen – dort tritt an dieser
-Stelle offenbar kein Fehler auf. Der noch nicht vollständig gelesene
-Codeblock bei Modul-Offset `0x554`–`0xbbf` (Trap-Rückkehr-/Reschedule-
-Logik, teilweise deckungsgleich mit dem bei `0xba4` beginnenden Block –
-vermutlich zwei Einstiegspunkte in denselben Code) bleibt ebenfalls ein
-Kandidat für die eigentliche Verzeichnis-/Modul-Scan-Entscheidung.
+**Nächster Ansatzpunkt:** statt eines einzelnen Haltepunkts auf einen
+vermeintlich eindeutigen Codepfad lieber alle Stellen instrumentieren,
+an denen die Prozess-Exit-Routine (`0x24d8`) mit leerem
+Reaktivierungsfeld eintritt, unabhängig davon, über welchen der
+mehreren bekannten Aufrufer (`0x1a70`/`0x1a9c` im gemeinsamen Nachlauf,
+sowie die beiden anderen, noch nicht untersuchten Aufrufer aus der
+älteren Aufrufer-Liste) das geschieht – und für GENAU diesen einen
+Fall den unmittelbaren Aufrufer identifizieren. Der noch nicht
+vollständig gelesene Codeblock bei Modul-Offset `0x554`–`0xbbf`
+(Trap-Rückkehr-/Reschedule-Logik, teilweise deckungsgleich mit dem bei
+`0xba4` beginnenden Block – vermutlich zwei Einstiegspunkte in
+denselben Code) bleibt ebenfalls ein Kandidat für die eigentliche
+Verzeichnis-/Modul-Scan-Entscheidung.
 
 ## Werkzeugnotizen
 
