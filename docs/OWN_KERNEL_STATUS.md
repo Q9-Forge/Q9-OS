@@ -8205,3 +8205,27 @@ anschließende `I$Detach` ebenfalls erfolgreich. Es gab keinen `!`-Marker,
 keinen Illegal-Instruction-Fehler und keinen Vektorfehler (`Vektor=0`). Damit
 ist der bisher offene CF/RBF-Attach-/Detach-Pfad im direkten Prozess-Test
 nachgewiesen. Der Schalter bleibt für den normalen Boottest auf `0`.
+
+## Fortsetzung 76: `date`-F$Load isoliert (2026-09-17)
+
+Der kombinierte normale Testlauf bleibt nach dem F$Link-Schutz stabil: kein
+Illegal Instruction, kein Formatfehler und kein Vektorfehler. Die vielen
+`A`-Zeichen stammen weiterhin aus der absichtlich laufenden
+`Q9K_TestProcA`-Scheduler-Schleife.
+
+Der vorhandene Testschalter `Q9K_TestPrograms` wurde vorübergehend auf den
+isolierten `date`-Fall (`2`) gesetzt und danach wieder auf den kombinierten
+Standardwert (`3`) zurückgestellt. Das Modul `/dd/CMDS/date` ist im Testimage
+vorhanden; `os9 ident` bestätigt gültige Kopfparität und CRC. Trotzdem endet
+der isolierte Lauf nach dem Ladeversuch mit `E$MNF` (`$00D7`), und `date` wird
+nicht in der Q9-Moduldirectory-Kette sichtbar. Der Moduldirectory-Pool ist
+dabei nicht erschöpft.
+
+Damit ist der nächste Fehlerbereich enger eingegrenzt: Der Microware-
+`F$Load`-/RBF-Pfad findet oder registriert genau dieses vorhandene Kommando
+noch nicht zuverlässig. `F$Fork` und der Prozessstart sind für den separaten
+`iattachsvc`-Nachweis bereits erfolgreich getestet; eine Änderung an
+`F$Fork` wäre an dieser Stelle voreilig. Als nächstes sollte der Pfadname,
+der RBF-Rückgabecode und der Übergang von `F$Load` zu `F$VModul` für `date`
+direkt verglichen werden, am besten gegen den bereits erfolgreichen
+`echo`-Ladevorgang.
