@@ -7981,3 +7981,51 @@ NICHT beantwortet. Fuer eine Folgesitzung, MIT der jetzt verfuegbaren
 um zu sehen, ob/wie diese beiden Funktionen sich bei `echo`s und
 `date`s jeweiligem Aufruf unterscheiden -- DORT, nicht in der Arena,
 liegt die eigentliche Erklaerung.
+## Fortsetzung 62: Speicher-Trace-Scratch-Kollision gefunden und beseitigt (2026-09-16)
+
+Die neue Speicher-Trace-Instrumentierung hatte ihre Statusfelder ab `$1650`
+abgelegt. Dieser Bereich ist jedoch bereits fest belegt: `$1650-$1663`
+gehört zum `F$VModul`-Rückgabepuffer, `$1664/$1668` zu `F$SetSys` und
+der anschließende Bereich enthält weitere Kernel-Scratch-Felder. Dadurch
+konnte der Debug-Code beim Modul-Laden echte Systemdaten überschreiben.
+
+Die Trace-Felder wurden in den geprüften freien Bereich `$16C0-$16F8`
+verschoben, unmittelbar vor der Owner-Tabelle ab `$1710`. Der Kernel baut
+fehlerfrei; der Emulator-Test bestätigt, dass CF/RBF weiterhin bis zur
+Treiberinitialisierung läuft. Der bekannte spätere `scf`-Fehler mit
+`Vektor 4, PC=$6c` tritt in diesem Lauf weiterhin auf und ist damit nicht
+allein durch diese Scratch-Kollision verursacht. Die nächste Untersuchung
+bleibt der Rücksprung-/Dispatchpfad von `scf`.
+
+## Fortsetzung 63: A4-Herkunftsprüfung im Trap-Dispatcher korrigiert (2026-09-16)
+
+Die Herkunftsprüfung in `Q9K_TrapDispatch` verwendete `A4` vorübergehend als
+Kernel-Modulbasis. Im Fremdaufrufer-Pfad wurde dieser Wert vor dem direkten
+Handleraufruf nicht wiederhergestellt. Ein verschachtelter Systemaufruf aus
+IOMan/RBF konnte dadurch mit `A4=$7100` statt mit dem Prozessdeskriptor laufen.
+
+Der ursprüngliche `A4`-Wert wird jetzt stackbasiert gesichert und vor dem
+Fremdhandler sowie vor der Rückkehr wiederhergestellt. Der Testlauf bestätigt
+für beide beobachteten `F$SRqMem`-Aufrufe `A4=$55510` am Dispatch-Eintritt;
+der Aufruf kehrt anschließend korrekt in RBF zurück.
+
+Der vollständige CF-Lauf scheitert danach weiterhin mit `Vektor 4, PC=$6c`.
+Die weitere Spur liegt somit hinter dem erfolgreichen Speicheraufruf, im
+RBF-/CFIDE-Rückkehrpfad; der A4-Fehler war real, aber nicht die letzte Ursache.
+
+## Fortsetzung 64: Externer Trap-Rückweg korrigiert (2026-09-16)
+
+Im Rückweg von extern über `F$SSvc` registrierten Handlern wurde der
+72-Byte-Registerrahmen entfernt, anschließend aber `78` statt `72` Byte zum
+ursprünglichen Hardware-Exception-Frame weitergeschaltet. `RTE` las dadurch
+das Format-/Vektorwort an der falschen Position; das erklärte den späteren
+Sprung auf `PC=$6c`.
+
+Die Korrektur in `Q9K_TrapCallExternal` verwendet jetzt `lea 72(sp),sp`.
+Der Kernel und das Bootfile wurden neu gebaut. Der anschließende CF-Emulator-
+Test erreicht den wiederholten Scheduler-/Prozesslauf mit den erwarteten
+`A`-Ausgaben; die vorherige `Vektor 4, PC=$6c`-Exception tritt in diesem
+Lauf nicht mehr auf. Ein anschließender Stabilitätstest über rund 90 Sekunden
+produzierte etwa 560.000 `A`-Ausgaben, ohne Exception, Illegal Instruction
+oder `PC=$6c`; der Dump meldete `Vektor=0`. Der Rückweg ist damit im
+Emulator als behoben und stabil einzustufen.

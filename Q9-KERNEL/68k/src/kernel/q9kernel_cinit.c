@@ -91,6 +91,8 @@ extern void   Q9K_SysFSRtMem(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F
 extern void   Q9K_SysFSSvc(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$SSvc (Callcode 0x32) */
 extern void   Q9K_SysFGProcP(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$GProcP (Callcode 0x37) */
 extern void   Q9K_SysFIOpen(void);
+extern void   Q9K_SysFIDup(void);   /* q9kernel_entry.a, I$Dup (Callcode 0x82) */
+extern void   Q9K_SysFIWritLn(void); /* q9kernel_entry.a, I$WritLn (Callcode 0x8c) */
 extern void   Q9K_SysFAllPD(void);   /* q9kernel_entry.a, F$AllPD (Callcode 0x30) */
 extern void   Q9K_SysFIRQ(void);     /* q9kernel_entry.a, F$IRQ  (Callcode 0x2a) */
 extern void   Q9K_SysFChkMem(void);  /* q9kernel_entry.a, F$ChkMem (Callcode 0x58) */
@@ -107,6 +109,8 @@ extern void   Q9K_SysFCCtl(void);         /* q9kernel_entry.a, F$CCtl  (Callcode
 extern void   Q9K_SysFSetSys(void);       /* q9kernel_entry.a, F$SetSys (Callcode 0x27) */
 extern void   Q9K_SysFTime(void);         /* q9kernel_entry.a, F$Time (Callcode 0x15) */
 extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
+extern void   Q9K_MemTraceInit(void);     /* q9kernel_debug.c */
+extern void   Q9K_ProcMemTrackInit(void); /* q9kernel_sysmem.c */
 /* TEMPORAERE DIAGNOSE (2026-08-18) -- s. Kopfkommentar bei Q9K_Entry in
  * q9kernel_entry.a. Vor dem naechsten "echten" Meilenstein-Commit
  * wieder entfernen oder hinter ein Q9K_DIAG-Flag stellen (TODO). */
@@ -243,6 +247,8 @@ static void Q9K_InitEmptyQueue(Q9_u32 queueBase, Q9_u32 headOff, Q9_u32 tailOff)
 
 void Q9K_CInit(void)
 {
+    Q9K_MemTraceInit();
+    Q9K_ProcMemTrackInit();
     Q9K_Diag4(); /* TEMPORAERE DIAGNOSE, s. o. */
 
     /* Sechs leere Ringlisten -- exakte Offsets aus q9sysglob.h bzw. dem
@@ -411,6 +417,8 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x32UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSSvc);
                     Q9K_PutU32(usrdisBase + 0x37UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGProcP);
                     Q9K_PutU32(usrdisBase + 0x84UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIOpen);
+                    Q9K_PutU32(usrdisBase + 0x82UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIDup);
+                    Q9K_PutU32(usrdisBase + 0x8cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIWritLn);
                     Q9K_PutU32(usrdisBase + 0x30UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllPD);
                     Q9K_PutU32(usrdisBase + 0x31UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFRetPD);
                     Q9K_PutU32(usrdisBase + 0x38UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMove);
@@ -438,6 +446,8 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x32UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSSvc);
                     Q9K_PutU32(sysdisBase + 0x37UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGProcP);
                     Q9K_PutU32(sysdisBase + 0x84UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIOpen);
+                    Q9K_PutU32(sysdisBase + 0x82UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIDup);
+                    Q9K_PutU32(sysdisBase + 0x8cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIWritLn);
                     Q9K_PutU32(sysdisBase + 0x30UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllPD);
                     Q9K_PutU32(sysdisBase + 0x31UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFRetPD);
                     Q9K_PutU32(sysdisBase + 0x38UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMove);
@@ -519,8 +529,11 @@ void Q9K_CInit(void)
         Q9_u32 picked;
 
 #if Q9K_BOOT_STARTUP
-        /* Run the dedicated sysgo-style startup process after IOMan init. */
-        Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_StartupProc, 5);
+        /* Q9K_TestProcA performs the resident IOMan initialization before
+         * entering the sysgo-style shell path.  Starting Q9K_StartupProc
+         * directly would use I$ChgDir/I$Open before D_DevTbl and the
+         * process paths exist. */
+        Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
 #else
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcB, 3);

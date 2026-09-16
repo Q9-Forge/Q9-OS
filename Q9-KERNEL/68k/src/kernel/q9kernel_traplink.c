@@ -71,6 +71,10 @@ typedef unsigned char  Q9_u8;
 extern Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name);
 extern int    Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outSize, Q9_u16 *outError);
 extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
+#if defined(Q9K_MEMTRACE_ARENA)
+extern void   Q9K_MemTraceSetModule(Q9_u32 header);
+extern void   Q9K_MemTraceClearModule(void);
+#endif
 
 /* Modulheader-Offsets (s. src/q9moduleheader.h Q9_MH68K_*) -- lokal
  * dupliziert, gleiche Konvention wie q9kernel_moddir.c/q9kernel_modsearch.c. */
@@ -371,10 +375,22 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
         Q9_u32 grantedSize = 0;
         Q9_u16 memErr = 0;
 
+        /* F$TLink performs this allocation on behalf of the linked module,
+         * often before a normal process is current.  Keep the module as
+         * explicit debug context for the allocation event only. */
+#if defined(Q9K_MEMTRACE_ARENA)
+        Q9K_MemTraceSetModule(hdr);
+#endif
         if (!Q9K_ProcSRqMem(size, &staticPtr, &grantedSize, &memErr)) {
+#if defined(Q9K_MEMTRACE_ARENA)
+            Q9K_MemTraceClearModule();
+#endif
             *outError = memErr;
             return 0;
         }
+#if defined(Q9K_MEMTRACE_ARENA)
+        Q9K_MemTraceClearModule();
+#endif
         /* NACHTRAG 2026-09-11 (Fortsetzung 49): M$IData/M$IRefs des
          * Trap-Moduls selbst anwenden -- s. ausfuehrlichen Kopfkommentar
          * bei Q9K_ApplyInitializedData oben. NUR wenn wirklich eigener

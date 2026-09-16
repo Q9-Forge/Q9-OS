@@ -294,6 +294,21 @@ Q9K_SRqMemScratch_Success equ $1340      * Q9_u16, 0=Fehlschlag/1=Erfolg
 Q9K_SRtMemScratch_AddrIn  equ $1344      * Q9_u32, (a2) EIN (F$SRtMem)
 Q9K_SRtMemScratch_SizeIn  equ $1348      * Q9_u32, d0.l EIN
 
+* Q9K_MemTrace -- backend-neutral memory event fields.  The C event
+* router writes these fields before calling the current output backend.
+* $1650-$1663 belongs to F$VModul and $1664/$1668 to F$SetSys.
+* $1690-$16B4 belongs to F$TLink.  Keep this block in the verified gap
+* $16C0-$16F8, immediately before the memory-owner table at $1710.
+Q9K_MemTraceEnabled       equ $16C0      * Q9_u32, 0=disabled, 1=enabled
+Q9K_MemTraceOp            equ $16C4      * Q9_u32, 1=request, 2=return, 3=alloc, 4=free, 5=largest, 6=process release
+Q9K_MemTraceRequest       equ $16C8      * Q9_u32, requested size
+Q9K_MemTraceAddress       equ $16CC      * Q9_u32, allocated/returned address
+Q9K_MemTraceSize          equ $16D0      * Q9_u32, granted/returned size
+Q9K_MemTraceError         equ $16D4      * Q9_u32, error code or zero
+Q9K_MemTraceHead          equ $16D8      * Q9_u32, free-list head after event
+Q9K_MemTraceName          equ $16DC      * Q9_u32, current process module name
+Q9K_MemTraceContextHdr    equ $16E0      * Q9_u32, temporary module context
+
 * Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
 * Q9K_SysFSSvc (Abschnitt "IOMan-Einbindung", 2026-08-31 -- IOMans
 * allererster Aufruf beim Booten). Direkt hinter den SRtMem-Scratch-
@@ -625,6 +640,198 @@ Q9K_DiagHexWait:
         dbra    d4,Q9K_DiagHexLoop
         movem.l (sp)+,d4/d6/d7/a4
         rts
+
+* Q9K_MemTraceConsoleBackend -- first memory-event backend.  It emits a
+* compact, machine-readable line directly through the DUART and does not
+* enter any syscall or allocator path.  A later ring-buffer backend can
+* replace this routine without changing q9kernel_sysmem.c.
+Q9K_MemTraceConsoleBackend:
+        movem.l d0-d7/a0-a5,-(sp)
+        move.l  Q9K_MemTraceOp,d6
+        cmpi.l  #1,d6
+        beq     Q9K_MemTraceRequestLine
+        cmpi.l  #2,d6
+        beq     Q9K_MemTraceReturnLine
+        cmpi.l  #7,d6
+        beq     Q9K_MemTraceModuleLine
+
+* Direct allocator/process events retain their compact diagnostic form.
+        moveq   #'M',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        cmpi.l  #3,d6
+        beq     Q9K_MemTraceAlloc
+        cmpi.l  #4,d6
+        beq     Q9K_MemTraceFree
+        cmpi.l  #6,d6
+        beq     Q9K_MemTraceProcRelease
+        moveq   #'L',d7
+        bra     Q9K_MemTraceCompactOp
+Q9K_MemTraceAlloc:
+        moveq   #'A',d7
+        bra     Q9K_MemTraceCompactOp
+Q9K_MemTraceFree:
+        moveq   #'F',d7
+        bra     Q9K_MemTraceCompactOp
+Q9K_MemTraceProcRelease:
+        moveq   #'P',d7
+Q9K_MemTraceCompactOp:
+        bsr     Q9K_DiagWriteD7
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'r',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'=',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  Q9K_MemTraceRequest,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'a',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'=',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  Q9K_MemTraceAddress,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'s',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'=',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  Q9K_MemTraceSize,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'e',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'=',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  Q9K_MemTraceError,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #$0D,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #$0A,d7
+        bsr     Q9K_DiagWriteD7
+        movem.l (sp)+,d0-d7/a0-a5
+        rts
+
+* One transaction line for the external memory request.
+Q9K_MemTraceRequestLine:
+        moveq   #']',d7
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_MemTraceRqText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceRequest,d5
+        bsr     Q9K_DiagWriteHex32
+        lea     Q9K_MemTraceAllocText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceSize,d5
+        bsr     Q9K_DiagWriteHex32
+        lea     Q9K_MemTraceResultText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceError,d5
+        bne     Q9K_MemTraceRequestError
+        moveq   #'0',d7
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_MemTraceSuccessText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceSize,d5
+        bsr     Q9K_DiagWriteHex32
+        lea     Q9K_MemTraceAddressText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceAddress,d5
+        bsr     Q9K_DiagWriteHex32
+        bra     Q9K_MemTraceLineEnd
+Q9K_MemTraceRequestError:
+        moveq   #'1',d7
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_MemTraceErrorText(pc),a0
+        bsr     Q9K_DiagWriteText
+        bsr     Q9K_DiagWriteErrorName
+        bra     Q9K_MemTraceLineEnd
+
+* One transaction line for the external memory return.
+Q9K_MemTraceReturnLine:
+        moveq   #']',d7
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_MemTraceRtText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceRequest,d5
+        bsr     Q9K_DiagWriteHex32
+        lea     Q9K_MemTraceReturnAddrText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceAddress,d5
+        bsr     Q9K_DiagWriteHex32
+        lea     Q9K_MemTraceFreeText(pc),a0
+        bsr     Q9K_DiagWriteText
+        moveq   #'0',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_MemTraceLineEnd
+
+* F$VModul is the currently exercised module-load/validation path.
+Q9K_MemTraceModuleLine:
+        moveq   #']',d7
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_MemTraceModuleText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceRequest,d5
+        bsr     Q9K_DiagWriteHex32
+        lea     Q9K_MemTraceModuleAddrText(pc),a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceAddress,d5
+        bsr     Q9K_DiagWriteHex32
+        lea     Q9K_MemTraceResultText,a0
+        bsr     Q9K_DiagWriteText
+        move.l  Q9K_MemTraceError,d5
+        bne     Q9K_MemTraceModuleError
+        moveq   #'0',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_MemTraceLineEnd
+Q9K_MemTraceModuleError:
+        moveq   #'1',d7
+        bsr     Q9K_DiagWriteD7
+        lea     Q9K_MemTraceErrorText(pc),a0
+        bsr     Q9K_DiagWriteText
+        bsr     Q9K_DiagWriteErrorName
+
+Q9K_MemTraceLineEnd:
+        moveq   #$0D,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #$0A,d7
+        bsr     Q9K_DiagWriteD7
+        movem.l (sp)+,d0-d7/a0-a5
+        rts
+
+Q9K_DiagWriteText:
+        move.b  (a0)+,d7
+        tst.b   d7
+        beq     Q9K_DiagWriteTextDone
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_DiagWriteText
+Q9K_DiagWriteTextDone:
+        rts
+
+Q9K_DiagWriteErrorName:
+        cmpi.l  #$00CF,d5
+        beq     Q9K_DiagErrorMemFul
+        cmpi.l  #$00ED,d5
+        beq     Q9K_DiagErrorNoRam
+        cmpi.l  #$00E8,d5
+        beq     Q9K_DiagErrorBmCrc
+        bsr     Q9K_DiagWriteHex32
+        rts
+Q9K_DiagErrorMemFul:
+        lea     Q9K_DiagTextMemFul(pc),a0
+        bra     Q9K_DiagWriteText
+Q9K_DiagErrorNoRam:
+        lea     Q9K_DiagTextNoRam(pc),a0
+        bra     Q9K_DiagWriteText
+Q9K_DiagErrorBmCrc:
+        lea     Q9K_DiagTextBmCrc(pc),a0
+        bra     Q9K_DiagWriteText
+
 * ===== ENDE TEMPORAERE DIAGNOSE (Deklarationen) =====
 
 * Q9K_ZeroRange -- nullt d4 Byte ab a0 (a0 wird als Schreibzeiger
@@ -2238,21 +2445,28 @@ Q9K_TrapDispatch:
 * (a1)" weiter oben in dieser Datei). Damit laufen I$Open UND I$Read auf
 * /dd/startup erstmals sauber durch. Details: docs/OWN_KERNEL_STATUS.md
 * Fortsetzung 25-27.
+        move.l  a4,-(sp)                                  * preserve caller A4 across origin check
         lea     Q9K_ModuleStart(pc),a4               * a4 = Ende des generierten Modulkopfs
         suba.l  #Q9K_ModuleHeaderSize,a4                * a4 = WAHRER Modulanfang (M$ID-Wort)
         move.l  Q9K_TrapCallerPC,d7
         sub.l   a4,d7                                  * d7 = Ruecksprung-PC minus wahre Lade-Basis
         cmp.l   4(a4),d7                                * gegen echtes M$Size aus dem Modulkopf
         bcc     Q9K_TrapCallForeignCaller               * >= eigene Groesse: Aufrufer AUSSERHALB
-        movea.l Q9K_TrapHandlerScratch,a4                 * Aufrufer ist WIR SELBST: unveraendertes Verhalten
+        movea.l Q9K_TrapHandlerScratch,a4                 * Aufrufer ist WIR SELBST
         jsr     (a4)
+        movea.l (sp)+,a4                                  * restore caller A4
         bra     Q9K_TrapAfterCall
 Q9K_TrapCallForeignCaller:
 * Aufrufer liegt ausserhalb unseres Moduls (IOMan/File-Manager/Treiber) --
-* A4 muss dessen eigener Wert sein (vom Stack zurueck, s. Fix oben).
+* A4 must remain the caller's own process/device context.  The origin
+* check above temporarily used A4 for the kernel module base; restore the
+* saved value before entering the kernel-owned handler.  Without this,
+* an internal syscall issued by scf/ioman sees the kernel base in A4 and
+* can reject its path lock or calculate a bogus dispatch target.
 * "jsr (a4)" wuerde A4 zusaetzlich mit der Handler-Adresse ueberschreiben,
 * deshalb speicherindirekt ueber Opcode-Bytes (r68 kennt "jsr ([...])"
 * nicht, der 68030 die Adressierungsart aber sehr wohl).
+        movea.l (sp)+,a4                                  * restore foreign caller A4
         dc.w    $4ebb,$01f1                               * jsr ([Q9K_TrapHandlerScratch])
         dc.l    Q9K_TrapHandlerScratch
         bra     Q9K_TrapAfterCall
@@ -2271,7 +2485,11 @@ Q9K_TrapCallExternal:
 * zurueck, deshalb wird er hinterher nur verworfen.
 * "movem" kann A7 nicht mitschreiben, der Slot wird separat gesetzt;
 * ebenso SR/PC/Format, die aus dem Hardware-Exception-Frame stammen
-* (SP zeigt beim Eintritt hierher genau darauf).
+* (SP zeigt beim Eintritt hierher genau darauf). Der Dispatcher hat seinen
+* temporaeren Registerblock vor diesem Pfad bereits entfernt; nach dem
+* Anlegen des R$-Rahmens liegt der Hardware-Frame deshalb bei 72(sp).
+* Die zwischenzeitliche +16-Korrektur war falsch und verschob SR/PC/Format
+* sowie den Ruecksprung-Stackzeiger in den nachfolgenden Speicher.
 * Q9K_RaceRing-Log (TEMPORAER, s. Definition oben), Marker $58='X' =
 * Anfang externer Aufruf. d0-d2/a0 sind hier laut Konvention frei
 * (Handler-Ergebnisregister, noch nicht belegt); a4 (Aufrufer-A4) bleibt
@@ -2291,12 +2509,29 @@ Q9K_TrapCallExternal:
         movem.l (sp)+,d0-d2/a0
         lea     -72(sp),sp                      * Platz fuer den R$-Rahmen
         movem.l d0-d7/a0-a6,(sp)                 * R$d0..R$a6 (60 Byte, aufsteigend)
-        move.l  sp,$3c(sp)
-        addi.l  #72,$3c(sp)                       * R$a7 = Stackzeiger des Aufrufers
-        move.w  72(sp),$40(sp)                     * R$sr  aus dem Exception-Frame
-        move.l  74(sp),$42(sp)                      * R$pc
-        move.w  78(sp),$46(sp)                       * R$fmt (Format/Vektor)
+* IOMan and the file managers use the R$a7 word of this service image as
+* the I/O callcode when dispatching through a device/file-manager M$Exec
+* table.  The real caller stack remains in the hardware exception frame
+* and is not needed by these service routines.  Passing the live TRAP code
+* here is therefore required; passing the temporary stack pointer makes
+* IOMan read an arbitrary low word and index the M$Exec table backwards.
+        clr.l   $3c(sp)
+        move.w  ($1370).w,$3c(sp)                 * R$a7 high word = current callcode
+        move.w  72(sp),$40(sp)                    * R$sr  aus dem Exception-Frame
+        move.l  74(sp),$42(sp)                    * R$pc
+        move.w  78(sp),$46(sp)                    * R$fmt (Format/Vektor)
         movea.l sp,a5                                 * A5 = Rahmenbasis
+* OS-9 supplies the per-service static-data pointer in A3.  F$SSvc stores
+* that pointer in the secondary half of the dispatch table; the earlier
+* external-call path preserved the caller's A3 instead, which made a
+* registered I/O service see NULL/static garbage.  The call code remains in
+* the diagnostic scratch cell written by Q9K_TrapDispatch.
+        movea.l Q9_D_USRDIS,a0
+        move.w  ($1370).w,d7
+        add.w   d7,d7
+        add.w   d7,d7
+        adda.w   #$0400,a0
+        movea.l (a0,d7.w),a3
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04, beim ersten I$ReadLn): ab hier
 * laeuft FREMDER Code (ioman/scf/sc68681). Ruft der seinerseits einen Syscall
 * ueber das PEA+RTS-Trampolin, liegt auf dem Stack KEIN Exception-Frame --
@@ -2451,7 +2686,7 @@ Q9K_TrapAfterCall:
 * veraendert, das ist HIER folgenlos: RTE laedt SR ausschliesslich aus
 * dem Frame (bereits oben per "or.w d0,6(sp)" endgueltig gesetzt).
         movem.l d0-d2/a0,-(sp)
-        move.l  18(sp),d1                        * PC, der GLEICH per RTE zurueckgegeben wird
+        move.l  24(sp),d1                        * PC, der GLEICH per RTE zurueckgegeben wird
         move.l  Q9K_RaceRingIdx,d2
         andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
         movea.l #Q9K_RaceRingBase,a0
@@ -4065,6 +4300,62 @@ Q9K_SysFSSvc:
         rts
 
 *******************************************************************************
+* Q9K_SysFIWritLn -- minimal console I$WritLn implementation (Callcode $8c).
+* Handle standard console output directly while the external I/O stack is
+* still initializing, so sysgo diagnostics do not recurse through IOMan.
+* d0 = path number, d1 = byte count, a0 = source buffer.
+*******************************************************************************
+Q9K_SysFIWritLn:
+        movem.l d0-d2/a0,-(sp)
+        move.l  d1,d2
+Q9K_SysFIWritLn_Loop:
+        tst.l   d2
+        beq.s   Q9K_SysFIWritLn_Ok
+        move.b  (a0)+,d0
+        bsr     Q9K_IOManPutChar
+        cmpi.b  #$0d,d0                         * OS-9 line output ends at CR
+        beq.s   Q9K_SysFIWritLn_Ok
+        subq.l  #1,d2
+        bra.s   Q9K_SysFIWritLn_Loop
+Q9K_SysFIWritLn_Ok:
+        movem.l (sp)+,d0-d2/a0
+        andi    #$fe,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFIDup -- minimal real I$Dup implementation (Callcode $82).
+* Duplicate the current process path entry into the lowest free slot.  The
+* path entry stores the OS-9 path number, not a native pointer; reference
+* counting remains with the file manager until I$Close is implemented.
+*******************************************************************************
+Q9K_SysFIDup:
+        move.w  d0,d1
+        andi.l  #$0000001f,d1
+        lea     $168(a4),a0
+        add.w   d1,d1
+        move.w  (a0,d1.w),d1
+        beq.w   Q9K_SysFIDup_BadPath
+        moveq   #0,d0
+        moveq   #31,d2
+Q9K_SysFIDup_FindFree:
+        tst.w   (a0)
+        beq.s   Q9K_SysFIDup_Store
+        addq.l  #2,a0
+        addq.w  #1,d0
+        dbra    d2,Q9K_SysFIDup_FindFree
+        move.w  #$00c8,d1
+        ori     #1,ccr
+        rts
+Q9K_SysFIDup_Store:
+        move.w  d1,(a0)
+        andi    #$fe,ccr
+        rts
+Q9K_SysFIDup_BadPath:
+        move.w  #$00d2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
 * Q9K_SysFIOpen -- TRAP-#0-Handler fuer den echten I$Open-Callcode (0x84,
 * s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention (68k_tech.pdf S.
 * 568-570, echt per Read gelesen): IN d0.b=Zugriffsmodus, (a0)=Pfadname-
@@ -4262,6 +4553,24 @@ Q9K_IntLock:
 Q9K_IntUnlock:
         move.w  d0,sr
         rts
+
+* Persistent text constants for the Development memory/module trace.
+* They live after the boot scratch area, so Q9K_ZeroRange cannot erase them.
+Q9K_MemTraceRqText:         dc.b "F$SRqMem D0-L=0x",0
+Q9K_MemTraceAllocText:      dc.b " Q9K_AllocMem L=0x",0
+Q9K_MemTraceResultText:     dc.b " -> C=",0
+Q9K_MemTraceSuccessText:    dc.b " D0-L=0x",0
+Q9K_MemTraceAddressText:    dc.b " A2-P=0x",0
+Q9K_MemTraceErrorText:      dc.b " D1-E=",0
+Q9K_MemTraceRtText:         dc.b "F$SRtMem D0-L=0x",0
+Q9K_MemTraceReturnAddrText: dc.b " A2-P=0x",0
+Q9K_MemTraceFreeText:       dc.b " Q9K_FreeMem -> C=",0
+Q9K_MemTraceModuleText:     dc.b "F$VModul L=0x",0
+Q9K_MemTraceModuleAddrText: dc.b " A0-P=0x",0
+Q9K_DiagTextMemFul:         dc.b "E$MemFul",0
+Q9K_DiagTextNoRam:          dc.b "E$NoRAM",0
+Q9K_DiagTextBmCrc:          dc.b "E$BMCRC",0
+        dc.b    0       * keep the module end word-aligned
 
 * Q9K_ModuleEnd -- NACHTRAG 2026-08-19: nicht mehr fuer den
 * Selbstueberschreibungs-Schutz benutzt (s. ausfuehrlichen Fund-

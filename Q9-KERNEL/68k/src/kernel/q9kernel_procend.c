@@ -45,10 +45,9 @@
  * EIGENE ENTSCHEIDUNGEN, Manual-Verhalten bewusst NICHT vollstaendig
  * nachgebildet (dokumentiert, nicht verschwiegen -- gleiche Vorgehensweise
  * wie ueberall in diesem Kernel):
- *   - Der automatisch freigegebene Block ist der bei Prozesserzeugung
- *     registrierte Primaerblock. Explizit per F$SRqMem erworbene Bloecke
- *     werden noch nicht pro Prozess verfolgt; das ist ein separater
- *     Allokations-Tracking-Schritt.
+ *   - Neben dem bei Prozesserzeugung registrierten Primaerblock werden
+ *     jetzt auch explizit per F$SRqMem erworbene User-State-Bloecke ueber
+ *     Q9K_ProcMemReleaseAll automatisch zurueckgegeben.
  *   - "Falls der Elternprozess tot ist, Deskriptor sofort freigeben"
  *     NICHT implementiert -- der Elternprozess wird hier immer als lebend
  *     angenommen (State-Feld eines FREIEN Slots ist wegen der
@@ -90,6 +89,19 @@ extern Q9_u32 Q9K_SchedFirstPick(void);             /* q9kernel_sched.c -- "naec
 extern void   Q9K_WaitQRemove(Q9_u32 desc);         /* q9kernel_sched.c */
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr); /* q9kernel_moddir.c */
 extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size); /* q9kernel_arena.c */
+extern void   Q9K_ProcMemReleaseAll(Q9_u32 owner);   /* q9kernel_sysmem.c */
+#if defined(Q9K_MEMTRACE_ARENA)
+extern void   Q9K_MemTraceSetModule(Q9_u32 header); /* q9kernel_debug.c */
+extern void   Q9K_MemTraceClearModule(void);        /* q9kernel_debug.c */
+extern void   Q9K_MemTraceEmit(Q9_u32 operation,
+                               Q9_u32 requested,
+                               Q9_u32 address,
+                               Q9_u32 size,
+                               Q9_u32 error,
+                               Q9_u32 freeHead);
+#define Q9K_MEMTRACE_OP_PROC_RELEASE 6UL
+#define Q9K_D_FREEMEM 0x0404UL
+#endif
 
 /* Deskriptor-Feldoffsets -- lokal dupliziert, gleiche schlanke Konvention
  * wie ueberall in diesem Kernel (s. q9kernel_firstproc.c Kopfkommentar
@@ -180,12 +192,33 @@ static void Q9K_ProcReleaseMemory(Q9_u32 desc)
 {
     Q9_u32 base = Q9K_GetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF);
     Q9_u32 size = Q9K_GetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF);
+#if defined(Q9K_MEMTRACE_ARENA)
+    Q9_u32 header = Q9K_GetU32(desc + Q9K_PROCDESC_MODHDR_OFF);
+#endif
 
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF, 0);
 
-    if (base != 0 && size != 0)
+    if (base != 0 && size != 0) {
+        /* Keep the exiting module visible in the allocator trace.  The
+         * scheduler may clear D_Proc before this cleanup runs. */
+#if defined(Q9K_MEMTRACE_ARENA)
+        Q9K_MemTraceSetModule(header);
+        /* Record the descriptor before the allocator changes anything.
+         * requested=descriptor and error=module header make this event
+         * distinguishable from a direct F$SRtMem/free event. */
+        Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_PROC_RELEASE, desc, base, size,
+                         header, Q9K_GetU32(Q9K_D_FREEMEM));
+#endif
         Q9K_FreeMem(base, size);
+#if defined(Q9K_MEMTRACE_ARENA)
+        Q9K_MemTraceClearModule();
+#endif
+    }
+
+    /* F$SRqMem blocks owned by this process are separate from its primary
+     * fork/create block and must be returned on process termination too. */
+    Q9K_ProcMemReleaseAll(desc);
 }
 
 /* Gibt einen Deskriptor-Pool-Slot zurueck in die Freiliste (Gegenstueck
