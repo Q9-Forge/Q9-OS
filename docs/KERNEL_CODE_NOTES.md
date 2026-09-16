@@ -205,19 +205,60 @@ zeitlich benachbart gefundene Schaltjahr-Arithmetik (`divsll`-basierte
 365/366-Tage-Verzweigung nahe dem Divergenzpunkt) einen Datumsbezug
 zunächst nahelegte.
 
-**Nächster Ansatzpunkt:** statt eines einzelnen Haltepunkts auf einen
-vermeintlich eindeutigen Codepfad lieber alle Stellen instrumentieren,
-an denen die Prozess-Exit-Routine (`0x24d8`) mit leerem
-Reaktivierungsfeld eintritt, unabhängig davon, über welchen der
-mehreren bekannten Aufrufer (`0x1a70`/`0x1a9c` im gemeinsamen Nachlauf,
-sowie die beiden anderen, noch nicht untersuchten Aufrufer aus der
-älteren Aufrufer-Liste) das geschieht – und für GENAU diesen einen
-Fall den unmittelbaren Aufrufer identifizieren. Der noch nicht
-vollständig gelesene Codeblock bei Modul-Offset `0x554`–`0xbbf`
-(Trap-Rückkehr-/Reschedule-Logik, teilweise deckungsgleich mit dem bei
-`0xba4` beginnenden Block – vermutlich zwei Einstiegspunkte in
-denselben Code) bleibt ebenfalls ein Kandidat für die eigentliche
-Verzeichnis-/Modul-Scan-Entscheidung.
+**Durchbruch, dritte Folgesitzung:** Die generische Instrumentierung
+(Haltepunkt direkt auf `0x24d8`, jeden Treffer samt Rücksprungadresse
+protokolliert) zeigt: in einem sauberen Testlauf treten **alle drei**
+beobachteten Prozess-Austritte – auch der folgenlose dritte – über
+**dieselbe Rücksprungadresse** auf dem Stack auf. Diese Adresse liegt
+NICHT im vorher untersuchten `0x1a70`/`Q9_gap_554`-Bereich, sondern
+gehört zu einem echten, per `TRAP #0` ausgelösten Aufruf: der
+Syscall-Dispatcher (`0x488`, s. o.) wird unmittelbar vor jedem der
+drei Austritte durchlaufen. **Der Prozess ruft `F$Exit` also
+selbst, absichtlich und über einen ganz normalen Systemaufruf auf –
+es handelt sich um keinen impliziten Kernel-Fehlerpfad.** Die
+`0x1a70`/`Q9_gap_554`-Spur aus den vorherigen zwei Sitzungen war damit
+komplett verworfen und (wie oben dokumentiert) ohnehin schon als
+falsche Fährte erkannt worden.
+
+Eine Ausführungsspur direkt vor dem dritten Austritt zeigt eine kurze,
+mehrfach wiederholte Codeschleife **außerhalb des Kernelmoduls**, in
+einem separat geladenen Treiber – anhand einer im Speicher gefundenen
+Zeichenkette ("CompactFlash driver build 42") als der
+**CompactFlash-IDE-Treiber** identifiziert. Die Schleife besteht aus
+mehreren kleinen Hilfsfunktionen: einer Leseroutine, die byteweise aus
+einem festen, modul-statischen Puffer liest (klassisches Zeichen-für-
+Zeichen-Parsing, z. B. eines Konfigurations- oder Gerätenamens), sowie
+zwei nahezu identischen Tabellen-Bereichsprüfungen (ein Zeiger wird
+gegen mehrere aufeinanderfolgende, gleich große Slots einer
+statischen Tabelle verglichen und als Index 0/1/2/... oder
+"keiner passt" klassifiziert) – zusammen mit Code, der ein frisch
+angelegtes Objekt vollständig nullt (klassische Deskriptor-
+Initialisierung). Das Gesamtbild passt zu Geräte-/Pfad-Deskriptor-
+Verwaltung innerhalb des Treibers, nicht zu einer einfachen
+Hardware-Wartewarteschleife.
+
+Ein bereits für dieses Modul angelegtes, separates Analyseprojekt
+existiert, deckt aber nur einen winzigen Ausschnitt ab (rund 1,4 KB,
+im Wesentlichen nur der Zeichenketten-Bereich) und war für den
+eigentlichen Code-Bereich nicht nutzbar – falls dieses Projekt künftig
+weiterverwendet wird, müsste es zunächst um den vollständigen
+Speicherabzug des geladenen Treibers ergänzt werden (Adressumrechnung
+in dieser Sitzung bereits hergeleitet: der bekannte Zeichenketten-
+Fundort im laufenden Emulator abzüglich seiner Position in diesem
+Projekt ergibt die Ladebasis).
+
+**Nächster Ansatzpunkt:** die genaue Stelle innerhalb des
+CompactFlash-Treiber-Codes finden, an der `F$Exit` tatsächlich
+aufgerufen wird (die per Ausführungsspur gefundene Aufrufkette
+zurückverfolgen bis zu diesem Aufruf), und klären, welche Bedingung
+dort erfüllt sein muss – vermutlich eine Fallunterscheidung innerhalb
+der oben beschriebenen Tabellen-Klassifikation oder eine Prüfung nach
+dem zeichenweisen Einlesen des verglichenen Namens. Der Vergleich mit
+der Referenzumgebung müsste an exakt dieser Stelle ansetzen. Der noch
+nicht vollständig gelesene Codeblock bei Modul-Offset `0x554`–`0xbbf`
+im Kernel (Trap-Rückkehr-/Reschedule-Logik) ist für dieses Problem
+nach aktuellem Stand NICHT mehr der relevante Ansatzpunkt – das war
+die inzwischen verworfene Spur der vorherigen zwei Sitzungen.
 
 ## Werkzeugnotizen
 
