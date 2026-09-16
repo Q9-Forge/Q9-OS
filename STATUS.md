@@ -16,7 +16,7 @@ The call-code names and the complete call-code set are based on
 mean that every OS-9 corner case or every hardware device is already
 supported.
 
-## Latest kernel verification (2026-09-16)
+## Latest kernel verification (2026-09-17)
 
 The external `F$SSvc` trap return path was corrected: the 72-byte service
 register frame is now removed with the correct stack adjustment before the
@@ -119,8 +119,8 @@ I/O replacements remain future work.
 
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
-| 🟡 | `0x80` | I$Attach | External IOMan/SCF path; the Q9 external dispatcher supports the observed `/term` attach sequence, full device semantics remain open |
-| 🟡 | `0x81` | I$Detach | External IOMan/File-Manager path; standalone detach and device-lifetime verification remain open |
+| 🔷 | `0x80` | I$Attach | Verified through Microware IOMan/RBF/CF: `iattachsvc` successfully attaches `c0`; Q9-native device semantics remain open |
+| 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF: the attached `c0` entry is detached successfully; broader lifetime semantics remain open |
 | 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication and reference counting are implemented; full file-manager semantics remain open |
 | 🟡 | `0x83` | I$Create | Microware path exists; no complete current Q9 emulator verification |
 | 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; full pathname/device semantics remain open |
