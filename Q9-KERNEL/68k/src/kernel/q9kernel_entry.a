@@ -145,9 +145,31 @@ Q9K_GlobSize    equ     $007000                 * 28K, endet VOR der Bootkette -
 * die hoechste bekannte Global-Adresse ist Q9K_SRqMemFrameScratch ($13A4).
 * Die Bootkette darf jetzt bis $10000 wachsen (rund 16K Luft ueber dem
 * heutigen Ende $C3BC), bevor die naechste Zone anzupassen ist.
-Q9K_StackBase   equ     $010000                 * Untergrenze Boot-/Supervisor-Stack, ueber der Bootkette
-Q9K_StackSize   equ     $008000                 * 32K (16K -> 32K: der alte Wert lief nachweislich ueber)
-Q9K_StackTop    equ     Q9K_StackBase+Q9K_StackSize
+* NACHTRAG 2026-09-18 (BUGFIX "Boot-Stack mitten in der Bootkette", der
+* dritte Stack-Umzug): Die Zusage oben -- "die Bootkette darf bis $10000
+* wachsen" -- war laengst ueberholt. Mit csl, mshell, math und allen
+* CMDS-Modulen reicht die Bootkette heute bis ~$56000; der Stack bei
+* $10000..$18000 lag damit seit Wochen MITTEN in den Bootmodulen und blieb
+* nur deshalb unauffaellig, weil er von $18000 abwaerts wenige KB nutzt und
+* zufaellig kein Modul genau dort endete. Das aenderte sich, sobald der
+* Kernel um ~2K wuchs: cfide (der CompactFlash-Treiber) rutschte auf
+* $17b82..$18138, direkt unter die Stack-Spitze, und die ersten Pushes
+* beim Booten ueberschrieben seinen Code. Symptom: Vektor 4 bzw. 11 in
+* cfide+$3ae/+$50a, noch vor dem ersten Marker -- reproduziert mit einem
+* unveraenderten main-Kernel plus 2K reinem Padding, also ein reiner
+* Groesseneffekt, kein Fehler im neuen Code.
+*
+* Fix: Der Stack liegt jetzt am RAM-ENDE und waechst von dort abwaerts.
+* Die Gesamt-RAM-Groesse steht beim Einsprung in d0 (Boot-ROM-Konvention,
+* s. Q9_D_TotRam) und ist bis zum Stack-Setzen unberuehrt. Die Zonen sind
+* damit Globals / Bootkette / Arena / Stack -- die Bootkette kann wachsen,
+* bis sie an die Arena stoesst (die ihrerseits seit 2026-09-15 dynamisch
+* hinter dem Bootlist-Ende beginnt), und der Stack ist nie im Weg. Die
+* Arena reserviert die letzten Q9K_StackSize Byte fuer ihn
+* (Q9K_BOOTSTACK_SIZE in q9kernel_cinit.c, muss zu dieser Konstante
+* passen). Q9K_StackBase/Q9K_StackTop entfallen -- es gibt keine feste
+* Adresse mehr, die veralten koennte.
+Q9K_StackSize   equ     $008000                 * 32K, am RAM-Ende reserviert (16K -> 32K: der alte Wert lief nachweislich ueber)
 
 * Eigene Ablage fuer die vom Boot-ROM per sp uebergebene Speicherregion-
 * Liste (s. Thema 01, "Neuer Fund" zu sp/D6) -- KEIN Feld aus dem echten
@@ -950,7 +972,10 @@ Q9K_Entry:
 * zur spaeteren Regionsliste-Kopie fest (dort frueher "movea.l sp,a0",
 * jetzt "movea.l a3,a0" -- sp selbst zeigt ab hier auf unseren Stack).
         movea.l sp,a3
-        movea.l #Q9K_StackTop,sp
+* Stack-Top = RAM-Ende: d0 traegt hier noch die vom Boot-ROM uebergebene
+* Gesamt-RAM-Groesse (einzige Instruktionen davor: sr setzen, sp sichern),
+* s. NACHTRAG 2026-09-18 bei Q9K_StackSize.
+        movea.l d0,sp
 
         moveq   #'1',d7                         * DIAGNOSE: M$Exec erreicht, allererste Instruktion
         bsr     Q9K_DiagWriteD7
@@ -1464,60 +1489,6 @@ __multiply:
         movem.l (sp)+,d2-d5
         rts
 
-* __udivide / __umodulo -- die Divisions-Gegenstuecke zu __multiply,
-* aus demselben Grund noetig: reines 68000 hat keine DIVU.L (die kam wie
-* MULU.L erst mit dem 68020), also erzeugt der Compiler einen Aufruf.
-* Gebraucht seit q9kernel_date.c (F$Julian/F$Gregor) -- die uebrigen
-* C-Dateien teilen bisher ausschliesslich durch Zweierpotenzen, die der
-* Compiler selbst zu Schiebebefehlen aufloest, deshalb fiel das Fehlen
-* dieser beiden Symbole bis jetzt nicht auf.
-*
-* Registerkonvention wie bei __multiply uebernommen (D0 = linker
-* Operand, D1 = rechter, Ergebnis in D0). Anders als dort ist sie hier
-* NICHT aus der Zwischenassemblierung abgelesen, sondern angenommen --
-* und deshalb bewusst an einer Stelle geprueft, die bei einer falschen
-* Annahme zwingend auffaellt: der Live-Test rechnet den 1970-01-01 in
-* die julianische Tageszahl um und vergleicht mit JULBASE (2440587,
-* MWOS/SRC/DEFS/time.h). Jede vertauschte oder falsch gelesene
-* Operandenzuordnung ergibt dort einen anderen Wert.
-*
-* Algorithmus: klassische Restoring-Division, 32 Schritte Schieben und
-* bedingtes Subtrahieren -- nutzt nur Basisinstruktionen und laeuft
-* damit auf jeder 68k-Stufe. Divisor 0 liefert Quotient 0 und Rest =
-* Dividend, statt eine Exception auszuloesen: ein Kernel soll an einer
-* fehlerhaften Rechnung nicht sterben.
-__udivide:
-        bsr     Q9K_UDivMod
-        rts                             * Q9K_UDivMod liefert den Quotienten in d0
-__umodulo:
-        bsr     Q9K_UDivMod
-        move.l  d2,d0                   * stattdessen den Rest
-        rts
-
-* Gemeinsamer Kern: d0 = Dividend, d1 = Divisor.
-* AUS: d0 = Quotient, d2 = Rest. d3 ist Schleifenzaehler.
-Q9K_UDivMod:
-        movem.l d1/d3,-(sp)
-        moveq   #0,d2                   * Rest
-        tst.l   d1
-        beq     Q9K_UDivMod_Zero
-        moveq   #31,d3
-Q9K_UDivMod_Loop:
-        lsl.l   #1,d0                   * oberstes Dividendenbit -> X
-        roxl.l  #1,d2                   * und von unten in den Rest
-        cmp.l   d1,d2
-        bcs     Q9K_UDivMod_NoSub
-        sub.l   d1,d2
-        addq.l  #1,d0                   * Quotientenbit in die frei gewordene Stelle
-Q9K_UDivMod_NoSub:
-        dbra    d3,Q9K_UDivMod_Loop
-        movem.l (sp)+,d1/d3
-        rts
-Q9K_UDivMod_Zero:
-        move.l  d0,d2                   * Rest = Dividend
-        moveq   #0,d0                   * Quotient = 0
-        movem.l (sp)+,d1/d3
-        rts
 
 * Q9K_TestProcA/Q9K_TestProcB -- zwei einfache Test-"Prozesse" fuer den
 * Abschnitt "Scheduler" (2026-08-21): der reale Nachweis von echtem
@@ -5300,6 +5271,69 @@ Q9K_SysFGregor:
 Q9K_SysFGregor_Fail:
         move.w  Q9K_DateScratch_Error+2,d1
         ori     #1,ccr
+        rts
+
+* __udivide / __umodulo -- die Divisions-Gegenstuecke zu __multiply,
+* LAGE BEWUSST HIER HINTEN, nicht neben __multiply: eingefuegt zwischen
+* __multiply und dem Sicherheitsabstand in Q9K_TestProcA verschob dieser
+* Block den 12-Byte-Totraum von Datei-Offset $3ac weg -- dort lag dann
+* echter Code, den RBF/SCF per "addq.l #1,$3ac(a4)" kaputtschrieben,
+* Ergebnis Vektor 4 im CompactFlash-Treiber, noch vor dem ersten Marker
+* (2026-09-18, live gefunden). Alles, was in dieser Datei VOR dem
+* Totraum steht, muss bytegenau so bleiben; neuer Code gehoert dahinter.
+* build.sh prueft das seit heute nach jedem Link.
+* aus demselben Grund noetig: reines 68000 hat keine DIVU.L (die kam wie
+* MULU.L erst mit dem 68020), also erzeugt der Compiler einen Aufruf.
+* Gebraucht seit q9kernel_date.c (F$Julian/F$Gregor) -- die uebrigen
+* C-Dateien teilen bisher ausschliesslich durch Zweierpotenzen, die der
+* Compiler selbst zu Schiebebefehlen aufloest, deshalb fiel das Fehlen
+* dieser beiden Symbole bis jetzt nicht auf.
+*
+* Registerkonvention wie bei __multiply uebernommen (D0 = linker
+* Operand, D1 = rechter, Ergebnis in D0). Anders als dort ist sie hier
+* NICHT aus der Zwischenassemblierung abgelesen, sondern angenommen --
+* und deshalb bewusst an einer Stelle geprueft, die bei einer falschen
+* Annahme zwingend auffaellt: der Live-Test rechnet den 1970-01-01 in
+* die julianische Tageszahl um und vergleicht mit JULBASE (2440587,
+* MWOS/SRC/DEFS/time.h). Jede vertauschte oder falsch gelesene
+* Operandenzuordnung ergibt dort einen anderen Wert.
+*
+* Algorithmus: klassische Restoring-Division, 32 Schritte Schieben und
+* bedingtes Subtrahieren -- nutzt nur Basisinstruktionen und laeuft
+* damit auf jeder 68k-Stufe. Divisor 0 liefert Quotient 0 und Rest =
+* Dividend, statt eine Exception auszuloesen: ein Kernel soll an einer
+* fehlerhaften Rechnung nicht sterben.
+__udivide:
+        bsr     Q9K_UDivMod
+        rts                             * Q9K_UDivMod liefert den Quotienten in d0
+__umodulo:
+        bsr     Q9K_UDivMod
+        move.l  d2,d0                   * stattdessen den Rest
+        rts
+
+* Gemeinsamer Kern: d0 = Dividend, d1 = Divisor.
+* AUS: d0 = Quotient, d2 = Rest. d3 ist Schleifenzaehler.
+Q9K_UDivMod:
+        movem.l d1/d3,-(sp)
+        moveq   #0,d2                   * Rest
+        tst.l   d1
+        beq     Q9K_UDivMod_Zero
+        moveq   #31,d3
+Q9K_UDivMod_Loop:
+        lsl.l   #1,d0                   * oberstes Dividendenbit -> X
+        roxl.l  #1,d2                   * und von unten in den Rest
+        cmp.l   d1,d2
+        bcs     Q9K_UDivMod_NoSub
+        sub.l   d1,d2
+        addq.l  #1,d0                   * Quotientenbit in die frei gewordene Stelle
+Q9K_UDivMod_NoSub:
+        dbra    d3,Q9K_UDivMod_Loop
+        movem.l (sp)+,d1/d3
+        rts
+Q9K_UDivMod_Zero:
+        move.l  d0,d2                   * Rest = Dividend
+        moveq   #0,d0                   * Quotient = 0
+        movem.l (sp)+,d1/d3
         rts
 
 *******************************************************************************

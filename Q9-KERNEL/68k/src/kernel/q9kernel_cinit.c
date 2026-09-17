@@ -226,6 +226,14 @@ extern void Q9K_Diag6(void);
  * Globals / Bootkette / Stack / Arena ueberlappungsfrei bleibt. */
 #define Q9K_FREEMEM_BASE    0x18000UL
 
+/* NACHTRAG 2026-09-18: Der Boot-/Supervisor-Stack liegt nicht mehr bei
+ * $10000..$18000 (dort stand laengst die Bootkette, s. q9kernel_entry.a,
+ * NACHTRAG 2026-09-18 bei Q9K_StackSize), sondern am RAM-ENDE. Die Arena
+ * laesst ihm deshalb die letzten Q9K_BOOTSTACK_SIZE Byte frei. Der Wert
+ * MUSS zu Q9K_StackSize in q9kernel_entry.a passen -- lokal dupliziert,
+ * gleiche schlanke Konvention wie bei allen ASM<->C-Konstanten hier. */
+#define Q9K_BOOTSTACK_SIZE  0x8000UL
+
 /* Schreibt einen 32-Bit-Wert an eine absolute Adresse (=Kernel-Global-
  * Offset, da Kernel-Globals-Basis bei diesem Kernel $000000 ist) */
 static void Q9K_PutU32(Q9_u32 addr, Q9_u32 value)
@@ -320,8 +328,10 @@ void Q9K_CInit(void)
 
         /* Keep allocator blocks 16-byte aligned. */
         freeBase = (freeBase + 15UL) & ~15UL;
-        if (totalRam > freeBase) {
-            Q9K_ArenaInit(freeBase, totalRam - freeBase);
+        /* Die letzten Q9K_BOOTSTACK_SIZE Byte gehoeren dem Boot-Stack
+         * (s. Definition oben) -- die Arena endet davor. */
+        if (totalRam > freeBase + Q9K_BOOTSTACK_SIZE) {
+            Q9K_ArenaInit(freeBase, totalRam - Q9K_BOOTSTACK_SIZE - freeBase);
         }
     }
 

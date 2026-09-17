@@ -114,6 +114,18 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
     q9kernel_setsys.r q9kernel_date.r \
     < /dev/null
 
+# Layout-Hinweis (2026-09-18): q9kernel_entry.a haelt fuer den bekannten
+# A4-Herkunftsbug (RBF/SCF schreiben "addq.l #1,$3ac(a4)" mit a4 = unserer
+# Modulbasis) einen 12-Byte-Totraum vor, der Datei-Offset $3ac abdecken
+# SOLL. Befund vom 2026-09-18: er liegt seit laengerem bei ~$60c, also
+# 612 Byte zu weit hinten -- auch in Kernels, die einwandfrei booten. Der
+# Symptomschutz ist damit gegenstandslos verschoben; der Kernel bootet
+# trotzdem, weil an $3ac offenbar nichts Kritisches liegt (addq/subq
+# heben sich paarweise auf). Nur Ausgabe, kein Abbruch -- zur Kenntnis
+# fuer den, der den A4-Bug eines Tages wirklich behebt.
+gap=$(xxd -s 0x3ac -l 4 -p q9kernel)
+echo "== Layout-Hinweis: Bytes an Datei-Offset \$3ac = $gap (Totraum-Soll: 00000000, s. Kommentar) =="
+
 echo "== Fertig: $OUTDIR/q9kernel =="
 file q9kernel || true
 
