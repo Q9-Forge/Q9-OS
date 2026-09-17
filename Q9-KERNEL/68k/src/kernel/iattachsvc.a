@@ -30,6 +30,9 @@
 *   I = F$ID succeeded (own PID retained for F$SPrior below)
 *   P = F$SPrior on the caller's own PID succeeded (Callcode 0x0D)
 *   p = F$SPrior on an invalid PID correctly rejected
+*   N = F$CmpNam matched two identical names (Callcode 0x11)
+*   n = F$CmpNam matched a wildcard pattern
+*   x = F$CmpNam correctly rejected two different names
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -179,6 +182,36 @@ Q9K_AttachStart:
         moveq   #'p',d7
         move.b  d7,$FFFFF006
 
+* F$CmpNam: d1.w = pattern length, (a0) = pattern, (a1) = target.  The
+* pattern is deliberately not null-terminated, which is how RBF passes a
+* name it got from F$PrsNam.
+        moveq   #7,d1                          * "startup" against itself
+        lea     Q9K_CmpTarget(pc),a0
+        lea     Q9K_CmpTarget(pc),a1
+        trap    #0
+        dc.w    $0011                          * F$CmpNam
+        bcs     Q9K_NativeFailed
+        moveq   #'N',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #5,d1                          * "star*" must match "startup"
+        lea     Q9K_CmpWild(pc),a0
+        lea     Q9K_CmpTarget(pc),a1
+        trap    #0
+        dc.w    $0011                          * F$CmpNam
+        bcs     Q9K_NativeFailed
+        moveq   #'n',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #4,d1                          * "stop" must not match
+        lea     Q9K_CmpOther(pc),a0
+        lea     Q9K_CmpTarget(pc),a1
+        trap    #0
+        dc.w    $0011                          * F$CmpNam
+        bcc     Q9K_NativeFailed
+        moveq   #'x',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
         trap    #0
@@ -225,6 +258,15 @@ Q9K_PathName:
 
 Q9K_DirName:
         dc.b    "/dd",0
+
+Q9K_CmpTarget:
+        dc.b    "startup",0
+
+Q9K_CmpWild:
+        dc.b    "star*"
+
+Q9K_CmpOther:
+        dc.b    "stop"
 
 Q9K_WriteByte:
         dc.b    "w"
