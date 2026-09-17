@@ -77,8 +77,12 @@ extern void Q9K_MemTraceEndCapture(void);
 
 #define Q9K_MEMTRACE_OP_REQUEST 1UL
 #define Q9K_MEMTRACE_OP_RETURN  2UL
+#ifndef Q9_D_FREEMEM
 #define Q9_D_FREEMEM            0x0404UL
+#endif
+#ifndef Q9_D_PROC
 #define Q9_D_PROC               0x004CUL
+#endif
 
 extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);      /* q9kernel_arena.c */
 extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size);   /* q9kernel_arena.c */
@@ -94,7 +98,9 @@ extern Q9_u32 Q9K_AllocLargest(Q9_u32 *outSize);       /* q9kernel_arena.c, s. d
  * process exits.  The table is deliberately small and fixed-size for the
  * current kernel; it can later become a linked allocation list. */
 #define Q9K_MEMOWNER_SLOTS 32UL
+#ifndef Q9K_MEMOWNER_BASE
 #define Q9K_MEMOWNER_BASE  0x1710UL
+#endif
 #define Q9K_MEMOWNER_STRIDE 12UL
 #define Q9K_MEMOWNER_MAGIC (Q9K_MEMOWNER_BASE + Q9K_MEMOWNER_SLOTS * Q9K_MEMOWNER_STRIDE)
 #define Q9K_MEMOWNER_OWNER(i) (Q9K_MEMOWNER_BASE + (i) * Q9K_MEMOWNER_STRIDE)

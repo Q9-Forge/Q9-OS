@@ -32,6 +32,9 @@ static unsigned long g_fakePoolNext;
 #define Q9K_PROCPOOL_FREE_ADDR  ((unsigned long)(g_fakeGlobals + 0x040))
 #define Q9_D_PROC               ((unsigned long)(g_fakeGlobals + 0x080))
 #define Q9K_PROCPOOL_BASE_ADDR  ((unsigned long)(g_fakeGlobals + 0x0C0))
+/* F$Fork-Scratchzelle fuer die gewuenschte Pfadanzahl (d3.w), von
+ * Q9K_ProcFork beim Aufbau der Pfadtabelle gelesen. */
+#define Q9K_FORK_SCRATCH_NUMPATHS ((unsigned long)(g_fakeGlobals + 0x100))
 
 /* State/Priority/Age/Next/Prev/SavedSP/EntryPC liegen im echten Deskriptor
  * nur wenige Byte auseinander (+0x00/+0x01/+0x02/+0x30/+0x34/+0x38/+0x3C)

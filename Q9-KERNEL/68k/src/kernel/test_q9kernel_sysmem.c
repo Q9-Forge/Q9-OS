@@ -26,6 +26,13 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_SRQMEM_SCRATCH_SUCCESS ((unsigned long)(g_fakeGlobals + 0x040))
 #define Q9K_SRTMEM_SCRATCH_ADDRIN  ((unsigned long)(g_fakeGlobals + 0x050))
 #define Q9K_SRTMEM_SCRATCH_SIZEIN  ((unsigned long)(g_fakeGlobals + 0x060))
+/* Eigentuemertabelle (32 Slots a 12 Byte + Magic = 388 Byte) -- ohne
+ * diese Umlenkung greift der Test auf die echte Kerneladresse $1710 zu. */
+#define Q9K_MEMOWNER_BASE          ((unsigned long)(g_fakeGlobals + 0x100))
+/* Systemglobale, die q9kernel_sysmem.c fuer Eigentuemerzuordnung und
+ * Speicherspur liest -- ebenfalls in den Fake-Speicher umlenken. */
+#define Q9_D_PROC                  ((unsigned long)(g_fakeGlobals + 0x300))
+#define Q9_D_FREEMEM               ((unsigned long)(g_fakeGlobals + 0x310))
 
 /* Aufrufzaehlende Stubs. Q9_u32 ist erst NACH dem #include unten
  * verfuegbar (in q9kernel_sysmem.c definiert) -- hier bewusst
@@ -59,6 +66,21 @@ unsigned long Q9K_AllocLargest(unsigned long *outSize)
     g_allocLargestCalls++;
     *outSize = g_allocLargestOutSize;
     return g_allocLargestReturn;
+}
+
+/* Speicherspur-Stubs (q9kernel_debug.c): reine Diagnose, fuer die hier
+ * geprueften Verzweigungen ohne Bedeutung. */
+void Q9K_MemTraceBeginCapture(void) {}
+void Q9K_MemTraceEndCapture(void) {}
+void Q9K_MemTraceEmit(unsigned long operation,
+                      unsigned long requested,
+                      unsigned long address,
+                      unsigned long size,
+                      unsigned long error,
+                      unsigned long freeHead)
+{
+    (void)operation; (void)requested; (void)address;
+    (void)size; (void)error; (void)freeHead;
 }
 
 #include "q9kernel_sysmem.c"
