@@ -133,8 +133,8 @@ does not yet provide full pathname, device, or file-manager semantics.
 
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
-| ❌ | `0x80` | I$Attach | No Q9-OS handler is registered; only the Microware path has been tested |
-| ❌ | `0x81` | I$Detach | No Q9-OS handler is registered; only the Microware path has been tested |
+| 🔷 | `0x80` | I$Attach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; Q9-native device semantics remain open |
+| 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; broader lifetime semantics remain open |
 | 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication and reference counting are implemented; full file-manager semantics remain open |
 | ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; process-local `P$Path` publication is tested, while full pathname/device semantics remain open |
