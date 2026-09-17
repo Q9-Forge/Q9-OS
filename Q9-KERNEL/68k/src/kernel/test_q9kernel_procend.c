@@ -89,6 +89,17 @@ void Q9K_FreeMem(unsigned long addr, unsigned long size)
     g_freeMemLastSize = size;
 }
 
+/* Q9K_ProcMemReleaseAll lebt in q9kernel_sysmem.c (per F$SRqMem
+ * getrackte Zusatzbloecke). Hier aufrufzaehlender Stub -- dieser Test
+ * prueft nur q9kernel_procend.c selbst. */
+static int g_memReleaseAllCalls = 0;
+static unsigned long g_memReleaseAllLastOwner = 0;
+void Q9K_ProcMemReleaseAll(unsigned long owner)
+{
+    g_memReleaseAllCalls++;
+    g_memReleaseAllLastOwner = owner;
+}
+
 #include "q9kernel_procend.c"
 
 static int failures = 0;

@@ -74,6 +74,21 @@ static int Q9K_ValidModuleHeader(const Q9_u8 *addr, Q9_u32 availableLen)
     return Q9K_CheckSyncWord(addr, availableLen);
 }
 
+/* Speicherspur-Stubs (q9kernel_debug.c): reine Diagnose, ohne Einfluss
+ * auf die hier geprueften Verzeichnislogik-Pfade. */
+void Q9K_MemTraceSetModule(unsigned long header) { (void)header; }
+void Q9K_MemTraceClearModule(void) {}
+void Q9K_MemTraceEmit(unsigned long operation,
+                      unsigned long requested,
+                      unsigned long address,
+                      unsigned long size,
+                      unsigned long error,
+                      unsigned long freeHead)
+{
+    (void)operation; (void)requested; (void)address;
+    (void)size; (void)error; (void)freeHead;
+}
+
 #include "q9kernel_moddir.c"
 
 static int failures = 0;
