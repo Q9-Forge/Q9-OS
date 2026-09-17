@@ -44,6 +44,12 @@ two process-local entries, and a fresh 68k build plus emulator boot completed
 without an exception. This fixes the process-table bookkeeping gap, but it
 does not yet provide full pathname, device, or file-manager semantics.
 
+The path lifecycle tests now distinguish the process-local path index from
+the global descriptor number. Two simulated processes can both use local
+path 3 while referring to different descriptors; the host tests pass and a
+fresh emulator boot again reaches the CF driver and the Q9 test programs
+without an exception.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
@@ -135,7 +141,7 @@ does not yet provide full pathname, device, or file-manager semantics.
 |---|---:|---|---|
 | 🔷 | `0x80` | I$Attach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; Q9-native device semantics remain open |
 | 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; broader lifetime semantics remain open |
-| 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication and reference counting are implemented; full file-manager semantics remain open |
+| 🟡 | `0x82` | I$Dup | Native path-table duplication and descriptor reference counting are implemented; process-local/global descriptor separation is covered by lifecycle tests, while full file-manager semantics remain open |
 | ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; process-local `P$Path` publication is tested, while full pathname/device semantics remain open |
 | ❌ | `0x85` | I$MakDir | No Q9-OS implementation; only the Microware path exists |
@@ -148,7 +154,7 @@ does not yet provide full pathname, device, or file-manager semantics.
 | 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output is implemented and exercised by `hellosvc`; full device semantics remain open |
 | 🟡 | `0x8D` | I$GetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
 | 🟡 | `0x8E` | I$SetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
-| 🟡 | `0x8F` | I$Close | Minimal Q9-native path release with reference counting is implemented; file-manager close semantics remain open |
+| 🟡 | `0x8F` | I$Close | Native path-table removal and descriptor release with reference counting are implemented; lifecycle coverage and file-manager close semantics remain open |
 | 🟡 | `0x92` | I$SGetSt | Minimal Q9-native `SS_Opt` support for direct system paths; permission, device-name, and file-manager semantics remain open |
 
 ## Current interpretation

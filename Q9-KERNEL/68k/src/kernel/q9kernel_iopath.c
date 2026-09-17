@@ -450,6 +450,7 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
     Q9_u32 p = pathnamePtr;
     Q9_u32 slot;
     Q9_u32 pathNum;
+    Q9_u32 descriptorNum;
     Q9_u32 procDesc;
     Q9_u32 pathIndex;
 
@@ -462,10 +463,11 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
     if (slot == 0)
         return 0;
 
-    /* Prefer the lowest free process-local path number.  The descriptor
-     * pool remains global, but the number visible to the caller belongs in
-     * the current process' P$Path table. */
-    pathNum = (slot - Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR)) / Q9K_PATHDESC_SIZE + 3UL;
+    /* The pool index is global, while the number returned to the caller is
+     * a process-local P$Path index.  Keep both values separate: this is
+     * essential once two processes open paths concurrently. */
+    descriptorNum = (slot - Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR)) / Q9K_PATHDESC_SIZE + 3UL;
+    pathNum = descriptorNum;
     procDesc = Q9K_GetU32(Q9_D_PROC);
     if (procDesc != 0) {
         pathNum = 0;
@@ -481,14 +483,14 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
         }
     }
 
-    Q9K_WriteU16BE(slot + Q9K_PATHDESC_NUM_OFF, (Q9_u16)pathNum);
+    Q9K_WriteU16BE(slot + Q9K_PATHDESC_NUM_OFF, (Q9_u16)descriptorNum);
     Q9K_WriteU16BE(slot + Q9K_PATHDESC_REF_OFF, 1);
 
     /* Publish the descriptor number in the process table.  IOMan and the
      * native I/O handlers use this table as the authoritative path lookup. */
     if (procDesc != 0)
         Q9K_WriteU16BE(procDesc + Q9K_PROCDESC_PATH_OFF + pathNum * 2UL,
-                       (Q9_u16)pathNum);
+                       (Q9_u16)descriptorNum);
 
     /* Zugriffsmodus eintragen -- ohne ihn verweigert IOMan jeden Lese- und
      * Schreibzugriff auf diesen Pfad (s. Kopfkommentar oben). Faellt der
