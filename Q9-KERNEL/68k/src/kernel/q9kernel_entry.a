@@ -4650,11 +4650,15 @@ Q9K_SysFIDup_Store:
         lsl.l   #8,d3
         movea.l Q9K_PATHPOOL_BASE_ADDR,a1
         adda.l  d3,a1
+        tst.w   4(a1)                          * reject a stale/malformed descriptor
+        beq     Q9K_SysFIDup_BadDescriptor
         addq.w  #1,4(a1)
 Q9K_SysFIDup_NoRef:
         movem.l (sp)+,d2-d3/a0-a1
         andi    #$fe,ccr
         rts
+Q9K_SysFIDup_BadDescriptor:
+        clr.w   (a0)
 Q9K_SysFIDup_BadPath:
         movem.l (sp)+,d2-d3/a0-a1
         move.w  #$00d2,d1
@@ -4678,8 +4682,6 @@ Q9K_SysFIClose:
         add.w   d2,d2
         move.w  (a0,d2.w),d1
         beq     Q9K_SysFIClose_BadPath
-        clr.w   (a0,d2.w)
-
 * Standard paths are process-owned and are not pool descriptors.
         cmpi.w  #3,d1
         bcs     Q9K_SysFIClose_Ok
@@ -4697,6 +4699,7 @@ Q9K_SysFIClose:
         move.l  a1,Q9K_PATHPOOL_FREE_ADDR
 
 Q9K_SysFIClose_Ok:
+        clr.w   (a0,d2.w)
         movem.l (sp)+,d2/a0/a1
         andi    #$fe,ccr
         rts
