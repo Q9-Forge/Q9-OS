@@ -45,6 +45,9 @@
 *   d = F$GPrDsc on an invalid PID correctly rejected
 *   B = F$GModDr returned a non-empty module directory copy (0x1A)
 *   T = F$SetCRC made a private module image verify against CRCCon (0x26)
+*   J = F$Julian turned 1970-01-01 into JULBASE 2440587 (0x20)
+*   G = F$Gregor turned that straight back into 1970-01-01 12:00 (0x54)
+*   j = F$Julian rejected hour 24
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -364,6 +367,41 @@ Q9K_AttachStart:
         cmpi.l  #$00800FE3,d1
         bne     Q9K_NativeFailed
         moveq   #'T',d7
+        move.b  d7,$FFFFF006
+
+* F$Julian: d0.l = time (00hhmmss), d1.l = date (yyyymmdd).  1970-01-01
+* must give JULBASE (2440587), the value MWOS/SRC/DEFS/time.h states for
+* that day.
+        move.l  #$000C0000,d0                  * 12:00:00
+        move.l  #$07B20101,d1                  * 1970-01-01
+        trap    #0
+        dc.w    $0020                          * F$Julian
+        bcs     Q9K_NativeFailed
+        cmpi.l  #2440587,d1                    * JULBASE
+        bne     Q9K_NativeFailed
+        cmpi.l  #43200,d0                      * 12 * 3600 seconds
+        bne     Q9K_NativeFailed
+        moveq   #'J',d7
+        move.b  d7,$FFFFF006
+
+* F$Gregor is the inverse: feeding its own result back must restore the
+* values we started from.
+        trap    #0
+        dc.w    $0054                          * F$Gregor
+        bcs     Q9K_NativeFailed
+        cmpi.l  #$07B20101,d1                  * 1970-01-01 again
+        bne     Q9K_NativeFailed
+        cmpi.l  #$000C0000,d0                  * 12:00:00 again
+        bne     Q9K_NativeFailed
+        moveq   #'G',d7
+        move.b  d7,$FFFFF006
+
+        move.l  #$00180000,d0                  * hour 24 must be rejected
+        move.l  #$07B20101,d1
+        trap    #0
+        dc.w    $0020                          * F$Julian
+        bcc     Q9K_NativeFailed
+        moveq   #'j',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access
