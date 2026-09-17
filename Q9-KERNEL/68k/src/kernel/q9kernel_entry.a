@@ -620,6 +620,15 @@ Q9K_IcptScratch_Pending    equ $19A0      * Q9_u32, d0.l AUS
 Q9K_TransScratch_Size      equ $19A8      * Q9_u32, d0.l EIN/AUS
 Q9K_TransScratch_Mode      equ $19AC      * Q9_u32, d1.l EIN / Erfolgskennzeichen AUS
 Q9K_TransScratch_Addr      equ $19B0      * Q9_u32, (a0) EIN/AUS
+Q9K_DatModScratch_Size     equ $19B8      * Q9_u32, d0.l EIN / Typ+Sprache AUS
+Q9K_DatModScratch_AttRev   equ $19BC      * Q9_u32, d1.w EIN/AUS
+Q9K_DatModScratch_Access   equ $19C0      * Q9_u32, d2.w EIN
+Q9K_DatModScratch_TyLang   equ $19C4      * Q9_u32, d3.w EIN
+Q9K_DatModScratch_Name     equ $19C8      * Q9_u32, (a0) EIN/AUS
+Q9K_DatModScratch_Data     equ $19CC      * Q9_u32, (a1) AUS
+Q9K_DatModScratch_Hdr      equ $19D0      * Q9_u32, (a2) AUS
+Q9K_DatModScratch_Error    equ $19D4      * Q9_u32, d1.w AUS bei Fehler
+Q9K_DatModScratch_Success  equ $19D8      * Q9_u32, 0/1
 
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
@@ -5476,6 +5485,42 @@ Q9K_SysFTrans:
         rts
 Q9K_SysFTrans_Fail:
         move.w  Q9K_TransScratch_Size+2,d1      * traegt im Fehlerfall den Code
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFDatMod -- F$DatMod (Callcode $25, "Create Data Module"). Reale
+* ABI, 68k_tech.pdf S.392: IN d0.l = Groesse der Nutzdaten, d1.w =
+* Attribut/Revision, d2.w = Zugriffsrechte, d3.w = Typ/Sprache
+* (optional), d4.l = Speicherfarbe (optional), (a0) = Modulname.
+* AUS: d0.w = Typ/Sprache, d1.w = Attribut/Revision, (a0) hinter den
+* Namen, (a1) = Datenzeiger, (a2) = Modulkopf. Fehler: E$BNam, E$MemFul,
+* E$NoRAM. Aufbau des erzeugten Moduls und die beiden bewussten
+* Abweichungen s. Q9K_ModCreateData in q9kernel_moddir.c.
+Q9K_SysFDatMod:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_DatModScratch_Size
+        clr.l   Q9K_DatModScratch_AttRev        * obere Worte nullen, C liest 32 Bit
+        move.w  d1,Q9K_DatModScratch_AttRev+2
+        clr.l   Q9K_DatModScratch_Access
+        move.w  d2,Q9K_DatModScratch_Access+2
+        clr.l   Q9K_DatModScratch_TyLang
+        move.w  d3,Q9K_DatModScratch_TyLang+2
+        move.l  a0,Q9K_DatModScratch_Name
+        bsr     Q9K_SysDatModImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_DatModScratch_Success+2
+        beq     Q9K_SysFDatMod_Fail
+        move.w  Q9K_DatModScratch_Size+2,d0      * Typ/Sprache
+        move.w  Q9K_DatModScratch_AttRev+2,d1     * Attribut/Revision
+        movea.l Q9K_DatModScratch_Name,a0          * hinter den Namen
+        movea.l Q9K_DatModScratch_Data,a1           * Datenzeiger
+        movea.l Q9K_DatModScratch_Hdr,a2             * Modulkopf
+        andi    #$fe,ccr
+        rts
+Q9K_SysFDatMod_Fail:
+        move.w  Q9K_DatModScratch_Error+2,d1
         ori     #1,ccr
         rts
 

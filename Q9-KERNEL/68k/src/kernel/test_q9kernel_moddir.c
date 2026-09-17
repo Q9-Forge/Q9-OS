@@ -44,6 +44,9 @@ static unsigned char g_fakeGlobals[0x2000];
  * Feld beim echten Boot je noch nicht gesetzt waere). Wird von diesem
  * Test ohnehin nicht direkt ausgeuebt (s. Kopfkommentar, Fall 1). */
 #define Q9_D_TOTRAM             ((unsigned long)(g_fakeGlobals + 0x020))
+/* F$VModul/F$DatMod legen ihre Rueckgabewerte hier ab -- ohne
+ * Umlenkung greift der Test auf die echte Kerneladresse $1650 zu. */
+#define Q9K_VMODUL_RETBUF       ((unsigned long)(g_fakeGlobals + 0x100))
 
 /* Real nur 4/8/10/12 Byte auseinander (echtes 32-Bit-Ziel) -- auf
  * diesem 64-Bit-Testhost ist Q9_u32 8 Byte breit, deshalb hier
@@ -90,6 +93,26 @@ void Q9K_MemTraceEmit(unsigned long operation,
 {
     (void)operation; (void)requested; (void)address;
     (void)size; (void)error; (void)freeHead;
+}
+
+/* Arena-Stubs (q9kernel_arena.c, dort eigenstaendig getestet): ein
+ * einfacher Bump-Allocator reicht -- F$DatMod prueft hier den Modulaufbau,
+ * nicht die Speicherverwaltung. */
+static unsigned char g_datmodArena[8192];
+static unsigned long g_datmodNext;
+static int g_freeMemCalls;
+unsigned long Q9K_AllocMem(unsigned long size)
+{
+    unsigned long a;
+    if (g_datmodNext + size > sizeof(g_datmodArena))
+        return 0;
+    a = (unsigned long)(g_datmodArena + g_datmodNext);
+    g_datmodNext += size;
+    return a;
+}
+void Q9K_FreeMem(unsigned long addr, unsigned long size)
+{
+    (void)addr; (void)size; g_freeMemCalls++;
 }
 
 #include "q9kernel_moddir.c"
@@ -444,6 +467,82 @@ int main(void)
 
         copied = Q9K_ModDirCopyOut(0, sizeof(buf));
         checkU32("F$GModDr mit Null-Puffer kopiert nichts", copied, 0);
+    }
+
+
+    /* F$DatMod (Callcode 0x25): erzeugt ein echtes Datenmodul im Speicher
+     * und traegt es ins Verzeichnis ein. Nachweis ohne Erwartungstabelle:
+     * das erzeugte Modul muss anschliessend alle Pruefungen bestehen, die
+     * dieser Kernel an ein Modul stellt -- Sync, Groesse, Kopfparitaet,
+     * CRC gegen CRCCon -- und per F$Link auffindbar sein. */
+    {
+        static const char dmName[] = "shareddata";
+        Q9_u32 hdr = 0, data = 0, past = 0;
+        Q9_u16 err = 0xFFFF;
+        Q9_u32 total;
+        Q9_u32 parity;
+        Q9_u32 k;
+
+        printf("\n--- F$DatMod ---\n");
+        g_datmodNext = 0;
+        g_freeMemCalls = 0;
+
+        checkU32("F$DatMod erzeugt ein Datenmodul",
+                 Q9K_ModCreateData(64, 0x0001, 0x0555, (Q9_u16)(Q9K_MT_DATA << 8),
+                                   (Q9_u32)(unsigned long)dmName,
+                                   &hdr, &data, &past, &err), 1);
+        checkU32("F$DatMod meldet dabei keinen Fehler", (Q9_u32)err, 0);
+        checkU32("der Datenzeiger liegt hinter dem 48-Byte-Kopf",
+                 data - hdr, Q9K_MH_HEADER_SIZE);
+        checkU32("(a0) zeigt hinter den Namen",
+                 past, (Q9_u32)(unsigned long)dmName + 10UL);
+
+        total = Q9K_ReadU32BE((const Q9_u8 *)hdr + Q9K_MH_SIZE);
+        checkU32("die Modulgroesse ist auf 16 Byte aufgerundet", total % 16UL, 0);
+        checkU32("und fasst Kopf, Daten, Namen und CRC",
+                 (Q9_u32)(total >= Q9K_MH_HEADER_SIZE + 64UL + 10UL + 3UL), 1);
+
+        checkU32("das Sync-Wort steht am Anfang",
+                 (Q9_u32)((Q9K_GetU8Raw(hdr) << 8) | Q9K_GetU8Raw(hdr + 1)), 0x4AFCUL);
+
+        parity = 0;
+        for (k = 0; k < Q9K_MH_PARITY + 2UL; k += 2)
+            parity ^= ((Q9_u32)Q9K_GetU8Raw(hdr + k) << 8) | (Q9_u32)Q9K_GetU8Raw(hdr + k + 1);
+        checkU32("die Kopfparitaet stimmt", parity, 0xFFFFUL);
+
+        checkU32("der CRC des erzeugten Moduls stimmt (CRCCon)",
+                 Q9K_CrcAccumulate(0xFFFFFFFFUL, hdr, total), 0x00800FE3UL);
+
+        /* Der Datenbereich muss geloescht sein -- die Beschreibung
+         * verlangt das ausdruecklich. */
+        {
+            Q9_u32 nonzero = 0;
+            for (k = 0; k < 64UL; ++k)
+                if (Q9K_GetU8Raw(data + k) != 0)
+                    nonzero++;
+            checkU32("der Datenbereich ist geloescht", nonzero, 0);
+        }
+
+        /* Und das Modul ist im Verzeichnis auffindbar. */
+        checkU32("F$Link findet das erzeugte Datenmodul",
+                 (Q9_u32)(Q9K_ModDirLinkByName(0, "shareddata") == hdr), 1);
+
+        err = 0;
+        checkU32("F$DatMod weist einen Nullzeiger als Namen ab",
+                 Q9K_ModCreateData(16, 0, 0, 0x0400, 0, &hdr, &data, &past, &err), 0);
+        checkU32("F$DatMod meldet dafuer E_BNAM", (Q9_u32)err, 0x00CEUL);
+
+        err = 0;
+        checkU32("F$DatMod weist einen leeren Namen ab",
+                 Q9K_ModCreateData(16, 0, 0, 0x0400,
+                                   (Q9_u32)(unsigned long)"", &hdr, &data, &past, &err), 0);
+
+        err = 0;
+        checkU32("F$DatMod meldet erschoepften Speicher sauber",
+                 Q9K_ModCreateData(100000UL, 0, 0, 0x0400,
+                                   (Q9_u32)(unsigned long)dmName,
+                                   &hdr, &data, &past, &err), 0);
+        checkU32("und nutzt dafuer E_MEMFUL", (Q9_u32)err, 0x00CFUL);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

@@ -59,6 +59,7 @@
 *   K = F$SigMask masked and unmasked signals around a critical section (0x57)
 *   N = F$Icpt registered an intercept routine (0x09)
 *   X = F$Trans translated an address (identity on this machine) (0x60)
+*   W = F$DatMod created a data module that F$Link then finds (0x25)
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -563,6 +564,31 @@ Q9K_AttachStart:
         moveq   #'X',d7
         move.b  d7,$FFFFF006
 
+* F$DatMod: d0.l = data size, d1.w = attr/rev, d2.w = access, d3.w =
+* type/language, (a0) = name.  The created module must afterwards be
+* findable by F$Link under that very name -- the strongest check
+* available here, since F$Link validates what the directory holds.
+        move.l  #64,d0
+        moveq   #1,d1
+        move.w  #$0555,d2
+        move.w  #$0400,d3                      * Q9_MT_DATA in the high byte
+        lea     Q9K_DatModName(pc),a0
+        trap    #0
+        dc.w    $0025                          * F$DatMod
+        bcs     Q9K_NativeFailed
+        move.l  a2,d4                          * remember the module header
+        beq     Q9K_NativeFailed
+        moveq   #0,d0
+        lea     Q9K_DatModName(pc),a0
+        trap    #0
+        dc.w    $0000                          * F$Link on the new module
+        bcs     Q9K_NativeFailed
+        move.l  a2,d0
+        cmp.l   d4,d0                          * must be the module we created
+        bne     Q9K_NativeFailed
+        moveq   #'W',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
         trap    #0
@@ -627,6 +653,9 @@ Q9K_CrcModName:
 
 Q9K_NoSuchModule:
         dc.b    "keinmodul",0
+
+Q9K_DatModName:
+        dc.b    "q9shared",0
 
 Q9K_DirBuffer:
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
