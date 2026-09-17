@@ -6,9 +6,9 @@ IOMan integration, not to the original OS-9 implementation.
 
 | Status | Meaning |
 |---|---|
-| ✅ | Implemented and exercised in the current kernel test path |
+| ✅ | Fully implemented in Q9-OS and exercised without Microware dependencies |
 | 🟡 | Partially implemented, limited, or not yet completely verified |
-| 🔷 | Works with Microware components in a current emulator test; Q9-native replacement is still open |
+| 🔷 | Kernel-level path is usable with Microware components in a current emulator test; Q9-native replacement is still open |
 | ❌ | Not implemented or still routed to the unimplemented-service stub |
 
 The call-code names and the complete call-code set are based on
@@ -130,11 +130,11 @@ advance problem in the external `F$Load` path.
 | 🔷 | `0x80` | I$Attach | Verified through Microware IOMan/RBF/CF: `iattachsvc` successfully attaches `c0`; Q9-native device semantics remain open |
 | 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF: the attached `c0` entry is detached successfully; broader lifetime semantics remain open |
 | 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication and reference counting are implemented; full file-manager semantics remain open |
-| 🟡 | `0x83` | I$Create | Microware path exists; no complete current Q9 emulator verification |
+| ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; full pathname/device semantics remain open |
-| 🟡 | `0x85` | I$MakDir | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x86` | I$ChgDir | Microware path exists; no complete current Q9 emulator verification |
-| 🟡 | `0x87` | I$Delete | Microware path exists; no complete current Q9 emulator verification |
+| ❌ | `0x85` | I$MakDir | No Q9-OS implementation; only the Microware path exists |
+| ❌ | `0x86` | I$ChgDir | No Q9-OS implementation; only the Microware path exists |
+| ❌ | `0x87` | I$Delete | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x88` | I$Seek | Sequential Q9-native paths accept seek as a validated no-op; random-access semantics remain open |
 | 🟡 | `0x89` | I$Read | Minimal Q9-native blocking console input is implemented; full device semantics remain open |
 | 🟡 | `0x8A` | I$Write | Minimal Q9-native console output is implemented; full device semantics remain open |
