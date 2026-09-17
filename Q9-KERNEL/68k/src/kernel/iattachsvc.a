@@ -38,6 +38,9 @@
 *   U = F$SUser changed the caller's own ID while still 0.0 (0x1C)
 *   V = F$ID reports the ID that F$SUser just set
 *   u = a second F$SUser, no longer 0.0, correctly refused
+*   R = F$CRC over a whole real module yields CRCCon $00800FE3 (0x17)
+*   Y = F$UnLoad took that module's link back by name (0x1D)
+*   y = F$UnLoad on an unknown module name correctly rejected
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -267,6 +270,44 @@ Q9K_AttachStart:
         moveq   #'u',d7
         move.b  d7,$FFFFF006
 
+* F$CRC: d0.l = byte count, d1.l = accumulator, (a0) = data.  Running it
+* over a whole module including its own three CRC bytes must yield the
+* documented constant CRCCon ($00800FE3).  "hellosvc" is in the bootfile
+* next to this module, so F$Link gives us a real module to check.
+        moveq   #0,d0                          * any type
+        lea     Q9K_CrcModName(pc),a0
+        trap    #0
+        dc.w    $0000                          * F$Link -> a2 = module header
+        bcs     Q9K_NativeFailed
+        movea.l a2,a0                          * a0 = module start
+        move.l  $04(a2),d0                     * d0.l = M$Size, the whole module
+        moveq   #-1,d1                         * accumulator starts at -1
+        trap    #0
+        dc.w    $0017                          * F$CRC
+        bcs     Q9K_NativeFailed
+        cmpi.l  #$00800FE3,d1                  * CRCCon: module is intact
+        bne     Q9K_NativeFailed
+        moveq   #'R',d7
+        move.b  d7,$FFFFF006
+
+* F$UnLoad: d0.w = type/language, (a0) = module name.  Takes back the
+* F$Link above, so the link count returns to where it started.
+        moveq   #0,d0
+        lea     Q9K_CrcModName(pc),a0
+        trap    #0
+        dc.w    $001d                          * F$UnLoad
+        bcs     Q9K_NativeFailed
+        moveq   #'Y',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #0,d0                          * unknown module must be rejected
+        lea     Q9K_NoSuchModule(pc),a0
+        trap    #0
+        dc.w    $001d                          * F$UnLoad
+        bcc     Q9K_NativeFailed
+        moveq   #'y',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
         trap    #0
@@ -325,6 +366,12 @@ Q9K_CmpOther:
 
 Q9K_CopyBuffer:
         dc.b    0,0,0,0,0,0,0,0
+
+Q9K_CrcModName:
+        dc.b    "hellosvc",0
+
+Q9K_NoSuchModule:
+        dc.b    "keinmodul",0
 
 Q9K_WriteByte:
         dc.b    "w"

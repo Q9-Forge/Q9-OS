@@ -538,6 +538,15 @@ Q9K_CpyMemScratch_Dst      equ $18DC      * Q9_u32, (a1) EIN
 Q9K_CpyMemScratch_Error    equ $18E0      * Q9_u32, d1.w AUS bei Fehler
 Q9K_CpyMemScratch_Success  equ $18E4      * Q9_u32, 0/1
 
+* F$UnLoad- und F$CRC-Scratch (2026-09-17, s. q9kernel_moddir.c).
+Q9K_UnloadScratch_TyLang   equ $18E8      * Q9_u32, d0.w EIN
+Q9K_UnloadScratch_Name     equ $18EC      * Q9_u32, (a0) EIN
+Q9K_UnloadScratch_Error    equ $18F0      * Q9_u32, d1.w AUS bei Fehler
+Q9K_UnloadScratch_Success  equ $18F4      * Q9_u32, 0/1
+Q9K_CrcScratch_Count       equ $18F8      * Q9_u32, d0.l EIN
+Q9K_CrcScratch_Accum       equ $18FC      * Q9_u32, d1.l EIN/AUS
+Q9K_CrcScratch_Addr        equ $1900      * Q9_u32, (a0) EIN
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -5047,6 +5056,65 @@ Q9K_SysFCpyMem:
 Q9K_SysFCpyMem_Fail:
         move.w  Q9K_CpyMemScratch_Error+2,d1
         ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFUnLoad -- F$UnLoad (Callcode $1D, "Unlink Module by Name").
+* Reale ABI, 68k_tech.pdf S.531: IN d0.w = Modultyp/-sprache, (a0) =
+* Modulname. Der Unterschied zu F$UnLink ist ausschliesslich die Eingabe
+* (Name statt Kopfadresse). Laut Beschreibung wird (a0) hinter den Namen
+* fortgeschrieben; das uebernimmt hier dieselbe Routine, die auch
+* Q9K_SysFLink dafuer benutzt, damit beide Calls denselben Namensbegriff
+* verwenden. Kernlogik s. Q9K_ModDirUnloadByName in q9kernel_moddir.c.
+Q9K_SysFUnLoad:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_UnloadScratch_TyLang        * oberes Wort nullen, C liest 32 Bit
+        move.w  d0,Q9K_UnloadScratch_TyLang+2
+        move.l  a0,Q9K_UnloadScratch_Name
+        bsr     Q9K_SysUnloadImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_UnloadScratch_Success+2
+        beq     Q9K_SysFUnLoad_Fail
+* a0 hinter den Namen fortschreiben -- identische Schleife und identische
+* Abbruchbedingungen wie in Q9K_SysFLink_SkipName: OS-9 markiert das
+* letzte Namenszeichen mit Bit 7, kernel-interne Aufrufer duerfen aber
+* auch mit NUL terminieren; 256 Byte begrenzen einen kaputten Namen.
+        move.l  d7,-(sp)
+        moveq   #255,d7
+Q9K_SysFUnLoad_SkipName:
+        tst.b   (a0)+
+        beq     Q9K_SysFUnLoad_NameDone
+        bmi     Q9K_SysFUnLoad_NameDone
+        dbra    d7,Q9K_SysFUnLoad_SkipName
+        move.l  (sp)+,d7
+        bra     Q9K_SysFUnLoad_Fail
+Q9K_SysFUnLoad_NameDone:
+        move.l  (sp)+,d7
+        andi    #$fe,ccr
+        rts
+Q9K_SysFUnLoad_Fail:
+        move.w  Q9K_UnloadScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFCRC -- F$CRC (Callcode $17, "Generate CRC"). Reale ABI,
+* 68k_tech.pdf S.390: IN d0.l = Byteanzahl, d1.l = CRC-Akkumulator,
+* (a0) = Datenzeiger. AUS: d1.l = fortgefuehrter Akkumulator, kein
+* Fehlerfall (der Aufruf kann nicht scheitern) -- deshalb hier auch
+* keine Erfolgs-/Fehlerzelle, nur der Akkumulator. Rechenweg s.
+* Q9K_CrcAccumulate in q9kernel_moddir.c.
+Q9K_SysFCRC:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_CrcScratch_Count
+        move.l  d1,Q9K_CrcScratch_Accum
+        move.l  a0,Q9K_CrcScratch_Addr
+        bsr     Q9K_SysCrcImpl
+        movea.l (sp)+,a6
+        move.l  Q9K_CrcScratch_Accum,d1
+        andi    #$fe,ccr
         rts
 
 *******************************************************************************
