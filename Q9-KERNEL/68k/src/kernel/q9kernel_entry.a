@@ -552,6 +552,10 @@ Q9K_ModuleHeaderSize equ $3C            * generierte Modulkopfgroesse, per l68-M
 * veraendern: 1 = nur echo, 2 = nur date, 3 = echo gefolgt von date.
 * Der eingecheckte Standard bleibt der umfassende Test 3.
 Q9K_TestPrograms equ 3
+* Optional sysgo-style startup experiment.  Keep this disabled for the
+* deterministic echo/date regression modes; enable it separately when the
+* startup shell path itself is being investigated.
+Q9K_TestStartup equ 0
 * Optionaler Diagnosetest: Ein manueller F$TLink im Elternprozess wird
 * vom Kindprozess geerbt und wuerde dessen eigenen csl-F$TLink doppeln.
 * Standardmaessig bleibt dieser kuenstliche Doppeltest deshalb aus.
@@ -1527,6 +1531,7 @@ Q9K_TestAttachForkFail:
         bra     Q9K_TestProcA_Loop
         endc
 
+        ifne    Q9K_TestStartup
 * Start a sysgo-style shell after IOMan has initialized the process paths.
 * The smaller classic shell is loaded first, matching the sysgo order.
 * The current test image stores the startup file in the root directory.
@@ -1597,6 +1602,7 @@ Q9K_BootStartupDupFail:
 Q9K_BootStartupCloseFail:
         moveq   #'c',d7
         bra     Q9K_BootStartupFail
+        endc
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-03, Abschnitt "erste echte
 * Programmausgabe"): IOMans I$Open ist erfolgreich, die IRQ-Zustellung
