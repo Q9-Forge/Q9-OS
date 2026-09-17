@@ -17,6 +17,30 @@ The call-code names and the complete call-code set are based on
 mean that every OS-9 corner case or every hardware device is already
 supported.
 
+## Where the remaining work is (2026-09-18)
+
+Of the calls still open, the ones that are single, well-specified functions have
+now been done. What remains falls into three groups, and the table marks which:
+
+* **Whole subsystems**, not single calls: `F$Event` (event records with wait
+  queues and signalling), `F$Alarm` (timed alarm queues on the tick handler),
+  `F$Chain` (replacing the running program in place). Each needs its own design
+  pass rather than an afternoon.
+* **Blocked on one missing mechanism** — entering user code from the kernel:
+  `F$Icpt` registers an intercept routine but nothing runs it, and `F$RTE`,
+  `F$SigReset` and `F$STrap` all wait on that same piece. Building this one
+  mechanism would unblock four calls at once, which makes it the highest-value
+  next step in this area.
+* **Not the kernel's to implement**: `F$SysDbg` calls a debugger that Q9-OS does
+  not ship, `F$UAcct` is an extension point an OS9P2 module provides, and the
+  SSM-owned calls need a memory management module. `F$Mem` and `F$SSpd` were
+  withdrawn in real OS-9/68K itself.
+
+A few calls have no page in the Technical Manual at all (`F$AllRAM`, `F$GBlkMp`,
+`F$FModul`, `F$Sema`, `F$MBuf`, `F$POSK`, `F$GSPUMp`). Those stay untouched on
+purpose: this kernel implements verified ABIs, and guessing one would break that
+rule.
+
 ## Latest kernel verification (2026-09-17)
 
 The external `F$SSvc` trap return path was corrected: the 72-byte service
@@ -401,7 +425,7 @@ globals. All sixteen suites build and pass again.
 | ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
-| ❌ | `0x0E` | F$STrap | Not implemented |
+| ❌ | `0x0E` | F$STrap | Would register per-process exception handlers in P$Traps; running them needs the exception path to enter user code, which does not exist yet |
 | 🟡 | `0x0F` | F$PErr | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
 | ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
@@ -417,7 +441,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x1B` | F$CpyMem | Copy with owner-PID validation; no address translation is needed while all processes share one flat address space |
 | ✅ | `0x1C` | F$SUser | Changes the caller's own group/user ID in the process descriptor; only the documented "user 0.0 may change freely" case is implemented |
 | ✅ | `0x1D` | F$UnLoad | Same lookup rule as F$Link and the same counter as F$UnLink, keyed by module name |
-| ❌ | `0x1E` | F$RTE | Not implemented |
+| ❌ | `0x1E` | F$RTE | Returns from an intercept routine; blocked on the same missing piece as F$Icpt and F$SigReset |
 | ✅ | `0x1F` | F$GPrDBT | Pointer table assembled from the process pool, one entry per slot, 0 for a free one |
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | 🟡 | `0x21` | F$TLink | Trap linking works; unlink and complete lifetime handling remain open |
@@ -449,14 +473,14 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x4B` | F$AllPrc | Allocates and clears a process descriptor; without an MMU this is the documented direct F$AllPD case |
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
 | ❌ | `0x4E` | F$FModul | Not implemented |
-| ❌ | `0x52` | F$SysDbg | Not implemented |
-| ❌ | `0x53` | F$Event | Not implemented |
+| ⛔ | `0x52` | F$SysDbg | Calls the system debugger "if one exists"; Q9-OS ships none, so there is nothing for the kernel to implement |
+| ❌ | `0x53` | F$Event | A whole subsystem (32-byte event records, wait queues, link/unlink, signalling), not a single call |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
-| ❌ | `0x56` | F$Alarm | Not implemented |
+| ❌ | `0x56` | F$Alarm | Needs timed alarm queues on top of the tick handler; a subsystem rather than a single call |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Basic memory-check path exists; full protection semantics remain open |
-| ❌ | `0x59` | F$UAcct | Not implemented |
+| ⛔ | `0x59` | F$UAcct | A user-defined call installed by an OS9P2 module, not a kernel service; without such a module there is nothing to provide |
 | 🟡 | `0x5A` | F$CCtl | Handler/dispatch path exists; cache-control implementation remains open |
 | ❌ | `0x5B` | F$GSPUMp | Not implemented |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
@@ -466,7 +490,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | ❌ | `0x61` | F$FIRQ | Not implemented |
 | ❌ | `0x62` | F$Sema | Not implemented |
-| ❌ | `0x63` | F$SigReset | Not implemented |
+| ❌ | `0x63` | F$SigReset | Clears the intercept context stack; needs intercept routines to actually run first (see F$Icpt) |
 
 ## I$ input/output system calls
 
