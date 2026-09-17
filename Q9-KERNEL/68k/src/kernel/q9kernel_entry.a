@@ -590,6 +590,20 @@ Q9K_DateScratch_Date       equ $1934      * Q9_u32, d1.l EIN/AUS
 Q9K_DateScratch_Error      equ $1938      * Q9_u32, d1.w AUS bei Fehler
 Q9K_DateScratch_Success    equ $193C      * Q9_u32, 0/1
 
+* F$AProc-, F$GPrDBT-, F$AllPrc- und F$DelPrc-Scratch (2026-09-18,
+* s. q9kernel_procapi.c bzw. q9kernel_firstproc.c).
+Q9K_AProcScratch_Desc      equ $1940      * Q9_u32, (a0) EIN
+Q9K_AProcScratch_Error     equ $1944      * Q9_u32, d1.w AUS bei Fehler
+Q9K_AProcScratch_Success   equ $1948      * Q9_u32, 0/1
+Q9K_GPrDBTScratch_Buf      equ $194C      * Q9_u32, (a0) EIN
+Q9K_GPrDBTScratch_Count    equ $1950      * Q9_u32, d1.l EIN/AUS
+Q9K_AllPrcScratch_Desc     equ $1954      * Q9_u32, (a2) AUS
+Q9K_AllPrcScratch_Error    equ $1958      * Q9_u32, d1.w AUS bei Fehler
+Q9K_AllPrcScratch_Success  equ $195C      * Q9_u32, 0/1
+Q9K_DelPrcScratch_PID      equ $1960      * Q9_u32, d0.w EIN
+Q9K_DelPrcScratch_Error    equ $1964      * Q9_u32, d1.w AUS bei Fehler
+Q9K_DelPrcScratch_Success  equ $1968      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -5272,6 +5286,160 @@ Q9K_SysFGregor_Fail:
         move.w  Q9K_DateScratch_Error+2,d1
         ori     #1,ccr
         rts
+
+*******************************************************************************
+* Q9K_SysFAProc -- F$AProc (Callcode $2C, "Enter Process in Active
+* Process Queue"). Reale ABI, 68k_tech.pdf S.377: IN (a0) =
+* Prozessdeskriptor, keine Ausgabe; Carry + d1.w bei Fehler.
+* Systemzustand. Kernlogik und die bewusst NICHT umgesetzte sofortige
+* Verdraengung s. Q9K_ProcAProc in q9kernel_procapi.c.
+Q9K_SysFAProc:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  a0,Q9K_AProcScratch_Desc
+        bsr     Q9K_SysAProcImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_AProcScratch_Success+2
+        beq     Q9K_SysFAProc_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFAProc_Fail:
+        move.w  Q9K_AProcScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFGPrDBT -- F$GPrDBT (Callcode $1F, "Get Copy of Process
+* Descriptor Block Table"). Reale ABI, 68k_tech.pdf S.439: IN d1.l =
+* hoechstens zu kopierende Bytes, (a0) = Puffer; AUS d1.l = tatsaechlich
+* kopierte Bytes. Kein Fehlerfall. Format s. Q9K_ProcGPrDBT.
+Q9K_SysFGPrDBT:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  a0,Q9K_GPrDBTScratch_Buf
+        move.l  d1,Q9K_GPrDBTScratch_Count
+        bsr     Q9K_SysGPrDBTImpl
+        movea.l (sp)+,a6
+        move.l  Q9K_GPrDBTScratch_Count,d1
+        andi    #$fe,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFAllPrc -- F$AllPrc (Callcode $4B, "Allocate Process
+* Descriptor"). Reale ABI, 68k_tech.pdf S.373: keine Eingabe, AUS
+* (a2) = Deskriptorzeiger; E$PrcFul bei erschoepftem Pool.
+* Systemzustand. Kernlogik s. Q9K_ProcAllPrc in q9kernel_firstproc.c.
+Q9K_SysFAllPrc:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SysAllPrcImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_AllPrcScratch_Success+2
+        beq     Q9K_SysFAllPrc_Fail
+        movea.l Q9K_AllPrcScratch_Desc,a2
+        andi    #$fe,ccr
+        rts
+Q9K_SysFAllPrc_Fail:
+        move.w  Q9K_AllPrcScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFDelPrc -- F$DelPrc (Callcode $4C, "De-allocate Process
+* Descriptor"). Reale ABI, 68k_tech.pdf S.403: IN d0.w = Prozess-ID,
+* keine Ausgabe. Systemzustand. Gibt NUR den Deskriptor zurueck, keine
+* sonstigen Betriebsmittel -- s. Q9K_ProcDelPrc in q9kernel_firstproc.c.
+Q9K_SysFDelPrc:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_DelPrcScratch_PID           * oberes Wort nullen, C liest 32 Bit
+        move.w  d0,Q9K_DelPrcScratch_PID+2
+        bsr     Q9K_SysDelPrcImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_DelPrcScratch_Success+2
+        beq     Q9K_SysFDelPrc_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFDelPrc_Fail:
+        move.w  Q9K_DelPrcScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFSysID -- F$SysID (Callcode $55, "Get System Information").
+* Reale ABI, 68k_tech.pdf S.519: IN d0.l und (a2)/(a3) reserviert (0),
+* (a0) = Puffer fuer den Versionstext oder 0, (a1) = Puffer fuer den
+* Copyright-Text oder 0. AUS: d0.l = OEM-Registriernummer, d1.l =
+* Seriennummer, d2.l = Prozessorkennung, d3.l = Kernelkennung, d4.l =
+* FPU-Kennung, d5.l = 0, d6.l = Kernelversion, d7.l = 0; die beiden
+* Puffer enthalten danach die jeweiligen Texte.
+*
+* KOMPLETT IN ASSEMBLER, ohne C-Gegenstueck -- zwei Gruende: der Call ist
+* reines Registersetzen plus zwei Zeichenkettenkopien, und die Texte
+* MUESSEN PC-relativ adressiert werden (lea ...(pc),an). Dieser Kernel
+* wird als REENT-Modul an wechselnder Adresse geladen; ein aus C
+* erzeugter Zeiger auf eine statische Zeichenkette waere nicht
+* reloziert und zeigte ins Leere.
+*
+* Ehrliche Werte statt erfundener: OEM-Nummer und Seriennummer sind 0 --
+* Q9-OS ist kein bei Microware registrierter OEM, und eine Seriennummer
+* gibt es nicht. Die FPU-Kennung ist ebenfalls 0, weil dieser Kernel
+* keine FPU-Erkennung durchfuehrt (das fpu-Modul der Bootkette wird nur
+* mitgeladen). Prozessor- und Kernelkennung kommen aus Q9_D_MpuTyp, dem
+* beim Boot aus d1 gesicherten echten CPU-Typ.
+Q9K_SysFSysID:
+        move.l  a0,-(sp)                        * Zielpuffer merken
+        move.l  a1,-(sp)
+
+        move.l  a0,d0
+        beq     Q9K_SysFSysID_NoVer
+        lea     Q9K_SysIDVersion(pc),a1
+        bsr     Q9K_SysIDCopyStr                 * (a1) -> (a0)
+Q9K_SysFSysID_NoVer:
+        movea.l (sp),a0                          * a0 = urspruenglicher a1 (Copyright-Puffer)
+        move.l  a0,d0
+        beq     Q9K_SysFSysID_NoCopy
+        lea     Q9K_SysIDCopyright(pc),a1
+        bsr     Q9K_SysIDCopyStr
+Q9K_SysFSysID_NoCopy:
+        movea.l (sp)+,a1                         * a1 = Copyright-Puffer zurueck
+        movea.l (sp)+,a0                         * a0 = Versions-Puffer zurueck
+
+        moveq   #0,d0                            * OEM-Registriernummer: keine
+        moveq   #0,d1                            * Seriennummer: keine
+        move.l  Q9_D_MpuTyp,d2                   * Prozessorkennung
+        move.l  d2,d3                             * Kernelkennung: fuer dieselbe CPU gebaut
+        moveq   #0,d4                             * FPU-Kennung: keine Erkennung
+        moveq   #0,d5                             * reserviert
+        move.l  #Q9K_SysIDVersionCode,d6           * Kernelversion, s. Konstante
+        moveq   #0,d7                               * reserviert
+        andi    #$fe,ccr
+        rts
+
+* Kopiert die NUL-terminierte Zeichenkette (a1) nach (a0), hoechstens
+* 63 Zeichen plus Abschluss -- die Beschreibung nennt keine Puffergroesse,
+* deshalb eine feste, kleine Obergrenze statt unbegrenztem Vertrauen in
+* einen fremden Puffer.
+Q9K_SysIDCopyStr:
+        movem.l d0/a0/a1,-(sp)
+        moveq   #62,d0
+Q9K_SysIDCopyLoop:
+        move.b  (a1)+,(a0)+
+        beq     Q9K_SysIDCopyDone
+        dbra    d0,Q9K_SysIDCopyLoop
+        clr.b   (a0)                              * Obergrenze erreicht: selbst abschliessen
+Q9K_SysIDCopyDone:
+        movem.l (sp)+,d0/a0/a1
+        rts
+
+* Kernelversion im Format Level/Version/Revision/Edition (je ein Byte),
+* wie es die Beschreibung fuer d6 vorsieht.
+Q9K_SysIDVersionCode equ $01000100                * Level 1, Version 0, Revision 1, Edition 0
+Q9K_SysIDVersion:
+        dc.b    "Q9-OS Version V1.0",0
+Q9K_SysIDCopyright:
+        dc.b    "Q9-OS kernel, Q9-Forge",0
+        align
 
 * __udivide / __umodulo -- die Divisions-Gegenstuecke zu __multiply,
 * LAGE BEWUSST HIER HINTEN, nicht neben __multiply: eingefuegt zwischen

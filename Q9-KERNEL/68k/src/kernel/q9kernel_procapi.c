@@ -35,6 +35,10 @@
 
 #include "q9kernel_config.h"
 
+/* Aus q9kernel_sched.c -- externe Deklaration statt gemeinsamem Header,
+ * gleiche schlanke Konvention wie ueberall in diesem Verzeichnis. */
+extern void Q9K_SchedInsert(unsigned long desc);
+
 typedef unsigned long  Q9_u32;
 typedef unsigned short Q9_u16;
 typedef unsigned char  Q9_u8;
@@ -72,6 +76,9 @@ typedef char Q9K_ProcDescShiftMatchesSize[
 #endif
 #ifndef Q9K_PROCDESC_USER_OFF
 #define Q9K_PROCDESC_USER_OFF 0x14UL  /* P$User, s. q9kernel_firstproc.c */
+#endif
+#ifndef Q9K_PROCDESC_SAVEDSP_OFF
+#define Q9K_PROCDESC_SAVEDSP_OFF 0x08UL /* P$sp, s. q9kernel_firstproc.c */
 #endif
 
 /* Direkt hinter den I$Open-Scratch-Feldern.  $1370/$1374 sind noch
@@ -125,6 +132,18 @@ typedef char Q9K_ProcDescShiftMatchesSize[
 
 #define Q9K_E_PRCID 0x00E0U /* errno.h: invalid process ID (E$IPrcID) */
 #define Q9K_E_PERMIT 0x00A4U /* errno.h: EOS_PERMIT, "must be super user" */
+
+/* F$AProc-/F$GPrDBT-Scratch (2026-09-18), hinter dem F$Julian-Block
+ * ($1930-$193C, q9kernel_date.c). */
+#ifndef Q9K_APROC_SCRATCH_DESC
+#define Q9K_APROC_SCRATCH_DESC     0x1940UL /* Q9_u32, (a0) EIN            */
+#define Q9K_APROC_SCRATCH_ERROR    0x1944UL /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_APROC_SCRATCH_SUCCESS  0x1948UL /* Q9_u32, 0/1                 */
+#endif
+#ifndef Q9K_GPRDBT_SCRATCH_BUF
+#define Q9K_GPRDBT_SCRATCH_BUF     0x194CUL /* Q9_u32, (a0) EIN            */
+#define Q9K_GPRDBT_SCRATCH_COUNT   0x1950UL /* Q9_u32, d1.l EIN/AUS        */
+#endif
 
 /* F$GPrDsc-Scratch (2026-09-17), hinter dem F$GModDr-Block
  * ($1910-$1914, q9kernel_moddir.c). */
@@ -497,4 +516,125 @@ void Q9K_SysGPrDscImpl(void)
         Q9K_SetU32(Q9K_GPRDSC_SCRATCH_ERROR, (Q9_u32)err);
         Q9K_SetU32(Q9K_GPRDSC_SCRATCH_SUCCESS, 0UL);
     }
+}
+
+/* Q9K_ProcAProc -- echte F$AProc-Kernlogik (Callcode $2C, "Enter Process
+ * in Active Process Queue"). Verifizierte ABI (68k_tech.pdf S. 377):
+ * (a0) = Prozessdeskriptor, keine Ausgabe; Carry + d1.w bei Fehler.
+ * Systemzustand.
+ *
+ * Die Beschreibung nennt drei Wirkungen: alle bereits wartenden Prozesse
+ * altern, das Alter des uebergebenen Prozesses wird auf seine Prioritaet
+ * gesetzt, und er wird nach seinem relativen Alter eingereiht. Genau das
+ * ist Q9K_SchedInsert (q9kernel_sched.c) -- Age=Prioritaet plus Einhaengen
+ * in die Ready-Queue; das Altern der uebrigen erledigt der Scheduler
+ * ohnehin bei jedem Tick (Q9K_SchedAgeAll in Q9K_SchedReschedule). Dieser
+ * Call fuehrt deshalb bewusst keine zweite, eigene Alterungsrunde aus:
+ * das waere doppelte Buchfuehrung auf denselben Feldern.
+ *
+ * NICHT umgesetzt ist der letzte Satz der Beschreibung -- "hat der neue
+ * Prozess eine hoehere Prioritaet als der laufende, gibt dieser den Rest
+ * seiner Zeitscheibe ab und der neue laeuft sofort". Das braucht eine
+ * Preemption aus dem Trap-Kontext heraus, dieselbe Umschaltung, die auch
+ * F$NProc noch fehlt (s. STATUS.md). Der Prozess wird hier also lauffaehig
+ * gemacht und kommt beim naechsten Tick dran, nicht sofort.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcAProc(Q9_u32 desc, Q9_u16 *outError)
+{
+    *outError = 0;
+
+    /* Nur ein Deskriptor, der wirklich zu einem belegten Pool-Slot
+     * gehoert, darf in die Ready-Queue -- sonst verkettet ein falscher
+     * Zeiger die Liste in den freien Speicher hinein. */
+    if (desc == 0 || Q9K_ProcIdForDesc(desc) == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+
+    /* Und er muss AUSFUEHRBAR sein. Der Scheduler holt sich beim
+     * Umschalten den gesicherten Stackzeiger aus dem Deskriptor und
+     * kehrt per RTE auf den dort liegenden Rahmen zurueck
+     * (Q9K_SchedRun/Q9K_TimerIRQHandler, q9kernel_entry.a). Ein
+     * Deskriptor ohne gesicherten Stack -- etwa ein frisch von F$AllPrc
+     * geholter, noch vollstaendig genullter -- laesst den Scheduler
+     * dadurch auf Adresse 0 umschalten und ein RTE auf einem leeren
+     * Rahmen ausfuehren: Format Error (Vektor 14), und zwar erst beim
+     * naechsten Zeitscheibenwechsel, also weit entfernt von der
+     * Ursache. LIVE ERLEBT (2026-09-18) genau so, als der Emulatortest
+     * einen frischen F$AllPrc-Deskriptor an F$AProc weiterreichte.
+     * Ein Prozess wird ausfuehrbar, indem F$Fork/Q9K_ProcCreate ihm
+     * einen Stack samt Rahmen aufbauen -- erst danach gehoert er in die
+     * Ready-Queue. */
+    if (Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF) == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+
+    Q9K_SchedInsert(desc);
+    return 1;
+}
+
+void Q9K_SysAProcImpl(void)
+{
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcAProc(Q9K_GetU32(Q9K_APROC_SCRATCH_DESC), &err)) {
+        Q9K_SetU32(Q9K_APROC_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_APROC_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_APROC_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
+/* Q9K_ProcGPrDBT -- echte F$GPrDBT-Kernlogik (Callcode $1F, "Get Copy of
+ * Process Descriptor Block Table"). Verifizierte ABI (68k_tech.pdf
+ * S. 439): d1.l = hoechstens zu kopierende Bytes, (a0) = Puffer;
+ * AUS: d1.l = tatsaechlich kopierte Bytes.
+ *
+ * Die Tabelle ist ein Feld von Zeigern auf die Prozessdeskriptoren --
+ * das reale Format, an dem sich procs orientiert. Dieser Kernel fuehrt
+ * keine solche Tabelle als eigene Struktur: der Prozesspool IST das
+ * Verzeichnis (fortlaufende Slots ab Q9K_PROCPOOL_BASE_ADDR). Die
+ * Tabelle wird deshalb beim Aufruf aus dem Pool zusammengestellt -- ein
+ * Eintrag je Slot, 0 fuer einen freien. Damit bleibt die Zusage der
+ * Beschreibung erhalten (Index = Prozessnummer, Eintrag = Deskriptor
+ * oder leer), ohne eine zweite, parallel zu pflegende Datenstruktur
+ * einzufuehren, die mit dem Pool auseinanderlaufen koennte.
+ *
+ * Abgeschnitten wird auf ganze Eintraege. Rueckgabe: kopierte Bytes. */
+Q9_u32 Q9K_ProcGPrDBT(Q9_u32 bufAddr, Q9_u32 maxBytes)
+{
+    Q9_u32 base  = Q9K_GetU32(Q9K_PROCPOOL_BASE_ADDR);
+    Q9_u32 count = Q9K_GetU32(Q9K_PROCPOOL_COUNT_ADDR);
+    Q9_u32 written = 0;
+    Q9_u32 i;
+
+    if (bufAddr == 0 || base == 0)
+        return 0;
+
+    for (i = 0; i < count && written + 4UL <= maxBytes; ++i) {
+        Q9_u32 desc = base + (i << Q9K_PROCDESC_SHIFT);
+        Q9_u32 entry = Q9K_ProcIsAllocated(desc) ? desc : 0UL;
+        volatile Q9_u8 *dst = (volatile Q9_u8 *)(bufAddr + written);
+
+        /* Byteweise und ausdruecklich Big-Endian: der Puffer gehoert dem
+         * Aufrufer und muss die echte 68k-Zeigerbreite von 4 Byte
+         * tragen, unabhaengig davon, wie breit Q9_u32 auf dem jeweiligen
+         * Uebersetzungsziel ist (auf dem Testhost 8 Byte). */
+        dst[0] = (Q9_u8)((entry >> 24) & 0xFFUL);
+        dst[1] = (Q9_u8)((entry >> 16) & 0xFFUL);
+        dst[2] = (Q9_u8)((entry >> 8) & 0xFFUL);
+        dst[3] = (Q9_u8)(entry & 0xFFUL);
+        written += 4UL;
+    }
+
+    return written;
+}
+
+void Q9K_SysGPrDBTImpl(void)
+{
+    Q9K_SetU32(Q9K_GPRDBT_SCRATCH_COUNT,
+               Q9K_ProcGPrDBT(Q9K_GetU32(Q9K_GPRDBT_SCRATCH_BUF),
+                              Q9K_GetU32(Q9K_GPRDBT_SCRATCH_COUNT)));
 }

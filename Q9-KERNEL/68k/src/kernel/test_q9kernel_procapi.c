@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static unsigned char g_globals[0x400];
+static unsigned char g_globals[0x600];
 /* Vier Pool-Slots. Die Groesse MUSS >= 4 * Q9K_PROCDESC_SIZE sein; die
  * Konstante selbst ist hier noch nicht sichtbar (sie kommt erst mit dem
  * #include unten), deshalb der bewusst grosszuegige Literalwert plus die
@@ -50,12 +50,29 @@ static unsigned char g_bigBuf[0x400 + 16];
 #define Q9K_GPRDSC_SCRATCH_BUF        ((unsigned long)(g_globals + 0x380))
 #define Q9K_GPRDSC_SCRATCH_ERROR      ((unsigned long)(g_globals + 0x3A0))
 #define Q9K_GPRDSC_SCRATCH_SUCCESS    ((unsigned long)(g_globals + 0x3C0))
+#define Q9K_APROC_SCRATCH_DESC        ((unsigned long)(g_globals + 0x400))
+#define Q9K_APROC_SCRATCH_ERROR       ((unsigned long)(g_globals + 0x420))
+#define Q9K_APROC_SCRATCH_SUCCESS     ((unsigned long)(g_globals + 0x440))
+#define Q9K_GPRDBT_SCRATCH_BUF        ((unsigned long)(g_globals + 0x460))
+#define Q9K_GPRDBT_SCRATCH_COUNT      ((unsigned long)(g_globals + 0x480))
 /* P$User liegt real auf $14 und ist dort genau 4 Byte breit. Auf diesem
  * Host ist Q9_u32 aber 8 Byte breit, ein Zugriff wuerde also bis $1B
  * reichen und die Nachbarfelder P$Prior ($19) und P$Age ($1A)
  * ueberschreiben -- gleiche Grosszuegigkeit wie in
  * test_q9kernel_firstproc.c, betrifft NUR diesen Test. */
 #define Q9K_PROCDESC_USER_OFF         0x300UL
+
+/* Q9K_SchedInsert lebt in q9kernel_sched.c (Ready-Queue). Hier ein
+ * aufrufzaehlender Stub -- dieser Test prueft nur, DASS F$AProc den
+ * Scheduler mit dem richtigen Deskriptor beauftragt; das Einhaengen
+ * selbst ist in test_q9kernel_sched.c eigenstaendig abgedeckt. */
+static int g_schedInsertCalls;
+static unsigned long g_schedInsertLast;
+void Q9K_SchedInsert(unsigned long desc)
+{
+    g_schedInsertCalls++;
+    g_schedInsertLast = desc;
+}
 
 #include "q9kernel_procapi.c"
 
@@ -308,6 +325,103 @@ int main(void)
               Q9K_GetU32(Q9K_GPRDSC_SCRATCH_SUCCESS), 0);
         check("F$GPrDsc-Bridge legt E$PrcID in voller Zellbreite ab",
               Q9K_GetU32(Q9K_GPRDSC_SCRATCH_ERROR), Q9K_E_PRCID);
+    }
+
+
+    /* F$AProc (Callcode 0x2C): beauftragt den Scheduler, aber nur mit
+     * einem Deskriptor, der wirklich zu einem belegten Slot gehoert. */
+    {
+        Q9_u16 err;
+
+        g_schedInsertCalls = 0;
+        g_schedInsertLast = 0;
+        /* Ein lauffaehiger Prozess hat einen gesicherten Stack -- ohne den
+         * wuerde der Scheduler auf Adresse 0 umschalten (s. Q9K_ProcAProc). */
+        Q9K_SetU32(second + Q9K_PROCDESC_SAVEDSP_OFF, 0x2000UL);
+        err = 0xFFFF;
+        check("F$AProc nimmt einen belegten, lauffaehigen Deskriptor an",
+              (Q9_u32)Q9K_ProcAProc(second, &err), 1);
+        check("F$AProc reicht genau diesen Deskriptor weiter",
+              (Q9_u32)g_schedInsertLast, second);
+        check("F$AProc ruft den Scheduler genau einmal", (Q9_u32)g_schedInsertCalls, 1);
+        check("F$AProc meldet dabei keinen Fehler", (Q9_u32)err, 0);
+
+        err = 0;
+        check("F$AProc weist den Nullzeiger ab",
+              (Q9_u32)Q9K_ProcAProc(0, &err), 0);
+        check("F$AProc meldet dabei E$PrcID", (Q9_u32)err, Q9K_E_PRCID);
+
+        /* Ein Zeiger, der nicht auf einen belegten Pool-Slot zeigt, darf
+         * nicht in die Ready-Queue -- sonst verkettet sie sich in den
+         * freien Speicher hinein. */
+        err = 0;
+        check("F$AProc weist einen poolfremden Zeiger ab",
+              (Q9_u32)Q9K_ProcAProc(base + 1UL, &err), 0);
+        check("F$AProc weist einen freien Slot ab",
+              (Q9_u32)Q9K_ProcAProc(base + 3UL * Q9K_PROCDESC_SIZE, &err), 0);
+        check("F$AProc hat den Scheduler dabei nie erneut gerufen",
+              (Q9_u32)g_schedInsertCalls, 1);
+
+        /* Der eigentliche Fund vom 2026-09-18: ein belegter, aber noch
+         * nicht lauffaehiger Deskriptor (SavedSP == 0, wie ihn F$AllPrc
+         * liefert) darf NICHT in die Ready-Queue -- sonst schaltet der
+         * Scheduler beim naechsten Tick auf Adresse 0 um und faellt in
+         * einen Format Error. */
+        Q9K_SetU32(third + Q9K_PROCDESC_SAVEDSP_OFF, 0);
+        err = 0;
+        check("F$AProc weist einen Deskriptor ohne gesicherten Stack ab",
+              (Q9_u32)Q9K_ProcAProc(third, &err), 0);
+        check("F$AProc meldet auch dafuer E$PrcID", (Q9_u32)err, Q9K_E_PRCID);
+        check("F$AProc hat den Scheduler dafuer nicht gerufen",
+              (Q9_u32)g_schedInsertCalls, 1);
+
+        /* Bridge: volle Zellbreite. */
+        Q9K_SetU32(Q9K_APROC_SCRATCH_DESC, second);
+        Q9K_SysAProcImpl();
+        check("F$AProc-Bridge meldet Erfolg in voller Zellbreite",
+              Q9K_GetU32(Q9K_APROC_SCRATCH_SUCCESS), 1);
+        Q9K_SetU32(Q9K_APROC_SCRATCH_DESC, 0);
+        Q9K_SysAProcImpl();
+        check("F$AProc-Bridge meldet den Nullzeiger als Fehlschlag",
+              Q9K_GetU32(Q9K_APROC_SCRATCH_SUCCESS), 0);
+        check("F$AProc-Bridge legt E$PrcID in voller Zellbreite ab",
+              Q9K_GetU32(Q9K_APROC_SCRATCH_ERROR), Q9K_E_PRCID);
+    }
+
+    /* F$GPrDBT (Callcode 0x1F): Zeigertabelle aus dem Pool, ein Eintrag
+     * je Slot, 0 fuer einen freien -- immer 4 Byte je Eintrag, auch auf
+     * diesem Host mit 8 Byte breitem Q9_u32. */
+    {
+        static unsigned char buf[64];
+        Q9_u32 copied;
+        unsigned i;
+
+        for (i = 0; i < sizeof(buf); ++i)
+            buf[i] = 0xEE;
+
+        copied = Q9K_ProcGPrDBT((Q9_u32)(unsigned long)buf, sizeof(buf));
+        check("F$GPrDBT liefert einen Eintrag je Pool-Slot", copied, 4UL * 4UL);
+
+        /* Slot 4 ist frei (s. Testaufbau oben) und muss als 0 erscheinen. */
+        check("F$GPrDBT traegt den freien Slot als 0 ein",
+              (Q9_u32)((buf[12] << 24) | (buf[13] << 16) | (buf[14] << 8) | buf[15]), 0UL);
+        /* Die belegten Slots tragen die unteren 32 Bit ihrer Adresse. */
+        check("F$GPrDBT traegt den ersten belegten Slot ein",
+              (Q9_u32)((buf[0] << 24) | (buf[1] << 16) | (buf[2] << 8) | buf[3]),
+              first & 0xFFFFFFFFUL);
+
+        copied = Q9K_ProcGPrDBT((Q9_u32)(unsigned long)buf, 6);
+        check("F$GPrDBT schneidet auf ganze Eintraege ab", copied, 4UL);
+        copied = Q9K_ProcGPrDBT((Q9_u32)(unsigned long)buf, 0);
+        check("F$GPrDBT mit Puffergroesse 0 kopiert nichts", copied, 0UL);
+        copied = Q9K_ProcGPrDBT(0, sizeof(buf));
+        check("F$GPrDBT mit Null-Puffer kopiert nichts", copied, 0UL);
+
+        Q9K_SetU32(Q9K_GPRDBT_SCRATCH_BUF, (Q9_u32)(unsigned long)buf);
+        Q9K_SetU32(Q9K_GPRDBT_SCRATCH_COUNT, sizeof(buf));
+        Q9K_SysGPrDBTImpl();
+        check("F$GPrDBT-Bridge legt die Byteanzahl in der Zelle ab",
+              Q9K_GetU32(Q9K_GPRDBT_SCRATCH_COUNT), 16UL);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

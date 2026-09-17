@@ -48,6 +48,12 @@
 *   J = F$Julian turned 1970-01-01 into JULBASE 2440587 (0x20)
 *   G = F$Gregor turned that straight back into 1970-01-01 12:00 (0x54)
 *   j = F$Julian rejected hour 24
+*   A = F$AllPrc handed out a fresh process descriptor (0x4B)
+*   a = F$AProc refused that not-yet-runnable descriptor (0x2C)
+*   Z = F$DelPrc gave it back to the pool (0x4C)
+*   z = F$DelPrc on an unknown PID correctly rejected
+*   E = F$GPrDBT returned a non-empty descriptor table (0x1F)
+*   Q = F$SysID filled the version buffer and reported the CPU type (0x55)
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -404,6 +410,78 @@ Q9K_AttachStart:
         moveq   #'j',d7
         move.b  d7,$FFFFF006
 
+* F$AllPrc: no input, (a2) = fresh descriptor.  Take one, hand it to
+* F$AProc, then give it back with F$DelPrc -- the descriptor never runs,
+* so nothing else in the system is disturbed.
+        trap    #0
+        dc.w    $004b                          * F$AllPrc
+        bcs     Q9K_NativeFailed
+        move.l  a2,d4                          * keep the descriptor in d4
+        beq     Q9K_NativeFailed               * a null pointer would be a lie
+        moveq   #'A',d7
+        move.b  d7,$FFFFF006
+
+* F$AProc: (a0) = descriptor.  A descriptor straight out of F$AllPrc is
+* cleared, so it has no saved stack and is not runnable yet -- F$AProc
+* must refuse it.  Accepting it would put a process into the ready queue
+* whose SavedSP is 0; the scheduler would switch to address 0 on the next
+* tick and die in a format error, far away from the cause (seen exactly
+* like that on 2026-09-18, which is why the check exists).
+        movea.l d4,a0
+        trap    #0
+        dc.w    $002c                          * F$AProc
+        bcc     Q9K_NativeFailed
+        moveq   #'a',d7
+        move.b  d7,$FFFFF006
+
+* F$DelPrc: d0.w = PID.  The descriptor carries its own P$ID at offset 0,
+* written by F$AllPrc.
+        movea.l d4,a0
+        move.w  (a0),d0
+        trap    #0
+        dc.w    $004c                          * F$DelPrc
+        bcs     Q9K_NativeFailed
+        moveq   #'Z',d7
+        move.b  d7,$FFFFF006
+
+        move.w  #999,d0                        * unknown PID must be rejected
+        trap    #0
+        dc.w    $004c                          * F$DelPrc
+        bcc     Q9K_NativeFailed
+        moveq   #'z',d7
+        move.b  d7,$FFFFF006
+
+* F$GPrDBT: d1.l = maximum bytes, (a0) = buffer.  At least this process
+* itself is in the table, so it must not come back empty.
+        move.l  #32,d1
+        lea     Q9K_DirBuffer(pc),a0
+        trap    #0
+        dc.w    $001f                          * F$GPrDBT
+        bcs     Q9K_NativeFailed
+        tst.l   d1
+        beq     Q9K_NativeFailed
+        moveq   #'E',d7
+        move.b  d7,$FFFFF006
+
+* F$SysID: (a0) = version buffer, (a1) = copyright buffer, d0/(a2)/(a3)
+* reserved and zero.  The version text must arrive and d2 must carry the
+* CPU type the boot ROM detected (non-zero on this board).
+        moveq   #0,d0
+        lea     Q9K_SysIDBuffer(pc),a0
+        lea     Q9K_SysIDBuffer2(pc),a1
+        suba.l  a2,a2
+        suba.l  a3,a3
+        trap    #0
+        dc.w    $0055                          * F$SysID
+        bcs     Q9K_NativeFailed
+        lea     Q9K_SysIDBuffer(pc),a0
+        cmpi.b  #'Q',(a0)                      * "Q9-OS Version ..."
+        bne     Q9K_NativeFailed
+        tst.l   d2                             * processor identification
+        beq     Q9K_NativeFailed
+        moveq   #'Q',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
         trap    #0
@@ -470,6 +548,17 @@ Q9K_NoSuchModule:
         dc.b    "keinmodul",0
 
 Q9K_DirBuffer:
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+Q9K_SysIDBuffer:
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Q9K_SysIDBuffer2:
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 

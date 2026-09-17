@@ -51,6 +51,12 @@ static unsigned long g_fakePoolNext;
  * breiten Q9_u32 dieses Hosts wuerde ein Zugriff bis $1B reichen und
  * genau die Prioritaet daneben ueberschreiben. */
 #define Q9K_PROCDESC_USER_OFF     0x300UL
+#define Q9K_ALLPRC_SCRATCH_DESC    ((unsigned long)(g_fakeGlobals + 0x600))
+#define Q9K_ALLPRC_SCRATCH_ERROR   ((unsigned long)(g_fakeGlobals + 0x620))
+#define Q9K_ALLPRC_SCRATCH_SUCCESS ((unsigned long)(g_fakeGlobals + 0x640))
+#define Q9K_DELPRC_SCRATCH_PID     ((unsigned long)(g_fakeGlobals + 0x660))
+#define Q9K_DELPRC_SCRATCH_ERROR   ((unsigned long)(g_fakeGlobals + 0x680))
+#define Q9K_DELPRC_SCRATCH_SUCCESS ((unsigned long)(g_fakeGlobals + 0x6A0))
 #define Q9K_PROCDESC_SAVEDSP_OFF 0x20UL
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x28UL
 /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): gleiche Grosszuegig-
@@ -73,6 +79,16 @@ unsigned long Q9K_GetA6(void) { return Q9K_FAKE_A6_CANARY; }
    Deskriptor mit (P$ID, Offset $00 -- fremde Module lesen sie dort). Die
    Nummer stammt aus q9kernel_procapi.c; hier genuegt ein Stub. */
 unsigned short Q9K_ProcIdForDesc(unsigned long desc) { (void)desc; return 1; }
+/* Q9K_ProcLookup lebt in q9kernel_procapi.c (dort eigenstaendig
+ * getestet). Hier ein steuerbarer Stub: F$DelPrc soll nachweislich
+ * ueber den Lookup gehen, statt die PID selbst umzurechnen. */
+static unsigned long g_lookupResult;
+static unsigned short g_lookupLastPid;
+unsigned long Q9K_ProcLookup(unsigned short pid)
+{
+    g_lookupLastPid = pid;
+    return g_lookupResult;
+}
 
 unsigned long Q9K_AllocMem(unsigned long requestedSize)
 {
@@ -582,6 +598,92 @@ int main(void)
             checkU32("F5: M$IData wurde kopiert UND per M$IRefs (Kodezeiger-Gruppe) reloziert (3+hdrAddr)",
                      relocatedCode, (Q9_u32)(unsigned int)(3 + (unsigned long)fakeHdr5));
         }
+    }
+
+
+    /* F$AllPrc (Callcode 0x4B) und F$DelPrc (0x4C): Deskriptor aus dem
+     * Pool holen bzw. zurueckgeben -- ohne sonstige Betriebsmittel
+     * anzufassen, wie die Beschreibung von F$DelPrc ausdruecklich
+     * verlangt. */
+    {
+        static unsigned char prcPool[4 * 0x400];
+        Q9_u32 prcBase = (Q9_u32)(unsigned long)prcPool;
+        Q9_u32 desc = 0;
+        Q9_u32 first;
+        Q9_u16 err;
+
+        memset(prcPool, 0xAA, sizeof(prcPool));
+        buildFreeList(prcBase, Q9K_PROCDESC_SIZE, 4, Q9K_PROCPOOL_FREE_ADDR);
+        Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, prcBase);
+
+        err = 0xFFFF;
+        checkU32("F$AllPrc liefert einen Deskriptor",
+                 (Q9_u32)Q9K_ProcAllPrc(&desc, &err), 1);
+        checkU32("F$AllPrc meldet dabei keinen Fehler", (Q9_u32)err, 0);
+        checkU32("F$AllPrc nimmt ihn aus dem Pool", (Q9_u32)(desc >= prcBase), 1);
+        first = desc;
+
+        /* Der Deskriptor muss vollstaendig geloescht sein -- der Slot
+         * trug vorher Muell (0xAA). */
+        {
+            Q9_u32 i;
+            Q9_u32 nonzero = 0;
+            for (i = 0; i < Q9K_PROCDESC_SIZE; ++i) {
+                Q9_u8 b = Q9K_GetU8(desc + i);
+                /* P$ID belegt Offset 0..1, das Zustandsbyte liegt auf
+                 * Q9K_PROCDESC_STATE_OFF -- beide setzt F$AllPrc
+                 * absichtlich, alles andere muss 0 sein. */
+                if (b != 0 && i > 1 && i != Q9K_PROCDESC_STATE_OFF)
+                    nonzero++;
+            }
+            checkU32("F$AllPrc loescht den Deskriptor bis auf Zustand und ID",
+                     nonzero, 0);
+        }
+        checkU32("F$AllPrc markiert ihn als belegt (wartend)",
+                 (Q9_u32)Q9K_GetU8(desc + Q9K_PROCDESC_STATE_OFF),
+                 Q9K_PROCDESC_STATE_WAITING);
+
+        /* Pool leerraeumen -> E$PrcFul. */
+        while (Q9K_ProcAllPrc(&desc, &err)) {
+            /* weiter, bis nichts mehr frei ist */
+        }
+        checkU32("F$AllPrc meldet den erschoepften Pool mit E$PrcFul",
+                 (Q9_u32)err, Q9K_E_PRCFUL);
+
+        /* F$DelPrc gibt genau den Slot zurueck, den der Lookup liefert. */
+        g_lookupResult = first;
+        err = 0xFFFF;
+        checkU32("F$DelPrc nimmt eine gueltige PID an",
+                 (Q9_u32)Q9K_ProcDelPrc(7, &err), 1);
+        checkU32("F$DelPrc hat dafuer wirklich den Lookup benutzt",
+                 (Q9_u32)g_lookupLastPid, 7);
+        checkU32("F$DelPrc markiert den Slot als frei",
+                 (Q9_u32)Q9K_GetU8(first + Q9K_PROCDESC_STATE_OFF), 0);
+        checkU32("F$DelPrc haengt ihn vorn in die Freiliste",
+                 Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR), first);
+
+        /* Und er ist danach wieder vergebbar. */
+        checkU32("Der freigegebene Slot ist wieder allozierbar",
+                 (Q9_u32)Q9K_ProcAllPrc(&desc, &err), 1);
+        checkU32("und zwar genau derselbe", desc, first);
+
+        g_lookupResult = 0;
+        err = 0;
+        checkU32("F$DelPrc weist eine unbekannte PID ab",
+                 (Q9_u32)Q9K_ProcDelPrc(99, &err), 0);
+        checkU32("F$DelPrc meldet dabei E$PrcID", (Q9_u32)err, Q9K_E_PRCID);
+
+        /* Bruecken: volle Zellbreite. */
+        g_lookupResult = first;
+        Q9K_SetU32(Q9K_DELPRC_SCRATCH_PID, 3);
+        Q9K_SysDelPrcImpl();
+        checkU32("F$DelPrc-Bridge meldet Erfolg in voller Zellbreite",
+                 Q9K_GetU32(Q9K_DELPRC_SCRATCH_SUCCESS), 1);
+        Q9K_SysAllPrcImpl();
+        checkU32("F$AllPrc-Bridge meldet Erfolg in voller Zellbreite",
+                 Q9K_GetU32(Q9K_ALLPRC_SCRATCH_SUCCESS), 1);
+        checkU32("F$AllPrc-Bridge legt den Deskriptor in der Zelle ab",
+                 Q9K_GetU32(Q9K_ALLPRC_SCRATCH_DESC), first);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

@@ -248,6 +248,60 @@ kernel survives because `addq`/`subq` cancel and nothing critical happens to
 live at `$3ac`. `build.sh` now prints the bytes at `$3ac` after every link as a
 reminder, without failing the build.
 
+`F$AProc` (`0x2C`), `F$GPrDBT` (`0x1F`), `F$AllPrc` (`0x4B`), `F$DelPrc`
+(`0x4C`) and `F$SysID` (`0x55`) extend the process API, and `F$SSpd` (`0x0B`)
+is marked withdrawn: the manual states plainly that "F$SSpd is currently not
+implemented" in real OS-9/68K and points to lowering the priority instead.
+
+`F$AProc` hands a descriptor to the existing scheduler. What the manual
+describes — age the queue, set the new process' age to its priority, insert by
+relative age — is exactly what `Q9K_SchedInsert` already does, and the ageing of
+the others happens every tick anyway, so this call deliberately does not run a
+second ageing pass over the same fields. Not implemented is the last sentence of
+the description, immediate preemption when the new process outranks the running
+one; that needs the same context switch out of trap state that `F$NProc` still
+lacks.
+
+`F$AllPrc` allocates and clears a descriptor. Without an MMU this is the direct
+`F$AllPD` case the manual names, so the MMU-image step falls away entirely. One
+detail comes from this kernel rather than the manual: a pool slot counts as
+occupied only if its state byte holds one of the four known values, so a merely
+cleared descriptor would be out of the free list yet invisible to the rest of
+the kernel. The fresh descriptor therefore gets WAITING — exists, does not run.
+`F$DelPrc` returns a descriptor to the pool and nothing else, as the manual
+explicitly requires the caller to release other resources first.
+
+`F$GPrDBT` assembles the pointer table from the process pool on demand — one
+entry per slot, 0 for a free one, always 4 bytes per entry. This kernel keeps no
+separate block table; the pool is the directory, and a second structure would
+only be something that could drift out of step with it.
+
+`F$SysID` is written entirely in assembler, without a C counterpart: it is
+register setting plus two string copies, and the texts must be addressed
+PC-relative because the kernel loads as a REENT module at a varying address. Its
+values are honest rather than invented — OEM number and serial are zero because
+Q9-OS is not a registered OEM and has no serial, the FPU identifier is zero
+because this kernel performs no FPU detection, and the processor identification
+comes from `Q9_D_MpuTyp`, the CPU type the boot ROM actually detected.
+
+**A real defect came out of this, found only because a diagnostic dump was read
+to the end for once.** The emulator run completed its whole marker sequence and
+then reported `Vektor=14`, a format error. A comparison run without these calls
+reported `Vektor=0`, which pinned it on the new code. Cause: the live test
+handed a descriptor straight from `F$AllPrc` — cleared, therefore with
+`SavedSP == 0` — to `F$AProc`. The scheduler picked it up on the next tick,
+switched the stack to address 0 and executed `RTE` on an empty frame. `F$AProc`
+now refuses a descriptor without a saved stack, so a process that cannot run can
+no longer be made schedulable; a process becomes runnable by `F$Fork` or
+`Q9K_ProcCreate` building its stack and frame first. Worth noting for future
+sessions: a marker run terminates the emulator about a second after the marker,
+which truncates the dump before the exception section — the failure had been
+invisible for that reason. A run with an unreachable marker and a timeout writes
+the dump in full.
+
+The emulator regression extended to
+`HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBTJGjAaZzEQ@#`.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -273,7 +327,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
 | ❌ | `0x09` | F$Icpt | Not implemented |
 | 🟡 | `0x0A` | F$Sleep | Scheduler sleep path exists; complete timing coverage remains open |
-| ❌ | `0x0B` | F$SSpd | Not implemented |
+| ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
 | ❌ | `0x0E` | F$STrap | Not implemented |
@@ -293,7 +347,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x1C` | F$SUser | Changes the caller's own group/user ID in the process descriptor; only the documented "user 0.0 may change freely" case is implemented |
 | ✅ | `0x1D` | F$UnLoad | Same lookup rule as F$Link and the same counter as F$UnLink, keyed by module name |
 | ❌ | `0x1E` | F$RTE | Not implemented |
-| ❌ | `0x1F` | F$GPrDBT | Not implemented |
+| ✅ | `0x1F` | F$GPrDBT | Pointer table assembled from the process pool, one entry per slot, 0 for a free one |
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | 🟡 | `0x21` | F$TLink | Trap linking works; unlink and complete lifetime handling remain open |
 | ❌ | `0x22` | F$DFork | Not implemented |
@@ -306,7 +360,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |
 | 🟡 | `0x2A` | F$IRQ | Kernel path exists; complete interrupt-device coverage remains open |
 | 🟡 | `0x2B` | F$IOQu | Microware path exists; current Q9 compatibility is not fully verified |
-| ❌ | `0x2C` | F$AProc | Not implemented |
+| ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; immediate preemption still open |
 | ❌ | `0x2D` | F$NProc | Not implemented |
 | 🟡 | `0x2E` | F$VModul | Validation path exists; complete loader integration remains open |
 | ❌ | `0x2F` | F$FindPD | Not implemented |
@@ -321,13 +375,13 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x3B` | F$Protect | SSM-owned; not implemented in Q9-OS |
 | ❌ | `0x3F` | F$AllTsk | SSM-owned; not implemented in Q9-OS |
 | ❌ | `0x40` | F$DelTsk | SSM-owned; not implemented in Q9-OS |
-| ❌ | `0x4B` | F$AllPrc | Not implemented |
-| ❌ | `0x4C` | F$DelPrc | Not implemented |
+| ✅ | `0x4B` | F$AllPrc | Allocates and clears a process descriptor; without an MMU this is the documented direct F$AllPD case |
+| ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
 | ❌ | `0x4E` | F$FModul | Not implemented |
 | ❌ | `0x52` | F$SysDbg | Not implemented |
 | ❌ | `0x53` | F$Event | Not implemented |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
-| ❌ | `0x55` | F$SysID | Not implemented |
+| ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
 | ❌ | `0x56` | F$Alarm | Not implemented |
 | ❌ | `0x57` | F$SigMask | Not implemented |
 | 🟡 | `0x58` | F$ChkMem | Basic memory-check path exists; full protection semantics remain open |

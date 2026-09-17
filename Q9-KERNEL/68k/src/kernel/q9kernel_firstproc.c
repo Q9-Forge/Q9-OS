@@ -120,6 +120,8 @@ extern Q9_u32 Q9K_GetA6(void);  /* q9kernel_entry.a -- liefert den aktuellen (pe
                                   * Q9K_CRuntimeData fixierten) a6-Wert, s. dortigen Kommentar */
 extern Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name);   /* q9kernel_moddir.c */
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /* q9kernel_moddir.c */
+extern Q9_u32 Q9K_ProcLookup(Q9_u16 pid);                                     /* q9kernel_procapi.c */
+extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);                                 /* q9kernel_procapi.c */
 
 #ifndef Q9K_PROCPOOL_FREE_ADDR
 #define Q9K_PROCPOOL_FREE_ADDR 0x120CUL   /* s. q9kernel_tables.c */
@@ -199,6 +201,19 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_PROCDESC_STATE_ZOMBIE 'z'   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_WAITING 'w'  /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_SLEEPING 's' /* NACHTRAG 2026-08-30, s. Kopfkommentar */
+
+/* F$AllPrc-/F$DelPrc-Scratch (2026-09-18), hinter dem F$GPrDBT-Block
+ * ($194C-$1950, q9kernel_procapi.c). */
+#ifndef Q9K_ALLPRC_SCRATCH_DESC
+#define Q9K_ALLPRC_SCRATCH_DESC    0x1954UL /* Q9_u32, (a2) AUS            */
+#define Q9K_ALLPRC_SCRATCH_ERROR   0x1958UL /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_ALLPRC_SCRATCH_SUCCESS 0x195CUL /* Q9_u32, 0/1                 */
+#endif
+#ifndef Q9K_DELPRC_SCRATCH_PID
+#define Q9K_DELPRC_SCRATCH_PID     0x1960UL /* Q9_u32, d0.w EIN            */
+#define Q9K_DELPRC_SCRATCH_ERROR   0x1964UL /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_DELPRC_SCRATCH_SUCCESS 0x1968UL /* Q9_u32, 0/1                 */
+#endif
 
 /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-21/22, Abschnitt "F$Fork"): bei
  * 2048 Byte hing das System nach einem erfolgreichen F$Fork zuverlaessig
@@ -315,6 +330,7 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_E_MNF     0x00DDU   /* Module Not Found */
 #define Q9K_E_MEMFUL  0x00CFU   /* Process Memory Full */
 #define Q9K_E_PRCFUL  0x00E5U   /* Process Table Full */
+#define Q9K_E_PRCID   0x00E0U   /* Invalid Process ID (E$IPrcID), s. q9kernel_procapi.c */
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
@@ -950,4 +966,110 @@ void Q9K_SysForkImpl(void)
 
     Q9K_SetU16(Q9K_FORK_SCRATCH_CHILDPID, (Q9_u16)pid);
     Q9K_SetU16(Q9K_FORK_SCRATCH_SUCCESS, 1);
+}
+
+/* Q9K_ProcAllPrc -- echte F$AllPrc-Kernlogik (Callcode $4B, "Allocate
+ * Process Descriptor"). Verifizierte ABI (68k_tech.pdf S. 373): keine
+ * Eingabe, AUS (a2) = Deskriptorzeiger, E$PrcFul wenn der Pool leer ist.
+ * Systemzustand.
+ *
+ * Die Beschreibung nennt drei Schritte -- Deskriptor loeschen, Zustand
+ * auf Systemzustand setzen, MMU-Abbild als unbelegt markieren -- und
+ * schliesst mit dem hier entscheidenden Satz: "On systems without memory
+ * management/protection, this is a direct call to F$AllPD." Genau das ist
+ * dieser Kernel, der dritte Schritt entfaellt also ersatzlos.
+ *
+ * Eine Feinheit, die nicht aus der Beschreibung kommt, sondern aus diesem
+ * Kernel: ein Pool-Slot gilt hier nur dann als belegt, wenn sein
+ * Zustandsbyte einen der vier bekannten Werte traegt (s.
+ * Q9K_ProcIsAllocated, q9kernel_procapi.c). Ein bloss genullter
+ * Deskriptor waere aus der Freiliste heraus, fuer den uebrigen Kernel
+ * aber unsichtbar -- F$GPrDBT wuerde ihn nicht auffuehren und F$DelPrc
+ * ihn nicht wiederfinden. Der frische Deskriptor bekommt deshalb
+ * WAITING: existiert, aber laeuft nicht. Erst F$AProc macht ihn
+ * lauffaehig. (Das "system-state" der Beschreibung meint den
+ * Ausfuehrungsmodus des Prozesses, nicht dieses Belegungsfeld.)
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcAllPrc(Q9_u32 *outDesc, Q9_u16 *outError)
+{
+    Q9_u32 desc;
+    Q9_u32 i;
+
+    *outError = 0;
+    *outDesc = 0;
+
+    desc = Q9K_ProcPoolAlloc();
+    if (desc == 0) {
+        *outError = (Q9_u16)Q9K_E_PRCFUL;
+        return 0;
+    }
+
+    for (i = 0; i < Q9K_PROCDESC_SIZE; ++i)
+        Q9K_SetU8(desc + i, 0);
+
+    Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
+    Q9K_SetU16(desc + Q9K_PROCDESC_ID_OFF, Q9K_ProcIdForDesc(desc));
+
+    *outDesc = desc;
+    return 1;
+}
+
+/* Q9K_ProcDelPrc -- echte F$DelPrc-Kernlogik (Callcode $4C,
+ * "De-allocate Process Descriptor"). Verifizierte ABI (68k_tech.pdf
+ * S. 403): d0.w = freizugebende Prozess-ID, keine Ausgabe.
+ * Systemzustand.
+ *
+ * Die Beschreibung ist in einem Punkt ausdruecklich: "You must ensure any
+ * system resources used by the process are returned before calling
+ * F$DelPrc." Dieser Call gibt also NUR den Deskriptor zurueck und fasst
+ * weder Speicher noch Pfade an -- anders als der Aufraeumpfad bei
+ * F$Exit (q9kernel_procend.c), der beides mit erledigt. Die Felder, auf
+ * denen die Pool-Invariante beruht (ParentDesc == 0 bei einem freien
+ * Slot), werden vor dem Zurueckhaengen geloescht, damit der Pool-Scan in
+ * q9kernel_procend.c weiter stimmt.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcDelPrc(Q9_u16 pid, Q9_u16 *outError)
+{
+    Q9_u32 desc = Q9K_ProcLookup(pid);
+
+    *outError = 0;
+
+    if (desc == 0) {
+        *outError = (Q9_u16)Q9K_E_PRCID;
+        return 0;
+    }
+
+    Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
+    Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, 0);
+    Q9K_ProcPoolAbortAlloc(desc);   /* Slot zurueck in die Freiliste */
+    return 1;
+}
+
+void Q9K_SysAllPrcImpl(void)
+{
+    Q9_u32 desc = 0;
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcAllPrc(&desc, &err)) {
+        Q9K_SetU32(Q9K_ALLPRC_SCRATCH_DESC, desc);
+        Q9K_SetU32(Q9K_ALLPRC_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_ALLPRC_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_ALLPRC_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
+void Q9K_SysDelPrcImpl(void)
+{
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcDelPrc((Q9_u16)Q9K_GetU32(Q9K_DELPRC_SCRATCH_PID), &err)) {
+        Q9K_SetU32(Q9K_DELPRC_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_DELPRC_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_DELPRC_SCRATCH_SUCCESS, 0UL);
+    }
 }
