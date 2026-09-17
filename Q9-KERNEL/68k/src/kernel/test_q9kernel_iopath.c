@@ -29,10 +29,11 @@ static void testPathPoolFree(unsigned long desc)
 #define Q9K_TEST_PATHPOOL_FREE_HOOK testPathPoolFree
 
 static unsigned char g_pathPool[4 * 256];   /* 4 Slots a 256 Byte = PDSIZE, wie real */
-static unsigned char g_poolGlobals[16];     /* nur BASE/FREE-Zeigerfelder */
+static unsigned char g_poolGlobals[24];     /* BASE/FREE/current-process pointers */
 
 #define Q9K_PATHPOOL_BASE_ADDR ((unsigned long)(g_poolGlobals + 0x00))
 #define Q9K_PATHPOOL_FREE_ADDR ((unsigned long)(g_poolGlobals + 0x08))
+#define Q9_D_PROC              ((unsigned long)(g_poolGlobals + 0x10))
 
 #include "q9kernel_iopath.c"
 
@@ -71,9 +72,11 @@ int main(void)
     Q9_u32 name2Addr = (Q9_u32)(unsigned long)name2;
     Q9_u32 past = 0;
     Q9_u32 num1, num2, num3, num4, num5;
+    static unsigned char processDesc[0x200];
 
     memset(g_poolGlobals, 0, sizeof(g_poolGlobals));
     memset(g_pathPool, 0xCC, sizeof(g_pathPool));
+    memset(processDesc, 0, sizeof(processDesc));
 
     Q9K_SetU32(Q9K_PATHPOOL_BASE_ADDR, poolBase);
     buildFreeList(poolBase, Q9K_PATHDESC_SIZE, 4, Q9K_PATHPOOL_FREE_ADDR);
@@ -107,6 +110,23 @@ int main(void)
      * mit 0 fehlschlagen, kein Absturz. */
     num5 = Q9K_ProcIOpen(0, name1Addr, &past);
     checkU32("F5: Pool erschoepft -- Rueckgabe 0", num5, 0);
+
+    /* The native open path must also publish the process-local path
+     * number.  This is the table consumed by IOMan and by native I/O. */
+    printf("\n--- process-local P$Path publication ---\n");
+    Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)processDesc);
+    memset(processDesc, 0, sizeof(processDesc));
+    buildFreeList(poolBase, Q9K_PATHDESC_SIZE, 4, Q9K_PATHPOOL_FREE_ADDR);
+    num1 = Q9K_ProcIOpen(0, name1Addr, &past);
+    checkU32("F6: process-local open starts at path 3", num1, 3);
+    checkU32("F6: P$Path[3] contains the published path number",
+             (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc
+                                   + Q9K_PROCDESC_PATH_OFF + 3UL * 2UL), 3);
+    num2 = Q9K_ProcIOpen(1, name2Addr, &past);
+    checkU32("F7: second process-local open uses path 4", num2, 4);
+    checkU32("F7: P$Path[4] contains the published path number",
+             (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc
+                                   + Q9K_PROCDESC_PATH_OFF + 4UL * 2UL), 4);
 
     /* --- F$AllPD (Callcode $30), 2026-09-02 -------------------------
      * Konvention und DBT-Aufbau sind aus IOMans Analyse
