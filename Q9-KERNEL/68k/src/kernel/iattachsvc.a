@@ -54,6 +54,9 @@
 *   z = F$DelPrc on an unknown PID correctly rejected
 *   E = F$GPrDBT returned a non-empty descriptor table (0x1F)
 *   Q = F$SysID filled the version buffer and reported the CPU type (0x55)
+*   F = F$FindPD resolved a path number back to its descriptor (0x2F)
+*   f = F$FindPD rejected an unallocated path number
+*   K = F$SigMask masked and unmasked signals around a critical section (0x57)
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -482,6 +485,55 @@ Q9K_AttachStart:
         moveq   #'Q',d7
         move.b  d7,$FFFFF006
 
+* F$FindPD: d0.w = path number, (a0) = table pointer, (a1) = descriptor.
+* F$AllPD hands out a number first, so there is something to look up.
+        lea     Q9K_PathDbt(pc),a0
+        move.w  #8,(a0)                        * highest valid index
+        clr.w   2(a0)
+        trap    #0
+        dc.w    $0030                          * F$AllPD -> d0.w = number, a1 = descriptor
+        bcs     Q9K_NativeFailed
+        move.w  d0,d5                          * keep the number
+        move.l  a1,d6                          * keep the descriptor
+        lea     Q9K_PathDbt(pc),a0
+        move.w  d5,d0
+        trap    #0
+        dc.w    $002f                          * F$FindPD
+        bcs     Q9K_NativeFailed
+        move.l  a1,d0
+        cmp.l   d6,d0                          * must be the very same descriptor
+        bne     Q9K_NativeFailed
+        moveq   #'F',d7
+        move.b  d7,$FFFFF006
+
+        lea     Q9K_PathDbt(pc),a0
+        move.w  #7,d0                          * never allocated
+        trap    #0
+        dc.w    $002f                          * F$FindPD
+        bcc     Q9K_NativeFailed
+        moveq   #'f',d7
+        move.b  d7,$FFFFF006
+
+* F$SigMask: d1.l = 1 masks, -1 unmasks, 0 clears.  A critical section
+* the way a real caller would write it.
+        moveq   #0,d0
+        moveq   #1,d1
+        trap    #0
+        dc.w    $0057                          * F$SigMask, mask
+        bcs     Q9K_NativeFailed
+        moveq   #0,d0
+        moveq   #-1,d1
+        trap    #0
+        dc.w    $0057                          * F$SigMask, unmask
+        bcs     Q9K_NativeFailed
+        moveq   #0,d0
+        moveq   #0,d1
+        trap    #0
+        dc.w    $0057                          * F$SigMask, clear
+        bcs     Q9K_NativeFailed
+        moveq   #'K',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
         trap    #0
@@ -556,6 +608,12 @@ Q9K_SysIDBuffer:
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Q9K_PathDbt:
+        dc.b    0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0
+
 Q9K_SysIDBuffer2:
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

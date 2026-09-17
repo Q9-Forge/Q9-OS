@@ -604,6 +604,17 @@ Q9K_DelPrcScratch_PID      equ $1960      * Q9_u32, d0.w EIN
 Q9K_DelPrcScratch_Error    equ $1964      * Q9_u32, d1.w AUS bei Fehler
 Q9K_DelPrcScratch_Success  equ $1968      * Q9_u32, 0/1
 
+* F$FindPD- und F$SigMask-Scratch (2026-09-18, s. q9kernel_iopath.c
+* bzw. q9kernel_procsleep.c).
+Q9K_FindPDScratch_Num      equ $1970      * Q9_u32, d0.w EIN
+Q9K_FindPDScratch_Dbt      equ $1974      * Q9_u32, (a0) EIN
+Q9K_FindPDScratch_Desc     equ $1978      * Q9_u32, (a1) AUS
+Q9K_FindPDScratch_Error    equ $197C      * Q9_u32, d1.w AUS bei Fehler
+Q9K_FindPDScratch_Success  equ $1980      * Q9_u32, 0/1
+Q9K_SigMaskScratch_Level   equ $1988      * Q9_u32, d1.l EIN
+Q9K_SigMaskScratch_Error   equ $198C      * Q9_u32, d1.w AUS bei Fehler
+Q9K_SigMaskScratch_Success equ $1990      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -5362,6 +5373,53 @@ Q9K_SysFDelPrc:
         rts
 Q9K_SysFDelPrc_Fail:
         move.w  Q9K_DelPrcScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFFindPD -- F$FindPD (Callcode $2F, "Find Process/Path
+* Descriptor"). Reale ABI, 68k_tech.pdf S.425: IN d0.w = Nummer,
+* (a0) = Tabellenzeiger; AUS (a1) = Deskriptorzeiger. Systemzustand.
+* Nachschlagehaelfte zu F$AllPD/F$RetPD, gleiche DBT-Struktur --
+* s. Q9K_ProcFindPD in q9kernel_iopath.c.
+Q9K_SysFFindPD:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_FindPDScratch_Num           * oberes Wort nullen, C liest 32 Bit
+        move.w  d0,Q9K_FindPDScratch_Num+2
+        move.l  a0,Q9K_FindPDScratch_Dbt
+        bsr     Q9K_SysFindPDImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_FindPDScratch_Success+2
+        beq     Q9K_SysFFindPD_Fail
+        movea.l Q9K_FindPDScratch_Desc,a1
+        andi    #$fe,ccr
+        rts
+Q9K_SysFFindPD_Fail:
+        move.w  Q9K_FindPDScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFSigMask -- F$SigMask (Callcode $57, "Mask/Unmask Signals
+* During Critical Code"). Reale ABI, 68k_tech.pdf S.493: IN d0.l
+* reserviert (0), d1.l = 0 loescht die Maske, 1 setzt/erhoeht, -1 senkt
+* sie. Keine Ausgabe. Wirkt immer auf den AUFRUFENDEN Prozess. Die Maske
+* ist ein Zaehler, damit verschachtelte kritische Abschnitte sich nicht
+* gegenseitig die Maske wegnehmen -- s. Q9K_ProcSigMask in
+* q9kernel_procsleep.c, wo auch steht, wie Q9K_ProcSend sie beachtet.
+Q9K_SysFSigMask:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d1,Q9K_SigMaskScratch_Level
+        bsr     Q9K_SysSigMaskImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_SigMaskScratch_Success+2
+        beq     Q9K_SysFSigMask_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFSigMask_Fail:
+        move.w  Q9K_SigMaskScratch_Error+2,d1
         ori     #1,ccr
         rts
 

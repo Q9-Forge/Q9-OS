@@ -19,6 +19,9 @@
 static unsigned char g_fakeGlobals[0x2000];
 
 #define Q9_D_PROC ((unsigned long)(g_fakeGlobals + 0x000))
+#define Q9K_SIGMASK_SCRATCH_LEVEL   ((unsigned long)(g_fakeGlobals + 0x1A00))
+#define Q9K_SIGMASK_SCRATCH_ERROR   ((unsigned long)(g_fakeGlobals + 0x1A20))
+#define Q9K_SIGMASK_SCRATCH_SUCCESS ((unsigned long)(g_fakeGlobals + 0x1A40))
 
 /* Real nur wenige Byte auseinander -- hier grosszuegig auf 8-Byte-
  * Schritte gelegt, gleiches Muster wie ueberall (Q9_u32 = 8 Byte auf
@@ -50,8 +53,11 @@ static unsigned long g_schedFirstPickReturn = 0xDEADBEEFUL;
 /* Seit 2026-09-04 ruft diese Uebersetzungseinheit ausserdem F$Send-Bausteine
    auf (Q9K_ProcSend -> Q9K_ProcLookup/Q9K_SchedWake). Beide sind hier reine
    Stubs -- der Test deckt Q9K_ProcSleep ab, nicht die Weckwirkung. */
-unsigned long Q9K_ProcLookup(unsigned short pid) { (void)pid; return 0; }
-void Q9K_SchedWake(unsigned long desc) { (void)desc; }
+static unsigned long g_lookupResult;
+unsigned long Q9K_ProcLookup(unsigned short pid) { (void)pid; return g_lookupResult; }
+static int g_wakeCalls;
+static unsigned long g_wakeLast;
+void Q9K_SchedWake(unsigned long desc) { g_wakeCalls++; g_wakeLast = desc; }
 
 unsigned long Q9K_SchedFirstPick(void)
 {
@@ -196,6 +202,97 @@ int main(void)
         checkU32("F6: kleine 256stel-Werte koennen auf ticks==1 abrunden -> Zeitscheiben-Verzicht",
                  (Q9_u32)g_schedInsertCalls, 1);
         checkU32("F6: ... NICHT Sleep-Queue", (Q9_u32)g_sleepQInsertCalls, 0);
+    }
+
+
+    /* F$SigMask (Callcode 0x57) und sein Zusammenspiel mit F$Send.
+     * Die Maske ist ein ZAEHLER, damit verschachtelte kritische
+     * Abschnitte sich nicht gegenseitig die Maske wegnehmen. */
+    {
+        static unsigned char sigDesc[0x400];
+        Q9_u32 desc = (Q9_u32)(unsigned long)sigDesc;
+        Q9_u16 err;
+
+        printf("\n--- F$SigMask ---\n");
+        memset(sigDesc, 0, sizeof(sigDesc));
+        Q9K_SetU32(Q9_D_PROC, desc);
+        g_lookupResult = desc;
+
+        checkU32("F$SigMask setzt die Maske", (Q9_u32)Q9K_ProcSigMask(1, &err), 1);
+        checkU32("Maskenzaehler steht auf 1",
+              (Q9_u32)Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF), 1);
+        Q9K_ProcSigMask(1, &err);
+        checkU32("zweites Setzen erhoeht auf 2 (verschachtelt)",
+              (Q9_u32)Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF), 2);
+        Q9K_ProcSigMask(0xFFFFFFFFUL, &err);
+        checkU32("-1 senkt wieder auf 1",
+              (Q9_u32)Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF), 1);
+
+        /* Bei gesetzter Maske wird ein normales Signal abgelegt, aber
+         * der Prozess NICHT geweckt. */
+        g_wakeCalls = 0;
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
+        checkU32("F$Send meldet auch bei maskiertem Empfaenger Erfolg",
+              (Q9_u32)Q9K_ProcSend(1, 42, &err), 1);
+        checkU32("das Signal steht im Deskriptor an",
+              (Q9_u32)Q9K_GetU16(desc + Q9K_PROCDESC_SIGNAL_OFF), 42);
+        checkU32("der maskierte Prozess wurde NICHT geweckt", (Q9_u32)g_wakeCalls, 0);
+
+        /* S$Kill durchbricht die Maske. */
+        g_wakeCalls = 0;
+        Q9K_ProcSend(1, Q9K_SIGNAL_KILL, &err);
+        checkU32("S$Kill durchbricht die Maske und weckt doch",
+              (Q9_u32)g_wakeCalls, 1);
+
+        /* S$Wake ebenfalls -- und wird dabei nicht abgelegt. */
+        g_wakeCalls = 0;
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
+        Q9K_ProcSend(1, Q9K_SIGNAL_WAKE, &err);
+        checkU32("S$Wake durchbricht die Maske ebenfalls", (Q9_u32)g_wakeCalls, 1);
+        checkU32("S$Wake wird dabei nicht als Signal abgelegt",
+              (Q9_u32)Q9K_GetU16(desc + Q9K_PROCDESC_SIGNAL_OFF), 0);
+
+        /* Maske oeffnen -> ein anstehendes Signal wird jetzt zugestellt. */
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 42);
+        Q9K_SetU8(desc + Q9K_PROCDESC_SIGLVL_OFF, 1);
+        g_wakeCalls = 0;
+        Q9K_ProcSigMask(0, &err);
+        checkU32("Maske loeschen setzt den Zaehler auf 0",
+              (Q9_u32)Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF), 0);
+        checkU32("und stellt das aufgelaufene Signal zu", (Q9_u32)g_wakeCalls, 1);
+
+        /* Ohne anstehendes Signal weckt das Oeffnen niemanden. */
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
+        Q9K_SetU8(desc + Q9K_PROCDESC_SIGLVL_OFF, 1);
+        g_wakeCalls = 0;
+        Q9K_ProcSigMask(0, &err);
+        checkU32("ohne anstehendes Signal weckt das Oeffnen niemanden",
+              (Q9_u32)g_wakeCalls, 0);
+
+        /* -1 unterhalb von 0 bleibt bei 0, statt umzulaufen. */
+        Q9K_ProcSigMask(0xFFFFFFFFUL, &err);
+        checkU32("-1 auf offener Maske laeuft nicht unter",
+              (Q9_u32)Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF), 0);
+
+        /* Ohne aktuellen Prozess sauberer Fehlschlag. */
+        Q9K_SetU32(Q9_D_PROC, 0);
+        err = 0;
+        checkU32("F$SigMask ohne aktuellen Prozess schlaegt fehl",
+              (Q9_u32)Q9K_ProcSigMask(1, &err), 0);
+        checkU32("und meldet E$PrcID", (Q9_u32)err, 0x00E0UL);
+
+        /* Bridge: volle Zellbreite. */
+        Q9K_SetU32(Q9_D_PROC, desc);
+        Q9K_SetU32(Q9K_SIGMASK_SCRATCH_LEVEL, 1);
+        Q9K_SysSigMaskImpl();
+        checkU32("F$SigMask-Bridge meldet Erfolg in voller Zellbreite",
+              Q9K_GetU32(Q9K_SIGMASK_SCRATCH_SUCCESS), 1);
+        Q9K_SetU32(Q9_D_PROC, 0);
+        Q9K_SysSigMaskImpl();
+        checkU32("F$SigMask-Bridge meldet den Fehlschlag in voller Zellbreite",
+              Q9K_GetU32(Q9K_SIGMASK_SCRATCH_SUCCESS), 0);
+        checkU32("F$SigMask-Bridge legt E$PrcID in voller Zellbreite ab",
+              Q9K_GetU32(Q9K_SIGMASK_SCRATCH_ERROR), 0x00E0UL);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
