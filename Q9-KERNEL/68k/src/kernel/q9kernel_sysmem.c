@@ -331,3 +331,65 @@ void Q9K_SysSRtMemImpl(void)
 
     Q9K_ProcSRtMem(addr, size);
 }
+
+/* F$Trans-Scratch (2026-09-18): hinter dem F$Icpt-Block
+ * ($1998-$19A0, q9kernel_procsleep.c). */
+#ifndef Q9K_TRANS_SCRATCH_SIZE
+#define Q9K_TRANS_SCRATCH_SIZE 0x19A8UL /* Q9_u32, d0.l EIN/AUS */
+#define Q9K_TRANS_SCRATCH_MODE 0x19ACUL /* Q9_u32, d1.l EIN     */
+#define Q9K_TRANS_SCRATCH_ADDR 0x19B0UL /* Q9_u32, (a0) EIN/AUS */
+#endif
+
+/* Q9K_ProcTrans -- echte F$Trans-Kernlogik (Callcode $60, "Translate
+ * Memory Address"). Verifizierte ABI (68k_tech.pdf S. 526): d0.l =
+ * Groesse des Blocks, d1.l = Richtung (0 = lokale CPU-Adresse in
+ * externe Busadresse, 1 = umgekehrt), (a0) = Adresse des Blocks;
+ * AUS d0.l = uebersetzte Groesse, (a0) = uebersetzte Adresse.
+ *
+ * Der Aufruf existiert fuer Systeme mit dual-ported memory, bei denen
+ * dieselbe Speicherstelle je nach Bus unter verschiedenen Adressen
+ * erscheint -- gebraucht wird er, wenn eine externe Busadresse an
+ * Hardware wie einen DMA-Controller weitergereicht werden muss. Die
+ * Q9-Maschine hat keinen solchen zweiten Bus: lokale und externe
+ * Adresse sind dieselbe. Die Uebersetzung ist deshalb die Identitaet,
+ * und zwar in beide Richtungen und fuer jede Blockgroesse.
+ *
+ * Das ist ausdruecklich kein Platzhalter, sondern die einzig richtige
+ * Antwort fuer diese Maschine: ein Aufrufer, der die zurueckgegebene
+ * Adresse an Hardware weitergibt, bekommt genau die, unter der die
+ * Hardware den Speicher auch sieht. Sollte Q9 je einen zweiten Bus
+ * bekommen, gehoert die Abbildung genau hierher, und kein Aufrufer
+ * muss sich aendern.
+ *
+ * Rueckgabe 1 = Erfolg. Fehlschlaege gibt es hier nur fuer eine
+ * unbekannte Richtungsangabe. */
+int Q9K_ProcTrans(Q9_u32 mode, Q9_u32 *ioSize, Q9_u32 *ioAddr, Q9_u16 *outError)
+{
+    *outError = 0;
+
+    if (mode > 1UL) {
+        *outError = 0x00D2U;   /* E_BPADDR -- unbekannte Richtungsangabe */
+        return 0;
+    }
+
+    /* Identitaet in beide Richtungen, s. Kopfkommentar. */
+    (void)ioSize;
+    (void)ioAddr;
+    return 1;
+}
+
+void Q9K_SysTransImpl(void)
+{
+    Q9_u32 size = Q9K_GetU32(Q9K_TRANS_SCRATCH_SIZE);
+    Q9_u32 addr = Q9K_GetU32(Q9K_TRANS_SCRATCH_ADDR);
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcTrans(Q9K_GetU32(Q9K_TRANS_SCRATCH_MODE), &size, &addr, &err)) {
+        Q9K_SetU32(Q9K_TRANS_SCRATCH_SIZE, size);
+        Q9K_SetU32(Q9K_TRANS_SCRATCH_ADDR, addr);
+        Q9K_SetU32(Q9K_TRANS_SCRATCH_MODE, 1UL);   /* Erfolgskennzeichen */
+    } else {
+        Q9K_SetU32(Q9K_TRANS_SCRATCH_SIZE, (Q9_u32)err);
+        Q9K_SetU32(Q9K_TRANS_SCRATCH_MODE, 0UL);
+    }
+}

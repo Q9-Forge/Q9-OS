@@ -126,6 +126,8 @@ extern void   Q9K_SysFDelPrc(void);  /* q9kernel_entry.a, F$DelPrc (Callcode 0x4
 extern void   Q9K_SysFSysID(void);   /* q9kernel_entry.a, F$SysID  (Callcode 0x55) */
 extern void   Q9K_SysFFindPD(void);  /* q9kernel_entry.a, F$FindPD (Callcode 0x2f) */
 extern void   Q9K_SysFSigMask(void); /* q9kernel_entry.a, F$SigMask(Callcode 0x57) */
+extern void   Q9K_SysFIcpt(void);    /* q9kernel_entry.a, F$Icpt   (Callcode 0x09) */
+extern void   Q9K_SysFTrans(void);   /* q9kernel_entry.a, F$Trans  (Callcode 0x60) */
 extern void   Q9K_SysFPanic(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Panic (Callcode 0x5e) */
 extern void   Q9K_SysFRetPD(void);        /* q9kernel_entry.a, F$RetPD (Callcode 0x31) */
 extern void   Q9K_SysFMove(void);         /* q9kernel_entry.a, F$Move  (Callcode 0x38) */
@@ -493,6 +495,8 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x55UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSysID);
                     Q9K_PutU32(usrdisBase + 0x2fUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFindPD);
                     Q9K_PutU32(usrdisBase + 0x57UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSigMask);
+                    Q9K_PutU32(usrdisBase + 0x09UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIcpt);
+                    Q9K_PutU32(usrdisBase + 0x60UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTrans);
                     Q9K_PutU32(usrdisBase + 0x15UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTime);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
@@ -549,6 +553,8 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x55UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSysID);
                     Q9K_PutU32(sysdisBase + 0x2fUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFindPD);
                     Q9K_PutU32(sysdisBase + 0x57UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSigMask);
+                    Q9K_PutU32(sysdisBase + 0x09UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIcpt);
+                    Q9K_PutU32(sysdisBase + 0x60UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTrans);
                     Q9K_PutU32(sysdisBase + 0x15UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTime);
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(sysdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);

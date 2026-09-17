@@ -33,6 +33,9 @@ static unsigned char g_fakeGlobals[0x2000];
  * Speicherspur liest -- ebenfalls in den Fake-Speicher umlenken. */
 #define Q9_D_PROC                  ((unsigned long)(g_fakeGlobals + 0x300))
 #define Q9_D_FREEMEM               ((unsigned long)(g_fakeGlobals + 0x310))
+#define Q9K_TRANS_SCRATCH_SIZE     ((unsigned long)(g_fakeGlobals + 0x400))
+#define Q9K_TRANS_SCRATCH_MODE     ((unsigned long)(g_fakeGlobals + 0x420))
+#define Q9K_TRANS_SCRATCH_ADDR     ((unsigned long)(g_fakeGlobals + 0x440))
 
 /* Aufrufzaehlende Stubs. Q9_u32 ist erst NACH dem #include unten
  * verfuegbar (in q9kernel_sysmem.c definiert) -- hier bewusst
@@ -220,6 +223,41 @@ int main(void)
         checkU32("F8: Q9K_FreeMem wurde aufgerufen", (Q9_u32)g_freeMemCalls, 1);
         checkU32("F8: ... mit der echten Adresse aus dem Scratch-Feld", g_freeMemLastAddr, 0x6000);
         checkU32("F8: ... mit der (bereits ausgerichteten) Groesse", g_freeMemLastSize, 64);
+    }
+
+
+    /* F$Trans (Callcode 0x60): auf einer Maschine ohne zweiten Bus ist
+     * die Adressuebersetzung die Identitaet -- in beide Richtungen. */
+    {
+        Q9_u32 size = 0x1000UL;
+        Q9_u32 addr = 0x00123456UL;
+        Q9_u16 err = 0xFFFF;
+
+        printf("\n--- F$Trans ---\n");
+        checkU32("F$Trans nimmt Richtung 0 an (lokal -> extern)",
+                 (Q9_u32)Q9K_ProcTrans(0, &size, &addr, &err), 1);
+        checkU32("F$Trans laesst die Adresse unveraendert", addr, 0x00123456UL);
+        checkU32("F$Trans laesst die Groesse unveraendert", size, 0x1000UL);
+        checkU32("F$Trans meldet dabei keinen Fehler", (Q9_u32)err, 0);
+
+        checkU32("F$Trans nimmt Richtung 1 an (extern -> lokal)",
+                 (Q9_u32)Q9K_ProcTrans(1, &size, &addr, &err), 1);
+        checkU32("auch dort bleibt die Adresse gleich", addr, 0x00123456UL);
+
+        err = 0;
+        checkU32("F$Trans weist eine unbekannte Richtung ab",
+                 (Q9_u32)Q9K_ProcTrans(2, &size, &addr, &err), 0);
+        checkU32("F$Trans meldet dafuer E_BPADDR", (Q9_u32)err, 0x00D2UL);
+
+        Q9K_SetU32(Q9K_TRANS_SCRATCH_SIZE, 0x800UL);
+        Q9K_SetU32(Q9K_TRANS_SCRATCH_MODE, 0UL);
+        Q9K_SetU32(Q9K_TRANS_SCRATCH_ADDR, 0x00ABCDEFUL);
+        Q9K_SysTransImpl();
+        checkU32("F$Trans-Bridge meldet Erfolg", Q9K_GetU32(Q9K_TRANS_SCRATCH_MODE), 1);
+        checkU32("F$Trans-Bridge gibt die Adresse unveraendert zurueck",
+                 Q9K_GetU32(Q9K_TRANS_SCRATCH_ADDR), 0x00ABCDEFUL);
+        checkU32("F$Trans-Bridge gibt die Groesse unveraendert zurueck",
+                 Q9K_GetU32(Q9K_TRANS_SCRATCH_SIZE), 0x800UL);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
