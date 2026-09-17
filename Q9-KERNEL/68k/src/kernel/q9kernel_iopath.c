@@ -625,3 +625,119 @@ void Q9K_SysIOpenImpl(void)
     Q9K_SetU32(Q9K_IOpenScratch_PastName, pastName);
     Q9K_SetU32(Q9K_IOpenScratch_PathNum, pathNum);
 }
+
+/*
+ * F$CmpNam (Callcode $11, "Compare Two Names")
+ *
+ * Verifizierte ABI (68k_tech.pdf S. 388):
+ *
+ *     IN   d1.w = Laenge der Musterzeichenkette
+ *          (a0) = Zeiger auf das Muster
+ *          (a1) = Zeiger auf den Zielnamen (NULL-terminiert)
+ *     OUT  Carry geloescht, wenn die Namen uebereinstimmen
+ *          sonst Carry gesetzt + d1.w = E$Differ ($A5)
+ *
+ * Gross-/Kleinschreibung gilt als gleich. Zwei Platzhalter im MUSTER:
+ * '?' trifft genau ein Zeichen, '*' trifft eine beliebige Zeichenkette.
+ *
+ * Das Muster ist NICHT null-terminiert (deshalb die Laenge in d1.w) --
+ * genau so ruft RBF den Call auf: F$PrsNam liefert Namensanfang und
+ * Laenge mitten aus einem Pfadnamen heraus (s. Q9K_PrsNamScratch_PAST
+ * oben), und beides geht unveraendert an F$CmpNam weiter.
+ *
+ * BEWUSSTE ABWEICHUNG: die reale Beschreibung nennt als zweiten Fehler
+ * E$StkOvf ($A6) "Muster zu komplex" -- das ist eine Eigenschaft der
+ * Original-Implementierung, die beim '*' rekursiv auf dem Stack sichert.
+ * Diese Fassung vergleicht stattdessen iterativ mit einem einzigen
+ * Rueckfallpunkt (konstanter Speicherbedarf), kann also kein Muster
+ * ueberlaufen lassen und meldet E$StkOvf folgerichtig nie. Das ist
+ * strikt vertraeglich: jedes Muster, das das Original akzeptiert, wird
+ * auch hier akzeptiert.
+ */
+#define Q9K_E_DIFFER 0x00A5U /* errno.h: EOS_DIFFER, Namen unterschiedlich */
+
+static unsigned char Q9K_CmpNamFold(unsigned char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (unsigned char)(c - 'A' + 'a') : c;
+}
+
+int Q9K_ProcCmpNam(Q9_u32 patternPtr, Q9_u16 patternLen, Q9_u32 targetPtr,
+                   Q9_u16 *outError)
+{
+    const volatile unsigned char *pat;
+    const volatile unsigned char *tgt;
+    Q9_u32 pi = 0, ti = 0;
+    Q9_u32 starPat = 0, starTgt = 0;
+    int haveStar = 0;
+
+    *outError = 0;
+
+    if (patternPtr == 0 || targetPtr == 0) {
+        *outError = Q9K_E_DIFFER;
+        return 0;
+    }
+
+    pat = (const volatile unsigned char *)patternPtr;
+    tgt = (const volatile unsigned char *)targetPtr;
+
+    while (tgt[ti] != 0) {
+        if (pi < (Q9_u32)patternLen && pat[pi] == '*') {
+            /* Rueckfallpunkt merken und zunaechst nichts verbrauchen. */
+            haveStar = 1;
+            starPat  = pi;
+            starTgt  = ti;
+            pi++;
+        } else if (pi < (Q9_u32)patternLen &&
+                   (pat[pi] == '?' ||
+                    Q9K_CmpNamFold(pat[pi]) == Q9K_CmpNamFold(tgt[ti]))) {
+            pi++;
+            ti++;
+        } else if (haveStar) {
+            /* Letztes '*' ein Zeichen weiter fressen lassen. */
+            starTgt++;
+            ti = starTgt;
+            pi = starPat + 1;
+        } else {
+            *outError = Q9K_E_DIFFER;
+            return 0;
+        }
+    }
+
+    /* Der Zielname ist zu Ende -- ein Restmuster darf nur noch aus '*'
+     * bestehen. */
+    while (pi < (Q9_u32)patternLen && pat[pi] == '*') {
+        pi++;
+    }
+
+    if (pi != (Q9_u32)patternLen) {
+        *outError = Q9K_E_DIFFER;
+        return 0;
+    }
+    return 1;
+}
+
+/* Scratch-Bruecke fuer F$CmpNam (2026-09-17): hinter dem F$SPrior-Block
+ * ($18A0-$18AC, q9kernel_procapi.c), der seinerseits hinter der
+ * F$SRqMem-Eigentuemertabelle liegt (endet $1894, q9kernel_sysmem.c). */
+#ifndef Q9K_CMPNAM_SCRATCH_PATTERN
+#define Q9K_CMPNAM_SCRATCH_PATTERN 0x18B0UL /* Q9_u32, (a0) EIN = Muster       */
+#define Q9K_CMPNAM_SCRATCH_TARGET  0x18B4UL /* Q9_u32, (a1) EIN = Zielname     */
+#define Q9K_CMPNAM_SCRATCH_PATLEN  0x18B8UL /* Q9_u32, d1.w EIN = Musterlaenge */
+#define Q9K_CMPNAM_SCRATCH_ERROR   0x18BCUL /* Q9_u32, d1.w AUS bei Fehler     */
+#define Q9K_CMPNAM_SCRATCH_SUCCESS 0x18C0UL /* Q9_u32, 0 = ungleich / 1 = gleich */
+#endif
+
+void Q9K_SysCmpNamImpl(void)
+{
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcCmpNam(Q9K_GetU32(Q9K_CMPNAM_SCRATCH_PATTERN),
+                       (Q9_u16)Q9K_GetU32(Q9K_CMPNAM_SCRATCH_PATLEN),
+                       Q9K_GetU32(Q9K_CMPNAM_SCRATCH_TARGET),
+                       &err)) {
+        Q9K_SetU32(Q9K_CMPNAM_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_CMPNAM_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_CMPNAM_SCRATCH_SUCCESS, 0UL);
+    }
+}

@@ -104,6 +104,21 @@ priority byte, and the scheduler applies a changed priority only on the next
 ready-queue entry, so raising a running process' priority does not preempt
 immediately.
 
+`F$CmpNam` (call code `0x11`) completes the pair that RBF uses to walk a
+directory: `F$PrsNam` already returns the start and length of one name inside
+a pathlist, and both now go straight into `F$CmpNam`. The pattern is therefore
+taken by length rather than by null termination, while the target name is null
+terminated, as documented. Upper and lower case match, `?` matches one
+character and `*` matches any string. The emulator regression extended to
+`HOwWl\rLGSDCcergsIPpNnx@#`: an exact match, a wildcard match, and a correctly
+rejected mismatch, with a second boot again reporting `Vektor=0`.
+
+One deliberate deviation: the documented second error `E$StkOvf` ("pattern too
+complex") reflects the original implementation, which recurses on the stack for
+every `*`. This version compares iteratively with a single backtracking point
+and constant memory, so no pattern can overflow it and `E$StkOvf` is never
+reported. Every pattern the original accepts is accepted here too.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -135,7 +150,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x0E` | F$STrap | Not implemented |
 | 🟡 | `0x0F` | F$PErr | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
-| ❌ | `0x11` | F$CmpNam | Not implemented |
+| ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
 | 🟡 | `0x12` | F$SchBit | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x13` | F$AllBit | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x14` | F$DelBit | Microware path exists; current Q9 compatibility is not fully verified |

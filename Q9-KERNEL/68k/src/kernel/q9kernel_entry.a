@@ -517,6 +517,16 @@ Q9K_SPriorScratch_Priority equ $18A4      * Q9_u32, d1.w EIN
 Q9K_SPriorScratch_Error    equ $18A8      * Q9_u32, d1.w AUS bei Fehler
 Q9K_SPriorScratch_Success  equ $18AC      * Q9_u32, 0/1
 
+* F$CmpNam-Scratch (2026-09-17, s. q9kernel_iopath.c Kopfkommentar):
+* direkt hinter dem F$SPrior-Block. Alle vier Zellen sind 32 Bit breit,
+* Wortwerte liegen deshalb im unteren Wort (+2) -- gleiche Konvention wie
+* beim F$PrsNam-Block oben.
+Q9K_CmpNamScratch_Pattern  equ $18B0      * Q9_u32, (a0) EIN = Muster
+Q9K_CmpNamScratch_Target   equ $18B4      * Q9_u32, (a1) EIN = Zielname
+Q9K_CmpNamScratch_PatLen   equ $18B8      * Q9_u32, d1.w EIN = Musterlaenge
+Q9K_CmpNamScratch_Error    equ $18BC      * Q9_u32, d1.w AUS bei Fehler
+Q9K_CmpNamScratch_Success  equ $18C0      * Q9_u32, 0 = ungleich / 1 = gleich
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -4950,6 +4960,33 @@ Q9K_SysFSPrior:
         rts
 Q9K_SysFSPrior_Fail:
         move.w  Q9K_SPriorScratch_Error,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFCmpNam -- F$CmpNam (Callcode $11, "Compare Two Names"). Reale
+* ABI, 68k_tech.pdf S.388: IN d1.w=Musterlaenge, (a0)=Muster,
+* (a1)=Zielname (NULL-terminiert). OUT: Carry geloescht bei
+* Uebereinstimmung, sonst Carry + d1.w=E$Differ ($A5). Keine weiteren
+* Ausgaberegister -- deshalb ist hier auch kein Registerrahmen-
+* Sonderfall noetig (anders als bei F$PrsNam/F$SRqMem, die a0/a1
+* zurueckgeben). Gleiche A6-Sicherung wie F$ID/F$SPrior. Der eigentliche
+* Vergleich samt Platzhalterbehandlung steht in q9kernel_iopath.c.
+Q9K_SysFCmpNam:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  a0,Q9K_CmpNamScratch_Pattern
+        move.l  a1,Q9K_CmpNamScratch_Target
+        clr.l   Q9K_CmpNamScratch_PatLen        * oberes Wort nullen, C liest 32 Bit
+        move.w  d1,Q9K_CmpNamScratch_PatLen+2
+        bsr     Q9K_SysCmpNamImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_CmpNamScratch_Success+2
+        beq     Q9K_SysFCmpNam_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFCmpNam_Fail:
+        move.w  Q9K_CmpNamScratch_Error+2,d1
         ori     #1,ccr
         rts
 

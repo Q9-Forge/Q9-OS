@@ -333,6 +333,61 @@ int main(void)
         checkU32("F$RetPD gibt in keinem Fehlerfall etwas frei", (Q9_u32)g_freedCount, 1);
     }
 
+    /* F$CmpNam (Callcode 0x11). Das Muster ist bewusst NICHT
+     * null-terminiert -- die Laenge kommt separat, genau wie bei RBFs
+     * Aufruf mitten aus einem Pfadnamen heraus. */
+    {
+        Q9_u16 err;
+        int    ok;
+        static const char pool[] = "startup/CMDS/echo";  /* Muster wird per Laenge begrenzt */
+
+        struct { const char *pat; unsigned len; const char *tgt; int want; const char *label; } cases[] = {
+            { "startup", 7, "startup",  1, "gleiche Namen stimmen ueberein" },
+            { "STARTUP", 7, "startup",  1, "Grossschreibung im Muster gilt als gleich" },
+            { "startup", 7, "STARTUP",  1, "Grossschreibung im Ziel gilt als gleich" },
+            { "startup", 7, "startupx", 0, "laengeres Ziel stimmt nicht ueberein" },
+            { "startupx", 8, "startup", 0, "laengeres Muster stimmt nicht ueberein" },
+            { "start?p",  7, "startup", 1, "'?' trifft genau ein Zeichen" },
+            { "start?",   6, "startup", 0, "'?' trifft nicht mehrere Zeichen" },
+            { "*",        1, "startup", 1, "'*' allein trifft jeden Namen" },
+            { "*",        1, "",        1, "'*' trifft auch den leeren Namen" },
+            { "start*",   6, "startup", 1, "'*' am Ende trifft den Rest" },
+            { "*up",      3, "startup", 1, "'*' am Anfang trifft den Anfang" },
+            { "st*up",    5, "startup", 1, "'*' in der Mitte trifft dazwischen" },
+            { "st*up",    5, "startip", 0, "'*' rettet einen falschen Rest nicht" },
+            { "*t*p",     4, "startup", 1, "zwei '*' im selben Muster" },
+            { "s*",       2, "",        0, "Muster mit Pflichtzeichen trifft leeren Namen nicht" },
+            { "",         0, "",        1, "leeres Muster trifft leeren Namen" },
+            { "",         0, "startup", 0, "leeres Muster trifft keinen Namen" },
+            { "**",       2, "startup", 1, "zwei '*' hintereinander" },
+        };
+        unsigned i;
+
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+            err = 0xFFFF;
+            ok = Q9K_ProcCmpNam((Q9_u32)(unsigned long)cases[i].pat,
+                                (Q9_u16)cases[i].len,
+                                (Q9_u32)(unsigned long)cases[i].tgt, &err);
+            checkU32(cases[i].label, (Q9_u32)ok, (Q9_u32)cases[i].want);
+            checkU32(cases[i].want ? "  ... ohne Fehlercode" : "  ... mit E$Differ",
+                     (Q9_u32)err, cases[i].want ? 0U : 0x00A5U);
+        }
+
+        /* Die Laenge begrenzt das Muster wirklich: derselbe Puffer, aber
+         * nur die ersten 7 Zeichen zaehlen. */
+        err = 0xFFFF;
+        ok = Q9K_ProcCmpNam((Q9_u32)(unsigned long)pool, 7,
+                            (Q9_u32)(unsigned long)"startup", &err);
+        checkU32("Musterlaenge schneidet den Puffer ab", (Q9_u32)ok, 1);
+
+        ok = Q9K_ProcCmpNam(0, 3, (Q9_u32)(unsigned long)"abc", &err);
+        checkU32("Null-Musterzeiger meldet Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("Null-Musterzeiger meldet E$Differ", (Q9_u32)err, 0x00A5U);
+
+        ok = Q9K_ProcCmpNam((Q9_u32)(unsigned long)"abc", 3, 0, &err);
+        checkU32("Null-Zielzeiger meldet Fehlschlag", (Q9_u32)ok, 0);
+    }
+
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;
 }
