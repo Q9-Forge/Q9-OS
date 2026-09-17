@@ -1,17 +1,23 @@
 /*
- * q9kernel_procapi.c -- Q9-OS eigener Kernel: lesende Prozess-API
+ * q9kernel_procapi.c -- Q9-OS eigener Kernel: Prozess-API (lesend +
+ * F$SPrior als erster schreibender Call, 2026-09-17)
  *
- * Implementiert die gemeinsame, kleine Grundlage fuer F$GProcP und F$ID.
- * Beide Calls sind vollstaendig kernel-intern: kein Treiber, kein
- * Dateisystem und kein Kontextwechsel sind daran beteiligt.  Die Register-
- * Bruecken liegen in q9kernel_entry.a; diese Datei enthaelt nur die
- * testbare Prozess-ID<->Deskriptor-Abbildung und die Scratch-Ergebnisse.
+ * Implementiert die gemeinsame, kleine Grundlage fuer F$GProcP, F$ID und
+ * F$SPrior.  Alle drei Calls sind vollstaendig kernel-intern: kein
+ * Treiber, kein Dateisystem und kein Kontextwechsel sind daran beteiligt.
+ * Die Register-Bruecken liegen in q9kernel_entry.a; diese Datei enthaelt
+ * nur die testbare Prozess-ID<->Deskriptor-Abbildung und die Scratch-
+ * Ergebnisse.
  *
- * Verifizierte ABI (68k_bls.pdf, S. 443/451):
+ * Verifizierte ABI (68k_bls.pdf, S. 443/451; 68k_tech.pdf S. 499f fuer
+ * F$SPrior):
  *
  *   F$GProcP: d0.w=PID -> (a1)=Prozessdeskriptor, E$PrcID ($E0)
  *              bei ungueltiger PID.
  *   F$ID:     -> d0.w=PID, d1.l=Gruppe/Benutzer, d2.w=Prioritaet.
+ *   F$SPrior: d0.w=PID, d1.w=gewuenschte Prioritaet (0=niedrigste,
+ *              65535=hoechste) -> keine Ausgabe bei Erfolg, sonst Carry
+ *              + d1.w=E$IPrcID ($E0) bei ungueltiger PID.
  *
  * Der aktuelle eigene Prozessdeskriptor hat noch NICHT das komplette
  * Microware-P$-Layout.  Diese Calls stellen deshalb nur die dokumentierte
@@ -19,6 +25,12 @@
  * bewusst 0.  Die PID entspricht wie bei Q9K_ProcFork dem 1-basierten
  * Prozesspool-Slot.  Das ist bereits stabil genug fuer IOMan, das
  * F$GProcP als Kernelprimitive nutzt.
+ *
+ * F$SPriors reale Benutzer-/Gruppenpruefung ("nur derselbe Benutzer oder
+ * Gruppe 0 darf eine fremde Prioritaet aendern") entfaellt hier bewusst:
+ * jeder Prozess traegt ohnehin Gruppe/Benutzer 0 (s. Q9K_SysIDImpl oben)
+ * -- das entspricht in der realen Konvention bereits dem Superuser-Fall,
+ * der IMMER darf.
  */
 
 #include "q9kernel_config.h"
@@ -90,7 +102,25 @@ typedef char Q9K_ProcDescShiftMatchesSize[
 #define Q9K_ID_SCRATCH_SUCCESS     0x13A0UL /* 0/1 */
 #endif
 
-#define Q9K_E_PRCID 0x00E0U /* errno.h: invalid process ID */
+/* F$SPrior-Scratch (2026-09-17): erster schreibender Prozess-API-Call in
+ * dieser Datei.  Hinter dem gesamten bisher belegten Kernel-Scratchbereich
+ * (hoechste bekannte Adresse $1894, Ende der F$SRqMem-Eigentuemertabelle
+ * in q9kernel_sysmem.c) -- bewusst mit Abstand, gleiche Konvention wie
+ * ueberall in diesem Kernel (kleine Luecken zwischen Bloecken). */
+#ifndef Q9K_SPRIOR_SCRATCH_PID
+#define Q9K_SPRIOR_SCRATCH_PID      0x18A0UL /* Q9_u32, d0.w EIN */
+#endif
+#ifndef Q9K_SPRIOR_SCRATCH_PRIORITY
+#define Q9K_SPRIOR_SCRATCH_PRIORITY 0x18A4UL /* Q9_u32, d1.w EIN */
+#endif
+#ifndef Q9K_SPRIOR_SCRATCH_ERROR
+#define Q9K_SPRIOR_SCRATCH_ERROR    0x18A8UL /* Q9_u32, d1.w AUS bei Fehler */
+#endif
+#ifndef Q9K_SPRIOR_SCRATCH_SUCCESS
+#define Q9K_SPRIOR_SCRATCH_SUCCESS  0x18ACUL /* Q9_u32, 0/1 */
+#endif
+
+#define Q9K_E_PRCID 0x00E0U /* errno.h: invalid process ID (E$IPrcID) */
 
 #define Q9K_PROCDESC_STATE_ACTIVE   'a'
 #define Q9K_PROCDESC_STATE_WAITING  'w'
@@ -102,6 +132,7 @@ static void Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = v
 static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
 static void Q9K_SetU16(Q9_u32 addr, Q9_u16 value) { *(volatile Q9_u16 *)addr = value; }
 static Q9_u8 Q9K_GetU8(Q9_u32 addr) { return *(volatile Q9_u8 *)addr; }
+static void Q9K_SetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = value; }
 
 /* Freie Pool-Slots enthalten an Offset 0 den Freilistenzeiger.  Daher darf
  * eine PID nicht allein aus ihrem Bereich abgeleitet werden: nur einer der
@@ -183,4 +214,50 @@ void Q9K_SysIDImpl(void)
     Q9K_SetU16(Q9K_ID_SCRATCH_PRIORITY,
                 (Q9_u16)Q9K_GetU8(desc + Q9K_PROCDESC_PRIORITY_OFF));
     Q9K_SetU16(Q9K_ID_SCRATCH_SUCCESS, 1);
+}
+
+/* Q9K_ProcSPrior -- echte F$SPrior-Kernlogik (Callcode $0D, "Set Process
+ * Priority"), s. Kopfkommentar fuer die verifizierte ABI.
+ *
+ * Dieser Kernel legt die Prioritaet nur im unteren Byte von P$Prior ab
+ * (Q9K_PROCDESC_PRIORITY_OFF, s. q9kernel_sched.c) -- die uebergebene,
+ * real wortbreite Prioritaet wird deshalb auf 0..255 abgeschnitten,
+ * dieselbe bewusste Vereinfachung wie bei Q9K_ProcFork/Q9K_ProcCreate.
+ *
+ * BEKANNTE EINSCHRAENKUNG: nur das Prioritaetsfeld wird geaendert. Der
+ * Scheduler (q9kernel_sched.c, Q9K_SchedInsert) setzt Age=Prioritaet nur
+ * BEIM Einhaengen in die Ready-Queue -- ein bereits eingehaengter Prozess
+ * wirkt sich also erst beim naechsten Ready-Queue-Eintritt (z.B. nach
+ * Schlaf/Block) mit der neuen Prioritaet aus, nicht sofort. Reale
+ * Sofortwirkung (Preemption bei Prioritaetserhoehung) bleibt TODO.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt).
+ */
+int Q9K_ProcSPrior(Q9_u16 pid, Q9_u16 priority, Q9_u16 *outError)
+{
+    Q9_u32 desc = Q9K_ProcLookup(pid);
+
+    *outError = 0;
+
+    if (desc == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+
+    Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, (Q9_u8)(priority & 0xFFU));
+    return 1;
+}
+
+void Q9K_SysSPriorImpl(void)
+{
+    Q9_u16 pid      = Q9K_GetU16(Q9K_SPRIOR_SCRATCH_PID);
+    Q9_u16 priority = Q9K_GetU16(Q9K_SPRIOR_SCRATCH_PRIORITY);
+    Q9_u16 err      = 0;
+
+    if (Q9K_ProcSPrior(pid, priority, &err)) {
+        Q9K_SetU16(Q9K_SPRIOR_SCRATCH_SUCCESS, 1);
+    } else {
+        Q9K_SetU16(Q9K_SPRIOR_SCRATCH_ERROR, err);
+        Q9K_SetU16(Q9K_SPRIOR_SCRATCH_SUCCESS, 0);
+    }
 }

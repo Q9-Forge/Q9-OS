@@ -507,6 +507,16 @@ Q9K_IDScratch_Priority    equ $1398      * d2.w AUS
 Q9K_IDScratch_Error       equ $139C      * d1.w AUS bei Fehler
 Q9K_IDScratch_Success     equ $13A0      * 0/1
 
+* F$SPrior-Scratch (2026-09-17, s. q9kernel_procapi.c Kopfkommentar):
+* hinter dem gesamten bisher belegten Kernel-Scratchbereich (hoechste
+* bekannte Adresse $1894, Ende der F$SRqMem-Eigentuemertabelle in
+* q9kernel_sysmem.c) -- bewusst mit Abstand, gleiche Konvention wie
+* ueberall in diesem Kernel.
+Q9K_SPriorScratch_PID      equ $18A0      * Q9_u32, d0.w EIN
+Q9K_SPriorScratch_Priority equ $18A4      * Q9_u32, d1.w EIN
+Q9K_SPriorScratch_Error    equ $18A8      * Q9_u32, d1.w AUS bei Fehler
+Q9K_SPriorScratch_Success  equ $18AC      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -4915,6 +4925,31 @@ Q9K_SysFID:
         rts
 Q9K_SysFID_Fail:
         move.w  Q9K_IDScratch_Error,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFSPrior -- F$SPrior (Callcode $0D, "Set Process Priority"). Reale
+* ABI, 68k_tech.pdf S.499f: IN d0.w=Prozess-ID, d1.w=gewuenschte
+* Prioritaet (0=niedrigste, 65535=hoechste). OUT: nichts bei Erfolg, sonst
+* Carry + d1.w=E$IPrcID ($E0) bei ungueltiger PID. Gleiche A6-Sicherung
+* wie F$ID (eingehendes A6 kann bei direkten Systemmodul-Aufrufen
+* ungueltig sein). Siehe q9kernel_procapi.c fuer die testbare Kernlogik
+* und die dort dokumentierten bewussten Vereinfachungen (Byte-Prioritaet,
+* keine Benutzer-/Gruppenpruefung, keine sofortige Ready-Queue-Wirkung).
+Q9K_SysFSPrior:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.w  d0,Q9K_SPriorScratch_PID
+        move.w  d1,Q9K_SPriorScratch_Priority
+        bsr     Q9K_SysSPriorImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_SPriorScratch_Success
+        beq     Q9K_SysFSPrior_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFSPrior_Fail:
+        move.w  Q9K_SPriorScratch_Error,d1
         ori     #1,ccr
         rts
 

@@ -14,10 +14,22 @@
 * even when the I/O path under test is the failing path:
 *   @ = I$Attach succeeded
 *   # = I$Detach succeeded
+*   H = native I$ChgDir succeeded (data directory)
 *   O = native I$Open succeeded
+*   w = native I$Write succeeded
+*   L = native I$WritLn succeeded
+*   G = native I$GetStt (SS_Opt) succeeded
+*   S = native I$SetStt (SS_Opt) succeeded
 *   D = native I$Dup succeeded
 *   C = native I$Close succeeded for the duplicate
 *   c = native I$Close succeeded for the original
+*   e = write on an unused path correctly rejected
+*   r = I$ReadLn on an invalid path correctly rejected without blocking
+*   g = I$GetStt on an invalid path correctly rejected
+*   s = I$SetStt on an invalid path correctly rejected
+*   I = F$ID succeeded (own PID retained for F$SPrior below)
+*   P = F$SPrior on the caller's own PID succeeded (Callcode 0x0D)
+*   p = F$SPrior on an invalid PID correctly rejected
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -142,6 +154,29 @@ Q9K_AttachStart:
         dc.w    $008e                          * I$SetStt / SS_Opt
         bcc     Q9K_NativeFailed
         moveq   #'s',d7
+        move.b  d7,$FFFFF006
+
+        trap    #0
+        dc.w    $000c                          * F$ID -> d0.w = own PID
+        bcs     Q9K_NativeFailed
+        move.w  d0,d3                           * retain own PID (d3 untouched by markers below)
+        moveq   #'I',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d3,d0
+        moveq   #10,d1
+        trap    #0
+        dc.w    $000d                          * F$SPrior: raise own priority to 10
+        bcs     Q9K_NativeFailed
+        moveq   #'P',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #99,d0                         * invalid PID must be rejected
+        moveq   #10,d1
+        trap    #0
+        dc.w    $000d                          * F$SPrior
+        bcc     Q9K_NativeFailed
+        moveq   #'p',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access

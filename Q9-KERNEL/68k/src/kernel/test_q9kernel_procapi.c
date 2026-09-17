@@ -29,6 +29,10 @@ static unsigned char g_pool[4 * 0x400];
 #define Q9K_ID_SCRATCH_PRIORITY      ((unsigned long)(g_globals + 0x140))
 #define Q9K_ID_SCRATCH_ERROR          ((unsigned long)(g_globals + 0x160))
 #define Q9K_ID_SCRATCH_SUCCESS        ((unsigned long)(g_globals + 0x180))
+#define Q9K_SPRIOR_SCRATCH_PID        ((unsigned long)(g_globals + 0x1A0))
+#define Q9K_SPRIOR_SCRATCH_PRIORITY   ((unsigned long)(g_globals + 0x1C0))
+#define Q9K_SPRIOR_SCRATCH_ERROR      ((unsigned long)(g_globals + 0x1E0))
+#define Q9K_SPRIOR_SCRATCH_SUCCESS    ((unsigned long)(g_globals + 0x200))
 
 #include "q9kernel_procapi.c"
 
@@ -99,6 +103,31 @@ int main(void)
     Q9K_SysIDImpl();
     check("F$ID ohne aktuellen Prozess meldet Fehler", Q9K_GetU16(Q9K_ID_SCRATCH_SUCCESS), 0);
     check("F$ID ohne aktuellen Prozess nutzt E$PrcID", Q9K_GetU16(Q9K_ID_SCRATCH_ERROR), Q9K_E_PRCID);
+
+    /* F$SPrior (Callcode 0x0D): gueltige PID -> neue Prioritaet im
+     * Deskriptor sichtbar. */
+    Q9K_SetU16(Q9K_SPRIOR_SCRATCH_PID, 2);
+    Q9K_SetU16(Q9K_SPRIOR_SCRATCH_PRIORITY, 42);
+    Q9K_SysSPriorImpl();
+    check("F$SPrior-Bridge meldet Erfolg", Q9K_GetU16(Q9K_SPRIOR_SCRATCH_SUCCESS), 1);
+    check("F$SPrior setzt die neue Prioritaet im Deskriptor",
+          (Q9_u32)Q9K_GetU8(second + Q9K_PROCDESC_PRIORITY_OFF), 42);
+
+    /* Ungueltige/freie PID muss E$IPrcID melden, kein Deskriptor betroffen. */
+    Q9K_SetU16(Q9K_SPRIOR_SCRATCH_PID, 4);
+    Q9K_SetU16(Q9K_SPRIOR_SCRATCH_PRIORITY, 99);
+    Q9K_SysSPriorImpl();
+    check("F$SPrior-Bridge meldet freien Slot als Fehler", Q9K_GetU16(Q9K_SPRIOR_SCRATCH_SUCCESS), 0);
+    check("F$SPrior-Bridge nutzt E$PrcID", Q9K_GetU16(Q9K_SPRIOR_SCRATCH_ERROR), Q9K_E_PRCID);
+
+    /* Reale Prioritaet ist wortbreit (bis 65535); dieser Kernel schneidet
+     * bewusst auf ein Byte ab (s. Q9K_ProcSPrior-Kopfkommentar). */
+    Q9K_SetU16(Q9K_SPRIOR_SCRATCH_PID, 1);
+    Q9K_SetU16(Q9K_SPRIOR_SCRATCH_PRIORITY, 0x1234);
+    Q9K_SysSPriorImpl();
+    check("F$SPrior-Bridge meldet Erfolg trotz Wort-Prioritaet", Q9K_GetU16(Q9K_SPRIOR_SCRATCH_SUCCESS), 1);
+    check("F$SPrior schneidet die Prioritaet auf ein Byte ab",
+          (Q9_u32)Q9K_GetU8(first + Q9K_PROCDESC_PRIORITY_OFF), 0x34);
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;

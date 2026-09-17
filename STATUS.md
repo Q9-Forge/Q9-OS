@@ -92,6 +92,28 @@ accessing the native path descriptor. The emulator regression extended to
 path 31 is rejected for both calls, and the previous I/O lifecycle remains
 green.
 
+`F$SPrior` (call code `0x0D`) is the first writing process-API call. It
+resolves the process ID through the existing descriptor lookup and stores the
+new priority, rejecting an unknown or free process ID with `E$IPrcID`. The
+emulator regression extended to `HOwWl\rLGSDCcergsIPp@#`: `F$ID` returns the
+caller's own PID, `F$SPrior` on that PID succeeds, and `F$SPrior` on an
+invalid PID is rejected. A separate boot with the regression switch disabled
+reported `Vektor=0`, so the normal boot path is unaffected. Two deliberate
+limitations remain: the priority is truncated to the descriptor's single
+priority byte, and the scheduler applies a changed priority only on the next
+ready-queue entry, so raising a running process' priority does not preempt
+immediately.
+
+The host regression suite was repaired in the same pass. Four of the sixteen
+suites had silently stopped building or running: `q9kernel_sysmem.c` and
+`q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
+their tests, `q9kernel_procend.c` gained a `Q9K_ProcMemReleaseAll` dependency,
+and `test_q9kernel_sysmem.c` plus `test_q9kernel_firstproc.c` reached real
+kernel addresses (`$1710`, `$004C`, `$0404`, `$1284`) because those constants
+were not redirectable. The constants now follow the `#ifndef` convention used
+elsewhere in the kernel, and the tests redirect them into their own fake
+globals. All sixteen suites build and pass again.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
@@ -109,7 +131,7 @@ green.
 | 🟡 | `0x0A` | F$Sleep | Scheduler sleep path exists; complete timing coverage remains open |
 | ❌ | `0x0B` | F$SSpd | Not implemented |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
-| ❌ | `0x0D` | F$SPrior | Not implemented |
+| ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
 | ❌ | `0x0E` | F$STrap | Not implemented |
 | 🟡 | `0x0F` | F$PErr | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
