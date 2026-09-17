@@ -117,6 +117,8 @@ extern void   Q9K_SysFUnLoad(void);  /* q9kernel_entry.a, F$UnLoad (Callcode 0x1
 extern void   Q9K_SysFSetCRC(void);  /* q9kernel_entry.a, F$SetCRC (Callcode 0x26) */
 extern void   Q9K_SysFGModDr(void);  /* q9kernel_entry.a, F$GModDr (Callcode 0x1a) */
 extern void   Q9K_SysFGPrDsc(void);  /* q9kernel_entry.a, F$GPrDsc (Callcode 0x18) */
+extern void   Q9K_SysFJulian(void);  /* q9kernel_entry.a, F$Julian (Callcode 0x20) */
+extern void   Q9K_SysFGregor(void);  /* q9kernel_entry.a, F$Gregor (Callcode 0x54) */
 extern void   Q9K_SysFPanic(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Panic (Callcode 0x5e) */
 extern void   Q9K_SysFRetPD(void);        /* q9kernel_entry.a, F$RetPD (Callcode 0x31) */
 extern void   Q9K_SysFMove(void);         /* q9kernel_entry.a, F$Move  (Callcode 0x38) */
@@ -224,6 +226,14 @@ extern void Q9K_Diag6(void);
  * Globals / Bootkette / Stack / Arena ueberlappungsfrei bleibt. */
 #define Q9K_FREEMEM_BASE    0x18000UL
 
+/* NACHTRAG 2026-09-18: Der Boot-/Supervisor-Stack liegt nicht mehr bei
+ * $10000..$18000 (dort stand laengst die Bootkette, s. q9kernel_entry.a,
+ * NACHTRAG 2026-09-18 bei Q9K_StackSize), sondern am RAM-ENDE. Die Arena
+ * laesst ihm deshalb die letzten Q9K_BOOTSTACK_SIZE Byte frei. Der Wert
+ * MUSS zu Q9K_StackSize in q9kernel_entry.a passen -- lokal dupliziert,
+ * gleiche schlanke Konvention wie bei allen ASM<->C-Konstanten hier. */
+#define Q9K_BOOTSTACK_SIZE  0x8000UL
+
 /* Schreibt einen 32-Bit-Wert an eine absolute Adresse (=Kernel-Global-
  * Offset, da Kernel-Globals-Basis bei diesem Kernel $000000 ist) */
 static void Q9K_PutU32(Q9_u32 addr, Q9_u32 value)
@@ -318,8 +328,10 @@ void Q9K_CInit(void)
 
         /* Keep allocator blocks 16-byte aligned. */
         freeBase = (freeBase + 15UL) & ~15UL;
-        if (totalRam > freeBase) {
-            Q9K_ArenaInit(freeBase, totalRam - freeBase);
+        /* Die letzten Q9K_BOOTSTACK_SIZE Byte gehoeren dem Boot-Stack
+         * (s. Definition oben) -- die Arena endet davor. */
+        if (totalRam > freeBase + Q9K_BOOTSTACK_SIZE) {
+            Q9K_ArenaInit(freeBase, totalRam - Q9K_BOOTSTACK_SIZE - freeBase);
         }
     }
 
@@ -465,6 +477,8 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x18UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGPrDsc);
                     Q9K_PutU32(usrdisBase + 0x1aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGModDr);
                     Q9K_PutU32(usrdisBase + 0x26UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSetCRC);
+                    Q9K_PutU32(usrdisBase + 0x20UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFJulian);
+                    Q9K_PutU32(usrdisBase + 0x54UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGregor);
                     Q9K_PutU32(usrdisBase + 0x15UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTime);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
@@ -512,6 +526,8 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x18UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGPrDsc);
                     Q9K_PutU32(sysdisBase + 0x1aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGModDr);
                     Q9K_PutU32(sysdisBase + 0x26UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSetCRC);
+                    Q9K_PutU32(sysdisBase + 0x20UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFJulian);
+                    Q9K_PutU32(sysdisBase + 0x54UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGregor);
                     Q9K_PutU32(sysdisBase + 0x15UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTime);
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(sysdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
