@@ -126,6 +126,24 @@ typedef char Q9K_ProcDescShiftMatchesSize[
 #define Q9K_E_PRCID 0x00E0U /* errno.h: invalid process ID (E$IPrcID) */
 #define Q9K_E_PERMIT 0x00A4U /* errno.h: EOS_PERMIT, "must be super user" */
 
+/* F$GPrDsc-Scratch (2026-09-17), hinter dem F$GModDr-Block
+ * ($1910-$1914, q9kernel_moddir.c). */
+#ifndef Q9K_GPRDSC_SCRATCH_PID
+#define Q9K_GPRDSC_SCRATCH_PID     0x1918UL /* Q9_u32, d0.w EIN            */
+#endif
+#ifndef Q9K_GPRDSC_SCRATCH_COUNT
+#define Q9K_GPRDSC_SCRATCH_COUNT   0x191CUL /* Q9_u32, d1.w EIN            */
+#endif
+#ifndef Q9K_GPRDSC_SCRATCH_BUF
+#define Q9K_GPRDSC_SCRATCH_BUF     0x1920UL /* Q9_u32, (a0) EIN            */
+#endif
+#ifndef Q9K_GPRDSC_SCRATCH_ERROR
+#define Q9K_GPRDSC_SCRATCH_ERROR   0x1924UL /* Q9_u32, d1.w AUS bei Fehler */
+#endif
+#ifndef Q9K_GPRDSC_SCRATCH_SUCCESS
+#define Q9K_GPRDSC_SCRATCH_SUCCESS 0x1928UL /* Q9_u32, 0/1                 */
+#endif
+
 /* F$SUser-Scratch (2026-09-17): hinter dem F$CmpNam-Block
  * ($18B0-$18C0, q9kernel_iopath.c). */
 #ifndef Q9K_SUSER_SCRATCH_GROUPUSER
@@ -422,5 +440,61 @@ void Q9K_SysCpyMemImpl(void)
     } else {
         Q9K_SetU32(Q9K_CPYMEM_SCRATCH_ERROR, (Q9_u32)err);
         Q9K_SetU32(Q9K_CPYMEM_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
+/* Q9K_ProcGPrDsc -- echte F$GPrDsc-Kernlogik (Callcode $18, "Get Copy of
+ * Process Descriptor"). Verifizierte ABI (68k_tech.pdf S. 440f):
+ * d0.w = angeforderte PID, d1.w = Anzahl zu kopierender Bytes,
+ * (a0) = Zielpuffer. Keine Ausgabe; E$IPrcID ($E0) bei ungueltiger PID.
+ *
+ * Ausdruecklich NUR lesend -- das Handbuch stellt klar, dass es keinen
+ * Weg gibt, ueber diesen Aufruf einen Deskriptor zu VERAENDERN. Mehr als
+ * die Deskriptorgroesse wird nie kopiert, auch wenn der Aufrufer mehr
+ * anfordert: alles dahinter gehoert bereits dem naechsten Pool-Slot und
+ * waere fremder Inhalt.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcGPrDsc(Q9_u16 pid, Q9_u32 count, Q9_u32 bufAddr, Q9_u16 *outError)
+{
+    Q9_u32 desc = Q9K_ProcLookup(pid);
+    const volatile Q9_u8 *src;
+    volatile Q9_u8 *dst;
+    Q9_u32 i;
+
+    *outError = 0;
+
+    if (desc == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+    if (bufAddr == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+
+    if (count > Q9K_PROCDESC_SIZE)
+        count = Q9K_PROCDESC_SIZE;
+
+    src = (const volatile Q9_u8 *)desc;
+    dst = (volatile Q9_u8 *)bufAddr;
+    for (i = 0; i < count; ++i)
+        dst[i] = src[i];
+
+    return 1;
+}
+
+void Q9K_SysGPrDscImpl(void)
+{
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcGPrDsc((Q9_u16)Q9K_GetU32(Q9K_GPRDSC_SCRATCH_PID),
+                       Q9K_GetU32(Q9K_GPRDSC_SCRATCH_COUNT),
+                       Q9K_GetU32(Q9K_GPRDSC_SCRATCH_BUF),
+                       &err)) {
+        Q9K_SetU32(Q9K_GPRDSC_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_GPRDSC_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_GPRDSC_SCRATCH_SUCCESS, 0UL);
     }
 }

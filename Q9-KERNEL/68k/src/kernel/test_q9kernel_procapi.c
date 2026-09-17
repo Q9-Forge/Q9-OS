@@ -15,6 +15,9 @@ static unsigned char g_globals[0x400];
  * 4 * 0x200 -- beim Vergroessern des Deskriptors auf 0x400 (2026-09-09)
  * fielen dadurch drei Tests still um genau einen halben Slot daneben. */
 static unsigned char g_pool[4 * 0x400];
+/* Groesser als ein Deskriptor, damit die Laengenbegrenzung von
+ * F$GPrDsc nachweisbar ist. */
+static unsigned char g_bigBuf[0x400 + 16];
 
 /* Auf dem 64-Bit-Host brauchen die Q9_u32-Felder getrennte Abstaende. */
 #define Q9_D_PROC                    ((unsigned long)(g_globals + 0x000))
@@ -42,6 +45,11 @@ static unsigned char g_pool[4 * 0x400];
 #define Q9K_CPYMEM_SCRATCH_DST        ((unsigned long)(g_globals + 0x2E0))
 #define Q9K_CPYMEM_SCRATCH_ERROR      ((unsigned long)(g_globals + 0x300))
 #define Q9K_CPYMEM_SCRATCH_SUCCESS    ((unsigned long)(g_globals + 0x320))
+#define Q9K_GPRDSC_SCRATCH_PID        ((unsigned long)(g_globals + 0x340))
+#define Q9K_GPRDSC_SCRATCH_COUNT      ((unsigned long)(g_globals + 0x360))
+#define Q9K_GPRDSC_SCRATCH_BUF        ((unsigned long)(g_globals + 0x380))
+#define Q9K_GPRDSC_SCRATCH_ERROR      ((unsigned long)(g_globals + 0x3A0))
+#define Q9K_GPRDSC_SCRATCH_SUCCESS    ((unsigned long)(g_globals + 0x3C0))
 /* P$User liegt real auf $14 und ist dort genau 4 Byte breit. Auf diesem
  * Host ist Q9_u32 aber 8 Byte breit, ein Zugriff wuerde also bis $1B
  * reichen und die Nachbarfelder P$Prior ($19) und P$Age ($1A)
@@ -77,6 +85,7 @@ int main(void)
     Q9_u32 second = base + Q9K_PROCDESC_SIZE;
     Q9_u32 third = base + 2UL * Q9K_PROCDESC_SIZE;
 
+    memset(g_bigBuf, 0xEE, sizeof(g_bigBuf));
     memset(g_globals, 0, sizeof(g_globals));
     memset(g_pool, 0, sizeof(g_pool));
     Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, base);
@@ -246,6 +255,59 @@ int main(void)
               Q9K_GetU32(Q9K_CPYMEM_SCRATCH_SUCCESS), 0);
         check("F$CpyMem-Bridge legt E$PrcID in voller Zellbreite ab",
               Q9K_GetU32(Q9K_CPYMEM_SCRATCH_ERROR), Q9K_E_PRCID);
+    }
+
+
+    /* F$GPrDsc (Callcode 0x18): liest einen Deskriptor heraus, veraendert
+     * ihn nie und kopiert nie ueber seine Groesse hinaus. */
+    {
+        static unsigned char buf[64];
+        Q9_u16 err;
+        unsigned i;
+
+        for (i = 0; i < sizeof(buf); ++i)
+            buf[i] = 0xEE;
+        *(Q9_u8 *)(second + 0) = 0x5A;
+        *(Q9_u8 *)(second + 1) = 0xA5;
+
+        err = 0xFFFF;
+        check("F$GPrDsc mit gueltiger PID meldet Erfolg",
+              (Q9_u32)Q9K_ProcGPrDsc(2, 2, (Q9_u32)(unsigned long)buf, &err), 1);
+        check("F$GPrDsc kopiert das erste Deskriptorbyte", (Q9_u32)buf[0], 0x5A);
+        check("F$GPrDsc kopiert das zweite Deskriptorbyte", (Q9_u32)buf[1], 0xA5);
+        check("F$GPrDsc kopiert kein Byte zu viel", (Q9_u32)buf[2], 0xEE);
+
+        err = 0;
+        check("F$GPrDsc mit freier PID schlaegt fehl",
+              (Q9_u32)Q9K_ProcGPrDsc(4, 2, (Q9_u32)(unsigned long)buf, &err), 0);
+        check("F$GPrDsc meldet dabei E$PrcID", (Q9_u32)err, Q9K_E_PRCID);
+
+        err = 0;
+        check("F$GPrDsc mit Null-Puffer schlaegt fehl",
+              (Q9_u32)Q9K_ProcGPrDsc(2, 2, 0, &err), 0);
+
+        /* Ueber die Deskriptorgroesse hinaus wird nie kopiert -- alles
+         * dahinter gehoert schon dem naechsten Pool-Slot. */
+        err = 0xFFFF;
+        check("F$GPrDsc begrenzt eine zu grosse Anforderung",
+              (Q9_u32)Q9K_ProcGPrDsc(2, 0xFFFFUL, (Q9_u32)(unsigned long)g_bigBuf, &err), 1);
+        check("F$GPrDsc laesst das Byte hinter dem Deskriptor unberuehrt",
+              (Q9_u32)g_bigBuf[Q9K_PROCDESC_SIZE], 0xEE);
+
+        /* Die Bridge schreibt Erfolg/Fehler in voller Zellbreite. */
+        Q9K_SetU32(Q9K_GPRDSC_SCRATCH_PID, 2);
+        Q9K_SetU32(Q9K_GPRDSC_SCRATCH_COUNT, 2);
+        Q9K_SetU32(Q9K_GPRDSC_SCRATCH_BUF, (Q9_u32)(unsigned long)buf);
+        Q9K_SysGPrDscImpl();
+        check("F$GPrDsc-Bridge meldet Erfolg in voller Zellbreite",
+              Q9K_GetU32(Q9K_GPRDSC_SCRATCH_SUCCESS), 1);
+
+        Q9K_SetU32(Q9K_GPRDSC_SCRATCH_PID, 4);
+        Q9K_SysGPrDscImpl();
+        check("F$GPrDsc-Bridge meldet freie PID als Fehlschlag",
+              Q9K_GetU32(Q9K_GPRDSC_SCRATCH_SUCCESS), 0);
+        check("F$GPrDsc-Bridge legt E$PrcID in voller Zellbreite ab",
+              Q9K_GetU32(Q9K_GPRDSC_SCRATCH_ERROR), Q9K_E_PRCID);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

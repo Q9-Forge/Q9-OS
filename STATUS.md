@@ -173,6 +173,33 @@ plainly that "F$Mem is no longer available. Use F$SRqMem instead.", so
 implementing it would mean building something real OS-9/68K itself removed.
 `F$SRqMem` already covers the need and is green.
 
+`F$GPrDsc` (`0x18`), `F$GModDr` (`0x1A`) and `F$SetCRC` (`0x26`) build on the
+three calls above. `F$GPrDsc` copies a process descriptor out for inspection and
+is strictly read-only, as documented; it never copies past the descriptor size,
+because everything beyond that already belongs to the next pool slot.
+
+`F$GModDr` copies the module directory in whole entries, never a partial one.
+The format is this kernel's own 16-byte entry layout: the manual states that the
+directory format may differ between OS-9 releases and that the call exists for
+tools like `mdir`, so imitating a foreign layout would be a pretence that fits
+nothing.
+
+`F$SetCRC` updates both check values of a module image, in order: first the
+header parity, then the CRC across everything but the three CRC bytes, so the
+CRC covers the parity just written. It is checked without an expected-value
+table: after the call, `F$CRC` over the whole image must yield `CRCCon` again
+and the XOR of all header words must be `$FFFF` — exactly the two conditions
+real OS-9 tools measure a module by.
+
+The emulator regression extended to `HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBT@#`,
+with a separate boot reporting `Vektor=0`. The documented even-address
+requirement for `F$SetCRC` proved real rather than theoretical: the test image
+first landed on an odd address behind an odd-length string table and was
+correctly refused, which is what the alignment check is there for. The live test
+deliberately runs `F$SetCRC` over a private module image, never over a resident
+module — the manual warns that altering a known module's header makes it
+inaccessible to every other process.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -211,9 +238,9 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x15` | F$Time | Handler exists; clock source and full validation remain open |
 | ❌ | `0x16` | F$STime | Not implemented |
 | ✅ | `0x17` | F$CRC | 24-bit module CRC, accumulated across calls; verified against a real module and the documented CRCCon constant |
-| ❌ | `0x18` | F$GPrDsc | Not implemented |
+| ✅ | `0x18` | F$GPrDsc | Read-only copy of a process descriptor, length-capped at the descriptor size |
 | ❌ | `0x19` | F$GBlkMp | Not implemented |
-| ❌ | `0x1A` | F$GModDr | Not implemented |
+| ✅ | `0x1A` | F$GModDr | Copies the module directory out in whole entries; the format is this kernel's own, as the manual allows |
 | ✅ | `0x1B` | F$CpyMem | Copy with owner-PID validation; no address translation is needed while all processes share one flat address space |
 | ✅ | `0x1C` | F$SUser | Changes the caller's own group/user ID in the process descriptor; only the documented "user 0.0 may change freely" case is implemented |
 | ✅ | `0x1D` | F$UnLoad | Same lookup rule as F$Link and the same counter as F$UnLink, keyed by module name |
@@ -225,7 +252,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x23` | F$DExec | Not implemented |
 | ❌ | `0x24` | F$DExit | Not implemented |
 | ❌ | `0x25` | F$DatMod | Not implemented |
-| ❌ | `0x26` | F$SetCRC | Not implemented |
+| ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
 | 🟡 | `0x27` | F$SetSys | Basic handler exists; full system configuration semantics remain open |
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking and emulator test complete |
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |

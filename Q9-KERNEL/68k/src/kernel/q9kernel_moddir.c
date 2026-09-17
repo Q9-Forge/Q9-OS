@@ -128,6 +128,22 @@ extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
 #define Q9K_CRC_SCRATCH_ACCUM      0x18FCUL /* Q9_u32, d1.l EIN/AUS        */
 #define Q9K_CRC_SCRATCH_ADDR       0x1900UL /* Q9_u32, (a0) EIN            */
 #endif
+#ifndef Q9K_SETCRC_SCRATCH_ADDR
+#define Q9K_SETCRC_SCRATCH_ADDR    0x1904UL /* Q9_u32, (a0) EIN            */
+#define Q9K_SETCRC_SCRATCH_ERROR   0x1908UL /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_SETCRC_SCRATCH_SUCCESS 0x190CUL /* Q9_u32, 0/1                 */
+#endif
+#ifndef Q9K_GMODDR_SCRATCH_BUF
+#define Q9K_GMODDR_SCRATCH_BUF     0x1910UL /* Q9_u32, (a0) EIN            */
+#define Q9K_GMODDR_SCRATCH_COUNT   0x1914UL /* Q9_u32, d1.l EIN/AUS        */
+#endif
+
+/* Groesse EINES Verzeichniseintrags beim Herauskopieren (F$GModDr).
+ * Real sind das die 16 Byte aus dem Kopfkommentar; im Host-Test liegen
+ * die Felder grosszuegiger, deshalb ueberschreibbar. */
+#ifndef Q9K_MODDIR_ENTRY_BYTES
+#define Q9K_MODDIR_ENTRY_BYTES     16UL
+#endif
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
@@ -819,4 +835,131 @@ void Q9K_SysCrcImpl(void)
                Q9K_CrcAccumulate(Q9K_GetU32(Q9K_CRC_SCRATCH_ACCUM),
                                  Q9K_GetU32(Q9K_CRC_SCRATCH_ADDR),
                                  Q9K_GetU32(Q9K_CRC_SCRATCH_COUNT)));
+}
+
+#define Q9K_E_BMID 0x00CDU /* errno.h: Bad Module ID (Sync/Groesse unbrauchbar) */
+
+/* Modulkopf: 48 Byte, das letzte Wort ($2E) ist M$Parity; die drei
+ * letzten Modulbytes sind der CRC. Beides aus den realen Definitionen
+ * (MWOS/OS9/SRC/DEFS/module.a, M$Parity) und der im Projekt gegen echte
+ * Module erprobten Werkzeugfassung. */
+#define Q9K_MH_HEADER_SIZE 0x30UL
+#define Q9K_MH_PARITY      0x2EUL
+#define Q9K_MH_CRC_SIZE    3UL
+
+/* Q9K_ModSetCRC -- echte F$SetCRC-Kernlogik (Callcode $26, "Generate
+ * Valid CRC in Module"). Verifizierte ABI (68k_tech.pdf S. 489):
+ * (a0) = Modulzeiger, keine Ausgabe; Carry + d1.w im Fehlerfall.
+ *
+ * Aktualisiert BEIDE Pruefwerte eines Moduls im Speicher, genau in
+ * dieser Reihenfolge: erst die Kopfparitaet ($2E), dann den CRC ueber
+ * das gesamte Modul OHNE seine drei CRC-Bytes -- der CRC muss die
+ * frisch gesetzte Paritaet mit einschliessen, sonst waere das Ergebnis
+ * sofort wieder ungueltig.
+ *
+ * Geprueft werden laut Beschreibung ausdruecklich nur Sync-Wort und
+ * Groesse ("other parts of the module are not checked") -- mehr tut
+ * diese Fassung deshalb bewusst auch nicht.
+ *
+ * Die Paritaet ist so definiert, dass das XOR ALLER Kopfworte
+ * einschliesslich M$Parity $FFFF ergibt; gespeichert wird also das
+ * Komplement des XOR ueber die Worte davor. Der CRC wird akkumuliert
+ * und byteweise komplementiert abgelegt -- beides in derselben Form,
+ * in der die Werkzeuge dieses Projekts echte Module pruefen und
+ * schreiben.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+Q9_u32 Q9K_ModSetCRC(Q9_u32 modAddr, Q9_u16 *outError)
+{
+    volatile Q9_u8 *m = (volatile Q9_u8 *)modAddr;
+    Q9_u32 size;
+    Q9_u32 parity = 0;
+    Q9_u32 crc;
+    Q9_u32 i;
+
+    *outError = 0;
+
+    if (modAddr == 0 || (modAddr & 1UL) != 0) {
+        *outError = Q9K_E_BMID;
+        return 0;
+    }
+    if (m[0] != 0x4A || m[1] != 0xFC) {
+        *outError = Q9K_E_BMID;
+        return 0;
+    }
+
+    size = ((Q9_u32)m[Q9K_MH_SIZE] << 24) | ((Q9_u32)m[Q9K_MH_SIZE + 1] << 16) |
+           ((Q9_u32)m[Q9K_MH_SIZE + 2] << 8) | (Q9_u32)m[Q9K_MH_SIZE + 3];
+    if (size < Q9K_MH_HEADER_SIZE + Q9K_MH_CRC_SIZE) {
+        *outError = Q9K_E_BMID;
+        return 0;
+    }
+
+    for (i = 0; i < Q9K_MH_PARITY; i += 2)
+        parity ^= ((Q9_u32)m[i] << 8) | (Q9_u32)m[i + 1];
+    parity = (~parity) & 0xFFFFUL;
+    m[Q9K_MH_PARITY]     = (Q9_u8)(parity >> 8);
+    m[Q9K_MH_PARITY + 1] = (Q9_u8)parity;
+
+    crc = Q9K_CrcAccumulate(0xFFFFFFFFUL, modAddr, size - Q9K_MH_CRC_SIZE);
+    m[size - 3] = (Q9_u8)(((crc >> 16) & 0xFFUL) ^ 0xFFUL);
+    m[size - 2] = (Q9_u8)(((crc >> 8) & 0xFFUL) ^ 0xFFUL);
+    m[size - 1] = (Q9_u8)((crc & 0xFFUL) ^ 0xFFUL);
+    return 1;
+}
+
+void Q9K_SysSetCRCImpl(void)
+{
+    Q9_u16 err = 0;
+
+    if (Q9K_ModSetCRC(Q9K_GetU32(Q9K_SETCRC_SCRATCH_ADDR), &err)) {
+        Q9K_SetU32(Q9K_SETCRC_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_SETCRC_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_SETCRC_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
+/* Q9K_ModDirCopyOut -- echte F$GModDr-Kernlogik (Callcode $1A, "Get
+ * Copy of Module Directory"). Verifizierte ABI (68k_tech.pdf S. 437):
+ * d1.l = hoechstens zu kopierende Byteanzahl, (a0) = Zielpuffer;
+ * AUS: d1.l = tatsaechlich kopierte Byteanzahl.
+ *
+ * Der Aufruf ist ausdruecklich fuer Werkzeuge wie mdir gedacht, und das
+ * Handbuch stellt selbst klar, dass Format und Inhalt des Verzeichnisses
+ * sich zwischen Ausgaben unterscheiden duerfen. Kopiert wird deshalb das
+ * EIGENE, in q9kernel_moddir.c dokumentierte 16-Byte-Eintragsformat --
+ * ein fremdes Layout nachzubilden waere eine Attrappe, die zu nichts
+ * passt. Abgeschnitten wird auf ganze Eintraege, damit ein Aufrufer nie
+ * einen halben Eintrag auswerten kann.
+ *
+ * Rueckgabe: Anzahl kopierter Bytes (0 ist gueltig, kein Fehler). */
+Q9_u32 Q9K_ModDirCopyOut(Q9_u32 bufAddr, Q9_u32 maxBytes)
+{
+    volatile Q9_u8 *dst = (volatile Q9_u8 *)bufAddr;
+    Q9_u32 slot = Q9K_GetU32(Q9K_MODDIR_HEAD_ADDR);
+    Q9_u32 written = 0;
+
+    if (bufAddr == 0)
+        return 0;
+
+    while (slot != 0 && written + Q9K_MODDIR_ENTRY_BYTES <= maxBytes) {
+        const volatile Q9_u8 *src = (const volatile Q9_u8 *)slot;
+        Q9_u32 i;
+
+        for (i = 0; i < Q9K_MODDIR_ENTRY_BYTES; ++i)
+            dst[written + i] = src[i];
+
+        written += Q9K_MODDIR_ENTRY_BYTES;
+        slot = Q9K_GetU32(slot + Q9K_MODDIR_NEXT_OFF);
+    }
+
+    return written;
+}
+
+void Q9K_SysGModDrImpl(void)
+{
+    Q9K_SetU32(Q9K_GMODDR_SCRATCH_COUNT,
+               Q9K_ModDirCopyOut(Q9K_GetU32(Q9K_GMODDR_SCRATCH_BUF),
+                                 Q9K_GetU32(Q9K_GMODDR_SCRATCH_COUNT)));
 }
