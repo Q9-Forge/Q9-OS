@@ -14,6 +14,10 @@
 * even when the I/O path under test is the failing path:
 *   @ = I$Attach succeeded
 *   # = I$Detach succeeded
+*   O = native I$Open succeeded
+*   D = native I$Dup succeeded
+*   C = native I$Close succeeded for the duplicate
+*   c = native I$Close succeeded for the original
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -29,6 +33,37 @@ Q9K_AttachData:
         ends
 
 Q9K_AttachStart:
+        moveq   #3,d0                           * native Q9 I$Open: read + write
+        lea     Q9K_PathName(pc),a0
+        trap    #0
+        dc.w    $0084                          * I$Open
+        bcs     Q9K_NativeFailed
+        move.w  d0,d6                           * retain the original local path
+        moveq   #'O',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d6,d0
+        trap    #0
+        dc.w    $0082                          * I$Dup
+        bcs     Q9K_NativeFailed
+        move.w  d0,d5                           * duplicate local path
+        moveq   #'D',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d5,d0
+        trap    #0
+        dc.w    $008f                          * I$Close duplicate
+        bcs     Q9K_NativeFailed
+        moveq   #'C',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d6,d0
+        trap    #0
+        dc.w    $008f                          * I$Close original
+        bcs     Q9K_NativeFailed
+        moveq   #'c',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
         trap    #0
@@ -48,6 +83,11 @@ Q9K_AttachStart:
         trap    #0
         dc.w    6                               * F$Exit
 
+Q9K_NativeFailed:
+        moveq   #'!',d7
+        move.b  d7,$FFFFF006
+        bra     Q9K_AttachExit
+
 Q9K_AttachFailed:
         moveq   #'!',d7
         move.b  d7,$FFFFF006
@@ -64,5 +104,8 @@ Q9K_AttachExit:
 
 Q9K_AttachName:
         dc.b    "c0",0
+
+Q9K_PathName:
+        dc.b    "/term",0
 
         endsect
