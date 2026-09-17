@@ -73,10 +73,12 @@ int main(void)
     Q9_u32 past = 0;
     Q9_u32 num1, num2, num3, num4, num5;
     static unsigned char processDesc[0x200];
+    static unsigned char processDesc2[0x200];
 
     memset(g_poolGlobals, 0, sizeof(g_poolGlobals));
     memset(g_pathPool, 0xCC, sizeof(g_pathPool));
     memset(processDesc, 0, sizeof(processDesc));
+    memset(processDesc2, 0, sizeof(processDesc2));
 
     Q9K_SetU32(Q9K_PATHPOOL_BASE_ADDR, poolBase);
     buildFreeList(poolBase, Q9K_PATHDESC_SIZE, 4, Q9K_PATHPOOL_FREE_ADDR);
@@ -127,6 +129,18 @@ int main(void)
     checkU32("F7: P$Path[4] contains the published path number",
              (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc
                                    + Q9K_PROCDESC_PATH_OFF + 4UL * 2UL), 4);
+
+    /* A second process gets its own local path 3, but the global descriptor
+     * number must still identify the third pool slot. */
+    Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)processDesc2);
+    num3 = Q9K_ProcIOpen(0, name1Addr, &past);
+    checkU32("F8: second process also starts at local path 3", num3, 3);
+    checkU32("F8: second process P$Path[3] stores global descriptor 5",
+             (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc2
+                                   + Q9K_PROCDESC_PATH_OFF + 3UL * 2UL), 5);
+    checkU32("F8: global descriptor keeps pool number 5",
+             (Q9_u32)Q9K_ReadU16BE(poolBase + 2UL * Q9K_PATHDESC_SIZE
+                                    + Q9K_PATHDESC_NUM_OFF), 5);
 
     /* --- F$AllPD (Callcode $30), 2026-09-02 -------------------------
      * Konvention und DBT-Aufbau sind aus IOMans Analyse
