@@ -22,7 +22,11 @@ gestartet und wartete auf die Shell. Dafür gibt es jetzt in
 `q9kernel_entry.a` den Compiletime-Schalter `Q9K_TestStartup` (Standard
 `0`), sodass `echo`/`date`-Regressionen den Startup-Versuch gezielt
 überspringen können; für die separate Startup-Untersuchung kann er auf `1`
-gesetzt werden. Ein abschließender isolierter `date`-Befund steht noch aus.
+gesetzt werden. Im isolierten Modus wurde anschließend
+`F$Load("/dd/CMDS/date")` erreicht; innerhalb des 18-Sekunden-Fensters war
+noch kein Rücksprung aus diesem Ladevorgang sichtbar. Eine Exception trat
+dabei nicht auf. Der nächste Messpunkt ist daher die interne Rückkehrbilanz
+von IOMans `F$Load` für `date`, nicht erneut `I$ChgDir`.
 
 Der 68k-Kernel ist ein laufender Integrationsprototyp mit Modulverwaltung,
 Prozessverwaltung, Scheduler, Speicherverwaltung und Anbindung an fremde
