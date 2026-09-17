@@ -1771,6 +1771,7 @@ Q9K_TestHelloDone:
         bra     Q9K_TestLoadCsl
         endc
         moveq   #1,d0                       * Read_ (Bit 7 nicht gesetzt -- d1/Farbe bleibt bewusst unbelegt)
+        clr.l   d1                           * Keep the unused color register deterministic.
         lea     Q9K_TestLoadName(pc),a0
         trap    #0
         dc.w    $0001                       * F$Load
@@ -1786,6 +1787,7 @@ Q9K_TestLoadCsl:
 * wird ignoriert -- wir wollen NUR sehen, ob es die spaetere Meldung
 * aendert, kein zweiter Fehlerpfad noetig).
         moveq   #1,d0
+        clr.l   d1                           * F$Load ignores the color when d0 bit 7 is clear.
         lea     Q9K_TestCslName(pc),a0
         trap    #0
         dc.w    $0001                       * F$Load
@@ -1866,6 +1868,7 @@ Q9K_TestForkEchoFail:
 * Q9K_TestLoadDateName. Gleiches Muster wie oben bei echo.
 Q9K_TestLoadDate:
         moveq   #1,d0
+        clr.l   d1                           * Do not pass the previous syscall's stale value.
         lea     Q9K_TestLoadDateName(pc),a0
         trap    #0
         dc.w    $0001                       * F$Load
