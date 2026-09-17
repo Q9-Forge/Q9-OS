@@ -547,6 +547,19 @@ Q9K_CrcScratch_Count       equ $18F8      * Q9_u32, d0.l EIN
 Q9K_CrcScratch_Accum       equ $18FC      * Q9_u32, d1.l EIN/AUS
 Q9K_CrcScratch_Addr        equ $1900      * Q9_u32, (a0) EIN
 
+* F$SetCRC-, F$GModDr- und F$GPrDsc-Scratch (2026-09-17, s.
+* q9kernel_moddir.c bzw. q9kernel_procapi.c).
+Q9K_SetCRCScratch_Addr     equ $1904      * Q9_u32, (a0) EIN
+Q9K_SetCRCScratch_Error    equ $1908      * Q9_u32, d1.w AUS bei Fehler
+Q9K_SetCRCScratch_Success  equ $190C      * Q9_u32, 0/1
+Q9K_GModDrScratch_Buf      equ $1910      * Q9_u32, (a0) EIN
+Q9K_GModDrScratch_Count    equ $1914      * Q9_u32, d1.l EIN/AUS
+Q9K_GPrDscScratch_PID      equ $1918      * Q9_u32, d0.w EIN
+Q9K_GPrDscScratch_Count    equ $191C      * Q9_u32, d1.w EIN
+Q9K_GPrDscScratch_Buf      equ $1920      * Q9_u32, (a0) EIN
+Q9K_GPrDscScratch_Error    equ $1924      * Q9_u32, d1.w AUS bei Fehler
+Q9K_GPrDscScratch_Success  equ $1928      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -5115,6 +5128,67 @@ Q9K_SysFCRC:
         movea.l (sp)+,a6
         move.l  Q9K_CrcScratch_Accum,d1
         andi    #$fe,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFSetCRC -- F$SetCRC (Callcode $26, "Generate Valid CRC in
+* Module"). Reale ABI, 68k_tech.pdf S.489: IN (a0) = Modulzeiger, keine
+* Ausgabe; Carry + d1.w bei Fehler. Aktualisiert Kopfparitaet UND CRC,
+* s. Q9K_ModSetCRC in q9kernel_moddir.c.
+Q9K_SysFSetCRC:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  a0,Q9K_SetCRCScratch_Addr
+        bsr     Q9K_SysSetCRCImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_SetCRCScratch_Success+2
+        beq     Q9K_SysFSetCRC_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFSetCRC_Fail:
+        move.w  Q9K_SetCRCScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFGModDr -- F$GModDr (Callcode $1A, "Get Copy of Module
+* Directory"). Reale ABI, 68k_tech.pdf S.437: IN d1.l = hoechstens zu
+* kopierende Bytes, (a0) = Puffer. AUS: d1.l = tatsaechlich kopierte
+* Bytes. Kein Fehlerfall -- ein zu kleiner Puffer liefert schlicht
+* weniger Eintraege. Kopiertes Format s. Q9K_ModDirCopyOut.
+Q9K_SysFGModDr:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  a0,Q9K_GModDrScratch_Buf
+        move.l  d1,Q9K_GModDrScratch_Count
+        bsr     Q9K_SysGModDrImpl
+        movea.l (sp)+,a6
+        move.l  Q9K_GModDrScratch_Count,d1
+        andi    #$fe,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFGPrDsc -- F$GPrDsc (Callcode $18, "Get Copy of Process
+* Descriptor"). Reale ABI, 68k_tech.pdf S.440: IN d0.w = PID, d1.w =
+* Byteanzahl, (a0) = Puffer. Keine Ausgabe; E$IPrcID bei ungueltiger
+* PID. Rein lesend, s. Q9K_ProcGPrDsc in q9kernel_procapi.c.
+Q9K_SysFGPrDsc:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_GPrDscScratch_PID           * obere Worte nullen, C liest 32 Bit
+        move.w  d0,Q9K_GPrDscScratch_PID+2
+        clr.l   Q9K_GPrDscScratch_Count
+        move.w  d1,Q9K_GPrDscScratch_Count+2
+        move.l  a0,Q9K_GPrDscScratch_Buf
+        bsr     Q9K_SysGPrDscImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_GPrDscScratch_Success+2
+        beq     Q9K_SysFGPrDsc_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFGPrDsc_Fail:
+        move.w  Q9K_GPrDscScratch_Error+2,d1
+        ori     #1,ccr
         rts
 
 *******************************************************************************

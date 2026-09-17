@@ -56,6 +56,9 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_MODDIR_ATTREV_OFF   0x12UL
 #define Q9K_MODDIR_LINKCNT_OFF  0x14UL
 #define Q9K_TEST_SLOT_SIZE      32UL
+/* F$GModDr kopiert ganze Eintraege -- im Test dieselbe
+ * grosszuegige Slotgroesse wie oben, nicht die realen 16 Byte. */
+#define Q9K_MODDIR_ENTRY_BYTES  32UL
 
 typedef unsigned long  Q9_u32;
 typedef unsigned char  Q9_u8;
@@ -344,6 +347,103 @@ int main(void)
                                    (Q9_u32)(unsigned long)patched,
                                    (Q9_u32)sizeof(patched)) != 0x00800FE3UL,
                  1);
+    }
+
+
+    /* F$SetCRC (Callcode 0x26): setzt Kopfparitaet UND CRC neu. Nachweis
+     * ohne Erwartungswert-Tabelle: ein absichtlich verfaelschtes Modul
+     * wird von F$SetCRC wieder so hergerichtet, dass F$CRC ueber das
+     * ganze Modul erneut CRCCon liefert und das XOR aller Kopfworte
+     * wieder $FFFF ergibt -- also genau die beiden Bedingungen, an denen
+     * echte OS-9-Werkzeuge ein Modul messen. */
+    {
+        static unsigned char mod[0x40];
+        Q9_u16 err;
+        Q9_u32 parity;
+        Q9_u32 k;
+
+        memset(mod, 0, sizeof(mod));
+        mod[0x00] = 0x4A; mod[0x01] = 0xFC;              /* Sync */
+        mod[0x04] = 0; mod[0x05] = 0; mod[0x06] = 0; mod[0x07] = sizeof(mod);
+        mod[0x30] = 'x'; mod[0x31] = 'y';                 /* etwas Modulkoerper */
+        mod[0x3A] = 0x5A;
+
+        err = 0xFFFF;
+        checkU32("F$SetCRC nimmt ein gueltiges Modulabbild an",
+                 Q9K_ModSetCRC((Q9_u32)(unsigned long)mod, &err), 1);
+        checkU32("F$SetCRC meldet dabei keinen Fehler", (Q9_u32)err, 0);
+
+        parity = 0;
+        for (k = 0; k < 0x30UL; k += 2)
+            parity ^= ((Q9_u32)mod[k] << 8) | (Q9_u32)mod[k + 1];
+        checkU32("F$SetCRC stellt die Kopfparitaet her", parity, 0xFFFFUL);
+
+        checkU32("F$SetCRC macht den Modul-CRC gueltig (CRCCon)",
+                 Q9K_CrcAccumulate(0xFFFFFFFFUL, (Q9_u32)(unsigned long)mod,
+                                   (Q9_u32)sizeof(mod)),
+                 0x00800FE3UL);
+
+        /* Nach einer Aenderung im Koerper muss es erneut funktionieren. */
+        mod[0x35] = 0x77;
+        checkU32("F$SetCRC laesst sich nach einer Aenderung wiederholen",
+                 Q9K_ModSetCRC((Q9_u32)(unsigned long)mod, &err), 1);
+        checkU32("F$SetCRC stellt den CRC danach wieder her",
+                 Q9K_CrcAccumulate(0xFFFFFFFFUL, (Q9_u32)(unsigned long)mod,
+                                   (Q9_u32)sizeof(mod)),
+                 0x00800FE3UL);
+
+        /* Geprueft werden laut Beschreibung nur Sync und Groesse. */
+        mod[0x00] = 0x00;
+        err = 0;
+        checkU32("F$SetCRC weist ein fehlendes Sync-Wort ab",
+                 Q9K_ModSetCRC((Q9_u32)(unsigned long)mod, &err), 0);
+        checkU32("F$SetCRC meldet dabei E_BMID", (Q9_u32)err, 0x00CDU);
+        mod[0x00] = 0x4A;
+
+        mod[0x07] = 0x10;   /* Groesse kleiner als Kopf+CRC */
+        err = 0;
+        checkU32("F$SetCRC weist eine unmoegliche Modulgroesse ab",
+                 Q9K_ModSetCRC((Q9_u32)(unsigned long)mod, &err), 0);
+        checkU32("F$SetCRC meldet auch dafuer E_BMID", (Q9_u32)err, 0x00CDU);
+
+        err = 0;
+        checkU32("F$SetCRC weist eine ungerade Moduladresse ab",
+                 Q9K_ModSetCRC((Q9_u32)(unsigned long)mod + 1, &err), 0);
+        err = 0;
+        checkU32("F$SetCRC weist den Nullzeiger ab",
+                 Q9K_ModSetCRC(0, &err), 0);
+    }
+
+    /* F$GModDr (Callcode 0x1A): kopiert das Verzeichnis heraus und
+     * schneidet dabei auf ganze Eintraege ab. */
+    {
+        static unsigned char buf[8 * Q9K_TEST_SLOT_SIZE];
+        Q9_u32 copied;
+        Q9_u32 entries;
+        Q9_u32 slot;
+
+        /* Erwartete Eintragszahl direkt aus der aktiven Liste zaehlen. */
+        entries = 0;
+        for (slot = Q9K_GetU32(Q9K_MODDIR_HEAD_ADDR); slot != 0;
+             slot = Q9K_GetU32(slot + Q9K_MODDIR_NEXT_OFF))
+            entries++;
+
+        memset(buf, 0xEE, sizeof(buf));
+        copied = Q9K_ModDirCopyOut((Q9_u32)(unsigned long)buf, sizeof(buf));
+        checkU32("F$GModDr kopiert jeden Verzeichniseintrag",
+                 copied, entries * Q9K_MODDIR_ENTRY_BYTES);
+
+        /* Ein zu kleiner Puffer liefert nur ganze Eintraege. */
+        copied = Q9K_ModDirCopyOut((Q9_u32)(unsigned long)buf,
+                                   Q9K_MODDIR_ENTRY_BYTES + Q9K_MODDIR_ENTRY_BYTES / 2);
+        checkU32("F$GModDr schneidet auf ganze Eintraege ab",
+                 copied, entries >= 1 ? Q9K_MODDIR_ENTRY_BYTES : 0);
+
+        copied = Q9K_ModDirCopyOut((Q9_u32)(unsigned long)buf, 0);
+        checkU32("F$GModDr mit Puffergroesse 0 kopiert nichts", copied, 0);
+
+        copied = Q9K_ModDirCopyOut(0, sizeof(buf));
+        checkU32("F$GModDr mit Null-Puffer kopiert nichts", copied, 0);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

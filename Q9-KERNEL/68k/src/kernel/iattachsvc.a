@@ -41,6 +41,10 @@
 *   R = F$CRC over a whole real module yields CRCCon $00800FE3 (0x17)
 *   Y = F$UnLoad took that module's link back by name (0x1D)
 *   y = F$UnLoad on an unknown module name correctly rejected
+*   D = F$GPrDsc copied our own descriptor, P$ID matches our PID (0x18)
+*   d = F$GPrDsc on an invalid PID correctly rejected
+*   B = F$GModDr returned a non-empty module directory copy (0x1A)
+*   T = F$SetCRC made a private module image verify against CRCCon (0x26)
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -308,6 +312,60 @@ Q9K_AttachStart:
         moveq   #'y',d7
         move.b  d7,$FFFFF006
 
+* F$GPrDsc: d0.w = PID, d1.w = byte count, (a0) = buffer.  Copy our own
+* descriptor; its first word is P$ID, so it must equal our own PID.
+        move.w  d3,d0                          * own PID from F$ID above
+        moveq   #2,d1
+        lea     Q9K_CopyBuffer(pc),a0
+        trap    #0
+        dc.w    $0018                          * F$GPrDsc
+        bcs     Q9K_NativeFailed
+        lea     Q9K_CopyBuffer(pc),a0
+        cmp.w   (a0),d3                        * P$ID at offset 0 must be our PID
+        bne     Q9K_NativeFailed
+        moveq   #'D',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #99,d0                         * invalid PID must be rejected
+        moveq   #2,d1
+        lea     Q9K_CopyBuffer(pc),a0
+        trap    #0
+        dc.w    $0018                          * F$GPrDsc
+        bcc     Q9K_NativeFailed
+        moveq   #'d',d7
+        move.b  d7,$FFFFF006
+
+* F$GModDr: d1.l = maximum bytes, (a0) = buffer.  The boot file holds
+* many modules, so the directory copy must not come back empty.
+        move.l  #32,d1
+        lea     Q9K_DirBuffer(pc),a0
+        trap    #0
+        dc.w    $001a                          * F$GModDr
+        bcs     Q9K_NativeFailed
+        tst.l   d1                             * bytes actually copied
+        beq     Q9K_NativeFailed
+        moveq   #'B',d7
+        move.b  d7,$FFFFF006
+
+* F$SetCRC: (a0) = module image.  Run it over a private image, not over
+* a live module: the manual warns that changing a known module's header
+* makes it inaccessible to everyone else.  Afterwards F$CRC over the
+* whole image must yield CRCCon again.
+        lea     Q9K_FakeModule(pc),a0
+        trap    #0
+        dc.w    $0026                          * F$SetCRC
+        bcs     Q9K_NativeFailed
+        lea     Q9K_FakeModule(pc),a0
+        moveq   #64,d0                         * the image is 64 bytes long
+        moveq   #-1,d1
+        trap    #0
+        dc.w    $0017                          * F$CRC
+        bcs     Q9K_NativeFailed
+        cmpi.l  #$00800FE3,d1
+        bne     Q9K_NativeFailed
+        moveq   #'T',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
         trap    #0
@@ -372,6 +430,28 @@ Q9K_CrcModName:
 
 Q9K_NoSuchModule:
         dc.b    "keinmodul",0
+
+Q9K_DirBuffer:
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+
+* A private 64-byte module image for F$SetCRC: valid sync word and size,
+* everything else zero.  Deliberately NOT a module known to the system.
+* 64 bytes because the header alone is 48 and the CRC takes 3 more.
+* The align matters: a module image must start on an even address, and
+* F$SetCRC rejects an odd one (the manual warns an address error would
+* follow otherwise).  The name strings above add up to an odd length.
+        align
+Q9K_FakeModule:
+        dc.b    $4A,$FC,0,0                     * sync word
+        dc.b    0,0,0,64                        * M$Size = 64
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
 
 Q9K_WriteByte:
         dc.b    "w"
