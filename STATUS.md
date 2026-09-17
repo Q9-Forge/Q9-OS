@@ -127,8 +127,8 @@ advance problem in the external `F$Load` path.
 
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
-| 🔷 | `0x80` | I$Attach | Verified through Microware IOMan/RBF/CF: `iattachsvc` successfully attaches `c0`; Q9-native device semantics remain open |
-| 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF: the attached `c0` entry is detached successfully; broader lifetime semantics remain open |
+| ❌ | `0x80` | I$Attach | No Q9-OS handler is registered; only the Microware path has been tested |
+| ❌ | `0x81` | I$Detach | No Q9-OS handler is registered; only the Microware path has been tested |
 | 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication and reference counting are implemented; full file-manager semantics remain open |
 | ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; full pathname/device semantics remain open |
