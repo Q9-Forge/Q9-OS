@@ -81,6 +81,11 @@ unused path 31 is rejected (`e`) before any output is emitted. The shared
 native path validator now checks process-local path bounds, descriptor
 liveness, and read/write mode bits.
 
+The same validator is now used by `I$WritLn` and `I$ReadLn`. The emulator
+regression produced `HOwWl\rLDCcer@#`: valid write and line-write operations
+complete, an invalid `I$ReadLn` path is rejected without blocking, and the
+existing native lifecycle plus Microware attach/detach checks still pass.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
@@ -181,8 +186,8 @@ liveness, and read/write mode bits.
 | 🟡 | `0x88` | I$Seek | Sequential Q9-native paths accept seek as a validated no-op; random-access semantics remain open |
 | 🟡 | `0x89` | I$Read | Minimal Q9-native blocking console input with path and read-mode validation is implemented; full device semantics remain open |
 | 🟡 | `0x8A` | I$Write | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
-| 🟡 | `0x8B` | I$ReadLn | Minimal Q9-native blocking line input is implemented; editing and device semantics remain open |
-| 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output is implemented and exercised by `hellosvc`; full device semantics remain open |
+| 🟡 | `0x8B` | I$ReadLn | Minimal Q9-native blocking line input with path and read-mode validation is implemented; editing and device semantics remain open |
+| 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
 | 🟡 | `0x8D` | I$GetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
 | 🟡 | `0x8E` | I$SetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
 | 🟡 | `0x8F` | I$Close | Native path-table removal, descriptor validation, and release with reference counting are implemented and verified in the emulator; full file-manager close semantics remain open |

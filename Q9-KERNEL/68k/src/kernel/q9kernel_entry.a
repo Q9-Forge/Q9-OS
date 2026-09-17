@@ -4362,7 +4362,10 @@ Q9K_SysFSSvc:
 * d0 = path number, d1 = byte count, a0 = source buffer.
 *******************************************************************************
 Q9K_SysFIWritLn:
-        movem.l d0-d2/a0,-(sp)
+        movem.l d0-d2/d4/a0,-(sp)
+        moveq   #2,d4                           * write access
+        bsr     Q9K_ValidateNativePath
+        bcs     Q9K_SysFIWritLn_Fail
         move.l  d1,d2
 Q9K_SysFIWritLn_Loop:
         tst.l   d2
@@ -4374,8 +4377,12 @@ Q9K_SysFIWritLn_Loop:
         subq.l  #1,d2
         bra.s   Q9K_SysFIWritLn_Loop
 Q9K_SysFIWritLn_Ok:
-        movem.l (sp)+,d0-d2/a0
+        movem.l (sp)+,d0-d2/d4/a0
         andi    #$fe,ccr
+        rts
+Q9K_SysFIWritLn_Fail:
+        movem.l (sp)+,d0-d2/d4/a0
+        ori     #1,ccr
         rts
 
 *******************************************************************************
@@ -4497,7 +4504,10 @@ Q9K_SysFIRead_Fail:
 * responsibilities.
 *******************************************************************************
 Q9K_SysFIReadLn:
-        movem.l d0/d2-d3/a0/a1,-(sp)
+        movem.l d0/d2-d4/a0/a1,-(sp)
+        moveq   #1,d4                           * read access
+        bsr     Q9K_ValidateNativePath
+        bcs     Q9K_SysFIReadLn_Fail
         move.l  d1,d2
         moveq   #0,d3
         movea.l #Q9_IO_DUART_SRA,a1
@@ -4517,8 +4527,12 @@ Q9K_SysFIReadLn_Wait:
         bra.s   Q9K_SysFIReadLn_Loop
 Q9K_SysFIReadLn_Ok:
         move.l  d3,d1
-        movem.l (sp)+,d0/d2-d3/a0/a1
+        movem.l (sp)+,d0/d2-d4/a0/a1
         andi    #$fe,ccr
+        rts
+Q9K_SysFIReadLn_Fail:
+        movem.l (sp)+,d0/d2-d4/a0/a1
+        ori     #1,ccr
         rts
 
 *******************************************************************************
