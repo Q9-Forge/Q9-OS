@@ -1767,6 +1767,9 @@ Q9K_TestHelloDone:
 * d1.l=Speicherfarbe (nur relevant, wenn Bit 7 von d0 gesetzt -- hier
 * nicht), (a0)=Pfadname. OUT (Erfolg): (a2)=Modulzeiger, (a1)=
 * Einsprungpunkt, Carry geloescht.
+        ifeq    Q9K_TestPrograms-2
+        bra     Q9K_TestLoadCsl
+        endc
         moveq   #1,d0                       * Read_ (Bit 7 nicht gesetzt -- d1/Farbe bleibt bewusst unbelegt)
         lea     Q9K_TestLoadName(pc),a0
         trap    #0
@@ -1775,6 +1778,7 @@ Q9K_TestHelloDone:
         moveq   #'l',d7                     * DIAGNOSE: F$Load erfolgreich (Modulzeiger/-groesse
         bsr     Q9K_DiagWriteD7              * per Moduldirectory-Dump pruefbar, s. Ctrl-^)
 
+Q9K_TestLoadCsl:
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-11): Verdacht pruefen,
 * dass "can't install csl" schlicht bedeutet "F$Link(csl) fand nichts",
 * weil csl nirgends geladen ist -- NICHT zwingend ein fehlender neuer
