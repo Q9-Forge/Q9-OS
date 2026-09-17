@@ -43,7 +43,7 @@ advance problem in the external `F$Load` path.
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
 | ✅ | `0x00` | F$Link | Kernel module lookup/link path implemented and exercised |
-| 🟡 | `0x01` | F$Load | `echo`/`csl` setup is exercised; isolated `date` load loops on repeated CF sector `LBA 65` |
+| 🟡 | `0x01` | F$Load | External path is entered, but current `echo` and `date` file loads do not return; `csl` is resident |
 | ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
 | ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |

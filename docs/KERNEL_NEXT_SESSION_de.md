@@ -29,8 +29,11 @@ dabei nicht auf. Der nächste Messpunkt ist daher die interne Rückkehrbilanz
 von IOMans `F$Load` für `date`, nicht erneut `I$ChgDir`.
 Mit aktivierter CF-Sektorspur wiederholt sich dabei derselbe Verzeichnis-
 bzw. Dateisektor (`LBA 65`), ohne dass ein weiterer Datenbereich gelesen
-oder der Aufruf zurückkehrt. Das ist der derzeit stärkste Hinweis auf einen
-RBF-/Verzeichnis-Weiterlauf im externen `F$Load`-Pfad.
+oder der Aufruf zurückkehrt. Dasselbe fehlende Rückkehrsignal wurde im
+aktuellen Kombitest bereits beim `echo`-Laden beobachtet; `csl` ist in dieser
+Bootkette resident und daher kein gleichwertiger Dateilade-Gegentest. Das ist
+der derzeit stärkste Hinweis auf einen RBF-/Verzeichnis-Weiterlauf im
+externen `F$Load`-Pfad.
 
 Der 68k-Kernel ist ein laufender Integrationsprototyp mit Modulverwaltung,
 Prozessverwaltung, Scheduler, Speicherverwaltung und Anbindung an fremde
