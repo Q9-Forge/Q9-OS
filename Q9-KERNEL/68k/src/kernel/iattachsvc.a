@@ -69,6 +69,24 @@ Q9K_AttachStart:
         move.b  d7,$FFFFF006
 
         move.w  d6,d0
+        clr.w   d1
+        lea     Q9K_OptBuffer(pc),a0
+        trap    #0
+        dc.w    $008d                          * I$GetStt / SS_Opt
+        bcs     Q9K_NativeFailed
+        moveq   #'G',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d6,d0
+        clr.w   d1
+        lea     Q9K_OptBuffer(pc),a0
+        trap    #0
+        dc.w    $008e                          * I$SetStt / SS_Opt
+        bcs     Q9K_NativeFailed
+        moveq   #'S',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d6,d0
         trap    #0
         dc.w    $0082                          * I$Dup
         bcs     Q9K_NativeFailed
@@ -106,6 +124,24 @@ Q9K_AttachStart:
         dc.w    $008b                          * I$ReadLn
         bcc     Q9K_NativeFailed
         moveq   #'r',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #31,d0                         * invalid status path must fail
+        clr.w   d1
+        lea     Q9K_OptBuffer(pc),a0
+        trap    #0
+        dc.w    $008d                          * I$GetStt / SS_Opt
+        bcc     Q9K_NativeFailed
+        moveq   #'g',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #31,d0
+        clr.w   d1
+        lea     Q9K_OptBuffer(pc),a0
+        trap    #0
+        dc.w    $008e                          * I$SetStt / SS_Opt
+        bcc     Q9K_NativeFailed
+        moveq   #'s',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access
@@ -163,5 +199,9 @@ Q9K_LineText:
 
 Q9K_ReadBuffer:
         dc.b    0
+
+Q9K_OptBuffer:
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
         endsect
