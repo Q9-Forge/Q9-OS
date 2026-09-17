@@ -29,11 +29,17 @@ static void testPathPoolFree(unsigned long desc)
 #define Q9K_TEST_PATHPOOL_FREE_HOOK testPathPoolFree
 
 static unsigned char g_pathPool[4 * 256];   /* 4 Slots a 256 Byte = PDSIZE, wie real */
-static unsigned char g_poolGlobals[24];     /* BASE/FREE/current-process pointers */
+static unsigned char g_poolGlobals[24];
+static unsigned char g_findpdScratch[0xA0];     /* BASE/FREE/current-process pointers */
 
 #define Q9K_PATHPOOL_BASE_ADDR ((unsigned long)(g_poolGlobals + 0x00))
 #define Q9K_PATHPOOL_FREE_ADDR ((unsigned long)(g_poolGlobals + 0x08))
 #define Q9_D_PROC              ((unsigned long)(g_poolGlobals + 0x10))
+#define Q9K_FINDPD_SCRATCH_NUM     ((unsigned long)(g_findpdScratch + 0x00))
+#define Q9K_FINDPD_SCRATCH_DBT     ((unsigned long)(g_findpdScratch + 0x20))
+#define Q9K_FINDPD_SCRATCH_DESC    ((unsigned long)(g_findpdScratch + 0x40))
+#define Q9K_FINDPD_SCRATCH_ERROR   ((unsigned long)(g_findpdScratch + 0x60))
+#define Q9K_FINDPD_SCRATCH_SUCCESS ((unsigned long)(g_findpdScratch + 0x80))
 
 #include "q9kernel_iopath.c"
 
@@ -386,6 +392,63 @@ int main(void)
 
         ok = Q9K_ProcCmpNam((Q9_u32)(unsigned long)"abc", 3, 0, &err);
         checkU32("Null-Zielzeiger meldet Fehlschlag", (Q9_u32)ok, 0);
+    }
+
+
+    /* F$FindPD (Callcode 0x2F): Nummer -> Deskriptoradresse, die reine
+     * Nachschlagehaelfte zu F$AllPD/F$RetPD. */
+    {
+        static unsigned char dbt2[4 + 8 * 4];
+        Q9_u32 dbtAddr = (Q9_u32)(unsigned long)dbt2;
+        Q9_u32 desc = 0;
+        Q9_u16 err;
+        int ok;
+
+        memset(dbt2, 0, sizeof(dbt2));
+        dbt2[0] = 0; dbt2[1] = 8;               /* hoechster Index = 8 */
+        /* Slot 3 auf einen erfundenen, aber wiedererkennbaren Wert.
+         * Eintrag idx liegt bei idx*4 -- der Kopf belegt genau die
+         * ersten vier Byte, deshalb ist Index 0 ungueltig. */
+        dbt2[3 * 4 + 0] = 0x00; dbt2[3 * 4 + 1] = 0x12;
+        dbt2[3 * 4 + 2] = 0x34; dbt2[3 * 4 + 3] = 0x56;
+
+        err = 0xFFFF;
+        ok = Q9K_ProcFindPD(dbtAddr, 3, &desc, &err);
+        checkU32("F$FindPD findet einen vergebenen Slot", (Q9_u32)ok, 1);
+        checkU32("F$FindPD liefert dessen Deskriptoradresse", desc, 0x00123456UL);
+        checkU32("F$FindPD meldet dabei keinen Fehler", (Q9_u32)err, 0);
+
+        err = 0;
+        ok = Q9K_ProcFindPD(dbtAddr, 4, &desc, &err);
+        checkU32("F$FindPD meldet einen freien Slot als Fehlschlag", (Q9_u32)ok, 0);
+        checkU32("F$FindPD nutzt dafuer E_BPNUM", (Q9_u32)err, 0x00C9UL);
+
+        err = 0;
+        ok = Q9K_ProcFindPD(dbtAddr, 0, &desc, &err);
+        checkU32("F$FindPD weist Nummer 0 ab (Offset 0 ist der Kopf)", (Q9_u32)ok, 0);
+        err = 0;
+        ok = Q9K_ProcFindPD(dbtAddr, 9, &desc, &err);
+        checkU32("F$FindPD weist eine Nummer ueber dem Hoechstindex ab", (Q9_u32)ok, 0);
+        err = 0;
+        ok = Q9K_ProcFindPD(0, 3, &desc, &err);
+        checkU32("F$FindPD weist den Null-DBT ab", (Q9_u32)ok, 0);
+        checkU32("F$FindPD nutzt dafuer E_BPADDR", (Q9_u32)err, 0x00D2UL);
+
+        /* F$AllPD und F$FindPD muessen zusammenpassen: was jenes vergibt,
+         * muss dieses wiederfinden. */
+        {
+            Q9_u32 alloc = 0;
+            Q9_u16 num = 0;
+
+            memset(dbt2, 0, sizeof(dbt2));
+            dbt2[0] = 0; dbt2[1] = 8;
+            if (Q9K_ProcAllPD(dbtAddr, &alloc, &num, &err)) {
+                desc = 0;
+                ok = Q9K_ProcFindPD(dbtAddr, num, &desc, &err);
+                checkU32("F$FindPD findet wieder, was F$AllPD vergeben hat", (Q9_u32)ok, 1);
+                checkU32("und liefert denselben Deskriptor", desc, alloc & 0xFFFFFFFFUL);
+            }
+        }
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

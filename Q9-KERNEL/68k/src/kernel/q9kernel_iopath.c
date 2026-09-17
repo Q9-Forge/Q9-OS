@@ -656,6 +656,16 @@ void Q9K_SysIOpenImpl(void)
  */
 #define Q9K_E_DIFFER 0x00A5U /* errno.h: EOS_DIFFER, Namen unterschiedlich */
 
+/* F$FindPD-Scratch (2026-09-18): hinter dem F$DelPrc-Block
+ * ($1960-$1968, q9kernel_firstproc.c). */
+#ifndef Q9K_FINDPD_SCRATCH_NUM
+#define Q9K_FINDPD_SCRATCH_NUM     0x1970UL /* Q9_u32, d0.w EIN            */
+#define Q9K_FINDPD_SCRATCH_DBT     0x1974UL /* Q9_u32, (a0) EIN            */
+#define Q9K_FINDPD_SCRATCH_DESC    0x1978UL /* Q9_u32, (a1) AUS            */
+#define Q9K_FINDPD_SCRATCH_ERROR   0x197CUL /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_FINDPD_SCRATCH_SUCCESS 0x1980UL /* Q9_u32, 0/1                 */
+#endif
+
 static unsigned char Q9K_CmpNamFold(unsigned char c)
 {
     return (c >= 'A' && c <= 'Z') ? (unsigned char)(c - 'A' + 'a') : c;
@@ -739,5 +749,64 @@ void Q9K_SysCmpNamImpl(void)
     } else {
         Q9K_SetU32(Q9K_CMPNAM_SCRATCH_ERROR, (Q9_u32)err);
         Q9K_SetU32(Q9K_CMPNAM_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
+/* Q9K_ProcFindPD -- echte F$FindPD-Kernlogik (Callcode $2F, "Find
+ * Process/Path Descriptor"). Verifizierte ABI (68k_tech.pdf S. 425):
+ * d0.w = Prozess-/Pfadnummer, (a0) = Tabellenzeiger;
+ * AUS (a1) = Zeiger auf den Deskriptor. Systemzustand.
+ *
+ * Der Aufruf ist die reine Nachschlagehaelfte des Trios, dessen andere
+ * beiden Teile schon hier stehen: F$AllPD vergibt eine Nummer, F$RetPD
+ * gibt sie zurueck, F$FindPD uebersetzt sie in die Adresse. Deshalb
+ * dieselbe, aus IOMans Code belegte DBT-Struktur wie dort (s.
+ * Kopfkommentar von Q9K_ProcAllPD) und dieselben Fehlercodes -- Nummer 0
+ * ist ungueltig, weil Offset 0 der Tabellenkopf selbst ist.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcFindPD(Q9_u32 dbtAddr, Q9_u16 num, Q9_u32 *outDesc, Q9_u16 *outError)
+{
+    Q9_u16 maxIndex;
+    Q9_u32 desc;
+
+    *outDesc  = 0;
+    *outError = 0;
+
+    if (dbtAddr == 0) {
+        *outError = 0x00D2U;            /* E_BPADDR, Bad Page Address */
+        return 0;
+    }
+
+    maxIndex = Q9K_ReadU16BE(dbtAddr);
+
+    if (num == 0 || (Q9_u32)num > (Q9_u32)maxIndex) {
+        *outError = 0x00C9U;            /* E_BPNUM, Bad Path Number */
+        return 0;
+    }
+
+    desc = Q9K_ReadU32BE_At(dbtAddr + (Q9_u32)num * 4UL);
+    if (desc == 0) {
+        *outError = 0x00C9U;            /* Nummer gueltig, aber nicht vergeben */
+        return 0;
+    }
+
+    *outDesc = desc;
+    return 1;
+}
+
+void Q9K_SysFindPDImpl(void)
+{
+    Q9_u32 desc = 0;
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcFindPD(Q9K_GetU32(Q9K_FINDPD_SCRATCH_DBT),
+                       (Q9_u16)Q9K_GetU32(Q9K_FINDPD_SCRATCH_NUM),
+                       &desc, &err)) {
+        Q9K_SetU32(Q9K_FINDPD_SCRATCH_DESC, desc);
+        Q9K_SetU32(Q9K_FINDPD_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_FINDPD_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_FINDPD_SCRATCH_SUCCESS, 0UL);
     }
 }

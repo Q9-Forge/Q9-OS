@@ -111,6 +111,7 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 static Q9_u8  Q9K_GetU8(Q9_u32 addr)  { return *(volatile Q9_u8 *)addr; }
 static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value)  { *(volatile Q9_u8 *)addr = value; }
 static void   Q9K_SetU16(Q9_u32 addr, Q9_u16 value) { *(volatile Q9_u16 *)addr = value; }
+static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
 
 /* Schreibt value in Register regIndex des 60-Byte-Registersatz-Bereichs
  * ab frameBase -- LOKALE Kopie von Q9K_SetFrameReg (q9kernel_firstproc.c/
@@ -239,6 +240,20 @@ void Q9K_SysSleepImpl(void)
 #ifndef Q9K_PROCDESC_SIGNAL_OFF
 #define Q9K_PROCDESC_SIGNAL_OFF  0x26UL     /* P$Signal, s. process.a */
 #endif
+#ifndef Q9K_PROCDESC_SIGLVL_OFF
+#define Q9K_PROCDESC_SIGLVL_OFF  0x210UL    /* P$SigLvl (Byte), s. process.a */
+#endif
+#ifndef Q9K_SIGNAL_KILL
+#define Q9K_SIGNAL_KILL 0U                  /* S$Kill, aus der realen Signaltabelle gezaehlt */
+#endif
+
+/* F$SigMask-Scratch (2026-09-18): hinter dem F$FindPD-Block
+ * ($1970-$1980, q9kernel_iopath.c). */
+#ifndef Q9K_SIGMASK_SCRATCH_LEVEL
+#define Q9K_SIGMASK_SCRATCH_LEVEL   0x1988UL /* Q9_u32, d1.l EIN            */
+#define Q9K_SIGMASK_SCRATCH_ERROR   0x198CUL /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_SIGMASK_SCRATCH_SUCCESS 0x1990UL /* Q9_u32, 0/1                 */
+#endif
 #ifndef Q9K_SEND_SCRATCH_PID
 #define Q9K_SEND_SCRATCH_PID     0x1608UL   /* Q9_u32, d0.w EIN                */
 #define Q9K_SEND_SCRATCH_SIGNAL  0x160CUL   /* Q9_u32, d1.w EIN                */
@@ -275,8 +290,89 @@ int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError)
     if (signal != Q9K_SIGNAL_WAKE) {
         Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, signal);
     }
+
+    /* NACHTRAG 2026-09-18 (F$SigMask): hat der Empfaenger seine Signale
+     * maskiert, wird das Signal nur abgelegt und der Prozess NICHT
+     * geweckt -- es bleibt anstehen, bis er die Maske wieder oeffnet
+     * (Q9K_ProcSigMask unten stellt es dann zu). Genau zwei Signale
+     * durchbrechen die Maske, wie die Beschreibung von F$SigMask
+     * ausdruecklich festhaelt: S$Kill beendet den Empfaenger unabhaengig
+     * von seiner Maske, und S$Wake stellt nur sicher, dass er laeuft,
+     * ohne sich einzureihen. */
+    if (signal != Q9K_SIGNAL_KILL && signal != Q9K_SIGNAL_WAKE
+        && Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF) != 0) {
+        return 1;
+    }
+
     Q9K_SchedWake(desc);
     return 1;
+}
+
+/* Q9K_ProcSigMask -- echte F$SigMask-Kernlogik (Callcode $57,
+ * "Mask/Unmask Signals During Critical Code"). Verifizierte ABI
+ * (68k_tech.pdf S. 493): d0.l reserviert und 0, d1.l = 0 loescht die
+ * Maske, 1 setzt bzw. erhoeht sie, -1 senkt sie. Keine Ausgabe.
+ *
+ * Die Maske ist ein ZAEHLER, kein Schalter -- deshalb "set/increment"
+ * und "decrement": verschachtelte kritische Abschnitte duerfen die
+ * Maske jeder fuer sich schliessen und oeffnen, ohne dass der innere
+ * Abschnitt dem aeusseren die Maske wegnimmt. Gefuehrt wird er in
+ * P$SigLvl ($210, s. process.a). Erreicht er 0, wird ein waehrend der
+ * Maskierung aufgelaufenes Signal zugestellt, indem der Prozess jetzt
+ * geweckt wird -- Q9K_ProcSend hat es zu diesem Zeitpunkt schon in
+ * P$Signal abgelegt.
+ *
+ * BEKANNTE EINSCHRAENKUNG: P$Signal fasst genau EIN anstehendes Signal.
+ * Treffen waehrend der Maskierung mehrere ein, ueberschreibt das spaetere
+ * das fruehere -- eine echte Warteschlange braucht Speicher pro Prozess,
+ * den dieser Kernel noch nicht vergibt. Der haeufige Fall (ein Signal
+ * waehrend eines kurzen kritischen Abschnitts) ist damit korrekt, der
+ * seltene verliert das aeltere Signal statt es zu verfaelschen.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+int Q9K_ProcSigMask(Q9_u32 level, Q9_u16 *outError)
+{
+    Q9_u32 desc = Q9K_GetU32(Q9_D_PROC);
+    Q9_u8 lvl;
+
+    *outError = 0;
+
+    if (desc == 0) {
+        *outError = 0x00E0U;      /* E$PrcID -- kein aktueller Prozess */
+        return 0;
+    }
+
+    lvl = Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF);
+
+    if (level == 0UL) {
+        lvl = 0;
+    } else if (level == 0xFFFFFFFFUL) {       /* -1 */
+        if (lvl > 0)
+            lvl--;
+    } else {
+        if (lvl < 255)
+            lvl++;
+    }
+
+    Q9K_SetU8(desc + Q9K_PROCDESC_SIGLVL_OFF, lvl);
+
+    /* Maske wieder offen und ein Signal steht an -> jetzt zustellen. */
+    if (lvl == 0 && Q9K_GetU16(desc + Q9K_PROCDESC_SIGNAL_OFF) != 0) {
+        Q9K_SchedWake(desc);
+    }
+    return 1;
+}
+
+void Q9K_SysSigMaskImpl(void)
+{
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcSigMask(Q9K_GetU32(Q9K_SIGMASK_SCRATCH_LEVEL), &err)) {
+        Q9K_SetU32(Q9K_SIGMASK_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_SIGMASK_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_SIGMASK_SCRATCH_SUCCESS, 0UL);
+    }
 }
 
 /* Duenne, parameterlose Bruecke zum Assembler-Trampolin -- gleiches Muster

@@ -302,6 +302,29 @@ the dump in full.
 The emulator regression extended to
 `HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBTJGjAaZzEQ@#`.
 
+`F$FindPD` (`0x2F`) completes the descriptor trio whose other two parts were
+already here: `F$AllPD` hands out a number, `F$RetPD` gives it back, `F$FindPD`
+translates it into an address. It therefore uses the same DBT structure read out
+of IOMan's own code and the same error codes; number 0 is invalid because offset
+0 is the table header itself.
+
+`F$SigMask` (`0x57`) is a counter rather than a switch, which is why the manual
+speaks of "set/increment" and "decrement": nested critical sections can each
+close and open the mask without the inner one taking the mask away from the
+outer. It is kept in `P$SigLvl` (`$210`). This is not a stub — `F$Send` honours
+it: a signal for a masked process is stored but the process is not woken, and
+opening the mask delivers what accumulated. Exactly two signals break through,
+as the manual states: `S$Kill` terminates regardless of the mask, and `S$Wake`
+only ensures the process runs without queueing. Known limitation: `P$Signal`
+holds exactly one pending signal, so several arriving during one masked section
+overwrite each other — a real queue needs per-process memory this kernel does
+not allocate yet. The common case, one signal during a short critical section,
+is correct.
+
+The emulator regression extended to
+`HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBTJGjAaZzEQFfK@#`, with a separate boot
+reporting `Vektor=0`.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -363,7 +386,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; immediate preemption still open |
 | ❌ | `0x2D` | F$NProc | Not implemented |
 | 🟡 | `0x2E` | F$VModul | Validation path exists; complete loader integration remains open |
-| ❌ | `0x2F` | F$FindPD | Not implemented |
+| ✅ | `0x2F` | F$FindPD | Path/process number to descriptor address, same DBT structure as F$AllPD/F$RetPD |
 | 🟡 | `0x30` | F$AllPD | Basic descriptor allocation path exists; full OS-9 semantics remain open |
 | 🟡 | `0x31` | F$RetPD | Basic descriptor return path exists; full validation remains open |
 | 🟡 | `0x32` | F$SSvc | Service registration path exists; broader service semantics remain open |
@@ -383,7 +406,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
 | ❌ | `0x56` | F$Alarm | Not implemented |
-| ❌ | `0x57` | F$SigMask | Not implemented |
+| ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Basic memory-check path exists; full protection semantics remain open |
 | ❌ | `0x59` | F$UAcct | Not implemented |
 | 🟡 | `0x5A` | F$CCtl | Handler/dispatch path exists; cache-control implementation remains open |
