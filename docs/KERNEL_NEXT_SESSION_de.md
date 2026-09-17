@@ -35,6 +35,16 @@ Bootkette resident und daher kein gleichwertiger Dateilade-Gegentest. Das ist
 der derzeit stärkste Hinweis auf einen RBF-/Verzeichnis-Weiterlauf im
 externen `F$Load`-Pfad.
 
+Ein kontrollierter Gegenversuch am 17.09. hat die Zuständigkeit weiter
+getrennt: Wenn der per `F$SSvc` registrierte IOMan testweise auch den
+`I$Open`-Slot übernehmen darf, verschwindet der alte Root-Sektor-Loop, aber
+IOMan scheitert bereits beim Konsolen-Open mit `Error $0000`. Die einfache
+Freigabe der I/O-Slots ist deshalb kein Fix. Der Kernel-Fallback und der
+externe IOMan-Aufruf müssen über denselben Registerrahmen, A4/A6-Kontext,
+Pfaddeskriptor und Fehler-CCR integriert werden. Die Änderung wurde nicht
+übernommen; sie dient als reproduzierbare Abgrenzung für den nächsten
+Schritt.
+
 Der 68k-Kernel ist ein laufender Integrationsprototyp mit Modulverwaltung,
 Prozessverwaltung, Scheduler, Speicherverwaltung und Anbindung an fremde
 OS-9-Komponenten. Laut letzter Übergabe läuft `echo` mit `csl`; `date`
