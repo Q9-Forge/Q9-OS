@@ -67,6 +67,13 @@ regression now passes in Q9-Flux as the marker sequence `ODCc@#`: native
 `I$Attach` and `I$Detach`. The direct-attach startup switch is compile-time
 gated and remains disabled in normal development boots.
 
+The native `I$ChgDir` baseline is now included in the same child-process
+regression. Marker sequence `HODCc@#` confirms that a data-directory change
+(`d0=3`, `/dd`) stores successfully before the native path lifecycle and
+Microware attach/detach checks. Execution-directory storage (`d0=1`) uses the
+parallel `P$DIO` slot; full device and file-manager directory resolution is
+still open.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
@@ -162,7 +169,7 @@ gated and remains disabled in normal development boots.
 | ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; process-local `P$Path` publication is tested, while full pathname/device semantics remain open |
 | ❌ | `0x85` | I$MakDir | No Q9-OS implementation; only the Microware path exists |
-| ❌ | `0x86` | I$ChgDir | No Q9-OS implementation; only the Microware path exists |
+| 🟡 | `0x86` | I$ChgDir | Native data/execution directory storage is implemented and emulator-tested; device and file-manager resolution remain open |
 | ❌ | `0x87` | I$Delete | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x88` | I$Seek | Sequential Q9-native paths accept seek as a validated no-op; random-access semantics remain open |
 | 🟡 | `0x89` | I$Read | Minimal Q9-native blocking console input is implemented; full device semantics remain open |

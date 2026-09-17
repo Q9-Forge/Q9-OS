@@ -33,6 +33,14 @@ Q9K_AttachData:
         ends
 
 Q9K_AttachStart:
+        moveq   #3,d0                           * native Q9 I$ChgDir: data directory
+        lea     Q9K_DirName(pc),a0
+        trap    #0
+        dc.w    $0086                          * I$ChgDir
+        bcs     Q9K_NativeFailed
+        moveq   #'H',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * native Q9 I$Open: read + write
         lea     Q9K_PathName(pc),a0
         trap    #0
@@ -107,5 +115,8 @@ Q9K_AttachName:
 
 Q9K_PathName:
         dc.b    "/term",0
+
+Q9K_DirName:
+        dc.b    "/dd",0
 
         endsect

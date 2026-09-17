@@ -4715,6 +4715,51 @@ Q9K_SysFIClose_BadPath:
         rts
 
 *******************************************************************************
+* Q9K_SysFIChgDir -- minimal native I$ChgDir implementation (Callcode $86).
+*
+* OS-9 uses d0=3 for the data directory and d0=1 for the execution
+* directory.  Each process stores one 16-byte default-directory path in
+* P$DIO at $148 and $158 respectively.  This implementation validates the
+* selector and stores the NUL-terminated path in the current process
+* descriptor.  File-manager/device resolution remains a separate layer.
+*******************************************************************************
+Q9K_SysFIChgDir:
+        movem.l d2-d4/a0-a1,-(sp)
+        moveq   #0,d2
+        move.w  d0,d2
+        cmpi.w  #1,d2
+        beq.s   Q9K_SysFIChgDir_Exec
+        cmpi.w  #3,d2
+        bne.s   Q9K_SysFIChgDir_BadPath
+        movea.l Q9_D_Proc,a1
+        adda.l  #$148,a1                       * P$DIO data directory
+        bra.s   Q9K_SysFIChgDir_Copy
+Q9K_SysFIChgDir_Exec:
+        movea.l Q9_D_Proc,a1
+        adda.l  #$158,a1                       * P$DIO execution directory
+Q9K_SysFIChgDir_Copy:
+        move.l  a0,d4
+        beq.s   Q9K_SysFIChgDir_BadPath
+        tst.b   (a0)
+        beq.s   Q9K_SysFIChgDir_BadPath
+        moveq   #15,d3                         * leave room for the NUL byte
+Q9K_SysFIChgDir_CopyLoop:
+        move.b  (a0)+,d4
+        move.b  d4,(a1)+
+        beq.s   Q9K_SysFIChgDir_Ok
+        dbra    d3,Q9K_SysFIChgDir_CopyLoop
+        bra.s   Q9K_SysFIChgDir_BadPath
+Q9K_SysFIChgDir_Ok:
+        movem.l (sp)+,d2-d4/a0-a1
+        andi    #$fe,ccr
+        rts
+Q9K_SysFIChgDir_BadPath:
+        movem.l (sp)+,d2-d4/a0-a1
+        move.w  #$00d8,d1                     * E$PNNF: path not found
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
 * Q9K_SysFIOpen -- TRAP-#0-Handler fuer den echten I$Open-Callcode (0x84,
 * s. modules/SYSCALL_MODULE_MAP.md). Reale Konvention (68k_tech.pdf S.
 * 568-570, echt per Read gelesen): IN d0.b=Zugriffsmodus, (a0)=Pfadname-
