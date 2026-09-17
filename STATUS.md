@@ -349,6 +349,30 @@ second bus, the mapping belongs exactly here and no caller has to change.
 The emulator regression extended to
 `HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBTJGjAaZzEQFfKNX@#`.
 
+`F$DatMod` (`0x25`) creates a genuine data module in memory and enters it into
+the module directory, so several processes can share it. The layout follows the
+real one: a 48-byte header (the common part up to `M$Parity` — the fields from
+`$30` on belong to the program header and a data module rightly lacks them),
+then the cleared data area, the name, and the three CRC bytes, rounded up to the
+allocation boundary. The proof needs no expected-value table: the created module
+must pass every check this kernel applies to a module — sync word, size, header
+parity, CRC against `CRCCon` — and be findable afterwards through `F$Link`, both
+on the host and in the emulator.
+
+Two deliberate deviations. The manual says the module is "initially created with
+a CRC value of 0", but this kernel's directory validates the CRC on every entry,
+so a module with CRC 0 would be rejected immediately; a valid CRC is therefore
+written. That is harmless: anyone changing the data has to renew the CRC through
+`F$SetCRC` anyway, and a valid initial value makes the module from the outset
+what the description wants it to end up as. The memory colour (`d4.l`) is
+ignored, as this kernel has a single memory area for a colour to choose between.
+
+The emulator regression now reads
+`HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBTJGjAaZzEQFfKNX` … `W@#` — the gap is the
+memory-trace diagnostic, which prints the allocation `F$DatMod` performs and
+splits the marker string. Worth knowing when reading a run: filter lines
+matching `^M <op> r=` before matching the sequence.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -400,7 +424,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x22` | F$DFork | Not implemented |
 | ❌ | `0x23` | F$DExec | Not implemented |
 | ❌ | `0x24` | F$DExit | Not implemented |
-| ❌ | `0x25` | F$DatMod | Not implemented |
+| ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
 | 🟡 | `0x27` | F$SetSys | Basic handler exists; full system configuration semantics remain open |
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking and emulator test complete |

@@ -44,6 +44,8 @@ typedef unsigned char  Q9_u8;
  * Header, gleiche schlanke Konvention wie ueberall in diesem Verzeichnis. */
 extern int Q9K_CheckSyncWord(const Q9_u8 *addr, Q9_u32 availableLen);
 extern int Q9K_ValidModuleHeader(const Q9_u8 *addr, Q9_u32 availableLen);
+extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);   /* q9kernel_arena.c */
+extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size); /* q9kernel_arena.c */
 #if Q9K_MEMTRACE_COMPILETIME
 extern void Q9K_MemTraceSetModule(Q9_u32 header);
 extern void Q9K_MemTraceClearModule(void);
@@ -114,6 +116,24 @@ extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
 
 #define Q9K_E_MNF 0x00DDU /* errno.h: Module Not Found, wie in q9kernel_firstproc.c */
 
+/* F$DatMod-Scratch (2026-09-18): hinter dem F$Trans-Block
+ * ($19A8-$19B0, q9kernel_sysmem.c). */
+#ifndef Q9K_DATMOD_SCRATCH_SIZE
+#define Q9K_DATMOD_SCRATCH_SIZE    0x19B8UL /* Q9_u32, d0.l EIN / Typ+Sprache AUS */
+#define Q9K_DATMOD_SCRATCH_ATTREV  0x19BCUL /* Q9_u32, d1.w EIN/AUS               */
+#define Q9K_DATMOD_SCRATCH_ACCESS  0x19C0UL /* Q9_u32, d2.w EIN                   */
+#define Q9K_DATMOD_SCRATCH_TYLANG  0x19C4UL /* Q9_u32, d3.w EIN                   */
+#define Q9K_DATMOD_SCRATCH_NAME    0x19C8UL /* Q9_u32, (a0) EIN/AUS               */
+#define Q9K_DATMOD_SCRATCH_DATA    0x19CCUL /* Q9_u32, (a1) AUS                   */
+#define Q9K_DATMOD_SCRATCH_HDR     0x19D0UL /* Q9_u32, (a2) AUS                   */
+#define Q9K_DATMOD_SCRATCH_ERROR   0x19D4UL /* Q9_u32, d1.w AUS bei Fehler        */
+#define Q9K_DATMOD_SCRATCH_SUCCESS 0x19D8UL /* Q9_u32, 0/1                        */
+#endif
+
+#define Q9K_MT_DATA   0x04U   /* Q9_MT_DATA, s. common/src/q9moduleheader.h */
+#define Q9K_E_BNAM    0x00CEU /* errno.h: Bad Name */
+#define Q9K_E_MEMFUL  0x00CFU /* errno.h: Process Memory Full */
+
 /* F$UnLoad-/F$CRC-Scratch (2026-09-17): hinter dem F$CpyMem-Block
  * ($18D0-$18E4, q9kernel_procapi.c). Alle Zellen 32 Bit breit, der
  * Assembler liest Wortwerte als unteres Wort ("+2"). */
@@ -162,6 +182,9 @@ static Q9_u32 Q9K_ReadU32BE(const Q9_u8 *p)
     return ((Q9_u32)p[0] << 24) | ((Q9_u32)p[1] << 16) |
            ((Q9_u32)p[2] << 8) | (Q9_u32)p[3];
 }
+
+static void Q9K_SetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = value; }
+static Q9_u8 Q9K_GetU8Raw(Q9_u32 addr) { return *(volatile Q9_u8 *)addr; }
 
 static void Q9K_ModDirSetU16(Q9_u32 addr, Q9_u16 value)
 {
@@ -962,4 +985,160 @@ void Q9K_SysGModDrImpl(void)
     Q9K_SetU32(Q9K_GMODDR_SCRATCH_COUNT,
                Q9K_ModDirCopyOut(Q9K_GetU32(Q9K_GMODDR_SCRATCH_BUF),
                                  Q9K_GetU32(Q9K_GMODDR_SCRATCH_COUNT)));
+}
+
+/* Q9K_ModCreateData -- echte F$DatMod-Kernlogik (Callcode $25, "Create
+ * Data Module"). Verifizierte ABI (68k_tech.pdf S. 392f): d0.l = Groesse
+ * der Nutzdaten (ohne Kopf und CRC), d1.w = Attribut/Revision, d2.w =
+ * Zugriffsrechte, d3.w = Typ/Sprache (optional), d4.l = Speicherfarbe
+ * (optional), (a0) = Modulname. AUS: d0.w = Typ/Sprache, d1.w =
+ * Attribut/Revision, (a0) hinter den Namen, (a1) = Datenzeiger,
+ * (a2) = Modulkopf. Fehler: E$BNam, E$MemFul, E$NoRAM.
+ *
+ * Aufbau des erzeugten Moduls -- Kopf 48 Byte (der gemeinsame Teil bis
+ * M$Parity; die Felder ab $30 gehoeren zum Programmmodulkopf und fehlen
+ * einem Datenmodul zu Recht), dann die Nutzdaten, dann der Name, dann
+ * die drei CRC-Bytes, das Ganze auf die Allokationsgranularitaet
+ * aufgerundet. Genau das meint die Beschreibung mit "may be somewhat
+ * larger ... rounded up to the nearest system memory allocation
+ * boundary".
+ *
+ * ZWEI BEWUSSTE ABWEICHUNGEN, beide begruendet:
+ *
+ * 1. Die Beschreibung sagt, das Modul werde "initially created with a
+ *    CRC value of 0". Das Modulverzeichnis dieses Kernels prueft den CRC
+ *    aber bei JEDEM Eintrag (Q9K_ModDirValidateAndAdd) -- ein Modul mit
+ *    CRC 0 wuerde also sofort wieder abgewiesen. Deshalb wird hier ein
+ *    GUELTIGER CRC gesetzt. Inhaltlich unschaedlich: wer die Daten
+ *    aendert, muss den CRC ohnehin per F$SetCRC erneuern, und mit einem
+ *    gueltigen Anfangswert ist das Modul von Anfang an das, was die
+ *    Beschreibung am Ende will -- ein im Verzeichnis bekanntes Modul.
+ *
+ * 2. Die Speicherfarbe (d4.l) wird ignoriert. Dieser Kernel hat nur
+ *    einen Speicherbereich; eine Farbwahl haette nichts, wonach sie
+ *    unterscheiden koennte (gleiche Lage wie bei F$SRqCMem).
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+Q9_u32 Q9K_ModCreateData(Q9_u32 dataSize, Q9_u16 attrRev, Q9_u16 access,
+                         Q9_u16 tyLang, Q9_u32 namePtr,
+                         Q9_u32 *outHdr, Q9_u32 *outData, Q9_u32 *outPastName,
+                         Q9_u16 *outError)
+{
+    const volatile Q9_u8 *name = (const volatile Q9_u8 *)namePtr;
+    Q9_u32 nameLen = 0;
+    Q9_u32 nameOff;
+    Q9_u32 total;
+    Q9_u32 hdr;
+    Q9_u32 i;
+    Q9_u32 crc;
+
+    *outHdr = 0;
+    *outData = 0;
+    *outPastName = namePtr;
+    *outError = 0;
+
+    if (namePtr == 0) {
+        *outError = Q9K_E_BNAM;
+        return 0;
+    }
+
+    /* Der Name endet am ersten Zeichen, das keines mehr sein kann --
+     * dieselbe Zeichenmenge wie bei F$PrsNam und beim Verzeichnisvergleich
+     * (Q9K_ModDirIsNameChar oben), damit ein hier erzeugtes Modul mit
+     * genau dem Namen gefunden wird, den F$Link spaeter sucht. */
+    while (nameLen < 64 && Q9K_ModDirIsNameChar((Q9_u8)name[nameLen]))
+        nameLen++;
+
+    if (nameLen == 0) {
+        *outError = Q9K_E_BNAM;
+        return 0;
+    }
+
+    nameOff = Q9K_MH_HEADER_SIZE + dataSize;
+    total = nameOff + nameLen + Q9K_MH_CRC_SIZE;
+    total = (total + 15UL) & ~15UL;      /* Allokationsgranularitaet */
+
+    hdr = Q9K_AllocMem(total);
+    if (hdr == 0) {
+        *outError = Q9K_E_MEMFUL;
+        return 0;
+    }
+
+    for (i = 0; i < total; ++i)
+        Q9K_SetU8(hdr + i, 0);           /* Kopf UND Datenbereich geloescht */
+
+    Q9K_SetU8(hdr + 0, 0x4A);            /* M$ID, Sync-Wort */
+    Q9K_SetU8(hdr + 1, 0xFC);
+    Q9K_SetU8(hdr + Q9K_MH_SIZE + 0, (Q9_u8)((total >> 24) & 0xFFUL));
+    Q9K_SetU8(hdr + Q9K_MH_SIZE + 1, (Q9_u8)((total >> 16) & 0xFFUL));
+    Q9K_SetU8(hdr + Q9K_MH_SIZE + 2, (Q9_u8)((total >> 8) & 0xFFUL));
+    Q9K_SetU8(hdr + Q9K_MH_SIZE + 3, (Q9_u8)(total & 0xFFUL));
+    Q9K_SetU8(hdr + Q9K_MH_NAME + 0, (Q9_u8)((nameOff >> 24) & 0xFFUL));
+    Q9K_SetU8(hdr + Q9K_MH_NAME + 1, (Q9_u8)((nameOff >> 16) & 0xFFUL));
+    Q9K_SetU8(hdr + Q9K_MH_NAME + 2, (Q9_u8)((nameOff >> 8) & 0xFFUL));
+    Q9K_SetU8(hdr + Q9K_MH_NAME + 3, (Q9_u8)(nameOff & 0xFFUL));
+    Q9K_SetU8(hdr + 0x10, (Q9_u8)((access >> 8) & 0xFFU));   /* M$Accs */
+    Q9K_SetU8(hdr + 0x11, (Q9_u8)(access & 0xFFU));
+    Q9K_SetU8(hdr + 0x12, (Q9_u8)((tyLang >> 8) & 0xFFU));   /* M$Type */
+    Q9K_SetU8(hdr + 0x13, (Q9_u8)(tyLang & 0xFFU));          /* M$Lang */
+    Q9K_SetU8(hdr + 0x14, (Q9_u8)((attrRev >> 8) & 0xFFU));  /* M$Attr */
+    Q9K_SetU8(hdr + 0x15, (Q9_u8)(attrRev & 0xFFU));         /* M$Revs */
+
+    for (i = 0; i < nameLen; ++i)
+        Q9K_SetU8(hdr + nameOff + i, (Q9_u8)name[i]);
+
+    /* Kopfparitaet und CRC setzen -- dieselbe Rechnung wie F$SetCRC, s.
+     * Abweichung 1 im Kopfkommentar. */
+    {
+        Q9_u32 parity = 0;
+
+        for (i = 0; i < Q9K_MH_PARITY; i += 2)
+            parity ^= ((Q9_u32)Q9K_GetU8Raw(hdr + i) << 8) | (Q9_u32)Q9K_GetU8Raw(hdr + i + 1);
+        parity = (~parity) & 0xFFFFUL;
+        Q9K_SetU8(hdr + Q9K_MH_PARITY, (Q9_u8)(parity >> 8));
+        Q9K_SetU8(hdr + Q9K_MH_PARITY + 1, (Q9_u8)parity);
+    }
+
+    crc = Q9K_CrcAccumulate(0xFFFFFFFFUL, hdr, total - Q9K_MH_CRC_SIZE);
+    Q9K_SetU8(hdr + total - 3, (Q9_u8)(((crc >> 16) & 0xFFUL) ^ 0xFFUL));
+    Q9K_SetU8(hdr + total - 2, (Q9_u8)(((crc >> 8) & 0xFFUL) ^ 0xFFUL));
+    Q9K_SetU8(hdr + total - 1, (Q9_u8)((crc & 0xFFUL) ^ 0xFFUL));
+
+    if (Q9K_ModDirValidateAndAdd((const Q9_u8 *)hdr, total, outError) == 0) {
+        Q9K_FreeMem(hdr, total);
+        return 0;
+    }
+
+    *outHdr = hdr;
+    *outData = hdr + Q9K_MH_HEADER_SIZE;
+    *outPastName = namePtr + nameLen;
+    return 1;
+}
+
+void Q9K_SysDatModImpl(void)
+{
+    Q9_u32 hdr = 0, data = 0, past = 0;
+    Q9_u16 err = 0;
+    Q9_u16 tyLang = (Q9_u16)Q9K_GetU32(Q9K_DATMOD_SCRATCH_TYLANG);
+
+    /* Typ/Sprache ist laut Beschreibung optional -- ohne Angabe ein
+     * Datenmodul, was dieser Aufruf ja erzeugt. */
+    if (tyLang == 0)
+        tyLang = (Q9_u16)(Q9K_MT_DATA << 8);
+
+    if (Q9K_ModCreateData(Q9K_GetU32(Q9K_DATMOD_SCRATCH_SIZE),
+                          (Q9_u16)Q9K_GetU32(Q9K_DATMOD_SCRATCH_ATTREV),
+                          (Q9_u16)Q9K_GetU32(Q9K_DATMOD_SCRATCH_ACCESS),
+                          tyLang,
+                          Q9K_GetU32(Q9K_DATMOD_SCRATCH_NAME),
+                          &hdr, &data, &past, &err)) {
+        Q9K_SetU32(Q9K_DATMOD_SCRATCH_SIZE, (Q9_u32)tyLang);
+        Q9K_SetU32(Q9K_DATMOD_SCRATCH_NAME, past);
+        Q9K_SetU32(Q9K_DATMOD_SCRATCH_DATA, data);
+        Q9K_SetU32(Q9K_DATMOD_SCRATCH_HDR, hdr);
+        Q9K_SetU32(Q9K_DATMOD_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_DATMOD_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_DATMOD_SCRATCH_SUCCESS, 0UL);
+    }
 }
