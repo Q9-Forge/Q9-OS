@@ -86,6 +86,12 @@ regression produced `HOwWl\rLDCcer@#`: valid write and line-write operations
 complete, an invalid `I$ReadLn` path is rejected without blocking, and the
 existing native lifecycle plus Microware attach/detach checks still pass.
 
+`I$GetStt` and `I$SetStt` now use the same current-process validation before
+accessing the native path descriptor. The emulator regression extended to
+`HOwWl\rLGSDCcergs@#`: valid `SS_Opt` get/set operations succeed, invalid
+path 31 is rejected for both calls, and the previous I/O lifecycle remains
+green.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
@@ -188,8 +194,8 @@ existing native lifecycle plus Microware attach/detach checks still pass.
 | 🟡 | `0x8A` | I$Write | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
 | 🟡 | `0x8B` | I$ReadLn | Minimal Q9-native blocking line input with path and read-mode validation is implemented; editing and device semantics remain open |
 | 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
-| 🟡 | `0x8D` | I$GetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
-| 🟡 | `0x8E` | I$SetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
+| 🟡 | `0x8D` | I$GetStt | Native `SS_Opt` support now validates the current process path; other status codes remain open |
+| 🟡 | `0x8E` | I$SetStt | Native `SS_Opt` support now validates the current process path; other status codes remain open |
 | 🟡 | `0x8F` | I$Close | Native path-table removal, descriptor validation, and release with reference counting are implemented and verified in the emulator; full file-manager close semantics remain open |
 | 🟡 | `0x92` | I$SGetSt | Minimal Q9-native `SS_Opt` support for direct system paths; permission, device-name, and file-manager semantics remain open |
 

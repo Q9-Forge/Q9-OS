@@ -4542,6 +4542,9 @@ Q9K_SysFIReadLn_Fail:
 *******************************************************************************
 Q9K_SysFIGetStt:
         movem.l d0/d2-d4/a0-a1,-(sp)
+        moveq   #0,d4                           * status query needs no mode bit
+        bsr     Q9K_ValidateNativePath
+        bcs     Q9K_SysFIGetStt_Fail
         moveq   #0,d2
         move.w  d0,d2
         cmpi.l  #3,d2
@@ -4628,6 +4631,9 @@ Q9K_SysFISGetSt_Fail:
 *******************************************************************************
 Q9K_SysFISetStt:
         movem.l d0/d2-d4/a0-a1,-(sp)
+        moveq   #0,d4                           * status update needs no mode bit
+        bsr     Q9K_ValidateNativePath
+        bcs     Q9K_SysFISetStt_Fail
         moveq   #0,d2
         move.w  d0,d2
         cmpi.l  #3,d2
