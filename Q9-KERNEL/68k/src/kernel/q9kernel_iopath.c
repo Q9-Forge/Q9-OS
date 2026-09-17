@@ -102,6 +102,18 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PATHDESC_MODE_OFF 0x02UL
 #define Q9K_PATHDESC_REF_OFF  0x04UL       /* Q9-native open-reference count */
 
+/* The current process owns the P$Path table.  Keep the offsets here in one
+ * place so native I/O uses the same process layout as IOMan. */
+#ifndef Q9_D_PROC
+#define Q9_D_PROC              0x04CUL      /* current process descriptor */
+#endif
+#ifndef Q9K_PROCDESC_PATH_OFF
+#define Q9K_PROCDESC_PATH_OFF  0x168UL      /* P$Path[0], 32 big-endian words */
+#endif
+#ifndef Q9K_PROCDESC_PATH_COUNT
+#define Q9K_PROCDESC_PATH_COUNT 32UL
+#endif
+
 /* Scratchzellen fuer F$RetPD -- gleiche Konvention wie ueberall in diesem
  * Kernel (Assembler-Trampolin legt die Eingaben ab, holt die Ausgaben). */
 #ifndef Q9K_RETPD_SCRATCH_DBTIN
@@ -438,6 +450,8 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
     Q9_u32 p = pathnamePtr;
     Q9_u32 slot;
     Q9_u32 pathNum;
+    Q9_u32 procDesc;
+    Q9_u32 pathIndex;
 
     while (*(volatile Q9_u8 *)p != 0)
         p++;
@@ -448,15 +462,33 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
     if (slot == 0)
         return 0;
 
-    /* Pfadnummer aus der Slot-Position ableiten (kein pro-Prozess-
-     * Zaehler vorhanden, s. Kopfkommentar) -- Offset 3, damit die bei
-     * echtem OS-9 fuer stdin/stdout/stderr reservierten Nummern 0-2
-     * nicht kollidieren, auch wenn wir diese noch nicht wirklich
-     * vorbelegen. */
+    /* Prefer the lowest free process-local path number.  The descriptor
+     * pool remains global, but the number visible to the caller belongs in
+     * the current process' P$Path table. */
     pathNum = (slot - Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR)) / Q9K_PATHDESC_SIZE + 3UL;
+    procDesc = Q9K_GetU32(Q9_D_PROC);
+    if (procDesc != 0) {
+        pathNum = 0;
+        for (pathIndex = 3; pathIndex < Q9K_PROCDESC_PATH_COUNT; pathIndex++) {
+            if (Q9K_ReadU16BE(procDesc + Q9K_PROCDESC_PATH_OFF + pathIndex * 2UL) == 0) {
+                pathNum = pathIndex;
+                break;
+            }
+        }
+        if (pathNum == 0) {
+            Q9K_PathPoolFree(slot);
+            return 0;
+        }
+    }
 
     Q9K_WriteU16BE(slot + Q9K_PATHDESC_NUM_OFF, (Q9_u16)pathNum);
     Q9K_WriteU16BE(slot + Q9K_PATHDESC_REF_OFF, 1);
+
+    /* Publish the descriptor number in the process table.  IOMan and the
+     * native I/O handlers use this table as the authoritative path lookup. */
+    if (procDesc != 0)
+        Q9K_WriteU16BE(procDesc + Q9K_PROCDESC_PATH_OFF + pathNum * 2UL,
+                       (Q9_u16)pathNum);
 
     /* Zugriffsmodus eintragen -- ohne ihn verweigert IOMan jeden Lese- und
      * Schreibzugriff auf diesen Pfad (s. Kopfkommentar oben). Faellt der

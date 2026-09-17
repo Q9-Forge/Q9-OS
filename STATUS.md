@@ -38,6 +38,12 @@ tracing shows repeated reads of the same directory/file sector (`LBA 65`),
 so the remaining issue is currently classified as an RBF directory/position
 advance problem in the external `F$Load` path.
 
+The native `I$Open` path now also publishes each allocated path number in
+the current process' `P$Path` table. Host regression tests cover the first
+two process-local entries, and a fresh 68k build plus emulator boot completed
+without an exception. This fixes the process-table bookkeeping gap, but it
+does not yet provide full pathname, device, or file-manager semantics.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
@@ -131,7 +137,7 @@ advance problem in the external `F$Load` path.
 | ❌ | `0x81` | I$Detach | No Q9-OS handler is registered; only the Microware path has been tested |
 | 🟡 | `0x82` | I$Dup | Minimal Q9-native path duplication and reference counting are implemented; full file-manager semantics remain open |
 | ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
-| 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; full pathname/device semantics remain open |
+| 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; process-local `P$Path` publication is tested, while full pathname/device semantics remain open |
 | ❌ | `0x85` | I$MakDir | No Q9-OS implementation; only the Microware path exists |
 | ❌ | `0x86` | I$ChgDir | No Q9-OS implementation; only the Microware path exists |
 | ❌ | `0x87` | I$Delete | No Q9-OS implementation; only the Microware path exists |
