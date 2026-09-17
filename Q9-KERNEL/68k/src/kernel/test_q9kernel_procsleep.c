@@ -22,6 +22,16 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_SIGMASK_SCRATCH_LEVEL   ((unsigned long)(g_fakeGlobals + 0x1A00))
 #define Q9K_SIGMASK_SCRATCH_ERROR   ((unsigned long)(g_fakeGlobals + 0x1A20))
 #define Q9K_SIGMASK_SCRATCH_SUCCESS ((unsigned long)(g_fakeGlobals + 0x1A40))
+/* P$SigVec ($28) und P$SigDat ($2C) liegen real genau 4 Byte
+ * auseinander. Auf diesem Host ist Q9_u32 8 Byte breit, ein Zugriff
+ * auf $28 reichte also bis $2F und ueberschriebe P$SigDat -- gleiche
+ * Grosszuegigkeit wie bei P$User in den anderen Tests, betrifft NUR
+ * diesen Test. */
+#define Q9K_PROCDESC_SIGVEC_OFF 0x100UL
+#define Q9K_PROCDESC_SIGDAT_OFF 0x120UL
+#define Q9K_ICPT_SCRATCH_VEC        ((unsigned long)(g_fakeGlobals + 0x1A60))
+#define Q9K_ICPT_SCRATCH_DAT        ((unsigned long)(g_fakeGlobals + 0x1A80))
+#define Q9K_ICPT_SCRATCH_PENDING    ((unsigned long)(g_fakeGlobals + 0x1AA0))
 
 /* Real nur wenige Byte auseinander -- hier grosszuegig auf 8-Byte-
  * Schritte gelegt, gleiches Muster wie ueberall (Q9_u32 = 8 Byte auf
@@ -293,6 +303,45 @@ int main(void)
               Q9K_GetU32(Q9K_SIGMASK_SCRATCH_SUCCESS), 0);
         checkU32("F$SigMask-Bridge legt E$PrcID in voller Zellbreite ab",
               Q9K_GetU32(Q9K_SIGMASK_SCRATCH_ERROR), 0x00E0UL);
+    }
+
+
+    /* F$Icpt (Callcode 0x09): traegt Abfangroutine und Datenzeiger in die
+     * dafuer vorgesehenen Deskriptorfelder ein und meldet, wie viele
+     * Signale anstehen. Laut Beschreibung kann der Aufruf nicht
+     * scheitern. */
+    {
+        static unsigned char icptDesc[0x400];
+        Q9_u32 desc = (Q9_u32)(unsigned long)icptDesc;
+
+        printf("\n--- F$Icpt ---\n");
+        memset(icptDesc, 0, sizeof(icptDesc));
+        Q9K_SetU32(Q9_D_PROC, desc);
+
+        checkU32("F$Icpt meldet ohne anstehendes Signal 0",
+                 Q9K_ProcIcpt(0x11223344UL, 0x55667788UL), 0);
+        checkU32("F$Icpt legt die Abfangroutine in P$SigVec ab",
+                 Q9K_GetU32(desc + Q9K_PROCDESC_SIGVEC_OFF), 0x11223344UL);
+        checkU32("F$Icpt legt den Datenzeiger in P$SigDat ab",
+                 Q9K_GetU32(desc + Q9K_PROCDESC_SIGDAT_OFF), 0x55667788UL);
+
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 42);
+        checkU32("F$Icpt meldet ein anstehendes Signal",
+                 Q9K_ProcIcpt(1, 2), 1);
+
+        Q9K_SetU32(Q9_D_PROC, 0);
+        checkU32("F$Icpt ohne aktuellen Prozess meldet 0 statt abzustuerzen",
+                 Q9K_ProcIcpt(1, 2), 0);
+
+        Q9K_SetU32(Q9_D_PROC, desc);
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
+        Q9K_SetU32(Q9K_ICPT_SCRATCH_VEC, 0xAABBCCDDUL);
+        Q9K_SetU32(Q9K_ICPT_SCRATCH_DAT, 0xEEFF0011UL);
+        Q9K_SysIcptImpl();
+        checkU32("F$Icpt-Bridge legt die Anzahl in der Zelle ab",
+                 Q9K_GetU32(Q9K_ICPT_SCRATCH_PENDING), 0);
+        checkU32("F$Icpt-Bridge hat den Vektor wirklich gesetzt",
+                 Q9K_GetU32(desc + Q9K_PROCDESC_SIGVEC_OFF), 0xAABBCCDDUL);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

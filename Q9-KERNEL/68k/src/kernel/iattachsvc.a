@@ -57,6 +57,8 @@
 *   F = F$FindPD resolved a path number back to its descriptor (0x2F)
 *   f = F$FindPD rejected an unallocated path number
 *   K = F$SigMask masked and unmasked signals around a critical section (0x57)
+*   N = F$Icpt registered an intercept routine (0x09)
+*   X = F$Trans translated an address (identity on this machine) (0x60)
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -532,6 +534,33 @@ Q9K_AttachStart:
         dc.w    $0057                          * F$SigMask, clear
         bcs     Q9K_NativeFailed
         moveq   #'K',d7
+        move.b  d7,$FFFFF006
+
+* F$Icpt: (a0) = intercept routine, (a6) = data area passed to it.
+* Returns the number of pending signals in d0; it cannot fail.
+        lea     Q9K_CopyBuffer(pc),a0          * any plausible routine address
+        trap    #0
+        dc.w    $0009                          * F$Icpt
+        bcs     Q9K_NativeFailed
+        moveq   #'N',d7
+        move.b  d7,$FFFFF006
+
+* F$Trans: d0.l = block size, d1.l = direction, (a0) = address.  This
+* machine has no second bus, so the translation is the identity -- the
+* address that comes back must be the one that went in.
+        lea     Q9K_CopyBuffer(pc),a0
+        move.l  a0,d5                          * remember what we passed in
+        move.l  #256,d0
+        moveq   #0,d1                          * local -> external
+        trap    #0
+        dc.w    $0060                          * F$Trans
+        bcs     Q9K_NativeFailed
+        move.l  a0,d6
+        cmp.l   d5,d6
+        bne     Q9K_NativeFailed
+        cmpi.l  #256,d0                        * size must survive too
+        bne     Q9K_NativeFailed
+        moveq   #'X',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access

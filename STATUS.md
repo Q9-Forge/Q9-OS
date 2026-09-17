@@ -325,6 +325,30 @@ The emulator regression extended to
 `HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBTJGjAaZzEQFfK@#`, with a separate boot
 reporting `Vektor=0`.
 
+`F$Icpt` (`0x09`) installs a signal intercept routine. Both inputs have a fixed
+place in the real process descriptor — `P$SigVec` (`$28`) and `P$SigDat`
+(`$2C`) — and that is where they are stored. The registration is complete; what
+is still missing is running the routine when a signal arrives, which needs the
+signal path to redirect the user context, enter the routine with signals masked
+and return through `F$RTE`. Until then a signal is stored in `P$Signal` as
+before. The call is therefore marked partial rather than green: the half that
+exists is real and holds exactly the fields a later delivery path takes its
+jump address from. One assembler detail worth noting: the caller passes its data
+area in `a6`, the very register this kernel uses for its own C runtime pointer,
+so the incoming value has to be stored before switching — otherwise precisely
+the value in question would be lost.
+
+`F$Trans` (`0x60`) exists for systems with dual-ported memory, where the same
+location appears under different addresses depending on the bus. The Q9 machine
+has no second bus, so local and external address are the same and the
+translation is the identity in both directions. That is not a placeholder but
+the only correct answer for this machine: a caller passing the returned address
+to hardware gets the one the hardware actually sees. Should Q9 ever gain a
+second bus, the mapping belongs exactly here and no caller has to change.
+
+The emulator regression extended to
+`HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBTJGjAaZzEQFfKNX@#`.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -348,7 +372,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
 | ⛔ | `0x07` | F$Mem | Withdrawn in real OS-9/68K ("F$Mem is no longer available. Use F$SRqMem instead."); deliberately not implemented |
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
-| ❌ | `0x09` | F$Icpt | Not implemented |
+| 🟡 | `0x09` | F$Icpt | Registers the intercept routine in P$SigVec/P$SigDat and reports pending signals; running the routine on delivery is still open |
 | 🟡 | `0x0A` | F$Sleep | Scheduler sleep path exists; complete timing coverage remains open |
 | ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
@@ -415,7 +439,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x5D` | F$POSK | Not implemented |
 | ❌ | `0x5E` | F$Panic | Diagnostic stub exists, but it is not a completed panic service |
 | ❌ | `0x5F` | F$MBuf | Not implemented |
-| ❌ | `0x60` | F$Trans | Not implemented |
+| ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | ❌ | `0x61` | F$FIRQ | Not implemented |
 | ❌ | `0x62` | F$Sema | Not implemented |
 | ❌ | `0x63` | F$SigReset | Not implemented |

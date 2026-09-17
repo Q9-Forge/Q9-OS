@@ -254,6 +254,19 @@ void Q9K_SysSleepImpl(void)
 #define Q9K_SIGMASK_SCRATCH_ERROR   0x198CUL /* Q9_u32, d1.w AUS bei Fehler */
 #define Q9K_SIGMASK_SCRATCH_SUCCESS 0x1990UL /* Q9_u32, 0/1                 */
 #endif
+#ifndef Q9K_PROCDESC_SIGVEC_OFF
+#define Q9K_PROCDESC_SIGVEC_OFF  0x28UL    /* P$SigVec (Langwort), s. process.a */
+#endif
+#ifndef Q9K_PROCDESC_SIGDAT_OFF
+#define Q9K_PROCDESC_SIGDAT_OFF  0x2CUL    /* P$SigDat (Langwort), s. process.a */
+#endif
+
+/* F$Icpt-Scratch (2026-09-18): hinter dem F$SigMask-Block. */
+#ifndef Q9K_ICPT_SCRATCH_VEC
+#define Q9K_ICPT_SCRATCH_VEC     0x1998UL  /* Q9_u32, (a0) EIN            */
+#define Q9K_ICPT_SCRATCH_DAT     0x199CUL  /* Q9_u32, (a6) EIN            */
+#define Q9K_ICPT_SCRATCH_PENDING 0x19A0UL  /* Q9_u32, d0.l AUS            */
+#endif
 #ifndef Q9K_SEND_SCRATCH_PID
 #define Q9K_SEND_SCRATCH_PID     0x1608UL   /* Q9_u32, d0.w EIN                */
 #define Q9K_SEND_SCRATCH_SIGNAL  0x160CUL   /* Q9_u32, d1.w EIN                */
@@ -386,4 +399,48 @@ void Q9K_SysSendImpl(void)
 
     Q9K_SetU32(Q9K_SEND_SCRATCH_ERROR, (Q9_u32)err);
     Q9K_SetU32(Q9K_SEND_SCRATCH_SUCCESS, ok ? 1UL : 0UL);
+}
+
+/* Q9K_ProcIcpt -- echte F$Icpt-Kernlogik (Callcode $09, "Set Up Signal
+ * Intercept Trap"). Verifizierte ABI (68k_tech.pdf S. 448): (a0) =
+ * Adresse der Abfangroutine, (a6) = Adresse, die ihr uebergeben wird
+ * (ueblicherweise der Datenbereich des Programms); AUS d0 = Anzahl
+ * anstehender Signale. Die Beschreibung nennt ausdruecklich KEINEN
+ * Fehlerausgang -- dieser Aufruf kann nicht scheitern.
+ *
+ * Beide Angaben haben im echten Prozessdeskriptor ihren festen Platz:
+ * P$SigVec ($28) und P$SigDat ($2C), Feld fuer Feld aus dem realen
+ * Layout aufsummiert. Genau dort werden sie abgelegt.
+ *
+ * WAS DIESER AUFRUF LEISTET UND WAS NICHT: er richtet die Abfangroutine
+ * ein -- das ist seine dokumentierte Wirkung, und sie ist hier
+ * vollstaendig. Die AUSFUEHRUNG der Routine beim Eintreffen eines
+ * Signals leistet dieser Kernel noch nicht: dafuer muesste der
+ * Signalpfad den Benutzerkontext umbiegen, die Routine mit maskierten
+ * Signalen anspringen und per F$RTE zurueckkehren. Solange das fehlt,
+ * wird ein Signal wie bisher in P$Signal abgelegt (s. Q9K_ProcSend).
+ * Die Registrierung ist damit kein Schaufenster: sie legt genau die
+ * Felder an, aus denen ein spaeterer Zustellpfad seine Sprungadresse
+ * nimmt.
+ *
+ * Rueckgabe: Anzahl anstehender Signale (0 oder 1 -- P$Signal fasst
+ * genau eines, s. Q9K_ProcSigMask). */
+Q9_u32 Q9K_ProcIcpt(Q9_u32 vector, Q9_u32 dataPtr)
+{
+    Q9_u32 desc = Q9K_GetU32(Q9_D_PROC);
+
+    if (desc == 0)
+        return 0;
+
+    Q9K_SetU32(desc + Q9K_PROCDESC_SIGVEC_OFF, vector);
+    Q9K_SetU32(desc + Q9K_PROCDESC_SIGDAT_OFF, dataPtr);
+
+    return (Q9K_GetU16(desc + Q9K_PROCDESC_SIGNAL_OFF) != 0) ? 1UL : 0UL;
+}
+
+void Q9K_SysIcptImpl(void)
+{
+    Q9K_SetU32(Q9K_ICPT_SCRATCH_PENDING,
+               Q9K_ProcIcpt(Q9K_GetU32(Q9K_ICPT_SCRATCH_VEC),
+                            Q9K_GetU32(Q9K_ICPT_SCRATCH_DAT)));
 }

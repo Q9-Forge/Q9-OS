@@ -614,6 +614,12 @@ Q9K_FindPDScratch_Success  equ $1980      * Q9_u32, 0/1
 Q9K_SigMaskScratch_Level   equ $1988      * Q9_u32, d1.l EIN
 Q9K_SigMaskScratch_Error   equ $198C      * Q9_u32, d1.w AUS bei Fehler
 Q9K_SigMaskScratch_Success equ $1990      * Q9_u32, 0/1
+Q9K_IcptScratch_Vec        equ $1998      * Q9_u32, (a0) EIN
+Q9K_IcptScratch_Dat        equ $199C      * Q9_u32, (a6) EIN
+Q9K_IcptScratch_Pending    equ $19A0      * Q9_u32, d0.l AUS
+Q9K_TransScratch_Size      equ $19A8      * Q9_u32, d0.l EIN/AUS
+Q9K_TransScratch_Mode      equ $19AC      * Q9_u32, d1.l EIN / Erfolgskennzeichen AUS
+Q9K_TransScratch_Addr      equ $19B0      * Q9_u32, (a0) EIN/AUS
 
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
@@ -5420,6 +5426,56 @@ Q9K_SysFSigMask:
         rts
 Q9K_SysFSigMask_Fail:
         move.w  Q9K_SigMaskScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFIcpt -- F$Icpt (Callcode $09, "Set Up Signal Intercept Trap").
+* Reale ABI, 68k_tech.pdf S.448: IN (a0) = Abfangroutine, (a6) = Adresse,
+* die ihr spaeter uebergeben wird; AUS d0 = Anzahl anstehender Signale.
+* Die Beschreibung nennt ausdruecklich KEINEN Fehlerausgang -- der Aufruf
+* kann nicht scheitern, Carry wird immer geloescht.
+*
+* WICHTIG zu a6: der Aufrufer uebergibt hier SEINEN Datenbereich. Dieser
+* Kernel benutzt a6 selbst als Zeiger auf seinen C-Laufzeitpuffer, das
+* eingehende a6 muss also VOR dem Umschalten gesichert und als Parameter
+* abgelegt werden -- sonst ginge genau der Wert verloren, um den es geht.
+* Was eingerichtet wird und was noch fehlt, steht bei Q9K_ProcIcpt in
+* q9kernel_procsleep.c.
+Q9K_SysFIcpt:
+        move.l  a6,-(sp)                        * eingehendes a6 = Datenbereich des Aufrufers
+        move.l  a0,Q9K_IcptScratch_Vec
+        move.l  a6,Q9K_IcptScratch_Dat          * noch VOR dem Umschalten ablegen
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SysIcptImpl
+        movea.l (sp)+,a6
+        move.l  Q9K_IcptScratch_Pending,d0
+        andi    #$fe,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFTrans -- F$Trans (Callcode $60, "Translate Memory Address").
+* Reale ABI, 68k_tech.pdf S.526: IN d0.l = Blockgroesse, d1.l = Richtung
+* (0 = lokal nach extern, 1 = extern nach lokal), (a0) = Blockadresse;
+* AUS d0.l = uebersetzte Groesse, (a0) = uebersetzte Adresse. Warum das
+* auf dieser Maschine die Identitaet ist, steht bei Q9K_ProcTrans in
+* q9kernel_sysmem.c.
+Q9K_SysFTrans:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_TransScratch_Size
+        move.l  d1,Q9K_TransScratch_Mode
+        move.l  a0,Q9K_TransScratch_Addr
+        bsr     Q9K_SysTransImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_TransScratch_Mode+2
+        beq     Q9K_SysFTrans_Fail
+        move.l  Q9K_TransScratch_Size,d0
+        movea.l Q9K_TransScratch_Addr,a0
+        andi    #$fe,ccr
+        rts
+Q9K_SysFTrans_Fail:
+        move.w  Q9K_TransScratch_Size+2,d1      * traegt im Fehlerfall den Code
         ori     #1,ccr
         rts
 
