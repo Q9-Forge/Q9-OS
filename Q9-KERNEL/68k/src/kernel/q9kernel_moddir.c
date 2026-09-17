@@ -112,6 +112,23 @@ extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
 #define Q9K_VMODUL_RETBUF 0x1650UL
 #endif
 
+#define Q9K_E_MNF 0x00DDU /* errno.h: Module Not Found, wie in q9kernel_firstproc.c */
+
+/* F$UnLoad-/F$CRC-Scratch (2026-09-17): hinter dem F$CpyMem-Block
+ * ($18D0-$18E4, q9kernel_procapi.c). Alle Zellen 32 Bit breit, der
+ * Assembler liest Wortwerte als unteres Wort ("+2"). */
+#ifndef Q9K_UNLOAD_SCRATCH_TYLANG
+#define Q9K_UNLOAD_SCRATCH_TYLANG  0x18E8UL /* Q9_u32, d0.w EIN            */
+#define Q9K_UNLOAD_SCRATCH_NAME    0x18ECUL /* Q9_u32, (a0) EIN            */
+#define Q9K_UNLOAD_SCRATCH_ERROR   0x18F0UL /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_UNLOAD_SCRATCH_SUCCESS 0x18F4UL /* Q9_u32, 0/1                 */
+#endif
+#ifndef Q9K_CRC_SCRATCH_COUNT
+#define Q9K_CRC_SCRATCH_COUNT      0x18F8UL /* Q9_u32, d0.l EIN            */
+#define Q9K_CRC_SCRATCH_ACCUM      0x18FCUL /* Q9_u32, d1.l EIN/AUS        */
+#define Q9K_CRC_SCRATCH_ADDR       0x1900UL /* Q9_u32, (a0) EIN            */
+#endif
+
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 
@@ -385,7 +402,11 @@ Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList)
  * Tiebreak statt "ersten Treffer nehmen"). Bei Erfolg: Link-Zaehler
  * des gewaehlten Eintrags erhoehen, Headerzeiger zurueckgeben.
  * Rueckgabe 0 = kein Treffer (E_MNF, s. Q9K_SysFLink). */
-Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name)
+/* Reine Suche ohne jede Nebenwirkung: liefert den BESTEN passenden
+ * Verzeichnis-Slot (hoechste Revision) oder 0. Herausgeloest, damit
+ * F$UnLoad denselben Treffer bestimmen kann wie F$Link, ohne dabei den
+ * Link-Zaehler zu erhoehen (was es sofort wieder zuruecknehmen muesste). */
+static Q9_u32 Q9K_ModDirFindSlotByName(Q9_u16 desiredTyLang, const char *name)
 {
     Q9_u32 slot = Q9K_GetU32(Q9K_MODDIR_HEAD_ADDR);
     Q9_u32 bestSlot = 0;
@@ -422,6 +443,13 @@ Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name)
         slot = Q9K_GetU32(slot + Q9K_MODDIR_NEXT_OFF);
     }
 
+    return bestSlot;
+}
+
+Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name)
+{
+    Q9_u32 bestSlot = Q9K_ModDirFindSlotByName(desiredTyLang, name);
+
     if (bestSlot == 0)
         return 0;
 
@@ -430,6 +458,7 @@ Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name)
 
     return Q9K_GetU32(bestSlot + Q9K_MODDIR_HDRPTR_OFF);
 }
+
 
 /* Sucht den Verzeichniseintrag zu einer gegebenen Modulkopfadresse
  * (reale F$UnLink-Eingabe, (a2)) und dekrementiert dessen Link-Zaehler.
@@ -683,4 +712,111 @@ void Q9K_SysVModulImpl(void)
         Q9K_SetU32(Q9K_VMODUL_SCRATCH_ERROR, (Q9_u32)err);
         Q9K_SetU32(Q9K_VMODUL_SCRATCH_SUCCESS, 0UL);
     }
+}
+
+/* Q9K_ModDirUnloadByName -- echte F$UnLoad-Kernlogik (Callcode $1D,
+ * "Unlink Module by Name"). Verifizierte ABI (68k_tech.pdf S. 531):
+ * d0.w = Modultyp/-sprache, (a0) = Zeiger auf den Modulnamen; (a0) wird
+ * hinter den Namen fortgeschrieben. Carry + d1.w im Fehlerfall.
+ *
+ * Der Unterschied zu F$UnLink ist ausschliesslich die Eingabe: dort die
+ * Kopfadresse, hier der Name. Gesucht wird deshalb mit exakt derselben
+ * Regel wie bei F$Link (inkl. Revisions-Tiebreak), heruntergezaehlt mit
+ * exakt derselben Routine wie bei F$UnLink -- F$UnLoad ist genau die
+ * Verbindung dieser beiden und fuehrt bewusst keine eigene dritte
+ * Variante ein.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
+Q9_u32 Q9K_ModDirUnloadByName(Q9_u16 desiredTyLang, const char *name,
+                              Q9_u16 *outError)
+{
+    Q9_u32 slot;
+    Q9_u32 hdrAddr;
+
+    *outError = 0;
+
+    if (name == 0) {
+        *outError = Q9K_E_MNF;
+        return 0;
+    }
+
+    slot = Q9K_ModDirFindSlotByName(desiredTyLang, name);
+    if (slot == 0) {
+        *outError = Q9K_E_MNF;
+        return 0;
+    }
+
+    hdrAddr = Q9K_GetU32(slot + Q9K_MODDIR_HDRPTR_OFF);
+    if (Q9K_ModDirUnlinkByHeader(hdrAddr) != 0) {
+        *outError = Q9K_E_MNF;
+        return 0;
+    }
+    return 1;
+}
+
+void Q9K_SysUnloadImpl(void)
+{
+    Q9_u16 err = 0;
+
+    if (Q9K_ModDirUnloadByName((Q9_u16)Q9K_GetU32(Q9K_UNLOAD_SCRATCH_TYLANG),
+                               (const char *)Q9K_GetU32(Q9K_UNLOAD_SCRATCH_NAME),
+                               &err)) {
+        Q9K_SetU32(Q9K_UNLOAD_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_UNLOAD_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_UNLOAD_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
+/* Q9K_CrcAccumulate -- echte F$CRC-Kernlogik (Callcode $17, "Generate
+ * CRC"). Verifizierte ABI (68k_tech.pdf S. 390f): d0.l = Byteanzahl,
+ * d1.l = CRC-Akkumulator, (a0) = Datenzeiger; AUS: d1.l = fortgefuehrter
+ * Akkumulator.
+ *
+ * Es ist der 24-Bit-OS-9-Modul-CRC. Der Akkumulator wird vor dem ERSTEN
+ * Aufruf auf -1 gesetzt und darf ueber mehrere Aufrufe fortgefuehrt
+ * werden; die oberen 8 Bit bleiben dabei ungenutzt. Rechnet man ueber
+ * ein vollstaendiges Modul EINSCHLIESSLICH seiner drei CRC-Bytes, muss
+ * am Ende die dokumentierte Konstante $00800FE3 stehen (CRCCon) -- genau
+ * das prueft der Host-Test an einem echten, gebauten Modul.
+ *
+ * Die Bitschritte sind aus der im Projekt bereits gegen echte Module
+ * erprobten Referenzfassung uebernommen (Q9-Flux/tools, os9_crc), nicht
+ * aus einer Polynombeschreibung nachempfunden. */
+Q9_u32 Q9K_CrcAccumulate(Q9_u32 accum, Q9_u32 addr, Q9_u32 count)
+{
+    const volatile Q9_u8 *p = (const volatile Q9_u8 *)addr;
+    Q9_u32 c0 = (accum >> 16) & 0xFFUL;
+    Q9_u32 c1 = (accum >> 8) & 0xFFUL;
+    Q9_u32 c2 = accum & 0xFFUL;
+    Q9_u32 i;
+
+    for (i = 0; i < count; ++i) {
+        Q9_u32 a = ((Q9_u32)p[i] ^ c0) & 0xFFUL;
+
+        c0 = c1;
+        c1 = c2;
+        c1 ^= (a >> 7) & 0xFFUL;
+        c2 = (a << 1) & 0xFFUL;
+        c1 ^= (a >> 2) & 0xFFUL;
+        c2 ^= (a << 6) & 0xFFUL;
+        a ^= (a << 1) & 0xFFUL;
+        a ^= (a << 2) & 0xFFUL;
+        a ^= (a << 4) & 0xFFUL;
+        a &= 0xFFUL;
+        if (a & 0x80UL) {
+            c0 ^= 0x80UL;
+            c2 ^= 0x21UL;
+        }
+    }
+
+    return (c0 << 16) | (c1 << 8) | c2;
+}
+
+void Q9K_SysCrcImpl(void)
+{
+    Q9K_SetU32(Q9K_CRC_SCRATCH_ACCUM,
+               Q9K_CrcAccumulate(Q9K_GetU32(Q9K_CRC_SCRATCH_ACCUM),
+                                 Q9K_GetU32(Q9K_CRC_SCRATCH_ADDR),
+                                 Q9K_GetU32(Q9K_CRC_SCRATCH_COUNT)));
 }

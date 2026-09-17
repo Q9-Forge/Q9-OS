@@ -10,6 +10,7 @@ IOMan integration, not to the original OS-9 implementation.
 | 🟡 | Partially implemented, limited, or not yet completely verified |
 | 🔷 | Kernel-level path is usable with Microware components in a current emulator test; Q9-native replacement is still open |
 | ❌ | Not implemented or still routed to the unimplemented-service stub |
+| ⛔ | Withdrawn in real OS-9/68K itself; deliberately not implemented here |
 
 The call-code names and the complete call-code set are based on
 `Q9-KERNEL/.os9-original/SYSCALL_MODULE_MAP.md`.  A green status does not
@@ -146,6 +147,32 @@ which lands in the high word, and every call therefore looked like a failure to
 the assembler. The host suite now covers the bridges themselves, not just the
 comparison logic underneath them.
 
+`F$CRC` (call code `0x17`) computes the 24-bit module CRC, accumulated across
+any number of calls from an accumulator initialised to -1. The bit steps were
+taken from the project's own reference implementation, which has long been
+checked against real modules, rather than re-derived from a polynomial. The
+strongest available proof is built into both test levels: running the CRC over
+a complete, toolchain-built module *including* its own three CRC bytes must
+yield the documented constant `CRCCon` (`$00800FE3`). The host test does this
+over an embedded real module; the emulator test does it over a module actually
+resident in memory, reached through `F$Link`.
+
+`F$UnLoad` (`0x1D`) differs from `F$UnLink` only in its input: a module name
+instead of a header address. It therefore picks its target with exactly the
+same rule as `F$Link` (including the revision tie-break) and decrements with
+exactly the same routine as `F$UnLink`, rather than introducing a third
+variant. The shared lookup was factored out of `F$Link` so that `F$UnLoad` does
+not have to raise the link count only to take it straight back down; a host
+test asserts that the counter drops by exactly one.
+
+The emulator regression extended to `HOwWl\rLGSDCcergsIPpNnxMmUVuRYy@#`, with a
+separate boot reporting `Vektor=0`.
+
+`F$Mem` (`0x07`) is marked withdrawn rather than missing. The manual states
+plainly that "F$Mem is no longer available. Use F$SRqMem instead.", so
+implementing it would mean building something real OS-9/68K itself removed.
+`F$SRqMem` already covers the need and is green.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -167,7 +194,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
 | ❌ | `0x05` | F$Chain | Not implemented |
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
-| ❌ | `0x07` | F$Mem | Not implemented |
+| ⛔ | `0x07` | F$Mem | Withdrawn in real OS-9/68K ("F$Mem is no longer available. Use F$SRqMem instead."); deliberately not implemented |
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
 | ❌ | `0x09` | F$Icpt | Not implemented |
 | 🟡 | `0x0A` | F$Sleep | Scheduler sleep path exists; complete timing coverage remains open |
@@ -183,13 +210,13 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x14` | F$DelBit | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x15` | F$Time | Handler exists; clock source and full validation remain open |
 | ❌ | `0x16` | F$STime | Not implemented |
-| ❌ | `0x17` | F$CRC | Not implemented |
+| ✅ | `0x17` | F$CRC | 24-bit module CRC, accumulated across calls; verified against a real module and the documented CRCCon constant |
 | ❌ | `0x18` | F$GPrDsc | Not implemented |
 | ❌ | `0x19` | F$GBlkMp | Not implemented |
 | ❌ | `0x1A` | F$GModDr | Not implemented |
 | ✅ | `0x1B` | F$CpyMem | Copy with owner-PID validation; no address translation is needed while all processes share one flat address space |
 | ✅ | `0x1C` | F$SUser | Changes the caller's own group/user ID in the process descriptor; only the documented "user 0.0 may change freely" case is implemented |
-| ❌ | `0x1D` | F$UnLoad | Not implemented |
+| ✅ | `0x1D` | F$UnLoad | Same lookup rule as F$Link and the same counter as F$UnLink, keyed by module name |
 | ❌ | `0x1E` | F$RTE | Not implemented |
 | ❌ | `0x1F` | F$GPrDBT | Not implemented |
 | ❌ | `0x20` | F$Julian | Not implemented |

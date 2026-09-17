@@ -244,6 +244,108 @@ int main(void)
     checkU32("F$UnLink(bereits entferntes Modul) schlaegt sauber fehl (1)",
              Q9K_ModDirUnlinkByHeader((Q9_u32)(unsigned long)(region + 2 * 64)), 1);
 
+
+
+    /* F$UnLoad (Callcode 0x1D). Kern der Sache: es muss denselben
+     * Treffer waehlen wie F$Link und denselben Zaehler senken wie
+     * F$UnLink -- ohne ihn vorher zu erhoehen. Genau das wird hier
+     * nachgerechnet, weil die gemeinsame Suchroutine dafuer aus
+     * Q9K_ModDirLinkByName herausgeloest wurde. */
+    {
+        Q9_u16 err;
+        Q9_u32 slot;
+        Q9_u32 before;
+
+        /* Ausgangslage schaffen: "foo" zweimal verlinken, Zaehler ablesen. */
+        checkU32("F$Link(\"foo\") als Vorbereitung",
+                 Q9K_ModDirLinkByName(0, "foo") != 0, 1);
+        slot = Q9K_ModDirFindSlotByName(0, "foo");
+        checkU32("Suchroutine findet \"foo\"", slot != 0, 1);
+        before = Q9K_ModDirGetU16(slot + Q9K_MODDIR_LINKCNT_OFF);
+
+        err = 0xFFFF;
+        checkU32("F$UnLoad(\"foo\") meldet Erfolg",
+                 Q9K_ModDirUnloadByName(0, "foo", &err), 1);
+        checkU32("F$UnLoad meldet dabei keinen Fehler", (Q9_u32)err, 0);
+        checkU32("F$UnLoad senkt den Linkzaehler um genau eins",
+                 (Q9_u32)Q9K_ModDirGetU16(slot + Q9K_MODDIR_LINKCNT_OFF),
+                 before - 1);
+
+        err = 0;
+        checkU32("F$UnLoad auf ein unbekanntes Modul schlaegt fehl",
+                 Q9K_ModDirUnloadByName(0, "gibtsnicht", &err), 0);
+        checkU32("F$UnLoad meldet dabei E_MNF", (Q9_u32)err, 0x00DDU);
+
+        err = 0;
+        checkU32("F$UnLoad mit Null-Namenszeiger schlaegt fehl",
+                 Q9K_ModDirUnloadByName(0, 0, &err), 0);
+        checkU32("F$UnLoad meldet dabei ebenfalls E_MNF", (Q9_u32)err, 0x00DDU);
+
+        /* Ein falscher Typfilter darf denselben Namen NICHT treffen --
+         * gleiche Filterregel wie bei F$Link. */
+        err = 0;
+        checkU32("F$UnLoad mit unpassendem Typfilter trifft nicht",
+                 Q9K_ModDirUnloadByName(0x0101, "foo", &err), 0);
+    }
+
+    /* F$CRC (Callcode 0x17). Staerkster verfuegbarer Nachweis: der CRC
+     * ueber ein ECHTES, von der Microware-Toolchain gebautes Modul --
+     * einschliesslich seiner drei eigenen CRC-Bytes -- muss exakt die
+     * dokumentierte Konstante CRCCon ($00800FE3, 68k_tech.pdf S.391 und
+     * MWOS/OS9/SRC/DEFS/module.a) ergeben. Die Bytes unten sind eine
+     * Momentaufnahme eines gebauten Moduls; sie muessen nicht aktuell
+     * gehalten werden, da die Aussage fuer genau diese Bytes gilt. */
+    {
+        static const unsigned char realModule[] = {
+    0x4A, 0xFC, 0x00, 0x01, 0x00, 0x00, 0x00, 0xA6, 0x00, 0x01, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x48, 0x05, 0x55, 0x01, 0x01, 0x00, 0x01, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xB1, 0xB9,
+    0x00, 0x00, 0x00, 0x52, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
+    0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x92, 0x00, 0x00, 0x00, 0x9A,
+    0x68, 0x65, 0x6C, 0x6C, 0x6F, 0x73, 0x76, 0x63, 0x00, 0x00, 0x70, 0x01,
+    0x22, 0x3C, 0x00, 0x00, 0x00, 0x21, 0x41, 0xFA, 0x00, 0x14, 0x4E, 0x40,
+    0x00, 0x8C, 0x65, 0x00, 0x00, 0x08, 0x72, 0x00, 0x4E, 0x40, 0x00, 0x06,
+    0x4E, 0x40, 0x00, 0x06, 0x48, 0x61, 0x6C, 0x6C, 0x6F, 0x20, 0x61, 0x75,
+    0x73, 0x20, 0x65, 0x69, 0x6E, 0x65, 0x6D, 0x20, 0x65, 0x63, 0x68, 0x74,
+    0x65, 0x6E, 0x20, 0x50, 0x72, 0x6F, 0x67, 0x72, 0x61, 0x6D, 0x6D, 0x21,
+    0x0D, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8F, 0xFF, 0x92,
+        };
+        static unsigned char patched[sizeof(realModule)];
+        Q9_u32 accum;
+        Q9_u32 half;
+        unsigned i;
+
+        accum = Q9K_CrcAccumulate(0xFFFFFFFFUL,
+                                  (Q9_u32)(unsigned long)realModule,
+                                  (Q9_u32)sizeof(realModule));
+        checkU32("F$CRC ueber ein echtes Modul ergibt CRCCon", accum, 0x00800FE3UL);
+
+        /* Der Akkumulator darf ueber mehrere Aufrufe fortgefuehrt werden
+         * (ausdruecklich dokumentiert) -- zweigeteilt muss dasselbe
+         * herauskommen. */
+        half = Q9K_CrcAccumulate(0xFFFFFFFFUL,
+                                 (Q9_u32)(unsigned long)realModule, 100);
+        half = Q9K_CrcAccumulate(half,
+                                 (Q9_u32)(unsigned long)(realModule + 100),
+                                 (Q9_u32)sizeof(realModule) - 100);
+        checkU32("F$CRC laesst sich ueber mehrere Aufrufe fortfuehren", half, accum);
+
+        checkU32("F$CRC ueber 0 Bytes laesst den Akkumulator unveraendert",
+                 Q9K_CrcAccumulate(0x00123456UL, (Q9_u32)(unsigned long)realModule, 0),
+                 0x00123456UL);
+
+        for (i = 0; i < sizeof(realModule); ++i)
+            patched[i] = realModule[i];
+        patched[40] ^= 0x01;
+        checkU32("F$CRC erkennt ein einzelnes gekipptes Bit",
+                 Q9K_CrcAccumulate(0xFFFFFFFFUL,
+                                   (Q9_u32)(unsigned long)patched,
+                                   (Q9_u32)sizeof(patched)) != 0x00800FE3UL,
+                 1);
+    }
+
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;
 }
