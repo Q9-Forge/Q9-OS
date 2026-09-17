@@ -61,8 +61,11 @@ through `Q9_D_Proc`, rather than relying on the caller's A4 value. `I$Close`
 also preserves the process-local path index while calculating the global
 descriptor address. This fixes the handler-side ambiguity and was rebuilt
 successfully for 68k; emulator startup reaches the native duplicate path
-without entering its bad-descriptor branch. A dedicated child-process marker
-run remains a follow-up because the direct-attach test is compile-time gated.
+without entering its bad-descriptor branch. The dedicated child-process
+regression now passes in Q9-Flux as the marker sequence `ODCc@#`: native
+`I$Open`, `I$Dup`, both native `I$Close` calls, followed by Microware
+`I$Attach` and `I$Detach`. The direct-attach startup switch is compile-time
+gated and remains disabled in normal development boots.
 
 ## F$ system calls
 
@@ -155,7 +158,7 @@ run remains a follow-up because the direct-attach test is compile-time gated.
 |---|---:|---|---|
 | 🔷 | `0x80` | I$Attach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; Q9-native device semantics remain open |
 | 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; broader lifetime semantics remain open |
-| 🟡 | `0x82` | I$Dup | Native path-table duplication, descriptor validation, and reference counting are implemented; full file-manager semantics remain open |
+| 🟡 | `0x82` | I$Dup | Native path-table duplication, descriptor validation, and reference counting are implemented and verified in the emulator; full file-manager semantics remain open |
 | ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; process-local `P$Path` publication is tested, while full pathname/device semantics remain open |
 | ❌ | `0x85` | I$MakDir | No Q9-OS implementation; only the Microware path exists |
@@ -168,7 +171,7 @@ run remains a follow-up because the direct-attach test is compile-time gated.
 | 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output is implemented and exercised by `hellosvc`; full device semantics remain open |
 | 🟡 | `0x8D` | I$GetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
 | 🟡 | `0x8E` | I$SetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |
-| 🟡 | `0x8F` | I$Close | Native path-table removal, descriptor validation, and release with reference counting are implemented; full file-manager close semantics remain open |
+| 🟡 | `0x8F` | I$Close | Native path-table removal, descriptor validation, and release with reference counting are implemented and verified in the emulator; full file-manager close semantics remain open |
 | 🟡 | `0x92` | I$SGetSt | Minimal Q9-native `SS_Opt` support for direct system paths; permission, device-name, and file-manager semantics remain open |
 
 ## Current interpretation

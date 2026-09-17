@@ -6,9 +6,9 @@
 * "c0", link cfide and RBF, return the device-table address in A2, and allow
 * that entry to be detached again.
 *
-* The module uses the startup name "hellosvc" when selected for a boot run;
-* the build output remains named iattachsvc so it can replace the normal
-* hello test module temporarily without changing the kernel startup code.
+* The module name is "iattachsvc" so the kernel's direct-attach test can
+* find it by its real module name.  It is independent of the normal
+* "hellosvc" startup module.
 *
 * Result markers are written directly to the DUART so the test remains useful
 * even when the I/O path under test is the failing path:
@@ -25,7 +25,7 @@ Q9Objct                 equ     1
 Q9K_AttachEdition       equ     1
 Q9K_AttachStackSize     equ     $1000
 
-        psect   hellosvc,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_AttachEdition,Q9K_AttachStackSize,Q9K_AttachStart
+        psect   iattachsvc,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_AttachEdition,Q9K_AttachStackSize,Q9K_AttachStart
 
         vsect
 Q9K_AttachData:
