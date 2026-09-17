@@ -30,12 +30,20 @@ scheduler output characters without an exception, illegal instruction, or
 external trap return path with the present Microware I/O modules. Native Q9
 I/O replacements remain future work.
 
+The current `I$ChgDir("/dd")` measurement reaches its return PC again with
+`D0=$00000005` and `D1=$00008200`; it does not hang in the external IOMan
+call. The isolated `date` test reaches `F$Load("/dd/CMDS/date")` without an
+exception, but the load does not return in the current test window. CF
+tracing shows repeated reads of the same directory/file sector (`LBA 65`),
+so the remaining issue is currently classified as an RBF directory/position
+advance problem in the external `F$Load` path.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
 | ✅ | `0x00` | F$Link | Kernel module lookup/link path implemented and exercised |
-| 🟡 | `0x01` | F$Load | Microware path exists, but no complete current Q9 emulator verification |
+| 🟡 | `0x01` | F$Load | `echo`/`csl` setup is exercised; isolated `date` load loops on repeated CF sector `LBA 65` |
 | ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
 | ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
