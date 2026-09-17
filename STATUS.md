@@ -74,6 +74,13 @@ Microware attach/detach checks. Execution-directory storage (`d0=1`) uses the
 parallel `P$DIO` slot; full device and file-manager directory resolution is
 still open.
 
+The native console I/O regression now also exercises `I$Write`: marker
+sequence `HOwWDCce@#` shows `I$ChgDir`, a real one-byte write (`wW`), the
+native path lifecycle, and Microware attach/detach. An attempted write on
+unused path 31 is rejected (`e`) before any output is emitted. The shared
+native path validator now checks process-local path bounds, descriptor
+liveness, and read/write mode bits.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
@@ -172,8 +179,8 @@ still open.
 | 🟡 | `0x86` | I$ChgDir | Native data/execution directory storage is implemented and emulator-tested; device and file-manager resolution remain open |
 | ❌ | `0x87` | I$Delete | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x88` | I$Seek | Sequential Q9-native paths accept seek as a validated no-op; random-access semantics remain open |
-| 🟡 | `0x89` | I$Read | Minimal Q9-native blocking console input is implemented; full device semantics remain open |
-| 🟡 | `0x8A` | I$Write | Minimal Q9-native console output is implemented; full device semantics remain open |
+| 🟡 | `0x89` | I$Read | Minimal Q9-native blocking console input with path and read-mode validation is implemented; full device semantics remain open |
+| 🟡 | `0x8A` | I$Write | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
 | 🟡 | `0x8B` | I$ReadLn | Minimal Q9-native blocking line input is implemented; editing and device semantics remain open |
 | 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output is implemented and exercised by `hellosvc`; full device semantics remain open |
 | 🟡 | `0x8D` | I$GetStt | Minimal Q9-native `SS_Opt` support is implemented; other status codes remain open |

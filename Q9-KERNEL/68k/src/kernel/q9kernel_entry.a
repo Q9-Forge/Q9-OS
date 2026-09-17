@@ -4379,12 +4379,65 @@ Q9K_SysFIWritLn_Ok:
         rts
 
 *******************************************************************************
+* Q9K_ValidateNativePath -- validate the current process path and access mode.
+*
+* IN:  d0.w = process-local path number, d4.w = required mode bits
+* OUT: carry clear on success; carry set with d1.w = OS-9 error code
+*      on failure.  d0/d2/d3/a0/a1 are preserved.
+*******************************************************************************
+Q9K_ValidateNativePath:
+        movem.l d2-d3/a1,-(sp)
+        moveq   #0,d2
+        move.w  d0,d2
+        cmpi.l  #32,d2
+        bcc     Q9K_ValidateNativePath_BadPath
+        movea.l Q9_D_Proc,a1
+        move.l  a1,d3
+        beq     Q9K_ValidateNativePath_BadPath
+        adda.l  #$168,a1
+        add.w   d2,d2
+        move.w  (a1,d2.w),d3
+        beq     Q9K_ValidateNativePath_BadPath
+        cmpi.w  #3,d3
+        bcs     Q9K_ValidateNativePath_Ok
+        moveq   #0,d2
+        move.w  d3,d2
+        subq.l  #3,d2
+        lsl.l   #8,d2
+        movea.l Q9K_PATHPOOL_BASE_ADDR,a1
+        adda.l  d2,a1
+        tst.w   4(a1)
+        beq     Q9K_ValidateNativePath_BadPath
+        moveq   #0,d2
+        move.b  2(a1),d2                       * PD_MOD access flags
+        and.w   d4,d2
+        cmp.w   d4,d2
+        bne     Q9K_ValidateNativePath_BadMode
+Q9K_ValidateNativePath_Ok:
+        movem.l (sp)+,d2-d3/a1
+        andi    #$fe,ccr
+        rts
+Q9K_ValidateNativePath_BadMode:
+        movem.l (sp)+,d2-d3/a1
+        move.w  #$00cb,d1                     * E$BMODE: wrong access mode
+        ori     #1,ccr
+        rts
+Q9K_ValidateNativePath_BadPath:
+        movem.l (sp)+,d2-d3/a1
+        move.w  #$00c9,d1                     * E$BPNUM: bad path number
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
 * Q9K_SysFIWrite -- minimal native I$Write implementation (Callcode $8a).
 * Write exactly d1 bytes to the Q9 console path.  The complete device-specific
 * write protocol remains with the future native file managers.
 *******************************************************************************
 Q9K_SysFIWrite:
-        movem.l d0-d2/a0,-(sp)
+        movem.l d0-d2/d4/a0,-(sp)
+        moveq   #2,d4                           * write access
+        bsr     Q9K_ValidateNativePath
+        bcs     Q9K_SysFIWrite_Fail
         move.l  d1,d2
 Q9K_SysFIWrite_Loop:
         tst.l   d2
@@ -4394,8 +4447,12 @@ Q9K_SysFIWrite_Loop:
         subq.l  #1,d2
         bra.s   Q9K_SysFIWrite_Loop
 Q9K_SysFIWrite_Ok:
-        movem.l (sp)+,d0-d2/a0
+        movem.l (sp)+,d0-d2/d4/a0
         andi    #$fe,ccr
+        rts
+Q9K_SysFIWrite_Fail:
+        movem.l (sp)+,d0-d2/d4/a0
+        ori     #1,ccr
         rts
 
 *******************************************************************************
@@ -4406,7 +4463,10 @@ Q9K_SysFIWrite_Ok:
 * work.
 *******************************************************************************
 Q9K_SysFIRead:
-        movem.l d0-d2/a0/a1,-(sp)
+        movem.l d0-d2/d4/a0/a1,-(sp)
+        moveq   #1,d4                           * read access
+        bsr     Q9K_ValidateNativePath
+        bcs     Q9K_SysFIRead_Fail
         move.l  d1,d2
         movea.l #Q9_IO_DUART_SRA,a1
 Q9K_SysFIRead_Loop:
@@ -4421,8 +4481,12 @@ Q9K_SysFIRead_Wait:
         subq.l  #1,d2
         bra.s   Q9K_SysFIRead_Loop
 Q9K_SysFIRead_Ok:
-        movem.l (sp)+,d0-d2/a0/a1
+        movem.l (sp)+,d0-d2/d4/a0/a1
         andi    #$fe,ccr
+        rts
+Q9K_SysFIRead_Fail:
+        movem.l (sp)+,d0-d2/d4/a0/a1
+        ori     #1,ccr
         rts
 
 *******************************************************************************
