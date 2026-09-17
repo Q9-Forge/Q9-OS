@@ -200,6 +200,54 @@ deliberately runs `F$SetCRC` over a private module image, never over a resident
 module — the manual warns that altering a known module's header makes it
 inaccessible to every other process.
 
+`F$Julian` (`0x20`) and `F$Gregor` (`0x54`) convert between field-packed
+date/time (`yyyymmdd`, `00hhmmss`) and the OS-9 Julian day number. The zero
+point is the crux and is not guessed: `MWOS/SRC/DEFS/time.h` defines `JULBASE
+2440587` as the Julian date for 1970-01-01, one below the astronomical day
+number for that date — consistent with the manual's note that OS-9 changes
+Julian dates at midnight rather than noon. The manual's weekday formula
+`MOD(Julian+2, 7)` confirms this zero point for 1970-01-01, 2000-01-01 and the
+1582-10-15 changeover, and fails for the astronomical value on all three. The
+changeover is implemented as documented, with the Julian leap rule before it.
+The host test proves `F$Gregor` is the exact inverse by round-tripping every one
+of the 225798 days from 1582-10-15 to 2200-12-31. The emulator regression
+extended to `HOwWl\rLGSDCcergsIPpNnxMmUVuRYyDdBTJGj@#`.
+
+These two calls needed the first real 32-bit division in the kernel. Every
+other C file divides only by powers of two, which the compiler turns into
+shifts, so `__udivide` and `__umodulo` never existed — plain 68000 has no
+instruction for it. Both now live in `q9kernel_entry.a` next to `__multiply`,
+with the same register convention; the live `F$Julian` check against JULBASE
+doubles as the proof of that convention, since swapped operands could never
+produce 2440587.
+
+**A latent boot-layout bug surfaced and was fixed on the way.** The new code
+grew the kernel by about 2k, and the emulator then crashed before the first
+marker (`Vektor=4`/`11`, PC inside the `cfide` CompactFlash driver, on a data
+table rather than code). An unmodified `main` kernel plus 2k of pure padding
+crashed identically, which ruled out the new code and identified a pure size
+effect. Root cause: the boot/supervisor stack sat at a fixed `$10000..$18000`
+under a comment promising the boot file could grow to `$10000` — but the boot
+file has long since grown to about `$56000`. The stack had therefore been
+sitting in the middle of the boot modules for weeks, harmless only because it
+grows down from `$18000` and uses a few KB; once the kernel grew, `cfide`
+landed at `$17b82..$18138`, directly under the stack top, and the first pushes
+during boot overwrote its code. The arena had already been made dynamic on
+2026-09-15; the stack had not. The stack now sits at the end of RAM, taken
+from the total-RAM value the boot ROM passes in `D0` — the only two
+instructions before it are the SR write and saving the old SP — and the arena
+reserves the last 32k for it. The zones are now Globals / boot file / arena /
+stack, and no fixed address remains that could go stale again.
+
+A related finding is recorded for whoever fixes the underlying A4-origin bug
+one day: the 12-byte dead zone that was meant to cover file offset `$3ac`
+(where RBF/SCF blindly `addq.l #1,$3ac(a4)` with `a4` pointing at this kernel)
+has been sitting about 612 bytes further back for some time, in kernels that
+boot perfectly well. The symptom guard is therefore displaced and inert; the
+kernel survives because `addq`/`subq` cancel and nothing critical happens to
+live at `$3ac`. `build.sh` now prints the bytes at `$3ac` after every link as a
+reminder, without failing the build.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -246,7 +294,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x1D` | F$UnLoad | Same lookup rule as F$Link and the same counter as F$UnLink, keyed by module name |
 | ❌ | `0x1E` | F$RTE | Not implemented |
 | ❌ | `0x1F` | F$GPrDBT | Not implemented |
-| ❌ | `0x20` | F$Julian | Not implemented |
+| ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | 🟡 | `0x21` | F$TLink | Trap linking works; unlink and complete lifetime handling remain open |
 | ❌ | `0x22` | F$DFork | Not implemented |
 | ❌ | `0x23` | F$DExec | Not implemented |
@@ -278,7 +326,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x4E` | F$FModul | Not implemented |
 | ❌ | `0x52` | F$SysDbg | Not implemented |
 | ❌ | `0x53` | F$Event | Not implemented |
-| ❌ | `0x54` | F$Gregor | Not implemented |
+| ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ❌ | `0x55` | F$SysID | Not implemented |
 | ❌ | `0x56` | F$Alarm | Not implemented |
 | ❌ | `0x57` | F$SigMask | Not implemented |
