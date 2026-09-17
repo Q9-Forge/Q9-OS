@@ -33,6 +33,11 @@
 *   N = F$CmpNam matched two identical names (Callcode 0x11)
 *   n = F$CmpNam matched a wildcard pattern
 *   x = F$CmpNam correctly rejected two different names
+*   M = F$CpyMem copied from a live process and the bytes arrived (0x1B)
+*   m = F$CpyMem on an invalid PID correctly rejected
+*   U = F$SUser changed the caller's own ID while still 0.0 (0x1C)
+*   V = F$ID reports the ID that F$SUser just set
+*   u = a second F$SUser, no longer 0.0, correctly refused
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -212,6 +217,56 @@ Q9K_AttachStart:
         moveq   #'x',d7
         move.b  d7,$FFFFF006
 
+* F$CpyMem: d0.w = owning PID, d1.l = byte count, (a0) = source in that
+* process, (a1) = own destination buffer.
+        move.w  d3,d0                          * own PID from F$ID above
+        moveq   #4,d1
+        lea     Q9K_CmpTarget(pc),a0
+        lea     Q9K_CopyBuffer(pc),a1
+        trap    #0
+        dc.w    $001b                          * F$CpyMem
+        bcs     Q9K_NativeFailed
+        lea     Q9K_CopyBuffer(pc),a0
+        move.b  (a0),d7                        * must be 's' of "startup"
+        cmpi.b  #'s',d7
+        bne     Q9K_NativeFailed
+        moveq   #'M',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #99,d0                         * invalid PID must be rejected
+        moveq   #4,d1
+        lea     Q9K_CmpTarget(pc),a0
+        lea     Q9K_CopyBuffer(pc),a1
+        trap    #0
+        dc.w    $001b                          * F$CpyMem
+        bcc     Q9K_NativeFailed
+        moveq   #'m',d7
+        move.b  d7,$FFFFF006
+
+* F$SUser: d1.l = desired group/user ID.  The process starts as 0.0, so
+* the first change is allowed and the second one is not.
+        move.l  #$00030007,d1
+        trap    #0
+        dc.w    $001c                          * F$SUser
+        bcs     Q9K_NativeFailed
+        moveq   #'U',d7
+        move.b  d7,$FFFFF006
+
+        trap    #0
+        dc.w    $000c                          * F$ID -> d1.l = group/user
+        bcs     Q9K_NativeFailed
+        cmpi.l  #$00030007,d1                  * F$ID must report the new ID
+        bne     Q9K_NativeFailed
+        moveq   #'V',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #0,d1                          * no longer 0.0 -> must be refused
+        trap    #0
+        dc.w    $001c                          * F$SUser
+        bcc     Q9K_NativeFailed
+        moveq   #'u',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
         trap    #0
@@ -267,6 +322,9 @@ Q9K_CmpWild:
 
 Q9K_CmpOther:
         dc.b    "stop"
+
+Q9K_CopyBuffer:
+        dc.b    0,0,0,0,0,0,0,0
 
 Q9K_WriteByte:
         dc.b    "w"

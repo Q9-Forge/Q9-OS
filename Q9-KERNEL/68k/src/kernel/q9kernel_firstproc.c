@@ -171,6 +171,15 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
  * State- und Prioritaets-Bytes, weshalb der Treiber die ID $6105 sah
  * ('a' = STATE_ACTIVE, 5 = Prioritaet) und niemanden weckte. */
 #define Q9K_PROCDESC_ID_OFF      0x00UL
+/* P$User ($14, zwei Worte: Gruppe im oberen, Benutzer im unteren) --
+ * Offset Feld fuer Feld aus dem realen Prozesslayout aufsummiert (org 0
+ * ab P$ID: ID/PID/SID/CID je ein Wort, dann P$sp/P$usp/P$MemSiz je ein
+ * Langwort). Passt damit lueckenlos zu den bereits uebernommenen
+ * Nachbarfeldern P$Prior ($18) und P$State ($1c). Geschrieben wird es
+ * von F$SUser (s. q9kernel_procapi.c), gelesen von F$ID. */
+#ifndef Q9K_PROCDESC_USER_OFF
+#define Q9K_PROCDESC_USER_OFF    0x14UL
+#endif
 #define Q9K_PROCDESC_PATH_OFF    0x168UL
 #define Q9K_PROCDESC_PATH_COUNT  32UL
 #ifndef Q9K_FORK_SCRATCH_NUMPATHS
@@ -460,6 +469,11 @@ Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority)
      * s. q9kernel_cinit.c) direkt aus Q9K_CInit heraus aufgerufen, nicht
      * ueber F$Fork. */
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
+    /* Gruppe/Benutzer 0.0 = Superuser. Pool-Slots werden beim Anlegen
+     * NICHT genullt (Q9K_ProcPoolAlloc reicht den Slot unveraendert
+     * durch), ein wiederverwendeter Slot traegt sonst die ID seines
+     * Vorgaengers. */
+    Q9K_SetU32(desc + Q9K_PROCDESC_USER_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, stackBase);
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF, Q9K_PROC_STACK_SIZE);
@@ -808,6 +822,11 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetU16(desc + Q9K_PROCDESC_ID_OFF, Q9K_ProcIdForDesc(desc));
     Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, (Q9_u8)priority);
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, parentDesc);   /* NACHTRAG 2026-08-22 */
+    /* Gruppe/Benutzer vom Elternprozess erben -- reale F$Fork-Semantik.
+     * Ohne Elternprozess (sollte bei F$Fork nicht vorkommen) bleibt es
+     * bei 0.0 = Superuser. */
+    Q9K_SetU32(desc + Q9K_PROCDESC_USER_OFF,
+               parentDesc ? Q9K_GetU32(parentDesc + Q9K_PROCDESC_USER_OFF) : 0UL);
 
     /* NACHTRAG 2026-09-04: Pfade vom Elternprozess erben.
      *

@@ -119,6 +119,33 @@ every `*`. This version compares iteratively with a single backtracking point
 and constant memory, so no pattern can overflow it and `E$StkOvf` is never
 reported. Every pattern the original accepts is accepted here too.
 
+`F$SUser` (call code `0x1C`) and `F$CpyMem` (`0x1B`) round out the process API.
+`F$SUser` required a real group/user field first: `P$User` at descriptor offset
+`$14` now exists, is set to 0.0 on process creation, inherited across `F$Fork`,
+and returned by `F$ID`, which previously reported a hardcoded zero. Of the three
+documented cases in which a change is permitted, only the first ("user 0.0 may
+change freely") is implemented; the other two need the owning module's user
+number, a field this kernel does not yet carry, so they return `E$Permit` rather
+than pretending to allow the change.
+
+`F$CpyMem` validates the owning process ID and then copies. Its real purpose in
+OS-9 is translating an address out of a foreign address space; this kernel runs
+without address separation, so the translation is simply not needed yet and the
+PID check is the only load-bearing semantics. When address spaces arrive, the
+translation belongs exactly there and callers stay unchanged.
+
+The emulator regression extended to `HOwWl\rLGSDCcergsIPpNnxMmUVu@#`: a copy
+whose bytes arrive, a rejected invalid PID, an accepted ID change, `F$ID`
+reporting that new ID, and a second change correctly refused. A separate boot
+with the regression switch disabled reported `Vektor=0`.
+
+That live test caught a real bridge bug that the host tests had missed: the
+assembler reads success and error as the low word of a 32-bit cell (`+2`), so
+the C side must write them at full width. Both bridges used a 16-bit write,
+which lands in the high word, and every call therefore looked like a failure to
+the assembler. The host suite now covers the bridges themselves, not just the
+comparison logic underneath them.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -160,8 +187,8 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x18` | F$GPrDsc | Not implemented |
 | ❌ | `0x19` | F$GBlkMp | Not implemented |
 | ❌ | `0x1A` | F$GModDr | Not implemented |
-| ❌ | `0x1B` | F$CpyMem | No registered syscall implementation |
-| ❌ | `0x1C` | F$SUser | Not implemented |
+| ✅ | `0x1B` | F$CpyMem | Copy with owner-PID validation; no address translation is needed while all processes share one flat address space |
+| ✅ | `0x1C` | F$SUser | Changes the caller's own group/user ID in the process descriptor; only the documented "user 0.0 may change freely" case is implemented |
 | ❌ | `0x1D` | F$UnLoad | Not implemented |
 | ❌ | `0x1E` | F$RTE | Not implemented |
 | ❌ | `0x1F` | F$GPrDBT | Not implemented |

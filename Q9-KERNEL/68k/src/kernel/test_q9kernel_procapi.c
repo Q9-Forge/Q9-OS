@@ -33,6 +33,21 @@ static unsigned char g_pool[4 * 0x400];
 #define Q9K_SPRIOR_SCRATCH_PRIORITY   ((unsigned long)(g_globals + 0x1C0))
 #define Q9K_SPRIOR_SCRATCH_ERROR      ((unsigned long)(g_globals + 0x1E0))
 #define Q9K_SPRIOR_SCRATCH_SUCCESS    ((unsigned long)(g_globals + 0x200))
+#define Q9K_SUSER_SCRATCH_GROUPUSER   ((unsigned long)(g_globals + 0x220))
+#define Q9K_SUSER_SCRATCH_ERROR       ((unsigned long)(g_globals + 0x240))
+#define Q9K_SUSER_SCRATCH_SUCCESS     ((unsigned long)(g_globals + 0x260))
+#define Q9K_CPYMEM_SCRATCH_PID        ((unsigned long)(g_globals + 0x280))
+#define Q9K_CPYMEM_SCRATCH_COUNT      ((unsigned long)(g_globals + 0x2A0))
+#define Q9K_CPYMEM_SCRATCH_SRC        ((unsigned long)(g_globals + 0x2C0))
+#define Q9K_CPYMEM_SCRATCH_DST        ((unsigned long)(g_globals + 0x2E0))
+#define Q9K_CPYMEM_SCRATCH_ERROR      ((unsigned long)(g_globals + 0x300))
+#define Q9K_CPYMEM_SCRATCH_SUCCESS    ((unsigned long)(g_globals + 0x320))
+/* P$User liegt real auf $14 und ist dort genau 4 Byte breit. Auf diesem
+ * Host ist Q9_u32 aber 8 Byte breit, ein Zugriff wuerde also bis $1B
+ * reichen und die Nachbarfelder P$Prior ($19) und P$Age ($1A)
+ * ueberschreiben -- gleiche Grosszuegigkeit wie in
+ * test_q9kernel_firstproc.c, betrifft NUR diesen Test. */
+#define Q9K_PROCDESC_USER_OFF         0x300UL
 
 #include "q9kernel_procapi.c"
 
@@ -128,6 +143,110 @@ int main(void)
     check("F$SPrior-Bridge meldet Erfolg trotz Wort-Prioritaet", Q9K_GetU16(Q9K_SPRIOR_SCRATCH_SUCCESS), 1);
     check("F$SPrior schneidet die Prioritaet auf ein Byte ab",
           (Q9_u32)Q9K_GetU8(first + Q9K_PROCDESC_PRIORITY_OFF), 0x34);
+
+    /* F$SUser (Callcode 0x1C): nur Benutzer 0.0 darf die eigene ID
+     * beliebig aendern, danach ist der Weg zurueck versperrt. */
+    {
+        Q9_u16 err = 0xFFFF;
+
+        Q9K_SetU32(first + Q9K_PROCDESC_USER_OFF, 0);
+        check("F$SUser als 0.0 wird angenommen",
+              (Q9_u32)Q9K_ProcSUser(first, 0x00030007UL, &err), 1);
+        check("F$SUser legt Gruppe/Benutzer im Deskriptor ab",
+              Q9K_GetU32(first + Q9K_PROCDESC_USER_OFF), 0x00030007UL);
+
+        err = 0;
+        check("F$SUser als Nicht-0.0 wird abgelehnt",
+              (Q9_u32)Q9K_ProcSUser(first, 0, &err), 0);
+        check("F$SUser meldet dabei E$Permit", (Q9_u32)err, Q9K_E_PERMIT);
+        check("F$SUser laesst die ID bei Ablehnung unveraendert",
+              Q9K_GetU32(first + Q9K_PROCDESC_USER_OFF), 0x00030007UL);
+
+        err = 0;
+        check("F$SUser ohne aktuellen Prozess meldet Fehlschlag",
+              (Q9_u32)Q9K_ProcSUser(0, 1, &err), 0);
+        check("F$SUser ohne aktuellen Prozess meldet E$PrcID", (Q9_u32)err, Q9K_E_PRCID);
+
+        /* F$ID muss jetzt das echte Feld liefern, nicht mehr fest 0. */
+        Q9K_SetU32(Q9_D_PROC, first);
+        Q9K_SysIDImpl();
+        check("F$ID liefert die per F$SUser gesetzte Gruppe/Benutzer",
+              Q9K_GetU32(Q9K_ID_SCRATCH_GROUPUSER), 0x00030007UL);
+
+        Q9K_SetU32(first + Q9K_PROCDESC_USER_OFF, 0);
+    }
+
+    /* F$CpyMem (Callcode 0x1B): PID pruefen, dann kopieren. */
+    {
+        static unsigned char srcBuf[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        static unsigned char dstBuf[8];
+        Q9_u16 err = 0xFFFF;
+
+        memset(dstBuf, 0, sizeof(dstBuf));
+        check("F$CpyMem mit gueltiger PID meldet Erfolg",
+              (Q9_u32)Q9K_ProcCpyMem(1, 4, (Q9_u32)(unsigned long)srcBuf,
+                                     (Q9_u32)(unsigned long)dstBuf, &err), 1);
+        check("F$CpyMem kopiert genau die angeforderte Byteanzahl",
+              (Q9_u32)dstBuf[3], 4);
+        check("F$CpyMem laesst das Byte dahinter unberuehrt", (Q9_u32)dstBuf[4], 0);
+
+        err = 0;
+        memset(dstBuf, 0, sizeof(dstBuf));
+        check("F$CpyMem mit freier PID meldet Fehlschlag",
+              (Q9_u32)Q9K_ProcCpyMem(4, 4, (Q9_u32)(unsigned long)srcBuf,
+                                     (Q9_u32)(unsigned long)dstBuf, &err), 0);
+        check("F$CpyMem meldet dabei E$PrcID", (Q9_u32)err, Q9K_E_PRCID);
+        check("F$CpyMem kopiert bei abgelehnter PID nichts", (Q9_u32)dstBuf[0], 0);
+
+        err = 0xFFFF;
+        check("F$CpyMem mit Laenge 0 ist ein gueltiger Leerlauf",
+              (Q9_u32)Q9K_ProcCpyMem(1, 0, 0, 0, &err), 1);
+        check("F$CpyMem meldet dabei keinen Fehler", (Q9_u32)err, 0);
+    }
+
+    /* Die Scratch-Bruecken selbst. Der Assembler liest Erfolg und Fehler
+     * als unteres Wort einer 32-Bit-Zelle ("+2"), die C-Seite MUSS sie
+     * deshalb mit der vollen Breite schreiben. Ein SetU16 traefe das
+     * obere Wort, und jeder Aufruf saehe fuer den Assembler wie ein
+     * Fehlschlag aus -- genau dieser Fehler war live zu sehen, bevor es
+     * diese beiden Testbloecke gab. */
+    {
+        static unsigned char srcBuf[4] = { 'Q', '9', 'O', 'S' };
+        static unsigned char dstBuf[4];
+
+        Q9K_SetU32(first + Q9K_PROCDESC_USER_OFF, 0);
+        Q9K_SetU32(Q9_D_PROC, first);
+        Q9K_SetU32(Q9K_SUSER_SCRATCH_GROUPUSER, 0x00010002UL);
+        Q9K_SysSUserImpl();
+        check("F$SUser-Bridge meldet Erfolg in voller Zellbreite",
+              Q9K_GetU32(Q9K_SUSER_SCRATCH_SUCCESS), 1);
+        check("F$SUser-Bridge hat die ID wirklich gesetzt",
+              Q9K_GetU32(first + Q9K_PROCDESC_USER_OFF), 0x00010002UL);
+
+        Q9K_SysSUserImpl();   /* jetzt nicht mehr 0.0 */
+        check("F$SUser-Bridge meldet den zweiten Versuch als Fehlschlag",
+              Q9K_GetU32(Q9K_SUSER_SCRATCH_SUCCESS), 0);
+        check("F$SUser-Bridge legt E$Permit in voller Zellbreite ab",
+              Q9K_GetU32(Q9K_SUSER_SCRATCH_ERROR), Q9K_E_PERMIT);
+        Q9K_SetU32(first + Q9K_PROCDESC_USER_OFF, 0);
+
+        memset(dstBuf, 0, sizeof(dstBuf));
+        Q9K_SetU32(Q9K_CPYMEM_SCRATCH_PID, 1);
+        Q9K_SetU32(Q9K_CPYMEM_SCRATCH_COUNT, 4);
+        Q9K_SetU32(Q9K_CPYMEM_SCRATCH_SRC, (Q9_u32)(unsigned long)srcBuf);
+        Q9K_SetU32(Q9K_CPYMEM_SCRATCH_DST, (Q9_u32)(unsigned long)dstBuf);
+        Q9K_SysCpyMemImpl();
+        check("F$CpyMem-Bridge meldet Erfolg in voller Zellbreite",
+              Q9K_GetU32(Q9K_CPYMEM_SCRATCH_SUCCESS), 1);
+        check("F$CpyMem-Bridge hat wirklich kopiert", (Q9_u32)dstBuf[3], 'S');
+
+        Q9K_SetU32(Q9K_CPYMEM_SCRATCH_PID, 4);   /* freier Slot */
+        Q9K_SysCpyMemImpl();
+        check("F$CpyMem-Bridge meldet freie PID als Fehlschlag",
+              Q9K_GetU32(Q9K_CPYMEM_SCRATCH_SUCCESS), 0);
+        check("F$CpyMem-Bridge legt E$PrcID in voller Zellbreite ab",
+              Q9K_GetU32(Q9K_CPYMEM_SCRATCH_ERROR), Q9K_E_PRCID);
+    }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;

@@ -70,6 +70,9 @@ typedef char Q9K_ProcDescShiftMatchesSize[
 #ifndef Q9K_PROCDESC_PRIORITY_OFF
 #define Q9K_PROCDESC_PRIORITY_OFF 0x19UL
 #endif
+#ifndef Q9K_PROCDESC_USER_OFF
+#define Q9K_PROCDESC_USER_OFF 0x14UL  /* P$User, s. q9kernel_firstproc.c */
+#endif
 
 /* Direkt hinter den I$Open-Scratch-Feldern.  $1370/$1374 sind noch
  * temporaere Diagnosefelder, daher beginnt die dauerhafte Prozess-API
@@ -121,6 +124,39 @@ typedef char Q9K_ProcDescShiftMatchesSize[
 #endif
 
 #define Q9K_E_PRCID 0x00E0U /* errno.h: invalid process ID (E$IPrcID) */
+#define Q9K_E_PERMIT 0x00A4U /* errno.h: EOS_PERMIT, "must be super user" */
+
+/* F$SUser-Scratch (2026-09-17): hinter dem F$CmpNam-Block
+ * ($18B0-$18C0, q9kernel_iopath.c). */
+#ifndef Q9K_SUSER_SCRATCH_GROUPUSER
+#define Q9K_SUSER_SCRATCH_GROUPUSER 0x18C4UL /* Q9_u32, d1.l EIN */
+#endif
+#ifndef Q9K_SUSER_SCRATCH_ERROR
+#define Q9K_SUSER_SCRATCH_ERROR     0x18C8UL /* Q9_u32, d1.w AUS bei Fehler */
+#endif
+#ifndef Q9K_SUSER_SCRATCH_SUCCESS
+#define Q9K_SUSER_SCRATCH_SUCCESS   0x18CCUL /* Q9_u32, 0/1 */
+#endif
+
+/* F$CpyMem-Scratch (2026-09-17), direkt hinter F$SUser. */
+#ifndef Q9K_CPYMEM_SCRATCH_PID
+#define Q9K_CPYMEM_SCRATCH_PID     0x18D0UL /* Q9_u32, d0.w EIN */
+#endif
+#ifndef Q9K_CPYMEM_SCRATCH_COUNT
+#define Q9K_CPYMEM_SCRATCH_COUNT   0x18D4UL /* Q9_u32, d1.l EIN */
+#endif
+#ifndef Q9K_CPYMEM_SCRATCH_SRC
+#define Q9K_CPYMEM_SCRATCH_SRC     0x18D8UL /* Q9_u32, (a0) EIN */
+#endif
+#ifndef Q9K_CPYMEM_SCRATCH_DST
+#define Q9K_CPYMEM_SCRATCH_DST     0x18DCUL /* Q9_u32, (a1) EIN */
+#endif
+#ifndef Q9K_CPYMEM_SCRATCH_ERROR
+#define Q9K_CPYMEM_SCRATCH_ERROR   0x18E0UL /* Q9_u32, d1.w AUS bei Fehler */
+#endif
+#ifndef Q9K_CPYMEM_SCRATCH_SUCCESS
+#define Q9K_CPYMEM_SCRATCH_SUCCESS 0x18E4UL /* Q9_u32, 0/1 */
+#endif
 
 #define Q9K_PROCDESC_STATE_ACTIVE   'a'
 #define Q9K_PROCDESC_STATE_WAITING  'w'
@@ -210,7 +246,11 @@ void Q9K_SysIDImpl(void)
     }
 
     Q9K_SetU16(Q9K_ID_SCRATCH_PID, pid);
-    Q9K_SetU32(Q9K_ID_SCRATCH_GROUPUSER, 0); /* Security-/User-Modell folgt separat. */
+    /* Seit F$SUser (2026-09-17) ein echtes Deskriptorfeld statt einer
+     * festen 0: P$User wird bei der Prozesserzeugung auf 0.0 gesetzt,
+     * von F$Fork vererbt und nur von F$SUser veraendert. */
+    Q9K_SetU32(Q9K_ID_SCRATCH_GROUPUSER,
+               Q9K_GetU32(desc + Q9K_PROCDESC_USER_OFF));
     Q9K_SetU16(Q9K_ID_SCRATCH_PRIORITY,
                 (Q9_u16)Q9K_GetU8(desc + Q9K_PROCDESC_PRIORITY_OFF));
     Q9K_SetU16(Q9K_ID_SCRATCH_SUCCESS, 1);
@@ -259,5 +299,128 @@ void Q9K_SysSPriorImpl(void)
     } else {
         Q9K_SetU16(Q9K_SPRIOR_SCRATCH_ERROR, err);
         Q9K_SetU16(Q9K_SPRIOR_SCRATCH_SUCCESS, 0);
+    }
+}
+
+/* Q9K_ProcSUser -- echte F$SUser-Kernlogik (Callcode $1C, "Set User ID
+ * Number"). Verifizierte ABI (68k_tech.pdf S. 516): d1.l = gewuenschte
+ * Gruppen-/Benutzer-ID, keine Ausgabe bei Erfolg, sonst Carry +
+ * d1.w = E$Permit ($A4).
+ *
+ * Die reale Beschreibung nennt drei Faelle, in denen der Wechsel erlaubt
+ * ist: Benutzer 0.0 darf beliebig wechseln; ein Primaermodul im Besitz
+ * von 0.0 darf beliebig wechseln; jedes Primaermodul darf auf die ID
+ * SEINES EIGENEN Modulbesitzers wechseln. Die beiden Modulfaelle
+ * brauchen den Besitzereintrag aus dem Modulkopf des laufenden
+ * Primaermoduls -- ein Feld, das dieser Kernel im Prozessdeskriptor noch
+ * nicht fuehrt. Umgesetzt ist deshalb NUR der erste Fall (0.0 darf
+ * alles), alles andere meldet sauber E$Permit statt einen der beiden
+ * anderen Faelle vorzutaeuschen. Praktisch aendert das heute nichts:
+ * jeder Prozess startet als 0.0 und erbt das bei F$Fork -- erst ein
+ * Prozess, der sich selbst heruntergestuft hat, sieht die Grenze.
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt).
+ */
+int Q9K_ProcSUser(Q9_u32 desc, Q9_u32 groupUser, Q9_u16 *outError)
+{
+    *outError = 0;
+
+    if (desc == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+
+    if (Q9K_GetU32(desc + Q9K_PROCDESC_USER_OFF) != 0UL) {
+        *outError = Q9K_E_PERMIT;
+        return 0;
+    }
+
+    Q9K_SetU32(desc + Q9K_PROCDESC_USER_OFF, groupUser);
+    return 1;
+}
+
+void Q9K_SysSUserImpl(void)
+{
+    Q9_u16 err = 0;
+
+    /* Diese beiden Zellen sind 32 Bit breit und werden vom Assembler mit
+     * "+2" (unteres Wort) gelesen -- deshalb SetU32, nicht SetU16.  Ein
+     * SetU16 wuerde das OBERE Wort treffen, die Bruecke saehe immer 0
+     * und meldete jeden Aufruf als Fehlschlag (live gefunden). */
+    if (Q9K_ProcSUser(Q9K_GetU32(Q9_D_PROC),
+                      Q9K_GetU32(Q9K_SUSER_SCRATCH_GROUPUSER),
+                      &err)) {
+        Q9K_SetU32(Q9K_SUSER_SCRATCH_SUCCESS, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_SUSER_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_SUSER_SCRATCH_SUCCESS, 0UL);
+    }
+}
+
+/* Q9K_ProcCpyMem -- echte F$CpyMem-Kernlogik (Callcode $1B, "Copy
+ * External Memory"). Verifizierte ABI (68k_tech.pdf S. 389): d0.w = PID
+ * des Besitzers des fremden Speichers, d1.l = Anzahl Bytes, (a0) =
+ * Quelladresse IM FREMDEN Prozess, (a1) = eigener Zielpuffer. Keine
+ * Ausgabe bei Erfolg.
+ *
+ * Was dieser Aufruf im realen OS-9 leistet, ist die Uebersetzung einer
+ * Adresse aus einem FREMDEN Adressraum. Dieser Kernel laeuft ohne
+ * Adressraumtrennung -- alle Prozesse sehen denselben flachen Speicher
+ * (kein SSM, keine MMU-Tabellen, s. F$Permit/F$Protect in STATUS.md).
+ * Die Uebersetzung entfaellt hier deshalb ersatzlos; echte Semantik hat
+ * nur die Pruefung, ob die angegebene PID ueberhaupt einen lebenden
+ * Prozess bezeichnet. Das ist bewusst so und keine Attrappe: sobald
+ * dieser Kernel Adressraeume trennt, gehoert die Uebersetzung GENAU
+ * hierher, und alle Aufrufer funktionieren unveraendert weiter.
+ *
+ * Kopiert wird vorwaerts und ohne Ueberlappungsbehandlung -- Quelle und
+ * Ziel sind laut Beschreibung fremder Speicher und eigener Puffer, also
+ * getrennt (anders als bei F$Move, das ausdruecklich verschiebt).
+ *
+ * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt).
+ */
+int Q9K_ProcCpyMem(Q9_u16 pid, Q9_u32 count, Q9_u32 srcAddr, Q9_u32 dstAddr,
+                   Q9_u16 *outError)
+{
+    volatile unsigned char       *dst;
+    const volatile unsigned char *src;
+    Q9_u32 i;
+
+    *outError = 0;
+
+    if (Q9K_ProcLookup(pid) == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+
+    if (count == 0)
+        return 1;
+
+    if (srcAddr == 0 || dstAddr == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+
+    src = (const volatile unsigned char *)srcAddr;
+    dst = (volatile unsigned char *)dstAddr;
+    for (i = 0; i < count; ++i)
+        dst[i] = src[i];
+
+    return 1;
+}
+
+void Q9K_SysCpyMemImpl(void)
+{
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcCpyMem((Q9_u16)Q9K_GetU32(Q9K_CPYMEM_SCRATCH_PID),
+                       Q9K_GetU32(Q9K_CPYMEM_SCRATCH_COUNT),
+                       Q9K_GetU32(Q9K_CPYMEM_SCRATCH_SRC),
+                       Q9K_GetU32(Q9K_CPYMEM_SCRATCH_DST),
+                       &err)) {
+        Q9K_SetU32(Q9K_CPYMEM_SCRATCH_SUCCESS, 1UL); /* 32 Bit, s. Q9K_SysSUserImpl */
+    } else {
+        Q9K_SetU32(Q9K_CPYMEM_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_CPYMEM_SCRATCH_SUCCESS, 0UL);
     }
 }
