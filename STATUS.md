@@ -56,6 +56,14 @@ the process-table entry, preventing a failed close from silently losing the
 path. The host regression suite and a fresh 68k emulator boot pass with
 these changes.
 
+The native `I$Dup` and `I$Close` handlers now resolve the process path table
+through `Q9_D_Proc`, rather than relying on the caller's A4 value. `I$Close`
+also preserves the process-local path index while calculating the global
+descriptor address. This fixes the handler-side ambiguity and was rebuilt
+successfully for 68k; emulator startup reaches the native duplicate path
+without entering its bad-descriptor branch. A dedicated child-process marker
+run remains a follow-up because the direct-attach test is compile-time gated.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
