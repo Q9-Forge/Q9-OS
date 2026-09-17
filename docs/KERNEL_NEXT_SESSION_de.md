@@ -10,6 +10,20 @@ Fall `echo` gefolgt von `date`.
 
 ## Einschätzung
 
+## Messstand 17.09.2026
+
+Der direkte Rücksprung aus dem externen `I$ChgDir("/dd")` ist jetzt live
+belegt: der Aufruf erreicht den Rücksprung-PC `0x0000caa6` wieder. Im
+gemessenen Lauf standen dabei `D0=0x00000005` und `D1=0x00008200`; der
+Aufruf hängt somit nicht im externen IOMan-Pfad. Die zuvor verwendete
+Testauswahl war jedoch nicht vollständig reproduzierbar: der
+Sysgo-Startup-Versuch wurde unabhängig von `Q9K_TestPrograms` immer
+gestartet und wartete auf die Shell. Dafür gibt es jetzt in
+`q9kernel_entry.a` den Compiletime-Schalter `Q9K_TestStartup` (Standard
+`0`), sodass `echo`/`date`-Regressionen den Startup-Versuch gezielt
+überspringen können; für die separate Startup-Untersuchung kann er auf `1`
+gesetzt werden. Ein abschließender isolierter `date`-Befund steht noch aus.
+
 Der 68k-Kernel ist ein laufender Integrationsprototyp mit Modulverwaltung,
 Prozessverwaltung, Scheduler, Speicherverwaltung und Anbindung an fremde
 OS-9-Komponenten. Laut letzter Übergabe läuft `echo` mit `csl`; `date`
