@@ -60,6 +60,15 @@ Q9K_AttachStart:
         move.b  d7,$FFFFF006
 
         move.w  d6,d0
+        moveq   #2,d1
+        lea     Q9K_LineText(pc),a0
+        trap    #0
+        dc.w    $008c                          * I$WritLn
+        bcs     Q9K_NativeFailed
+        moveq   #'L',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d6,d0
         trap    #0
         dc.w    $0082                          * I$Dup
         bcs     Q9K_NativeFailed
@@ -88,6 +97,15 @@ Q9K_AttachStart:
         dc.w    $008a                          * I$Write
         bcc     Q9K_NativeFailed
         moveq   #'e',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #31,d0                         * invalid path must not block
+        clr.l   d1
+        lea     Q9K_ReadBuffer(pc),a0
+        trap    #0
+        dc.w    $008b                          * I$ReadLn
+        bcc     Q9K_NativeFailed
+        moveq   #'r',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access
@@ -139,5 +157,11 @@ Q9K_DirName:
 
 Q9K_WriteByte:
         dc.b    "w"
+
+Q9K_LineText:
+        dc.b    "l",$0d
+
+Q9K_ReadBuffer:
+        dc.b    0
 
         endsect
