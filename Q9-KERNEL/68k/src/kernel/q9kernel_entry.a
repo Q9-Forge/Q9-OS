@@ -560,6 +560,14 @@ Q9K_GPrDscScratch_Buf      equ $1920      * Q9_u32, (a0) EIN
 Q9K_GPrDscScratch_Error    equ $1924      * Q9_u32, d1.w AUS bei Fehler
 Q9K_GPrDscScratch_Success  equ $1928      * Q9_u32, 0/1
 
+* F$Julian-/F$Gregor-Scratch (2026-09-17, s. q9kernel_date.c). Beide
+* Calls teilen sich die Zellen -- sie laufen nie gleichzeitig, und in
+* beiden sind Zeit und Datum zugleich Ein- UND Ausgabe.
+Q9K_DateScratch_Time       equ $1930      * Q9_u32, d0.l EIN/AUS
+Q9K_DateScratch_Date       equ $1934      * Q9_u32, d1.l EIN/AUS
+Q9K_DateScratch_Error      equ $1938      * Q9_u32, d1.w AUS bei Fehler
+Q9K_DateScratch_Success    equ $193C      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -1454,6 +1462,61 @@ __multiply:
 
         move.l  d4,d0                   * Ergebnis-Konvention: D0
         movem.l (sp)+,d2-d5
+        rts
+
+* __udivide / __umodulo -- die Divisions-Gegenstuecke zu __multiply,
+* aus demselben Grund noetig: reines 68000 hat keine DIVU.L (die kam wie
+* MULU.L erst mit dem 68020), also erzeugt der Compiler einen Aufruf.
+* Gebraucht seit q9kernel_date.c (F$Julian/F$Gregor) -- die uebrigen
+* C-Dateien teilen bisher ausschliesslich durch Zweierpotenzen, die der
+* Compiler selbst zu Schiebebefehlen aufloest, deshalb fiel das Fehlen
+* dieser beiden Symbole bis jetzt nicht auf.
+*
+* Registerkonvention wie bei __multiply uebernommen (D0 = linker
+* Operand, D1 = rechter, Ergebnis in D0). Anders als dort ist sie hier
+* NICHT aus der Zwischenassemblierung abgelesen, sondern angenommen --
+* und deshalb bewusst an einer Stelle geprueft, die bei einer falschen
+* Annahme zwingend auffaellt: der Live-Test rechnet den 1970-01-01 in
+* die julianische Tageszahl um und vergleicht mit JULBASE (2440587,
+* MWOS/SRC/DEFS/time.h). Jede vertauschte oder falsch gelesene
+* Operandenzuordnung ergibt dort einen anderen Wert.
+*
+* Algorithmus: klassische Restoring-Division, 32 Schritte Schieben und
+* bedingtes Subtrahieren -- nutzt nur Basisinstruktionen und laeuft
+* damit auf jeder 68k-Stufe. Divisor 0 liefert Quotient 0 und Rest =
+* Dividend, statt eine Exception auszuloesen: ein Kernel soll an einer
+* fehlerhaften Rechnung nicht sterben.
+__udivide:
+        bsr     Q9K_UDivMod
+        rts                             * Q9K_UDivMod liefert den Quotienten in d0
+__umodulo:
+        bsr     Q9K_UDivMod
+        move.l  d2,d0                   * stattdessen den Rest
+        rts
+
+* Gemeinsamer Kern: d0 = Dividend, d1 = Divisor.
+* AUS: d0 = Quotient, d2 = Rest. d3 ist Schleifenzaehler.
+Q9K_UDivMod:
+        movem.l d1/d3,-(sp)
+        moveq   #0,d2                   * Rest
+        tst.l   d1
+        beq     Q9K_UDivMod_Zero
+        moveq   #31,d3
+Q9K_UDivMod_Loop:
+        lsl.l   #1,d0                   * oberstes Dividendenbit -> X
+        roxl.l  #1,d2                   * und von unten in den Rest
+        cmp.l   d1,d2
+        bcs     Q9K_UDivMod_NoSub
+        sub.l   d1,d2
+        addq.l  #1,d0                   * Quotientenbit in die frei gewordene Stelle
+Q9K_UDivMod_NoSub:
+        dbra    d3,Q9K_UDivMod_Loop
+        movem.l (sp)+,d1/d3
+        rts
+Q9K_UDivMod_Zero:
+        move.l  d0,d2                   * Rest = Dividend
+        moveq   #0,d0                   * Quotient = 0
+        movem.l (sp)+,d1/d3
         rts
 
 * Q9K_TestProcA/Q9K_TestProcB -- zwei einfache Test-"Prozesse" fuer den
@@ -5188,6 +5251,54 @@ Q9K_SysFGPrDsc:
         rts
 Q9K_SysFGPrDsc_Fail:
         move.w  Q9K_GPrDscScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFJulian -- F$Julian (Callcode $20, "Get Julian Date"). Reale
+* ABI, 68k_tech.pdf S.458: IN d0.l = Zeit (00hhmmss), d1.l = Datum
+* (yyyymmdd). AUS: d0.l = Sekunden seit Mitternacht, d1.l = julianische
+* Tageszahl. Beide Register sind Ein- UND Ausgabe, deshalb teilen sich
+* Hin- und Rueckweg dieselben Scratch-Zellen. Nullpunkt und
+* Kalenderumstellung s. q9kernel_date.c.
+Q9K_SysFJulian:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_DateScratch_Time
+        move.l  d1,Q9K_DateScratch_Date
+        bsr     Q9K_SysJulianImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_DateScratch_Success+2
+        beq     Q9K_SysFJulian_Fail
+        move.l  Q9K_DateScratch_Time,d0
+        move.l  Q9K_DateScratch_Date,d1
+        andi    #$fe,ccr
+        rts
+Q9K_SysFJulian_Fail:
+        move.w  Q9K_DateScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFGregor -- F$Gregor (Callcode $54, "Get Gregorian Date"). Reale
+* ABI, 68k_tech.pdf S.444: die Umkehrung von F$Julian -- IN d0.l =
+* Sekunden seit Mitternacht, d1.l = julianische Tageszahl; AUS d0.l =
+* Zeit (00hhmmss), d1.l = Datum (yyyymmdd).
+Q9K_SysFGregor:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_DateScratch_Time
+        move.l  d1,Q9K_DateScratch_Date
+        bsr     Q9K_SysGregorImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_DateScratch_Success+2
+        beq     Q9K_SysFGregor_Fail
+        move.l  Q9K_DateScratch_Time,d0
+        move.l  Q9K_DateScratch_Date,d1
+        andi    #$fe,ccr
+        rts
+Q9K_SysFGregor_Fail:
+        move.w  Q9K_DateScratch_Error+2,d1
         ori     #1,ccr
         rts
 
