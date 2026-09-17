@@ -47,6 +47,10 @@ static unsigned long g_fakePoolNext;
 #define Q9K_READYQ_NEXT_OFF      0x08UL
 #define Q9K_READYQ_PREV_OFF      0x10UL
 #define Q9K_PROCDESC_PRIORITY_OFF 0x18UL
+/* P$User liegt real auf $14 und ist dort 4 Byte breit; mit dem 8 Byte
+ * breiten Q9_u32 dieses Hosts wuerde ein Zugriff bis $1B reichen und
+ * genau die Prioritaet daneben ueberschreiben. */
+#define Q9K_PROCDESC_USER_OFF     0x300UL
 #define Q9K_PROCDESC_SAVEDSP_OFF 0x20UL
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x28UL
 /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): gleiche Grosszuegig-

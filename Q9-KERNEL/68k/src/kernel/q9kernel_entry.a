@@ -527,6 +527,17 @@ Q9K_CmpNamScratch_PatLen   equ $18B8      * Q9_u32, d1.w EIN = Musterlaenge
 Q9K_CmpNamScratch_Error    equ $18BC      * Q9_u32, d1.w AUS bei Fehler
 Q9K_CmpNamScratch_Success  equ $18C0      * Q9_u32, 0 = ungleich / 1 = gleich
 
+* F$SUser- und F$CpyMem-Scratch (2026-09-17, s. q9kernel_procapi.c).
+Q9K_SUserScratch_GroupUser equ $18C4      * Q9_u32, d1.l EIN
+Q9K_SUserScratch_Error     equ $18C8      * Q9_u32, d1.w AUS bei Fehler
+Q9K_SUserScratch_Success   equ $18CC      * Q9_u32, 0/1
+Q9K_CpyMemScratch_PID      equ $18D0      * Q9_u32, d0.w EIN
+Q9K_CpyMemScratch_Count    equ $18D4      * Q9_u32, d1.l EIN
+Q9K_CpyMemScratch_Src      equ $18D8      * Q9_u32, (a0) EIN
+Q9K_CpyMemScratch_Dst      equ $18DC      * Q9_u32, (a1) EIN
+Q9K_CpyMemScratch_Error    equ $18E0      * Q9_u32, d1.w AUS bei Fehler
+Q9K_CpyMemScratch_Success  equ $18E4      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -4987,6 +4998,54 @@ Q9K_SysFCmpNam:
         rts
 Q9K_SysFCmpNam_Fail:
         move.w  Q9K_CmpNamScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFSUser -- F$SUser (Callcode $1C, "Set User ID Number"). Reale
+* ABI, 68k_tech.pdf S.516: IN d1.l = gewuenschte Gruppen-/Benutzer-ID.
+* Keine Ausgabe bei Erfolg, sonst Carry + d1.w = E$Permit ($A4). Wirkt
+* immer auf den AUFRUFENDEN Prozess (Q9_D_Proc), nimmt also keine PID
+* entgegen. Umgesetzter Berechtigungsfall und die beiden bewusst
+* ausgelassenen s. Q9K_ProcSUser in q9kernel_procapi.c.
+Q9K_SysFSUser:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d1,Q9K_SUserScratch_GroupUser
+        bsr     Q9K_SysSUserImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_SUserScratch_Success+2
+        beq     Q9K_SysFSUser_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFSUser_Fail:
+        move.w  Q9K_SUserScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFCpyMem -- F$CpyMem (Callcode $1B, "Copy External Memory").
+* Reale ABI, 68k_tech.pdf S.389: IN d0.w = PID des Besitzers, d1.l =
+* Anzahl Bytes, (a0) = Quelle im fremden Prozess, (a1) = eigener
+* Zielpuffer. Keine Ausgabe bei Erfolg, sonst Carry + d1.w. Warum hier
+* keine Adressraum-Uebersetzung noetig ist, steht bei Q9K_ProcCpyMem in
+* q9kernel_procapi.c.
+Q9K_SysFCpyMem:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_CpyMemScratch_PID           * oberes Wort nullen, C liest 32 Bit
+        move.w  d0,Q9K_CpyMemScratch_PID+2
+        move.l  d1,Q9K_CpyMemScratch_Count
+        move.l  a0,Q9K_CpyMemScratch_Src
+        move.l  a1,Q9K_CpyMemScratch_Dst
+        bsr     Q9K_SysCpyMemImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_CpyMemScratch_Success+2
+        beq     Q9K_SysFCpyMem_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFCpyMem_Fail:
+        move.w  Q9K_CpyMemScratch_Error+2,d1
         ori     #1,ccr
         rts
 
