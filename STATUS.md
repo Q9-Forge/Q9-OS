@@ -510,7 +510,7 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtkbh@#`.
+The emulator regression now ends `…KNX` … `Wvtkbhio@#`.
 
 **A contradiction between the two time sources, found while extending F$Alarm
 and worth fixing before anything builds on it.** `F$Alarm`'s absolute variants
@@ -559,6 +559,32 @@ and day 1-31, and the manual says of `F$STime` that "the date and time are not
 checked for validity". Tightening that would be an invention beyond the
 original; the host suite pins the actual behaviour so it cannot drift
 unnoticed.
+
+**F$GBlkMp** (`0x19`) is the status report that `mfree` and similar tools use:
+the addresses and sizes of the free RAM blocks, copied into the caller's buffer
+as `{address, size}` pairs and closed with a null entry, plus the minimum
+allocation size, the fragment count, the total RAM found at startup and the
+currently free total. The manual is emphatic that the reported blocks must
+never be used directly — `F$SRqMem` is for that — so this call only copies out.
+
+It needed one thing the kernel did not have: the total RAM size. The boot ROM
+passes it in `d0` on entry, but that value only ever became the stack pointer.
+It is now kept in `Q9K_RamSize`, written **after** the zero-fill (which clears
+the first 32K and would otherwise erase it) and taken from `sp`, which at that
+point still holds exactly the value the boot ROM supplied. Taking it from `sp`
+rather than rescuing a register across the zero-fill avoids a second assumption
+about the boot ROM's register usage.
+
+Two limits are stated rather than papered over. The reported total is the
+machine's RAM, not the part available to the arena — kernel, boot chain and
+stack live inside it. And the arena does not yet coalesce adjacent blocks on
+free, so the fragment count can exceed the number of genuinely separate free
+regions; the free total is still correct, but "fragments" here means "list
+nodes".
+
+Unlike the bit-map calls below, this one **is** proven on the machine: the live
+test gets `d0 = 16`, which is this allocator's granularity and therefore proof
+that the kernel's own handler ran rather than a foreign one.
 
 **The three bit-map calls, and what measuring them turned up.** `F$SchBit`
 (`0x12`), `F$AllBit` (`0x13`) and `F$DelBit` (`0x14`) form one cycle: search a
@@ -653,7 +679,7 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x16` | F$STime | Sets the software clock, including the battery-backed form (month field 0); the clock module it would otherwise link does not exist on this machine |
 | ✅ | `0x17` | F$CRC | 24-bit module CRC, accumulated across calls; verified against a real module and the documented CRCCon constant |
 | ✅ | `0x18` | F$GPrDsc | Read-only copy of a process descriptor, length-capped at the descriptor size |
-| ❌ | `0x19` | F$GBlkMp | Not implemented |
+| ✅ | `0x19` | F$GBlkMp | Reports the free-memory map from the kernel's own free list, with the fragment count and totals; emulator-verified |
 | ✅ | `0x1A` | F$GModDr | Copies the module directory out in whole entries; the format is this kernel's own, as the manual allows |
 | ✅ | `0x1B` | F$CpyMem | Copy with owner-PID validation; no address translation is needed while all processes share one flat address space |
 | ✅ | `0x1C` | F$SUser | Changes the caller's own group/user ID in the process descriptor; only the documented "user 0.0 may change freely" case is implemented |
