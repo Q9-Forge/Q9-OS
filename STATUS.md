@@ -453,23 +453,33 @@ where it was originally suspected, in the external `F$Load`/RBF directory
 advance, and not in memory corruption. Recorded so the cheap check is not
 repeated.
 
-`F$Alarm` (`0x56`) is a call with a function code in `d1.w`, and three of its
+`F$Alarm` (`0x56`) is a call with a function code in `d1.w`, and five of its
 six functions are now implemented: **A$Set** (one signal after an interval),
-**A$Cycle** (repeating) and **A$Delete** (by ID, or all of the caller's own).
-The codes come from the real table in `funcs.a`, counted rather than guessed.
+**A$Cycle** (repeating), **A$Delete** (by ID, or all of the caller's own) and
+the two absolute variants **A$AtJul** and **A$AtDate**. The codes come from the
+real table in `funcs.a`, counted rather than guessed.
 
-These three need no system clock — they count ticks, and the tick handler,
-signal delivery and process lookup all existed already. Delivery goes through
-the same `F$Send` path as any other signal, which means alarm signals honour the
-signal mask for free: if the recipient is masked, the alarm signal stays pending
-instead of being lost.
+The three relative functions need no system clock — they count ticks, and the
+tick handler, signal delivery and process lookup all existed already. Delivery
+goes through the same `F$Send` path as any other signal, which means alarm
+signals honour the signal mask for free: if the recipient is masked, the alarm
+signal stays pending instead of being lost.
 
-**A$AtDate, A$AtJul and A$Reset deliberately return `E$UnkSvc`.** The absolute
-variants need a running system clock, and `F$Time` here is still partial with no
-tick source; without one they would produce an alarm that either never fires or
-fires immediately — worse than an honest "don't know". Once the clock runs, the
-conversion belongs exactly here, and A$AtJul is a two-liner away given the
-`F$Julian`/`F$Gregor` pair that now exists.
+The absolute variants were held back in the previous round on the grounds that
+there was no system clock. **That was wrong, and the note saying so has been
+corrected**: the board carries an RTC72421 at `$FFFFD000`, which the emulator
+mirrors from the host clock. `Q9K_RtcRead()` reads it, and each tick now
+compares the stored target against it. A$AtJul takes the julian day number and
+seconds after midnight directly; A$AtDate takes a calendar date in `d4.l` and a
+time in `d3.l`, both field-coded the way `F$Time` returns them, and converts via
+the `F$Julian` pair. A missed moment still fires — the description says "greater
+than or equal", so an alarm whose time passed while the machine was busy is not
+silently dropped. An impossible date or time is refused with `E$BPAddr` rather
+than rounded.
+
+**A$Reset still returns `E$UnkSvc`**, and for a different reason than the
+others did: the description does not say what it is meant to reset. Guessing
+there would produce a call that silently does the wrong thing.
 
 On the time unit, an honest limitation: the description says an interval may be
 given "in system clock ticks, or 256ths of a second" but does not say at that
@@ -484,7 +494,7 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvt@#`.
+The emulator regression now ends `…KNX` … `Wvtk@#`.
 
 **A contradiction between the two time sources, found while extending F$Alarm
 and worth fixing before anything builds on it.** `F$Alarm`'s absolute variants
@@ -500,16 +510,20 @@ result is nonsense. Which reading of "yyyymmdd" is the real one cannot be decide
 from the manual text alone — both fit the notation, and the `F$STime` remark
 about "the month field in the date parameter" reads either way.
 
-Until that is settled, an absolute alarm would be built on sand, and in a way
-that does not show up in testing: it would simply fire at the wrong time. So
-`A$AtDate`, `A$AtJul` and `A$Reset` return `E$UnkSvc` for now. Once the question
-is decided and both sides use the same format, the two absolute variants are
-small — `F$Time` gives the present, `F$Julian` turns the target date into a day
-number, and the tick pass compares two numbers.
+**The question has since been decided, by disassembly rather than by taste.**
+Microware's own kernel `aker000b` unpacks the date at `0x2316` with
+`move.b d1,d3` / `asr.l #8,d1` / `move.b d1,d2` / `asr.l #8,d1` — byte-wise
+field extraction, not decimal division. The same routine contains `cmpi.w
+#$62e` (1582, the Gregorian changeover) and `muls.w #$5b5` (1461, the four-year
+cycle), which identifies it as the julian-day conversion beyond doubt. So
+"yyyymmdd" means **fields**: `F$Julian` was right and `F$Time` was wrong.
 
-Deciding it needs evidence rather than preference: the most direct route is to
-see what a real OS-9 program does with the value, for instance by disassembling
-`date`, which calls `F$Time` and prints the result.
+`Q9K_SysFTime` now builds its date the same way (`swap` for the year, then
+`lsl.w #8` / `or.l` for month and day). With both sides agreeing, the absolute
+alarm variants were implemented in the same pass; see the `F$Alarm` section
+above. This was a genuine defect, not a cosmetic one: any program feeding
+`F$Time`'s output into `F$Julian` — the ordinary way to compute a date
+difference — would have got nonsense back.
 
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
@@ -591,7 +605,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x53` | F$Event | A whole subsystem (32-byte event records, wait queues, link/unlink, signalling), not a single call |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
-| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle and A$Delete work off the tick counter; the absolute-time variants wait on a system clock |
+| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work; only A$Reset is unimplemented, its purpose being undocumented |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Basic memory-check path exists; full protection semantics remain open |
 | ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |

@@ -61,7 +61,8 @@
 *   X = F$Trans translated an address (identity on this machine) (0x60)
 *   W = F$DatMod created a data module that F$Link then finds (0x25)
 *   v = F$Alarm set an alarm and deleted it again (0x56)
-*   t = F$Alarm refused A$AtDate, which needs a system clock
+*   t = F$Alarm set an absolute alarm (A$AtDate) and deleted it again
+*   k = F$Alarm refused A$AtDate for an impossible calendar date
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -611,12 +612,37 @@ Q9K_AttachStart:
         moveq   #'v',d7
         move.b  d7,$FFFFF006
 
-        moveq   #3,d1                          * A$AtDate -- no system clock yet
+* A$AtDate (3) takes a wall-clock moment instead of an interval: d4.l is
+* the date and d3.l the time, both field-coded the way F$Time returns
+* them.  A day far in the future keeps it from ever firing here; it is
+* deleted right away, like the interval alarm above.
+        moveq   #3,d1                          * A$AtDate
         moveq   #0,d0
+        move.w  #98,d2                         * signal code
+        move.l  #$000C1E00,d3                  * 12:30:00
+        move.l  #$08330101,d4                  * 2099-01-01, far beyond this test
         trap    #0
         dc.w    $0056                          * F$Alarm
-        bcc     Q9K_NativeFailed               * must be refused, not faked
+        bcs     Q9K_NativeFailed
+        tst.l   d0                             * an alarm ID must come back
+        beq     Q9K_NativeFailed
+        moveq   #0,d1                          * A$Delete, d0 still holds the ID
+        trap    #0
+        dc.w    $0056                          * F$Alarm
+        bcs     Q9K_NativeFailed
         moveq   #'t',d7
+        move.b  d7,$FFFFF006
+
+* An impossible date must be refused rather than quietly rounded.
+        moveq   #3,d1                          * A$AtDate
+        moveq   #0,d0
+        move.w  #98,d2
+        move.l  #$000C1E00,d3
+        move.l  #$08330D01,d4                  * month 13
+        trap    #0
+        dc.w    $0056                          * F$Alarm
+        bcc     Q9K_NativeFailed               * must be refused, not rounded
+        moveq   #'k',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access
