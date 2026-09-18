@@ -14,14 +14,31 @@
  *   A$AtJul  = 4  absolute Zeit (julianisch)      -- s. u.
  *   A$Reset  = 5  -- s. u.
  *
- * UMGESETZT SIND A$Delete, A$Set UND A$Cycle. Das sind die drei, die
- * ohne Systemuhr auskommen: sie zaehlen Ticks. Die beiden absoluten
- * Varianten brauchen eine laufende Systemuhr (F$Time ist hier erst 🟡,
- * die Taktquelle fehlt) und wuerden ohne sie zu einem Alarm fuehren, der
- * nie oder sofort ausloest -- schlechter als ein sauberes "kenne ich
- * nicht". Sie melden deshalb E$UnkSvc, ebenso A$Reset. Sobald die
- * Systemuhr steht, gehoert die Umrechnung genau hierher: A$AtJul ist mit
- * dem vorhandenen F$Julian/F$Gregor bereits einen Zweizeiler entfernt.
+ * UMGESETZT SIND A$Delete, A$Set UND A$Cycle -- die drei, die in Ticks
+ * rechnen. A$AtDate, A$AtJul und A$Reset melden E$UnkSvc.
+ *
+ * KORREKTUR ZUR URSPRUENGLICHEN BEGRUENDUNG (2026-09-18, noch am selben
+ * Tag): hier stand zuerst, die absoluten Varianten fehlten, weil es
+ * keine Systemuhr gaebe. Das ist falsch -- es gibt eine: Q9K_SysFTime
+ * (q9kernel_entry.a) liest einen echten RTC72421 bei $FFFFD000, den der
+ * Emulator bereitstellt und der die Hostuhr spiegelt.
+ *
+ * Der wirkliche Grund ist ein anderer und wiegt schwerer: die beiden
+ * vorhandenen Zeitquellen widersprechen sich im DATUMSFORMAT. Q9K_SysFTime
+ * baut sein Datum als DEZIMALZAHL zusammen (Jahr*10000 + Monat*100 + Tag,
+ * also 20260918), waehrend Q9K_ProcJulian (q9kernel_date.c) FELDER
+ * erwartet (Jahr im oberen Wort, dann je ein Byte Monat und Tag). Wer
+ * F$Time aufruft und das Ergebnis an F$Julian weiterreicht, bekommt
+ * Unsinn. Welche der beiden Lesarten von "yyyymmdd" die reale ist, laesst
+ * sich aus dem Handbuchtext allein nicht entscheiden -- beide passen auf
+ * die Schreibweise. Solange das nicht geklaert ist, waere ein absoluter
+ * Alarm auf Sand gebaut, und zwar auf eine Art, die beim Testen nicht
+ * auffaellt: er ginge einfach zum falschen Zeitpunkt los.
+ *
+ * Ist die Frage entschieden und beide Seiten auf dasselbe Format
+ * gebracht, sind A$AtDate und A$AtJul klein: F$Time liefert die
+ * Gegenwart, F$Julian rechnet das Zieldatum in eine Tageszahl, und der
+ * Tick-Durchlauf unten vergleicht zwei Zahlen.
  *
  * ZEITEINHEIT: Die Beschreibung sagt, das Intervall koenne "in system
  * clock ticks, or 256ths of a second" angegeben werden, nennt aber an
