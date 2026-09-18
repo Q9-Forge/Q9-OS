@@ -595,12 +595,33 @@ This is what actually blocks the tick-dependent calls:
   no tick to set or read the clock — which is why this went unnoticed.
 
 The row for `F$Sleep` (`0x0A`) says "complete timing coverage remains open".
-That is far too kind either way: a plain sleep does not wake. The cause sits in
-the switch path — `Q9K_TimerIRQHandler` → `Q9K_SchedReschedule` → the frame
-switch — and was not found in this round; the scheduler's selection logic
-itself reads correctly (`Q9K_SCHED_TSLICE` is 2, ageing and minimum priority
-behave as documented). Finding it is the next piece of work, and the tick
-counter is the instrument for it.
+That is far too kind either way: a plain sleep does not wake.
+
+**What a second round of measurement narrowed it down to** (instruments added
+temporarily inside `Q9K_SchedReschedule` and `Q9K_ProcExit`, then removed
+again; only `Q9K_TickCount` stays):
+
+- Exactly **three** process switches happen, then none ever again. Printed from
+  the switch branch itself: `w83>87`, `w87>83`, `w83>87` — two descriptors
+  alternating, as intended, and then silence.
+- From then on the **ready queue is permanently empty**, sampled every 256 time
+  slices: `[0]`, over and over. `Q9K_SchedPickHighestAge` therefore returns 0
+  and the running process simply keeps the CPU — which is exactly what is
+  observed, `Q9K_TestProcA` filling the console with `A`.
+- **No process is ever terminated.** A marker at the head of `Q9K_ProcExit`
+  never appears.
+- Yet one pool slot reads state **`z` — zombie** (`[0az.]`: slot 0 active,
+  slot 1 zombie). The only place that writes that state is `Q9K_ProcExit`,
+  whose marker never fired.
+
+That last pair is the contradiction to chase next: either a descriptor reaches
+the zombie state without passing through `Q9K_ProcExit`, or the zombie in slot
+1 is an earlier test child and the process that vanished sits in a slot beyond
+the three sampled. The next step is to widen the pool scan and follow the
+descriptor of the interrupted process specifically.
+
+What is now certain: the timer works, the switch mechanism works three times,
+and something removes a process from the ready queue without terminating it.
 
 **The intercept subsystem: F$Icpt now actually runs the routine.** Until now
 `F$Icpt` could only register one. A signal was dropped into `P$Signal` and the
