@@ -14,31 +14,20 @@
  *   A$AtJul  = 4  absolute Zeit (julianisch)      -- s. u.
  *   A$Reset  = 5  -- s. u.
  *
- * UMGESETZT SIND A$Delete, A$Set UND A$Cycle -- die drei, die in Ticks
- * rechnen. A$AtDate, A$AtJul und A$Reset melden E$UnkSvc.
+ * UMGESETZT SIND A$Delete, A$Set, A$Cycle, A$AtDate UND A$AtJul. Nur
+ * A$Reset meldet E$UnkSvc -- das Handbuch beschreibt nicht, was es
+ * zuruecksetzen soll.
  *
- * KORREKTUR ZUR URSPRUENGLICHEN BEGRUENDUNG (2026-09-18, noch am selben
- * Tag): hier stand zuerst, die absoluten Varianten fehlten, weil es
- * keine Systemuhr gaebe. Das ist falsch -- es gibt eine: Q9K_SysFTime
- * (q9kernel_entry.a) liest einen echten RTC72421 bei $FFFFD000, den der
- * Emulator bereitstellt und der die Hostuhr spiegelt.
- *
- * Der wirkliche Grund ist ein anderer und wiegt schwerer: die beiden
- * vorhandenen Zeitquellen widersprechen sich im DATUMSFORMAT. Q9K_SysFTime
- * baut sein Datum als DEZIMALZAHL zusammen (Jahr*10000 + Monat*100 + Tag,
- * also 20260918), waehrend Q9K_ProcJulian (q9kernel_date.c) FELDER
- * erwartet (Jahr im oberen Wort, dann je ein Byte Monat und Tag). Wer
- * F$Time aufruft und das Ergebnis an F$Julian weiterreicht, bekommt
- * Unsinn. Welche der beiden Lesarten von "yyyymmdd" die reale ist, laesst
- * sich aus dem Handbuchtext allein nicht entscheiden -- beide passen auf
- * die Schreibweise. Solange das nicht geklaert ist, waere ein absoluter
- * Alarm auf Sand gebaut, und zwar auf eine Art, die beim Testen nicht
- * auffaellt: er ginge einfach zum falschen Zeitpunkt los.
- *
- * Ist die Frage entschieden und beide Seiten auf dasselbe Format
- * gebracht, sind A$AtDate und A$AtJul klein: F$Time liefert die
- * Gegenwart, F$Julian rechnet das Zieldatum in eine Tageszahl, und der
- * Tick-Durchlauf unten vergleicht zwei Zahlen.
+ * VORGESCHICHTE (2026-09-18, am selben Tag): die absoluten Varianten
+ * fehlten zunaechst, erst mit der Begruendung "keine Systemuhr" (falsch --
+ * Q9K_SysFTime liest einen echten RTC72421 bei $FFFFD000), dann mit der
+ * richtigen: F$Time und F$Julian widersprachen sich im Datumsformat, und
+ * ein absoluter Alarm haette deshalb still zum falschen Zeitpunkt
+ * gefeuert. Der Widerspruch ist inzwischen am Originalkernel entschieden
+ * (s. Q9K_SysFTime in q9kernel_entry.a: "yyyymmdd" meint FELDER) und
+ * F$Time entsprechend korrigiert. Damit stehen beide Seiten auf
+ * demselben Format, und die absoluten Varianten sind das, was sie sein
+ * sollten: ein Vergleich zweier Zahlen.
  *
  * ZEITEINHEIT: Die Beschreibung sagt, das Intervall koenne "in system
  * clock ticks, or 256ths of a second" angegeben werden, nennt aber an
@@ -67,6 +56,8 @@ typedef unsigned char  Q9_u8;
 
 extern int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError); /* q9kernel_procsleep.c */
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);                         /* q9kernel_procapi.c  */
+extern Q9_u32 Q9K_JulianFromDate(Q9_u32 year, Q9_u32 month, Q9_u32 day); /* q9kernel_date.c */
+extern void   Q9K_RtcRead(Q9_u32 *outDay, Q9_u32 *outSeconds);        /* unten in dieser Datei */
 
 #ifndef Q9_D_PROC
 #define Q9_D_PROC 0x04CUL
@@ -87,15 +78,19 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);                         /* q9kerne
  * Tabelle dieses Kernels -- auf einem 64-Bit-Testhost ist Q9_u32 8 Byte
  * breit, ein Schreibzugriff auf ID reichte dort bis in PID hinein. */
 #ifndef Q9K_ALARM_STRIDE
-#define Q9K_ALARM_STRIDE     16UL
+#define Q9K_ALARM_STRIDE     24UL
 #define Q9K_ALARM_OFF_PID     4UL
 #define Q9K_ALARM_OFF_SIGNAL  8UL
 #define Q9K_ALARM_OFF_TICKS  12UL
+#define Q9K_ALARM_OFF_DAY    16UL   /* absoluter Alarm: julianische Tageszahl, 0 = relativ */
+#define Q9K_ALARM_OFF_SEC    20UL   /* absoluter Alarm: Sekunden nach Mitternacht          */
 #endif
 #define Q9K_ALARM_ID(i)       (Q9K_ALARM_BASE + (i) * Q9K_ALARM_STRIDE)       /* Q9_u32, 0 = frei */
 #define Q9K_ALARM_PID(i)      (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_PID)            /* Q9_u32, Empfaenger */
 #define Q9K_ALARM_SIGNAL(i)   (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_SIGNAL)         /* Q9_u32, Signalcode */
 #define Q9K_ALARM_TICKS(i)    (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_TICKS)          /* Q9_u32, Restticks  */
+#define Q9K_ALARM_DAY(i)      (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_DAY)            /* Q9_u32, Zieltag    */
+#define Q9K_ALARM_SEC(i)      (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_SEC)            /* Q9_u32, Zielsekunde */
 /* Das Intervall eines zyklischen Alarms teilt sich die Zelle mit der
  * Signalnummer nicht -- es steht im oberen Wort von SIGNAL, damit der
  * Eintrag bei 16 Byte bleibt. 0 = einmaliger Alarm. */
@@ -109,6 +104,8 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);                         /* q9kerne
 #define Q9K_A_DELETE 0U
 #define Q9K_A_SET    1U
 #define Q9K_A_CYCLE  2U
+#define Q9K_A_ATDATE 3U
+#define Q9K_A_ATJUL  4U
 
 #define Q9K_E_UNKSVC 0x00D0U /* errno.h: Unknown Service Request */
 #define Q9K_E_BPADDR 0x00D2U /* errno.h: Bad Parameter/Address    */
@@ -172,6 +169,107 @@ int Q9K_AlarmSet(Q9_u16 signal, Q9_u32 ticks, Q9_u32 cycleTicks,
     return 1;
 }
 
+
+/* RTC72421 des Q9-Boards, BCD, bei $FFFFD000 -- dieselbe Quelle, aus der
+ * auch Q9K_SysFTime liest (q9kernel_entry.a). Registerfolge dort
+ * abgelesen: +0 Sekunden, +2 Minuten, +4 Stunden, +6 Tag, +8 Monat,
+ * +10 Jahr (zweistellig, +2000). Jedes Register haelt eine BCD-Ziffer je
+ * Halbbyte.
+ *
+ * Liefert die Gegenwart als dasselbe Zahlenpaar, in dem ein absoluter
+ * Alarm sein Ziel speichert: julianische Tageszahl und Sekunden nach
+ * Mitternacht. Damit ist der Faelligkeitstest unten ein reiner
+ * Zahlenvergleich. */
+#ifndef Q9K_RTC_BASE
+#define Q9K_RTC_BASE 0xFFFFD000UL
+#endif
+
+#ifndef Q9K_TEST_RTC_OVERRIDE
+static Q9_u32 Q9K_RtcBcd(Q9_u32 offset)
+{
+    Q9_u32 raw = (Q9_u32)(*(volatile Q9_u8 *)(Q9K_RTC_BASE + offset));
+    return ((raw >> 4) & 0x0FUL) * 10UL + (raw & 0x0FUL);
+}
+#endif
+
+void Q9K_RtcRead(Q9_u32 *outDay, Q9_u32 *outSeconds)
+{
+#ifdef Q9K_TEST_RTC_OVERRIDE
+    /* Im Hosttest gibt es keine RTC -- dort stellt der Test die Uhr. */
+    extern unsigned long g_nowDay, g_nowSec;
+    *outDay = g_nowDay;
+    *outSeconds = g_nowSec;
+    return;
+#else
+    Q9_u32 sec   = Q9K_RtcBcd(0);
+    Q9_u32 min   = Q9K_RtcBcd(2);
+    Q9_u32 hour  = Q9K_RtcBcd(4);
+    Q9_u32 day   = Q9K_RtcBcd(6);
+    Q9_u32 month = Q9K_RtcBcd(8);
+    Q9_u32 year  = Q9K_RtcBcd(10) + 2000UL;
+
+    *outSeconds = hour * 3600UL + min * 60UL + sec;
+    *outDay = Q9K_JulianFromDate(year, month, day);
+#endif
+}
+
+/* Q9K_AlarmSetAbsolute -- A$AtDate und A$AtJul. Beide unterscheiden sich
+ * nur in der Form des uebergebenen Datums: A$AtJul bekommt die
+ * julianische Tageszahl direkt, A$AtDate ein Kalenderdatum in derselben
+ * Feldkodierung wie ueberall (Jahr im oberen Wort, dann Monat und Tag).
+ * Intern ist danach beides dasselbe.
+ *
+ * Rueckgabe 1 = Erfolg. */
+int Q9K_AlarmSetAbsolute(Q9_u16 signal, Q9_u32 julianDay, Q9_u32 seconds,
+                         Q9_u32 *outId, Q9_u16 *outError)
+{
+    Q9_u32 desc = Q9K_GetU32(Q9_D_PROC);
+    Q9_u16 pid;
+    Q9_u32 i;
+    Q9_u32 id;
+
+    *outId = 0;
+    *outError = 0;
+
+    if (julianDay == 0UL || seconds >= 24UL * 3600UL) {
+        *outError = Q9K_E_BPADDR;
+        return 0;
+    }
+    if (desc == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+    pid = Q9K_ProcIdForDesc(desc);
+    if (pid == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+
+    for (i = 0; i < Q9K_ALARM_SLOTS; ++i) {
+        if (Q9K_GetU32(Q9K_ALARM_ID(i)) == 0UL)
+            break;
+    }
+    if (i >= Q9K_ALARM_SLOTS) {
+        *outError = Q9K_E_BPADDR;
+        return 0;
+    }
+
+    id = Q9K_GetU32(Q9K_ALARM_NEXTID) + 1UL;
+    if (id == 0UL)
+        id = 1UL;
+    Q9K_SetU32(Q9K_ALARM_NEXTID, id);
+
+    Q9K_SetU32(Q9K_ALARM_ID(i), id);
+    Q9K_SetU32(Q9K_ALARM_PID(i), (Q9_u32)pid);
+    Q9K_SetU32(Q9K_ALARM_SIGNAL(i), (Q9_u32)signal);
+    Q9K_SetU32(Q9K_ALARM_TICKS(i), 0UL);      /* 0 = kein Tickzaehler, absolut */
+    Q9K_SetU32(Q9K_ALARM_DAY(i), julianDay);
+    Q9K_SetU32(Q9K_ALARM_SEC(i), seconds);
+
+    *outId = id;
+    return 1;
+}
+
 /* Q9K_AlarmDelete -- A$Delete. id == 0 loescht alle Alarme DES
  * AUFRUFENDEN Prozesses; die Beschreibung sagt "all pending alarm
  * requests", und fremde Prozesse gehen einen Aufrufer nichts an.
@@ -205,6 +303,8 @@ int Q9K_AlarmDelete(Q9_u32 id, Q9_u16 *outError)
         Q9K_SetU32(Q9K_ALARM_PID(i), 0UL);
         Q9K_SetU32(Q9K_ALARM_SIGNAL(i), 0UL);
         Q9K_SetU32(Q9K_ALARM_TICKS(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_DAY(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_SEC(i), 0UL);
     }
     return 1;
 }
@@ -225,6 +325,8 @@ Q9_u32 Q9K_AlarmTick(void)
 {
     Q9_u32 fired = 0;
     Q9_u32 i;
+    Q9_u32 nowDay = 0, nowSec = 0;
+    int haveNow = 0;
 
     for (i = 0; i < Q9K_ALARM_SLOTS; ++i) {
         Q9_u32 ticks;
@@ -233,7 +335,30 @@ Q9_u32 Q9K_AlarmTick(void)
             continue;
 
         ticks = Q9K_GetU32(Q9K_ALARM_TICKS(i));
-        if (ticks > 1UL) {
+
+        if (ticks == 0UL) {
+            /* Absoluter Alarm: faellig, sobald die Systemzeit sein Ziel
+             * erreicht oder ueberschritten hat -- so formuliert es auch
+             * die Beschreibung ("anytime the system date/time becomes
+             * greater than or equal to the alarm time"), damit ein
+             * verschlafener Zeitpunkt nicht einfach verfaellt.
+             *
+             * Die Uhr wird hoechstens EINMAL pro Tick gelesen, und nur
+             * wenn ueberhaupt ein absoluter Alarm eingetragen ist: der
+             * Tick laeuft 100-mal je Sekunde, und ein RTC-Zugriff ist
+             * teurer als ein Zahlenvergleich. */
+            Q9_u32 day = Q9K_GetU32(Q9K_ALARM_DAY(i));
+
+            if (!haveNow) {
+                Q9K_RtcRead(&nowDay, &nowSec);
+                haveNow = 1;
+            }
+            if (nowDay < day)
+                continue;
+            if (nowDay == day && nowSec < Q9K_GetU32(Q9K_ALARM_SEC(i)))
+                continue;
+            /* faellig -- faellt unten in die Zustellung */
+        } else if (ticks > 1UL) {
             Q9K_SetU32(Q9K_ALARM_TICKS(i), ticks - 1UL);
             continue;
         }
@@ -254,6 +379,8 @@ Q9_u32 Q9K_AlarmTick(void)
                 Q9K_SetU32(Q9K_ALARM_PID(i), 0UL);
                 Q9K_SetU32(Q9K_ALARM_SIGNAL(i), 0UL);
                 Q9K_SetU32(Q9K_ALARM_TICKS(i), 0UL);
+                Q9K_SetU32(Q9K_ALARM_DAY(i), 0UL);
+                Q9K_SetU32(Q9K_ALARM_SEC(i), 0UL);
             }
         }
     }
@@ -265,7 +392,8 @@ Q9_u32 Q9K_AlarmTick(void)
 #define Q9K_ALARM_SCRATCH_FUNC   0x1A90UL /* Q9_u32, d1.w EIN = Funktionscode   */
 #define Q9K_ALARM_SCRATCH_IDIN   0x1A94UL /* Q9_u32, d0.l EIN / d0.l AUS = ID   */
 #define Q9K_ALARM_SCRATCH_SIGNAL 0x1A98UL /* Q9_u32, d2.w EIN                   */
-#define Q9K_ALARM_SCRATCH_TICKS  0x1A9CUL /* Q9_u32, d3.l EIN                   */
+#define Q9K_ALARM_SCRATCH_TICKS  0x1A9CUL /* Q9_u32, d3.l EIN = Intervall/Sekunden */
+#define Q9K_ALARM_SCRATCH_DATE   0x1AA8UL /* Q9_u32, d4.l EIN = Datum/Tageszahl    */
 #define Q9K_ALARM_SCRATCH_ERROR  0x1AA0UL /* Q9_u32, d1.w AUS bei Fehler        */
 #define Q9K_ALARM_SCRATCH_SUCCESS 0x1AA4UL /* Q9_u32, 0/1                       */
 #endif
@@ -292,9 +420,42 @@ void Q9K_SysAlarmImpl(void)
                               iv, iv, &id, &err);
         }
         break;
+    case Q9K_A_ATJUL:
+        ok = Q9K_AlarmSetAbsolute((Q9_u16)Q9K_GetU32(Q9K_ALARM_SCRATCH_SIGNAL),
+                                  Q9K_GetU32(Q9K_ALARM_SCRATCH_DATE),
+                                  Q9K_GetU32(Q9K_ALARM_SCRATCH_TICKS),
+                                  &id, &err);
+        break;
+    case Q9K_A_ATDATE:
+        {
+            /* Kalenderdatum in derselben Feldkodierung wie ueberall --
+             * Jahr im oberen Wort, dann je ein Byte Monat und Tag (am
+             * Originalkernel belegt, s. Q9K_SysFTime). */
+            Q9_u32 packed = Q9K_GetU32(Q9K_ALARM_SCRATCH_DATE);
+            Q9_u32 clock  = Q9K_GetU32(Q9K_ALARM_SCRATCH_TICKS);
+            Q9_u32 jd = Q9K_JulianFromDate((packed >> 16) & 0xFFFFUL,
+                                           (packed >> 8) & 0xFFUL,
+                                           packed & 0xFFUL);
+            /* Die Uhrzeit kommt in derselben Feldkodierung wie das
+             * Datum -- ein Byte je Stunde, Minute, Sekunde. Genau diese
+             * beiden Formen rechnet F$Julian ineinander um; A$AtJul
+             * nimmt die andere (Sekunden seit Mitternacht) direkt. */
+            Q9_u32 hh = (clock >> 16) & 0xFFUL;
+            Q9_u32 mm = (clock >> 8) & 0xFFUL;
+            Q9_u32 ss = clock & 0xFFUL;
+            if (jd == 0UL || hh > 23UL || mm > 59UL || ss > 59UL) {
+                ok = 0;
+                err = Q9K_E_BPADDR;
+            } else {
+                ok = Q9K_AlarmSetAbsolute((Q9_u16)Q9K_GetU32(Q9K_ALARM_SCRATCH_SIGNAL),
+                                          jd, hh * 3600UL + mm * 60UL + ss,
+                                          &id, &err);
+            }
+        }
+        break;
     default:
-        /* A$AtDate/A$AtJul/A$Reset und alles Unbekannte -- s.
-         * Kopfkommentar: ohne Systemuhr waere jede Antwort geraten. */
+        /* A$Reset und alles Unbekannte: die Beschreibung sagt nicht,
+         * was A$Reset zuruecksetzen soll. */
         ok = 0;
         err = Q9K_E_UNKSVC;
         break;
