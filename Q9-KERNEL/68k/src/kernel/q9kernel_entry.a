@@ -704,6 +704,14 @@ Q9K_IcptScratch_Ok         equ $1BD0      * Q9_u32, 0/1
 Q9K_IcptScratch_Error      equ $1BD4      * Q9_u32, d1.w AUS bei Fehler
 Q9K_IcptScratch_Depth      equ $1BD8      * Q9_u32, verbliebene Verschachtelungstiefe
 
+* Eigener Tickzaehler (2026-09-18). Die Emulator-Diagnose
+* "Timer-Interrupts: N gesamt" zaehlt ueber eine HART KODIERTE
+* PC-Adresse ($75a2, s. Q9-Flux/src/kernel/m68krt.c) und ist damit nur
+* fuer den Build gueltig, fuer den sie eingetragen wurde -- dieser Kernel
+* ist seither erheblich gewachsen. Dieser Zaehler haengt an nichts
+* Externem und beantwortet die Frage "tickt es?" unabhaengig davon.
+Q9K_TickCount              equ $1BE0      * Q9_u32, Timer-Interrupts seit dem Boot
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -2495,6 +2503,7 @@ Q9K_TimerActivate:
 * einen zuvor selbst unterbrochenen (s. Kopfkommentar bei Q9K_SchedRun
 * oben zum gemeinsamen Fake-Rahmen-Mechanismus).
 Q9K_TimerIRQHandler:
+        addq.l  #1,Q9K_TickCount               * eigener Zaehler, s. dort
         movem.l d0-d7/a0-a6,-(sp)              * kompletten Registersatz des unterbrochenen Prozesses sichern
 * Q9K_RaceRing-Log (TEMPORAER, s. Definition oben): d0-d2/a0 sind hier
 * frei benutzbar -- ihre echten Werte liegen bereits gesichert im

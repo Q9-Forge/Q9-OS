@@ -561,25 +561,46 @@ checked for validity". Tightening that would be an invention beyond the
 original; the host suite pins the actual behaviour so it cannot drift
 unnoticed.
 
-**THE TIMER DOES NOT TICK — found while testing the intercept delivery, and
-the single most consequential thing in this round.** The kernel dump reports
-`Timer-Interrupts: 0 gesamt, davon 0 im IRQ-Dispatcher`, in the direct-attach
-run and in the normal boot alike. Everything that depends on the tick is
-therefore inert:
+**A process interrupted by a timer tick never runs again — and a correction to
+what this file said a moment ago.**
 
-- `F$Sleep(50)` — half a second — never returns. Measured with a marker either
-  side of the call: the one before appears, the one after never does.
-- Alarms never fire, so `F$Alarm`'s relative and absolute variants are only as
-  good as their host tests. The earlier emulator check passed because it
-  deleted the alarm again straight away and never let one come due.
-- The software clock never advances. `F$STime`/`F$Time` still work, since
-  neither needs a tick to set or read the clock — which is why this went
-  unnoticed.
+The previous entry here claimed "the timer does not tick", on the strength of
+the kernel dump reporting `Timer-Interrupts: 0 gesamt`. **That was wrong.** That
+figure is produced by counting hits on a *hardcoded PC address* (`$75a2`, see
+`Q9-Flux/src/kernel/m68krt.c`, commented "Adressen fuer den aktuellen Build").
+This kernel has grown a great deal since that address was written down, so the
+counter now watches an address the timer handler no longer occupies. It reads 0
+no matter what the hardware does.
+
+The kernel therefore counts its own ticks now, in `Q9K_TickCount` (`$1BE0`),
+incremented in `Q9K_TimerIRQHandler` and printed by the live test. **It reads 3
+by the time the test runs: the timer ticks.**
+
+What actually happens is narrower and worse. A process that is *interrupted by
+a tick* does not get the CPU back. Measured directly: a plain counting loop in
+the test program — no system call at all — never reaches the marker after it
+when the loop is long enough to span a tick, while the same loop shortened to
+fit between two ticks completes normally. In the long case the console fills
+with `A` from `Q9K_TestProcA`, the parent's diagnostic loop, which keeps the
+CPU from then on. (That `A` is not an idle indicator, as first assumed — it is
+that loop.)
+
+This is what actually blocks the tick-dependent calls:
+
+- `F$Sleep(50)` — half a second — never returns, measured with a marker either
+  side.
+- Alarms never come due for their target. The earlier emulator check passed
+  only because it deleted the alarm straight away.
+- The software clock does not advance. `F$STime`/`F$Time` still work, needing
+  no tick to set or read the clock — which is why this went unnoticed.
 
 The row for `F$Sleep` (`0x0A`) says "complete timing coverage remains open".
-That is far too kind: a plain sleep does not wake at all. Fixing this is its
-own piece of work — it is about the timer interrupt reaching the dispatcher,
-not about the scheduler code, which reads correctly.
+That is far too kind either way: a plain sleep does not wake. The cause sits in
+the switch path — `Q9K_TimerIRQHandler` → `Q9K_SchedReschedule` → the frame
+switch — and was not found in this round; the scheduler's selection logic
+itself reads correctly (`Q9K_SCHED_TSLICE` is 2, ageing and minimum priority
+behave as documented). Finding it is the next piece of work, and the tick
+counter is the instrument for it.
 
 **The intercept subsystem: F$Icpt now actually runs the routine.** Until now
 `F$Icpt` could only register one. A signal was dropped into `P$Signal` and the
@@ -607,9 +628,10 @@ frame built from it would resume them anywhere. For a running process the
 signal is stored as before and delivered at the next switch.
 
 The emulator proves the registration and `F$SigReset`. The round trip
-signal → routine → `F$RTE` is host-tested only, and the reason is the dead timer
-above: delivery needs a sender, and the natural one (an alarm, from the timer
-interrupt) never fires. Once the tick runs, three lines in the live test suffice.
+signal → routine → `F$RTE` is host-tested only, for the reason above: delivery
+needs a sender, and the natural one — an alarm — never reaches its target while
+an interrupted process cannot resume. Once that is fixed, three lines in the
+live test suffice.
 
 **F$Chain** (`0x05`) runs a new program without creating a process — "similar
 to a Fork command followed by an Exit", but in the same process, with the open
