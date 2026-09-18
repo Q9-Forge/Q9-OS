@@ -42,6 +42,12 @@ static unsigned char g_fakeGlobals[0x2000];
 
 #define Q9K_TEST_DESC_SIZE      96UL   /* muss > Q9K_READYQ_PREV_OFF+8 sein */
 
+/* Q9K_AlarmTick lebt in q9kernel_alarm.c (dort eigenstaendig getestet)
+ * und wird vom Scheduler einmal pro Tick gerufen. Hier ein zaehlender
+ * Stub -- dieser Test prueft die Ready-Queue, nicht die Alarme. */
+static int g_alarmTicks;
+unsigned long Q9K_AlarmTick(void) { g_alarmTicks++; return 0; }
+
 #include "q9kernel_sched.c"
 
 static int failures = 0;

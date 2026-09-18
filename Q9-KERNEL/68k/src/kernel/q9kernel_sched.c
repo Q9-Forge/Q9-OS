@@ -47,6 +47,10 @@
 
 #include "q9kernel_config.h"
 
+/* Aus q9kernel_alarm.c -- externe Deklaration statt gemeinsamem Header,
+ * gleiche schlanke Konvention wie ueberall in diesem Verzeichnis. */
+extern unsigned long Q9K_AlarmTick(void);
+
 typedef unsigned long  Q9_u32;
 typedef unsigned short Q9_u16;
 typedef unsigned char  Q9_u8;
@@ -417,6 +421,7 @@ Q9_u32 Q9K_SchedReschedule(void)
 
     Q9K_SchedAgeAll();
     Q9K_SleepQDecrementAll();   /* NACHTRAG 2026-08-30, Abschnitt "F$Sleep" -- einmal pro Tick, s. dortigen Kopfkommentar */
+    Q9K_AlarmTick();            /* NACHTRAG 2026-09-18, F$Alarm -- ebenfalls einmal pro Tick, s. q9kernel_alarm.c */
 
     slice = Q9K_GetU16(Q9K_SCHED_SLICE_ADDR);
     if (slice > 0) {

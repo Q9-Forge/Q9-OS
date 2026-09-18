@@ -60,6 +60,8 @@
 *   N = F$Icpt registered an intercept routine (0x09)
 *   X = F$Trans translated an address (identity on this machine) (0x60)
 *   W = F$DatMod created a data module that F$Link then finds (0x25)
+*   v = F$Alarm set an alarm and deleted it again (0x56)
+*   t = F$Alarm refused A$AtDate, which needs a system clock
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -100,6 +102,7 @@ Q9K_AttachStart:
         bcs     Q9K_NativeFailed
         moveq   #'W',d7
         move.b  d7,$FFFFF006
+
 
         move.w  d6,d0
         moveq   #2,d1
@@ -587,6 +590,33 @@ Q9K_AttachStart:
         cmp.l   d4,d0                          * must be the module we created
         bne     Q9K_NativeFailed
         moveq   #'W',d7
+        move.b  d7,$FFFFF006
+* F$Alarm: d1.w = function code.  A$Set (1) with a signal in d2.w and an
+* interval in d3.l returns an alarm ID; A$Delete (0) takes it back.  The
+* alarm is deliberately never allowed to fire here -- the interval is far
+* longer than this test, and it is deleted right away.
+        moveq   #1,d1                          * A$Set
+        moveq   #0,d0
+        move.w  #99,d2                         * signal code
+        move.l  #30000,d3                      * interval in ticks, far beyond this test
+        trap    #0
+        dc.w    $0056                          * F$Alarm
+        bcs     Q9K_NativeFailed
+        tst.l   d0                             * an alarm ID must come back
+        beq     Q9K_NativeFailed
+        moveq   #0,d1                          * A$Delete, d0 still holds the ID
+        trap    #0
+        dc.w    $0056                          * F$Alarm
+        bcs     Q9K_NativeFailed
+        moveq   #'v',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #3,d1                          * A$AtDate -- no system clock yet
+        moveq   #0,d0
+        trap    #0
+        dc.w    $0056                          * F$Alarm
+        bcc     Q9K_NativeFailed               * must be refused, not faked
+        moveq   #'t',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access

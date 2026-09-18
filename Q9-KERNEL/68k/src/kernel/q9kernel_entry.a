@@ -630,6 +630,16 @@ Q9K_DatModScratch_Hdr      equ $19D0      * Q9_u32, (a2) AUS
 Q9K_DatModScratch_Error    equ $19D4      * Q9_u32, d1.w AUS bei Fehler
 Q9K_DatModScratch_Success  equ $19D8      * Q9_u32, 0/1
 
+* F$Alarm-Scratch (2026-09-18, s. q9kernel_alarm.c). Die Alarmtabelle
+* selbst liegt bei $1A00 (8 Eintraege a 16 Byte, Ende $1A80), der
+* ID-Zaehler bei $1A80 -- die Scratchzellen deshalb erst ab $1A90.
+Q9K_AlarmScratch_Func      equ $1A90      * Q9_u32, d1.w EIN = Funktionscode
+Q9K_AlarmScratch_IdIn      equ $1A94      * Q9_u32, d0.l EIN / d0.l AUS = Alarm-ID
+Q9K_AlarmScratch_Signal    equ $1A98      * Q9_u32, d2.w EIN
+Q9K_AlarmScratch_Ticks     equ $1A9C      * Q9_u32, d3.l EIN
+Q9K_AlarmScratch_Error     equ $1AA0      * Q9_u32, d1.w AUS bei Fehler
+Q9K_AlarmScratch_Success   equ $1AA4      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -5521,6 +5531,35 @@ Q9K_SysFDatMod:
         rts
 Q9K_SysFDatMod_Fail:
         move.w  Q9K_DatModScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFAlarm -- F$Alarm (Callcode $56). Reale ABI, 68k_tech.pdf
+* Appendix D: der Aufruf traegt seinen Funktionscode in d1.w.
+*   A$Delete (0): d0.l = Alarm-ID (0 = alle eigenen), keine Ausgabe
+*   A$Set    (1): d2.w = Signalcode, d3.l = Intervall -> d0.l = Alarm-ID
+*   A$Cycle  (2): wie A$Set, wiederholt sich
+* A$AtDate/A$AtJul/A$Reset melden E$UnkSvc, solange keine Systemuhr
+* laeuft -- Begruendung s. Kopfkommentar von q9kernel_alarm.c.
+Q9K_SysFAlarm:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_AlarmScratch_Func           * obere Worte nullen, C liest 32 Bit
+        move.w  d1,Q9K_AlarmScratch_Func+2
+        move.l  d0,Q9K_AlarmScratch_IdIn
+        clr.l   Q9K_AlarmScratch_Signal
+        move.w  d2,Q9K_AlarmScratch_Signal+2
+        move.l  d3,Q9K_AlarmScratch_Ticks
+        bsr     Q9K_SysAlarmImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_AlarmScratch_Success+2
+        beq     Q9K_SysFAlarm_Fail
+        move.l  Q9K_AlarmScratch_IdIn,d0         * Alarm-ID (bei A$Delete 0)
+        andi    #$fe,ccr
+        rts
+Q9K_SysFAlarm_Fail:
+        move.w  Q9K_AlarmScratch_Error+2,d1
         ori     #1,ccr
         rts
 
