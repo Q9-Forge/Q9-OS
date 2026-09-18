@@ -72,9 +72,23 @@ unsigned long Q9K_JulianFromDate(unsigned long y, unsigned long m, unsigned long
 /* Steuerbare Uhr: der Test stellt die "Gegenwart", statt sich auf die
  * echte RTC zu verlassen (die es auf dem Host nicht gibt). */
 static unsigned long g_nowDay = 1000, g_nowSec = 0;
+/* Die Feldform derselben Ersatzuhr -- Q9K_RtcReadFields bedient F$STime
+ * (s. q9kernel_clock.c) und wird hier nur bedient, damit die Datei
+ * uebersetzt; geprueft wird sie in test_q9kernel_clock.c. */
+unsigned long g_rtcYear = 2026, g_rtcMonth = 9, g_rtcDay = 18;
+unsigned long g_rtcHour = 12, g_rtcMin = 0, g_rtcSec = 0;
 #define Q9K_TEST_RTC_OVERRIDE 1
 
 #include "q9kernel_alarm.c"
+
+/* Die absoluten Alarme lesen seit F$STime die Systemuhr, nicht mehr die
+ * Hardware. Hier steht sie auf derselben steuerbaren "Gegenwart" wie der
+ * RTC-Ersatz darueber -- q9kernel_clock.c hat eine eigene Testreihe. */
+void Q9K_ClockRead(Q9_u32 *outDay, Q9_u32 *outSeconds)
+{
+    *outDay = g_nowDay;
+    *outSeconds = g_nowSec;
+}
 
 static int failures;
 
