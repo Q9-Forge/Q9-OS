@@ -560,6 +560,25 @@ checked for validity". Tightening that would be an invention beyond the
 original; the host suite pins the actual behaviour so it cannot drift
 unnoticed.
 
+**A method worth recording, because it unblocks the rest of this list.** Several
+calls are marked here as not implemented with the reason "the manual gives no
+ABI" — `F$Chain`, `F$NProc`, `F$FModul`, `F$Panic`, `F$Event`, `F$FIRQ`,
+`F$AllRAM` and others appear in Appendix D only as cross-references or index
+entries, without input and output registers.
+
+That obstacle is gone. Microware's own C bindings carry the calling convention
+in compiled form, and `MWOS/OS9/68020/LIB/os_lib.l` contains a binding for
+essentially every system call in the table — including all of the ones above.
+Disassembling the few instructions before each `trap #0` gives the register
+usage directly, which is how `F$Sema` below was settled. The recipe: find the
+`trap #0` (`4E40`, with the call code relocated to `0000` in the object), read
+the register moves immediately preceding it, and cross-check the structure
+offsets against the matching header in `MWOS/OS9/SRC/DEFS`.
+
+Where a manual entry does exist it stays the primary source; the library
+settles what the manual leaves open, the way the original kernel settled the
+date format.
+
 **F$Sema** (`0x62`), and an ABI that had to be recovered. The manual describes
 semaphores at length — the structure, the states, the P/V operation codes — but
 never says which registers the call expects. That was settled by disassembling
