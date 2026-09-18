@@ -665,6 +665,18 @@ Q9K_BitmapScratch_End      equ $1B4C      * Q9_u32, (a1) EIN, nur F$SchBit
 Q9K_BitmapScratch_Error    equ $1B50      * Q9_u32, d1.w AUS bei Fehler
 Q9K_BitmapScratch_Ok       equ $1B54      * Q9_u32, 0/1
 
+* F$GBlkMp (2026-09-18, s. q9kernel_blkmap.c).
+Q9K_RamSize                equ $1B58      * Q9_u32, Gesamt-RAM, beim Boot gesetzt
+Q9K_BlkMpScratch_Begin     equ $1B5C      * Q9_u32, d0.l EIN = ab welcher Adresse berichtet wird
+Q9K_BlkMpScratch_BufSize   equ $1B60      * Q9_u32, d1.l EIN = Puffergroesse
+Q9K_BlkMpScratch_Buf       equ $1B64      * Q9_u32, (a0) EIN = Puffer
+Q9K_BlkMpScratch_MinAlloc  equ $1B68      * Q9_u32, d0.l AUS = kleinste Zuteilungsgroesse
+Q9K_BlkMpScratch_Frags     equ $1B6C      * Q9_u32, d1.l AUS = Zahl der Fragmente
+Q9K_BlkMpScratch_TotalRam  equ $1B70      * Q9_u32, d2.l AUS = Gesamt-RAM
+Q9K_BlkMpScratch_FreeRam   equ $1B74      * Q9_u32, d3.l AUS = freier Speicher
+Q9K_BlkMpScratch_Error     equ $1B78      * Q9_u32, d1.w AUS bei Fehler
+Q9K_BlkMpScratch_Ok        equ $1B7C      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -1183,6 +1195,19 @@ Q9K_ZeroNoOverlap:
         sub.l   #Q9K_BootListEnd,d4
         bsr     Q9K_ZeroRange
 Q9K_ZeroDone:
+
+* Gesamt-RAM-Groesse festhalten -- F$GBlkMp muss sie melden ("d2.l = Total
+* RAM found by system at startup", s. q9kernel_blkmap.c).
+*
+* WARUM GENAU HIER, und nicht oben beim Einsprung, wo das Boot-ROM sie in
+* d0 uebergibt: der Zero-Fill direkt darueber loescht die ersten 32K und
+* damit jede Zelle, die vorher beschrieben worden waere. Und warum aus sp:
+* sp wurde oben auf ebendieses d0 gesetzt und steht hier wieder auf
+* oberster Ebene (alle bsr dazwischen sind zurueckgekehrt), traegt also
+* unveraendert das RAM-Ende. Ein eigenes Register ueber den Zero-Fill zu
+* retten waere der zweite Weg gewesen; dieser kommt ohne Zusatzannahme
+* ueber die Registerbelegung des Boot-ROM aus.
+        move.l  sp,Q9K_RamSize
 
         moveq   #'2',d7                         * DIAGNOSE: 32K-Nullen abgeschlossen
         bsr     Q9K_DiagWriteD7
@@ -4542,6 +4567,41 @@ Q9K_BitmapReturn:
         rts
 Q9K_BitmapReturn_Fail:
         move.w  Q9K_BitmapScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFGBlkMp -- F$GBlkMp (Callcode $19). Reale ABI, 68k_tech.pdf S.434:
+* EIN  d0.l = Adresse, ab der berichtet wird, d1.l = Puffergroesse,
+*      (a0) = Puffer.
+* AUS  d0.l = kleinste Zuteilungsgroesse, d1.l = Zahl der Fragmente,
+*      d2.l = Gesamt-RAM beim Start, d3.l = derzeit freier Speicher,
+*      (a0) = Fragmentliste aus Paaren {Adresse, Groesse}, mit Nulleintrag
+*      abgeschlossen.
+*
+* d2/d3 sind AUSGABEN -- anders als bei fast jedem anderen Aufruf dieses
+* Kernels, wo d2-d7 unangetastet bleiben muessen. Der Dispatcher erlaubt
+* Handlern nur a0/a1/a2/d0/d1 frei; d2/d3 werden deshalb hier ausdruecklich
+* gesetzt, und das ist bei diesem Aufruf richtig so.
+*******************************************************************************
+Q9K_SysFGBlkMp:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_BlkMpScratch_Begin
+        move.l  d1,Q9K_BlkMpScratch_BufSize
+        move.l  a0,Q9K_BlkMpScratch_Buf
+        bsr     Q9K_SysGBlkMpImpl
+        movea.l (sp)+,a6
+        move.l  Q9K_BlkMpScratch_TotalRam,d2     * auch im Fehlerfall gueltig
+        tst.w   Q9K_BlkMpScratch_Ok+2
+        beq     Q9K_SysFGBlkMp_Fail
+        move.l  Q9K_BlkMpScratch_MinAlloc,d0
+        move.l  Q9K_BlkMpScratch_Frags,d1
+        move.l  Q9K_BlkMpScratch_FreeRam,d3
+        andi    #$fe,ccr
+        rts
+Q9K_SysFGBlkMp_Fail:
+        move.w  Q9K_BlkMpScratch_Error+2,d1
         ori     #1,ccr
         rts
 

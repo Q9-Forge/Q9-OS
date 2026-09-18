@@ -65,6 +65,8 @@
 *   k = F$Alarm refused A$AtDate for an impossible calendar date
 *   b = F$STime set the clock and F$Time read the same value back
 *   h = F$STime refused an impossible month
+*   i = F$GBlkMp reported the free-memory map (d0=16 proves it was ours)
+*   o = F$GBlkMp refused a buffer too small for the terminator
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -681,6 +683,56 @@ Q9K_STimeOk:
         dc.w    $0016                          * F$STime
         bcc     Q9K_NativeFailed
         moveq   #'h',d7
+        move.b  d7,$FFFFF006
+
+* F$GBlkMp ($19): Auskunft ueber den freien Speicher, wie sie mfree
+* benutzt.  Der Puffer liegt auf dem Stack -- a6 ist hier noch nicht
+* verbuergt (F$Fork bleibt 🟡).
+*
+* Dass d0 mit 16 zurueckkommt, ist zugleich der Nachweis, dass WIRKLICH
+* der Kernel-Handler lief: 16 ist die Zuteilungsgranularitaet dieses
+* Allocators.  (Bei F$SchBit/F$AllBit war genau das nicht gegeben -- dort
+* beansprucht der geladene IOMan den Callcode fuer sich, s. STATUS.md.)
+        lea     -64(sp),sp
+        movea.l sp,a0
+        moveq   #0,d0                          * ab Adresse 0 berichten
+        moveq   #64,d1                         * Puffergroesse
+        trap    #0
+        dc.w    $0019                          * F$GBlkMp
+        bcs     Q9K_BlkMpFailed
+        cmpi.l  #16,d0                         * kleinste Zuteilungsgroesse
+        bne     Q9K_BlkMpFailed
+        tst.l   d1                             * mindestens ein Fragment
+        beq     Q9K_BlkMpFailed
+        tst.l   d2                             * Gesamt-RAM muss bekannt sein
+        beq     Q9K_BlkMpFailed
+        tst.l   d3                             * und etwas muss frei sein
+        beq     Q9K_BlkMpFailed
+        movea.l sp,a0
+        tst.l   (a0)                           * erstes Paar: echte Adresse
+        beq     Q9K_BlkMpFailed
+        tst.l   4(a0)                          * und echte Groesse
+        beq     Q9K_BlkMpFailed
+        lea     64(sp),sp
+        moveq   #'i',d7
+        move.b  d7,$FFFFF006
+        bra     Q9K_BlkMpOk
+Q9K_BlkMpFailed:
+        lea     64(sp),sp
+        bra     Q9K_NativeFailed
+Q9K_BlkMpOk:
+
+* Ein Puffer, in den nicht einmal der Abschluss passt, muss abgewiesen
+* werden -- sonst bliebe die Liste ohne Ende.
+        lea     -64(sp),sp
+        movea.l sp,a0
+        moveq   #0,d0
+        moveq   #4,d1                          * zu klein fuer ein Paar
+        trap    #0
+        dc.w    $0019                          * F$GBlkMp
+        lea     64(sp),sp
+        bcc     Q9K_NativeFailed               * muss abgewiesen werden
+        moveq   #'o',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access
