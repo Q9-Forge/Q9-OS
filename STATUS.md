@@ -453,6 +453,39 @@ where it was originally suspected, in the external `F$Load`/RBF directory
 advance, and not in memory corruption. Recorded so the cheap check is not
 repeated.
 
+`F$Alarm` (`0x56`) is a call with a function code in `d1.w`, and three of its
+six functions are now implemented: **A$Set** (one signal after an interval),
+**A$Cycle** (repeating) and **A$Delete** (by ID, or all of the caller's own).
+The codes come from the real table in `funcs.a`, counted rather than guessed.
+
+These three need no system clock — they count ticks, and the tick handler,
+signal delivery and process lookup all existed already. Delivery goes through
+the same `F$Send` path as any other signal, which means alarm signals honour the
+signal mask for free: if the recipient is masked, the alarm signal stays pending
+instead of being lost.
+
+**A$AtDate, A$AtJul and A$Reset deliberately return `E$UnkSvc`.** The absolute
+variants need a running system clock, and `F$Time` here is still partial with no
+tick source; without one they would produce an alarm that either never fires or
+fires immediately — worse than an honest "don't know". Once the clock runs, the
+conversion belongs exactly here, and A$AtJul is a two-liner away given the
+`F$Julian`/`F$Gregor` pair that now exists.
+
+On the time unit, an honest limitation: the description says an interval may be
+given "in system clock ticks, or 256ths of a second" but does not say at that
+point how the kernel tells the two apart. This version counts ticks throughout —
+the unit the kernel's own tick handler already keeps — so a caller meaning
+fractions of a second gets a different delay than expected. Documented rather
+than quietly guessed.
+
+The alarm table is a Q9-owned fixed pool of eight entries rather than the
+original's two queues (`D_ALMQ1`/`D_ALMQ2`), which the boot code does create. The
+inner node format of those is known only from disassembling the original kernel
+and is of no use to us, since no foreign module reads our alarm nodes; the two
+ring lists stay untouched.
+
+The emulator regression now ends `…KNX` … `Wvt@#`.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -533,7 +566,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x53` | F$Event | A whole subsystem (32-byte event records, wait queues, link/unlink, signalling), not a single call |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
-| ❌ | `0x56` | F$Alarm | Needs timed alarm queues on top of the tick handler; a subsystem rather than a single call |
+| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle and A$Delete work off the tick counter; the absolute-time variants wait on a system clock |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Basic memory-check path exists; full protection semantics remain open |
 | ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |
