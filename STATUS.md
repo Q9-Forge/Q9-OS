@@ -486,6 +486,31 @@ ring lists stay untouched.
 
 The emulator regression now ends `…KNX` … `Wvt@#`.
 
+**A contradiction between the two time sources, found while extending F$Alarm
+and worth fixing before anything builds on it.** `F$Alarm`'s absolute variants
+were first left out with the reason "there is no system clock". That reason was
+wrong: `F$Time` reads a real RTC72421 at `$FFFFD000`, which the emulator provides
+and which mirrors the host clock.
+
+The real obstacle is worse. The two existing time sources disagree on the **date
+format**. `F$Time` assembles its date as a *decimal number* (year × 10000 +
+month × 100 + day, so 20260918), while `F$Julian` expects *fields* (year in the
+high word, then a byte each for month and day). Feed one into the other and the
+result is nonsense. Which reading of "yyyymmdd" is the real one cannot be decided
+from the manual text alone — both fit the notation, and the `F$STime` remark
+about "the month field in the date parameter" reads either way.
+
+Until that is settled, an absolute alarm would be built on sand, and in a way
+that does not show up in testing: it would simply fire at the wrong time. So
+`A$AtDate`, `A$AtJul` and `A$Reset` return `E$UnkSvc` for now. Once the question
+is decided and both sides use the same format, the two absolute variants are
+small — `F$Time` gives the present, `F$Julian` turns the target date into a day
+number, and the tick pass compares two numbers.
+
+Deciding it needs evidence rather than preference: the most direct route is to
+see what a real OS-9 program does with the value, for instance by disassembling
+`date`, which calls `F$Time` and prints the result.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -521,7 +546,7 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x12` | F$SchBit | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x13` | F$AllBit | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x14` | F$DelBit | Microware path exists; current Q9 compatibility is not fully verified |
-| 🟡 | `0x15` | F$Time | Handler exists; clock source and full validation remain open |
+| 🟡 | `0x15` | F$Time | Reads the emulated RTC72421 at `$FFFFD000`; its date encoding contradicts `F$Julian` — see the note |
 | ❌ | `0x16` | F$STime | Not implemented |
 | ✅ | `0x17` | F$CRC | 24-bit module CRC, accumulated across calls; verified against a real module and the documented CRCCon constant |
 | ✅ | `0x18` | F$GPrDsc | Read-only copy of a process descriptor, length-capped at the descriptor size |
