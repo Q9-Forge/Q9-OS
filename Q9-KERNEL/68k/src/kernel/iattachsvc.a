@@ -69,6 +69,9 @@
 *   o = F$GBlkMp refused a buffer too small for the terminator
 *   l = F$Sema released a semaphore nobody was waiting on
 *   w = F$Sema refused an unknown operation and a null pointer
+*   two hex digits = the kernel's own tick counter (see STATUS.md: the
+*       emulator's "Timer-Interrupts" figure counts via a stale hardcoded
+*       PC address and reads 0 regardless)
 *   ( = F$Icpt registered an intercept routine
 *   + = F$SigReset accepted a call with no open intercept
 *       (the actual signal -> routine -> F$RTE round trip cannot be shown
@@ -814,6 +817,16 @@ Q9K_SemaOk:
 * Zeitpunkt -- genau die Lage, fuer die die Zustellung gebaut ist (wer
 * gerade laeuft, hat seinen Zustand in den Registern, s. q9kernel_icpt.c).
 * So braucht der Test keinen zweiten Prozess.
+* Tickzaehler des Kernels ($1BE0, s. q9kernel_entry.a) sichtbar machen.
+* Das ist kein Testfall, sondern eine stehende Messung: die
+* Emulator-Diagnose "Timer-Interrupts: N" zaehlt ueber eine hart
+* kodierte PC-Adresse und ist fuer diesen Kernel laengst veraltet --
+* diese zwei Bytes sagen die Wahrheit.
+        move.b  ($1BE2).l,d0
+        bsr     Q9K_EmitHexByte
+        move.b  ($1BE3).l,d0
+        bsr     Q9K_EmitHexByte
+
         lea     Q9K_IcptRoutine(pc),a0
         trap    #0
         dc.w    $0009                          * F$Icpt
@@ -899,6 +912,27 @@ Q9K_AttachExit:
 * Die Intercept-Routine.  Das Handbuch verlangt sie "short and fast" --
 * hier: einen Marker ausgeben und per F$RTE zurueck.  d1.w traegt beim
 * Eintritt den Signalcode.
+* Gibt d0.b als zwei Hexziffern auf der DUART aus. Zerstoert d0/d2.
+Q9K_EmitHexByte:
+        move.b  d0,d2
+        lsr.b   #4,d0
+        bsr     Q9K_EmitHexNibble
+        move.b  d2,d0
+        andi.b  #$0f,d0
+        bsr     Q9K_EmitHexNibble
+        rts
+Q9K_EmitHexNibble:
+        andi.b  #$0f,d0
+        cmpi.b  #10,d0
+        blt     Q9K_EmitHexDigit
+        addi.b  #'a'-10,d0
+        move.b  d0,$FFFFF006
+        rts
+Q9K_EmitHexDigit:
+        addi.b  #'0',d0
+        move.b  d0,$FFFFF006
+        rts
+
 Q9K_IcptRoutine:
         cmpi.w  #17,d1                         * genau das gesendete Signal?
         bne     Q9K_IcptWrongSignal
