@@ -18,6 +18,9 @@ static unsigned char g_fakeGlobals[0x2000];
 
 #define Q9_D_PROC               ((unsigned long)(g_fakeGlobals + 0x000))
 #define Q9K_READYQ_SENTINEL_ADDR             ((unsigned long)(g_fakeGlobals + 0x008))
+/* Systemweite Mindestprioritaet -- im Test in den Fake-Speicher
+ * umgebogen, sonst greift der Scheduler auf die echte Adresse $55E zu. */
+#define Q9K_SCHED_MINPTY_ADDR                ((unsigned long)(g_fakeGlobals + 0x1F00))
 #define Q9K_SCHED_SLICE_ADDR    ((unsigned long)(g_fakeGlobals + 0x010))
 #define Q9K_WAITQ_SENTINEL_ADDR ((unsigned long)(g_fakeGlobals + 0x018))   /* NACHTRAG 2026-08-22 */
 #define Q9K_SLEEPQ_SENTINEL_ADDR ((unsigned long)(g_fakeGlobals + 0x020))  /* NACHTRAG 2026-08-30 */
@@ -286,6 +289,50 @@ int main(void)
                  Q9K_GetU32(Q9K_SLEEPQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF), p2);
         checkU32("Tick4: p2.State bleibt 's'",
                  (Q9_u32)*(unsigned char *)(p2 + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'s');
+    }
+
+
+    /* Mindestprioritaet (D_MinPty): der vom Handbuch bei F$SSpd genannte
+     * Weg, einen Prozess anzuhalten -- seine Prioritaet unter die
+     * Untergrenze senken. Bei 0 gibt es keine Untergrenze, das Verhalten
+     * ist dann unveraendert (so bootet das System auch). */
+    {
+        static unsigned char mpPool[2 * Q9K_TEST_DESC_SIZE];
+        Q9_u32 mpBase = (Q9_u32)(unsigned long)mpPool;
+        Q9_u32 lo = mpBase;
+        Q9_u32 hi = mpBase + Q9K_TEST_DESC_SIZE;
+
+        printf("\n--- Mindestprioritaet (F$SSpd-Ersatzweg) ---\n");
+        memset(mpPool, 0, sizeof(mpPool));
+        Q9K_SetU8(lo + Q9K_PROCDESC_PRIORITY_OFF, 3);   /* niedrig */
+        Q9K_SetU8(hi + Q9K_PROCDESC_PRIORITY_OFF, 9);   /* hoch    */
+
+        Q9K_SetU16(Q9K_SCHED_MINPTY_ADDR, 0);
+        Q9K_SetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF, Q9K_READYQ_SENTINEL_ADDR);
+        Q9K_SetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_PREV_OFF, Q9K_READYQ_SENTINEL_ADDR);
+        Q9K_SchedInsert(lo);
+        Q9K_SchedInsert(hi);
+        checkU32("ohne Untergrenze gewinnt die hoehere Prioritaet",
+                 Q9K_SchedPickHighestAge(), hi);
+
+        Q9K_SetU16(Q9K_SCHED_MINPTY_ADDR, 5);
+        checkU32("unter der Untergrenze wird niemand gewaehlt",
+                 Q9K_SchedPickHighestAge(), 0);
+
+        /* Angehalten heisst nicht vergessen: Untergrenze zuruecknehmen,
+         * und derselbe Prozess ist wieder waehlbar -- er lag die ganze
+         * Zeit noch in der Ready-Queue. */
+        Q9K_SetU16(Q9K_SCHED_MINPTY_ADDR, 0);
+        checkU32("nach Zuruecknehmen der Untergrenze laeuft er wieder",
+                 Q9K_SchedPickHighestAge(), lo);
+
+        /* Genau auf der Grenze zaehlt als lauffaehig (>=, nicht >). */
+        Q9K_SchedInsert(lo);
+        Q9K_SetU16(Q9K_SCHED_MINPTY_ADDR, 3);
+        checkU32("genau auf der Untergrenze laeuft weiter",
+                 Q9K_SchedPickHighestAge(), lo);
+
+        Q9K_SetU16(Q9K_SCHED_MINPTY_ADDR, 0);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

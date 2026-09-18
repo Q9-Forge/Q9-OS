@@ -175,6 +175,32 @@ typedef unsigned char  Q9_u8;
 #endif
 #define Q9K_SCHED_TSLICE 2U   /* Ticks pro Zeitscheibe, Manual-Default (D_TSlice) */
 
+#ifndef Q9K_SCHED_MINPTY_ADDR
+/* Systemweite Mindestprioritaet: ein Prozess, dessen Prioritaet DARUNTER
+ * liegt, wird nicht mehr ausgewaehlt. Das ist der vom Handbuch bei
+ * F$SSpd genannte Weg, einen Prozess anzuhalten ("You can suspend a
+ * process by setting its priority below the system's minimum executable
+ * priority level").
+ *
+ * BEWUSST EIN Q9-EIGENES FELD im Kernel-Scratchbereich, NICHT das
+ * Systemglobal D_MinPty. Der erste Versuch benutzte die Adresse $55E aus
+ * common/src/q9sysglob.h -- dort ist sie aber ausdruecklich als
+ * "[HANDBUCH]" gekennzeichnet, also aus der Dokumentation abgeleitet und
+ * nie am Binaercode verifiziert. Live zeigte sich, warum das zaehlt: mit
+ * $55E als Quelle blieb das System gleich beim Booten stehen, IOMan kam
+ * nicht einmal bis zum Fuellen seiner Geraetetabelle -- an dieser
+ * Adresse steht in diesem System etwas anderes, und der Scheduler las
+ * einen Zufallswert als Untergrenze und sperrte damit jeden Prozess aus.
+ *
+ * Solange kein fremdes Modul eine Mindestpriorietaet setzt (und keines
+ * tut das -- gesucht wurde danach), ist das hier ein rein interner
+ * Begriff, und ein eigenes Feld ist die ehrlichere Loesung als eine
+ * geratene fremde Adresse. Bleibt 0, solange niemand sie setzt; bei 0
+ * kann keine Prioritaet darunter liegen, das Verhalten ist dann
+ * unveraendert. */
+#define Q9K_SCHED_MINPTY_ADDR 0x19E0UL
+#endif
+
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
@@ -345,12 +371,22 @@ static Q9_u32 Q9K_SchedPickHighestAge(void)
     Q9_u32 best = 0;
     Q9_u16 bestAge = 0;
 
+    Q9_u16 minPty = Q9K_GetU16(Q9K_SCHED_MINPTY_ADDR);
+
     while (node != Q9K_READYQ_SENTINEL_ADDR) {
         Q9_u16 age = Q9K_GetU16(node + Q9K_PROCDESC_AGE_OFF);
 
-        if (best == 0 || age > bestAge) {
-            best = node;
-            bestAge = age;
+        /* Angehaltene Prozesse ueberspringen: wessen Prioritaet unter der
+         * systemweiten Mindestpriorietaet liegt, kommt nicht dran (s.
+         * Q9K_SCHED_MINPTY_ADDR oben). Er bleibt in der Ready-Queue --
+         * angehalten heisst nicht vergessen; sobald die Prioritaet wieder
+         * reicht, waehlt ihn diese Schleife von selbst wieder aus. */
+        if (minPty == 0
+            || (Q9_u16)Q9K_GetU8(node + Q9K_PROCDESC_PRIORITY_OFF) >= minPty) {
+            if (best == 0 || age > bestAge) {
+                best = node;
+                bestAge = age;
+            }
         }
 
         node = Q9K_GetU32(node + Q9K_READYQ_NEXT_OFF);

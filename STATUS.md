@@ -397,6 +397,32 @@ memory-trace diagnostic, which prints the allocation `F$DatMod` performs and
 splits the marker string. Worth knowing when reading a run: filter lines
 matching `^M <op> r=` before matching the sequence.
 
+**The scheduler now honours a minimum priority**, which makes the manual's
+replacement for the withdrawn `F$SSpd` actually work: a process whose priority
+falls below the limit is no longer picked, while staying in the ready queue —
+suspended is not forgotten, and raising the priority again makes it runnable
+without any further bookkeeping. The limit is 0 by default, and at 0 no priority
+can fall below it, so the boot behaviour is unchanged.
+
+The limit deliberately lives in a Q9-owned scratch cell rather than in the
+system global `D_MinPty`. The first attempt used `$55E` from `q9sysglob.h` — but
+that entry is marked `[HANDBUCH]` there, meaning derived from documentation and
+never verified against the binary. The live test showed why that matters: with
+`$55E` as the source the system stalled during boot, IOMan never even filled its
+device table. Something else lives at that address in this system, so the
+scheduler read a random value as the limit and locked every process out. As long
+as no foreign module sets a minimum priority — and a scan of all 455 Microware
+modules found none that does — this is a purely internal notion, and an own
+field is the honest answer rather than a guessed foreign address.
+
+Related finding from the same scan, recorded so nobody repeats it: `F$Mem` is
+called by no application at all, only by the Microware kernels themselves, which
+never run here. `F$SSpd` appears in `cio` and `debug` purely as the library
+wrapper `_os_sspd()` — present in the module, executed only if a program calls
+it, and failing on real OS-9/68K just the same. `F$UAcct` appears nowhere.
+`F$SysDbg`, by contrast, is genuinely used by `break`, `debug`, `sysgo` and
+`pcf`, and the ROM does contain RomBug — see the note on that below.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -422,7 +448,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
 | 🟡 | `0x09` | F$Icpt | Registers the intercept routine in P$SigVec/P$SigDat and reports pending signals; running the routine on delivery is still open |
 | 🟡 | `0x0A` | F$Sleep | Scheduler sleep path exists; complete timing coverage remains open |
-| ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead |
+| ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead, and that route now works here (see the scheduler note) |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
 | ❌ | `0x0E` | F$STrap | Would register per-process exception handlers in P$Traps; running them needs the exception path to enter user code, which does not exist yet |
@@ -480,7 +506,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x56` | F$Alarm | Needs timed alarm queues on top of the tick handler; a subsystem rather than a single call |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Basic memory-check path exists; full protection semantics remain open |
-| ⛔ | `0x59` | F$UAcct | A user-defined call installed by an OS9P2 module, not a kernel service; without such a module there is nothing to provide |
+| ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |
 | 🟡 | `0x5A` | F$CCtl | Handler/dispatch path exists; cache-control implementation remains open |
 | ❌ | `0x5B` | F$GSPUMp | Not implemented |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
