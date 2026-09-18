@@ -67,6 +67,8 @@
 *   h = F$STime refused an impossible month
 *   i = F$GBlkMp reported the free-memory map (d0=16 proves it was ours)
 *   o = F$GBlkMp refused a buffer too small for the terminator
+*   l = F$Sema released a semaphore nobody was waiting on
+*   w = F$Sema refused an unknown operation and a null pointer
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -734,6 +736,50 @@ Q9K_BlkMpOk:
         bcc     Q9K_NativeFailed               * muss abgewiesen werden
         moveq   #'o',d7
         move.b  d7,$FFFFF006
+
+* F$Sema ($62).  Geprueft werden hier NUR die Pfade, die den Testprozess
+* nicht blockieren: V auf einen Semaphor ohne Warter, und die beiden
+* Abweisungen.  Die P-Operation legt den Aufrufer per Entwurf schlafen,
+* bis ein ANDERER Prozess freigibt -- sie liesse sich hier nur mit einem
+* zweiten Prozess pruefen und ist deshalb allein im Hosttest abgedeckt.
+* Lieber diese Luecke benannt als ein Marker, der das Gegenteil suggeriert.
+        lea     -64(sp),sp
+        movea.l sp,a0
+        moveq   #15,d2                         * 64 Byte Semaphorstruktur nullen
+Q9K_SemaClear:
+        clr.l   (a0)+
+        dbra    d2,Q9K_SemaClear
+
+        movea.l sp,a0
+        move.l  a0,d0                          * Zeiger auf die Struktur
+        moveq   #2,d1                          * V -- niemand wartet
+        trap    #0
+        dc.w    $0062                          * F$Sema
+        bcs     Q9K_SemaFailed
+        moveq   #'l',d7
+        move.b  d7,$FFFFF006
+
+        movea.l sp,a0
+        move.l  a0,d0
+        moveq   #7,d1                          * unbekannte Operation
+        trap    #0
+        dc.w    $0062                          * F$Sema
+        bcc     Q9K_SemaFailed                 * muss abgewiesen werden
+
+        moveq   #0,d0                          * Nullzeiger
+        moveq   #2,d1
+        trap    #0
+        dc.w    $0062                          * F$Sema
+        bcc     Q9K_SemaFailed                 * muss abgewiesen werden
+
+        lea     64(sp),sp
+        moveq   #'w',d7
+        move.b  d7,$FFFFF006
+        bra     Q9K_SemaOk
+Q9K_SemaFailed:
+        lea     64(sp),sp
+        bra     Q9K_NativeFailed
+Q9K_SemaOk:
 
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
