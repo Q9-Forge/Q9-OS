@@ -48,6 +48,11 @@ static unsigned char g_fakeGlobals[0x2000];
 static int g_alarmTicks;
 unsigned long Q9K_AlarmTick(void) { g_alarmTicks++; return 0; }
 
+/* Dasselbe fuer die Systemuhr (q9kernel_clock.c, eigene Testreihe in
+ * test_q9kernel_clock.c) -- der Scheduler ruft sie ebenfalls pro Tick. */
+static int g_clockTicks;
+unsigned long Q9K_ClockTick(void) { g_clockTicks++; return 0; }
+
 #include "q9kernel_sched.c"
 
 static int failures = 0;

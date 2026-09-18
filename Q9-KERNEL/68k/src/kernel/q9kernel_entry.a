@@ -645,6 +645,17 @@ Q9K_AlarmScratch_Error     equ $1B10      * Q9_u32, d1.w AUS bei Fehler
 Q9K_AlarmScratch_Success   equ $1B14      * Q9_u32, 0/1
 Q9K_AlarmScratch_Date      equ $1B18      * Q9_u32, d4.l EIN = Datum/Tageszahl
 
+* Systemuhr und F$STime (2026-09-18, s. q9kernel_clock.c). Die Uhr laeuft
+* in Software; die RTC liefert nur den Startwert.
+Q9K_ClockDay               equ $1B20      * Q9_u32, julianische Tageszahl
+Q9K_ClockSec               equ $1B24      * Q9_u32, Sekunden seit Mitternacht
+Q9K_ClockTickCell          equ $1B28      * Q9_u32, Ticks innerhalb der Sekunde
+Q9K_ClockValid             equ $1B2C      * Q9_u32, 0 = nie gestellt
+Q9K_STimeScratch_Time      equ $1B30      * Q9_u32, d0.l EIN (F$STime) / AUS (F$Time)
+Q9K_STimeScratch_Date      equ $1B34      * Q9_u32, d1.l EIN (F$STime) / AUS (F$Time)
+Q9K_STimeScratch_Error     equ $1B38      * Q9_u32, d1.w AUS bei Fehler
+Q9K_STimeScratch_Success   equ $1B3C      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -4343,73 +4354,6 @@ Q9K_SysFCCtl:
 * bei einem echten Fehlaufruf ohnehin nur die Freiliste korrumpiert --
 * ein Carry-Check haette hier keinen echten Schutz geboten.
 *******************************************************************************
-* Q9K_SysFTime -- F$Time (callcode $15).
-*
-* Read the coherent BCD latch provided by the Q9-Flux RTC72421 at $FFFFD000.
-* Return the OS-9 time value (seconds since midnight) in D0 and the
-* Gregorian date YYYYMMDD in D1.  All non-result registers are preserved.
-*******************************************************************************
-Q9K_SysFTime:
-        movem.l d2-d4/a0/a3-a5,-(sp)
-        lea     $ffffd000,a0
-
-        moveq   #0,d0
-        move.b  (a0),d0
-        bsr     Q9K_BcdToBinary
-        move.l  d0,d2
-        moveq   #0,d0
-        move.b  2(a0),d0
-        bsr     Q9K_BcdToBinary
-        move.l  d0,d3
-        moveq   #0,d0
-        move.b  4(a0),d0
-        bsr     Q9K_BcdToBinary
-        move.l  d0,d4
-        mulu    #60,d3
-        mulu    #3600,d4
-        add.l   d3,d4
-        add.l   d4,d2
-        move.l  d2,d0
-
-* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-18): hier wurde das Datum als
-* DEZIMALZAHL zusammengesetzt (Jahr*10000 + Monat*100 + Tag, also
-* 20260918). Das reale "yyyymmdd" meint aber FELDER -- Jahr im oberen
-* Wort, dann je ein Byte Monat und Tag. Bewiesen am Originalkernel
-* (MWOS/OS9/68000/CMDS/BOOTOBJS/aker000b, F$Julian-Code ab $2316):
-*
-*     movem.l d0-d4,-(a7)
-*     moveq   #0,d3
-*     move.b  d1,d3        * Tag = unterstes Byte
-*     asr.l   #8,d1
-*     move.b  d1,d2        * Monat = naechstes Byte
-*     asr.l   #8,d1        * Jahr  = oberes Wort
-*     cmpi.w  #$62e,d1     * 1582, die Kalenderumstellung
-*     cmpi.b  #$f,d3       * Tag 15
-*     muls.w  #$5b5,d1     * 1461, der Vier-Jahres-Zyklus
-*
-* Folge des Fehlers: F$Time und F$Julian (q9kernel_date.c, das die
-* Felder korrekt erwartet) waren zueinander inkompatibel -- wer das
-* Ergebnis des einen an den anderen weiterreichte, bekam Unsinn, ohne
-* dass ein Test es gemerkt haette.
-        moveq   #0,d0
-        move.b  10(a0),d0
-        bsr     Q9K_BcdToBinary
-        addi.l  #2000,d0
-        swap    d0                              * Jahr ins obere Wort
-        move.l  d0,d1
-        moveq   #0,d0
-        move.b  8(a0),d0
-        bsr     Q9K_BcdToBinary
-        lsl.w   #8,d0                            * Monat ins zweite Byte
-        or.l    d0,d1
-        moveq   #0,d0
-        move.b  6(a0),d0
-        bsr     Q9K_BcdToBinary
-        or.l    d0,d1                             * Tag ins unterste Byte
-
-        movem.l (sp)+,d2-d4/a0/a3-a5
-        andi    #$fe,ccr
-        rts
 
 * Convert one packed BCD byte in D0 to binary; preserve D1.
 Q9K_BcdToBinary:
@@ -4450,6 +4394,69 @@ Q9K_SysFSRtMem:
         andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
         rts
 
+
+*******************************************************************************
+* Q9K_SysFTime -- F$Time (Callcode $15). Reale ABI, 68k_tech.pdf S.523:
+* AUS d0.l = Uhrzeit (00hhmmss), d1.l = Datum (yyyymmdd), beide
+* feldkodiert (je ein Byte pro Feld, Jahr im oberen Wort).
+*
+* Liest seit 2026-09-18 die SYSTEMUHR (q9kernel_clock.c) statt direkt den
+* RTC72421. Vorher war F$STime wirkungslos: was der Aufrufer stellte, war
+* beim naechsten F$Time wieder weg, weil jeder Aufruf erneut die Hardware
+* las. Die Uhr uebernimmt den Hardwarestand jetzt einmal beim Kaltstart
+* und laeuft ab da selbst -- genau das, was das Handbuch beschreibt
+* ("The OS-9 kernel keeps track of the current date and time in
+* software").
+*
+* Die Feldkodierung war ihrerseits ein echter Fehler, am Originalkernel
+* entschieden: "yyyymmdd" meint FELDER, nicht eine Dezimalzahl. Belegt an
+* MWOS/OS9/68000/CMDS/BOOTOBJS/aker000b ab $2316:
+*
+*     move.b  d1,d3        * Tag = unterstes Byte
+*     asr.l   #8,d1
+*     move.b  d1,d2        * Monat = naechstes Byte
+*     asr.l   #8,d1        * Jahr  = oberes Wort
+*     cmpi.w  #$62e,d1     * 1582, die Kalenderumstellung
+*     muls.w  #$5b5,d1     * 1461, der Vier-Jahres-Zyklus
+*
+* Folge des alten Fehlers: F$Time und F$Julian waren zueinander
+* inkompatibel -- wer das Ergebnis des einen an den anderen weiterreichte,
+* bekam Unsinn, ohne dass ein Test es gemerkt haette.
+*******************************************************************************
+Q9K_SysFTime:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SysTimeImpl
+        movea.l (sp)+,a6
+        move.l  Q9K_STimeScratch_Time,d0
+        move.l  Q9K_STimeScratch_Date,d1
+        andi    #$fe,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFSTime -- F$STime (Callcode $16). Reale ABI, 68k_tech.pdf S.511:
+* EIN d0.l = Uhrzeit (00hhmmss), d1.l = Datum (yyyymmdd), feldkodiert wie
+* bei F$Time. AUS: nichts; bei Fehler Carry und d1.w = Fehlercode.
+*
+* Ein Monatsfeld von 0 heisst "Datum und Uhrzeit aus der Hardware nehmen";
+* ein dann mitgegebenes Jahr liefert das Jahrhundert, das der RTC72421
+* nicht speichert. Begruendung und Handbuchzitat s. q9kernel_clock.c.
+*******************************************************************************
+Q9K_SysFSTime:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_STimeScratch_Time
+        move.l  d1,Q9K_STimeScratch_Date
+        bsr     Q9K_SysSTimeImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_STimeScratch_Success+2
+        beq     Q9K_SysFSTime_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFSTime_Fail:
+        move.w  Q9K_STimeScratch_Error+2,d1
+        ori     #1,ccr
+        rts
 
 *******************************************************************************
 * Q9K_SysFSetSys -- TRAP-#0-Handler fuer den echten F$SetSys-Callcode

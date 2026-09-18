@@ -63,6 +63,8 @@
 *   v = F$Alarm set an alarm and deleted it again (0x56)
 *   t = F$Alarm set an absolute alarm (A$AtDate) and deleted it again
 *   k = F$Alarm refused A$AtDate for an impossible calendar date
+*   b = F$STime set the clock and F$Time read the same value back
+*   h = F$STime refused an impossible month
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -643,6 +645,42 @@ Q9K_AttachStart:
         dc.w    $0056                          * F$Alarm
         bcc     Q9K_NativeFailed               * must be refused, not rounded
         moveq   #'k',d7
+        move.b  d7,$FFFFF006
+
+* F$STime (\$16) sets the system clock; F$Time (\$15) must then return
+* exactly what was set.  That round trip is the whole point of keeping the
+* clock in software -- before it existed, F$Time re-read the hardware on
+* every call and any F$STime was lost.  Date and time are field-coded: a
+* byte each for month/day and hour/minute/second, year in the high word.
+        move.l  #$07E80304,d1                  * 2024-03-04
+        move.l  #$00050607,d0                  * 05:06:07
+        trap    #0
+        dc.w    $0016                          * F$STime
+        bcs     Q9K_NativeFailed
+        trap    #0
+        dc.w    $0015                          * F$Time
+        bcs     Q9K_NativeFailed
+        cmpi.l  #$07E80304,d1                  * same date back
+        bne     Q9K_NativeFailed
+* The seconds field may already have advanced -- the clock runs.  Compare
+* only date, hour and minute, and allow the minute to be the next one.
+        move.l  d0,d2
+        andi.l  #$00FFFF00,d2
+        cmpi.l  #$00050600,d2
+        beq     Q9K_STimeOk
+        cmpi.l  #$00050700,d2
+        bne     Q9K_NativeFailed
+Q9K_STimeOk:
+        moveq   #'b',d7
+        move.b  d7,$FFFFF006
+
+* An impossible month must be refused rather than silently accepted.
+        move.l  #$07E80D04,d1                  * month 13
+        move.l  #$00050607,d0
+        trap    #0
+        dc.w    $0016                          * F$STime
+        bcc     Q9K_NativeFailed
+        moveq   #'h',d7
         move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access
