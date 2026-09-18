@@ -69,6 +69,21 @@ static int g_wakeCalls;
 static unsigned long g_wakeLast;
 void Q9K_SchedWake(unsigned long desc) { g_wakeCalls++; g_wakeLast = desc; }
 
+/* Seit der Intercept-Zustellung (2026-09-18) ruft Q9K_ProcSend auch
+ * Q9K_IcptDeliver. Die Zustellung selbst ist in test_q9kernel_icpt.c
+ * eigenstaendig geprueft; hier zaehlt nur, DASS sie fuer einen nicht
+ * laufenden Empfaenger versucht wird. */
+static int g_icptCalls;
+static unsigned long g_icptLastDesc;
+static unsigned g_icptLastSignal;
+int Q9K_IcptDeliver(unsigned long desc, unsigned short signal)
+{
+    g_icptCalls++;
+    g_icptLastDesc = desc;
+    g_icptLastSignal = signal;
+    return 0;   /* "keine Routine eingetragen" -- Verhalten wie bisher */
+}
+
 unsigned long Q9K_SchedFirstPick(void)
 {
     return g_schedFirstPickReturn;

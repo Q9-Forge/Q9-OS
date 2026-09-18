@@ -510,7 +510,7 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtkbhiolw@#e` followed by `C`
+The emulator regression now ends `…KNX` … `Wvtkbhiolw@#(+e` followed by `C`
 from the chained-to module.
 
 **A contradiction between the two time sources, found while extending F$Alarm
@@ -560,6 +560,56 @@ and day 1-31, and the manual says of `F$STime` that "the date and time are not
 checked for validity". Tightening that would be an invention beyond the
 original; the host suite pins the actual behaviour so it cannot drift
 unnoticed.
+
+**THE TIMER DOES NOT TICK — found while testing the intercept delivery, and
+the single most consequential thing in this round.** The kernel dump reports
+`Timer-Interrupts: 0 gesamt, davon 0 im IRQ-Dispatcher`, in the direct-attach
+run and in the normal boot alike. Everything that depends on the tick is
+therefore inert:
+
+- `F$Sleep(50)` — half a second — never returns. Measured with a marker either
+  side of the call: the one before appears, the one after never does.
+- Alarms never fire, so `F$Alarm`'s relative and absolute variants are only as
+  good as their host tests. The earlier emulator check passed because it
+  deleted the alarm again straight away and never let one come due.
+- The software clock never advances. `F$STime`/`F$Time` still work, since
+  neither needs a tick to set or read the clock — which is why this went
+  unnoticed.
+
+The row for `F$Sleep` (`0x0A`) says "complete timing coverage remains open".
+That is far too kind: a plain sleep does not wake at all. Fixing this is its
+own piece of work — it is about the timer interrupt reaching the dispatcher,
+not about the scheduler code, which reads correctly.
+
+**The intercept subsystem: F$Icpt now actually runs the routine.** Until now
+`F$Icpt` could only register one. A signal was dropped into `P$Signal` and the
+process woken; the registered routine never ran, so any program wanting to
+handle a keyboard abort was reduced to polling.
+
+The delivery needs no new memory. An interrupted process already has its whole
+state on its own stack — register set plus exception frame, 68 bytes, with
+`P$SavedSP` pointing at it. Delivery simply stacks a **second** such frame
+below it, entering the intercept routine, and points `P$SavedSP` at that. `F$RTE`
+is then almost nothing: move `P$SavedSP` back by one frame and the main program
+continues as if nothing happened. This is exactly the stacking the manual
+describes with "each time the intercept routine is called, 70 bytes are used on
+the user's stack" — this version needs 68, its frame being precisely that size.
+
+`F$RTE` re-enters the routine instead of returning when another signal is
+pending ("until the queue is exhausted"), and refuses a call with no intercept
+open — unstacking a frame there would cost the main program its own state and
+resume it at an arbitrary address. `F$SigReset` discards the context instead,
+for a routine left via `longjmp()`.
+
+Delivery happens only to a process that is **not** currently running: whoever
+is running has their state in the CPU registers, so `P$SavedSP` is stale and a
+frame built from it would resume them anywhere. For a running process the
+signal is stored as before and delivered at the next switch.
+
+The emulator proves the registration and `F$SigReset`. The round trip
+signal → routine → `F$RTE` is host-tested only, and the reason is the dead timer
+above: delivery needs a sender, and the natural one (an alarm, from the timer
+interrupt) never fires. Once the tick runs, three lines in the live test suffice.
 
 **F$Chain** (`0x05`) runs a new program without creating a process — "similar
 to a Fork command followed by an Exit", but in the same process, with the open
@@ -763,7 +813,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
 | ⛔ | `0x07` | F$Mem | Withdrawn in real OS-9/68K ("F$Mem is no longer available. Use F$SRqMem instead."); deliberately not implemented |
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
-| 🟡 | `0x09` | F$Icpt | Registers the intercept routine in P$SigVec/P$SigDat and reports pending signals; running the routine on delivery is still open |
+| 🟡 | `0x09` | F$Icpt | Registers the routine and now really **runs** it on delivery, by stacking a second process frame; host-tested, emulator proof blocked by the dead timer — see the note |
 | 🟡 | `0x0A` | F$Sleep | Scheduler sleep path exists; complete timing coverage remains open |
 | ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead, and that route now works here (see the scheduler note) |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
@@ -784,7 +834,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x1B` | F$CpyMem | Copy with owner-PID validation; no address translation is needed while all processes share one flat address space |
 | ✅ | `0x1C` | F$SUser | Changes the caller's own group/user ID in the process descriptor; only the documented "user 0.0 may change freely" case is implemented |
 | ✅ | `0x1D` | F$UnLoad | Same lookup rule as F$Link and the same counter as F$UnLink, keyed by module name |
-| ❌ | `0x1E` | F$RTE | Returns from an intercept routine; blocked on the same missing piece as F$Icpt and F$SigReset |
+| 🟡 | `0x1E` | F$RTE | Unstacks the intercept frame and re-enters the routine when another signal is pending; host-tested |
 | ✅ | `0x1F` | F$GPrDBT | Pointer table assembled from the process pool, one entry per slot, 0 for a free one |
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | 🟡 | `0x21` | F$TLink | Trap linking works; unlink and complete lifetime handling remain open |
@@ -833,7 +883,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | ❌ | `0x61` | F$FIRQ | Not implemented |
 | 🟡 | `0x62` | F$Sema | P and V implemented against an ABI recovered by disassembly; V and the refusals are emulator-verified, P is host-tested only (it blocks by design) |
-| ❌ | `0x63` | F$SigReset | Clears the intercept context stack; needs intercept routines to actually run first (see F$Icpt) |
+| ✅ | `0x63` | F$SigReset | Discards the saved intercept context, for a routine left via `longjmp()`; emulator-verified |
 
 ## I$ input/output system calls
 
