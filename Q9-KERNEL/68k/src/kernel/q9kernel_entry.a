@@ -685,6 +685,20 @@ Q9K_SemaScratch_Ok         equ $1B8C      * Q9_u32, 0/1
 Q9K_SemaScratch_Sleep      equ $1B90      * Q9_u32, 1 = Aufrufer muss warten
 Q9K_SemaScratch_Next       equ $1B94      * Q9_u32, naechster Prozess
 
+* F$Chain (2026-09-18, s. q9kernel_chain.c).
+Q9K_ChainScratch_TypeLang  equ $1BA0      * Q9_u32, d0.w EIN
+Q9K_ChainScratch_AddMem    equ $1BA4      * Q9_u32, d1.l EIN
+Q9K_ChainScratch_ParamSz   equ $1BA8      * Q9_u32, d2.l EIN
+Q9K_ChainScratch_NumPaths  equ $1BAC      * Q9_u32, d3.w EIN
+Q9K_ChainScratch_Priority  equ $1BB0      * Q9_u32, d4.w EIN
+Q9K_ChainScratch_Name      equ $1BB4      * Q9_u32, (a0) EIN
+Q9K_ChainScratch_Param     equ $1BB8      * Q9_u32, (a1) EIN
+Q9K_ChainScratch_Error     equ $1BBC      * Q9_u32, d1.w AUS bei Fehler
+Q9K_ChainScratch_Ok        equ $1BC0      * Q9_u32, 0/1
+Q9K_ChainScratch_OldBlock  equ $1BC4      * Q9_u32, alter Block
+Q9K_ChainScratch_OldSize   equ $1BC8      * Q9_u32, dessen Groesse
+Q9K_ChainScratch_OldMod    equ $1BCC      * Q9_u32, altes Primaermodul
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -4684,6 +4698,76 @@ Q9K_SysFSema_NoFrame:
         move.w  #$00d0,d1                       * E_UNKSVC -- s. Kopfkommentar
         ori     #1,ccr
         rts
+
+*******************************************************************************
+* Q9K_SysFChain -- F$Chain (Callcode $05). Reale ABI, 68k_tech.pdf S.383:
+* EIN d0.w = Modultyp/Sprache, d1.l = Zusatzspeicher, d2.l = Parameter-
+*     groesse, d3.w = Pfadzahl, d4.w = Prioritaet, (a0) = Modulname,
+*     (a1) = Parameter.
+* AUS keine -- "F$Chain does not return to the calling process".
+*     Im FEHLERFALL kehrt es sehr wohl zurueck, mit Carry und d1.w, und
+*     der Aufrufer laeuft unveraendert weiter.
+*
+* DREI DINGE, AUF DIE ES HIER ANKOMMT:
+*
+* 1. Der Fehlerfall laesst den Aufrufer heil. Q9K_ProcChain baut deshalb
+*    erst alles Neue auf und raeumt nichts ab, bevor das gelungen ist --
+*    ein Fehlschlag (Tippfehler im Modulnamen) ist der haeufigere Fall.
+*
+* 2. Der alte Speicherblock wird ERST FREIGEGEBEN, NACHDEM hier auf den
+*    Stack im neuen Block umgeschaltet wurde. Der Kernel laeuft bis dahin
+*    auf dem Stack IM ALTEN BLOCK -- ihn vorher freizugeben ginge fast
+*    immer gut, bis die naechste Allokation ihn ueberschreibt. Deshalb die
+*    Zweiteilung in Q9K_SysChainImpl und Q9K_SysChainReleaseImpl.
+*
+* 3. Wie F$Sleep und F$Sema braucht der Wechsel einen Exception-Rahmen,
+*    also den Weg ueber Q9K_TrapDispatch. Ein Aufruf ueber das
+*    PEA+RTS-Trampolin wird abgewiesen statt mit einem selbstgebauten
+*    Rahmen bedient -- F$Chain kommt aus Nutzerprogrammen per TRAP.
+*******************************************************************************
+Q9K_SysFChain:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_ChainScratch_TypeLang        * obere Worte nullen, C liest 32 Bit
+        move.w  d0,Q9K_ChainScratch_TypeLang+2
+        move.l  d1,Q9K_ChainScratch_AddMem
+        move.l  d2,Q9K_ChainScratch_ParamSz
+        clr.l   Q9K_ChainScratch_NumPaths
+        move.w  d3,Q9K_ChainScratch_NumPaths+2
+        clr.l   Q9K_ChainScratch_Priority
+        move.w  d4,Q9K_ChainScratch_Priority+2
+        move.l  a0,Q9K_ChainScratch_Name
+        move.l  a1,Q9K_ChainScratch_Param
+        bsr     Q9K_SysChainImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_ChainScratch_Ok+2
+        beq     Q9K_SysFChain_Fail
+
+        tst.w   Q9K_InTrapPath
+        beq     Q9K_SysFChain_NoFrame
+
+* Ab hier gibt es kein Zurueck: der Deskriptor zeigt bereits auf das neue
+* Programm. Auf dessen Stack umschalten, DANN erst das alte freigeben.
+        movea.l Q9_D_Proc,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SysChainReleaseImpl          * jetzt gefahrlos -- neuer Stack
+        movem.l (sp)+,d0-d7/a0-a6
+        rte                                      * Sprung ins neue Programm
+
+Q9K_SysFChain_Fail:
+        move.w  Q9K_ChainScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+Q9K_SysFChain_NoFrame:
+* Der Aufbau ist gelungen, aber ohne Exception-Rahmen laesst sich nicht
+* wechseln. Das darf nicht stillschweigend passieren: der Deskriptor
+* zeigt schon auf das neue Programm, der Prozess liefe mit dem alten
+* Stack weiter. Behandelt wie ein Kernelfehler -- er kann nur durch einen
+* falschen Aufrufweg entstehen, nicht durch schlechte Argumente.
+        moveq   #K_IDLE,d0
+        bra     Q9K_KernelPanic
 
 *******************************************************************************
 * Q9K_SysFSetSys -- TRAP-#0-Handler fuer den echten F$SetSys-Callcode
