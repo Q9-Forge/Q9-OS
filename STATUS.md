@@ -510,7 +510,7 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtk@#`.
+The emulator regression now ends `…KNX` … `Wvtkbh@#`.
 
 **A contradiction between the two time sources, found while extending F$Alarm
 and worth fixing before anything builds on it.** `F$Alarm`'s absolute variants
@@ -525,6 +525,40 @@ high word, then a byte each for month and day). Feed one into the other and the
 result is nonsense. Which reading of "yyyymmdd" is the real one cannot be decided
 from the manual text alone — both fit the notation, and the `F$STime` remark
 about "the month field in the date parameter" reads either way.
+
+**A software clock, so that F$STime can mean anything.** `F$Time` used to
+read the RTC72421 on every single call. That returns a correct time, but it
+makes `F$STime` impossible: whatever a caller sets would be gone by the next
+`F$Time`. The manual describes the opposite arrangement in as many words —
+"The OS-9 kernel keeps track of the current date and time in software to make
+clock modules small and simple" — so the clock now lives in the kernel
+(`q9kernel_clock.c`) and the hardware only supplies the starting value.
+
+`Q9K_ClockTick()` runs once per timer interrupt beside `Q9K_AlarmTick()` and
+rolls ticks into seconds into days; `Q9K_ClockRead()` hands out the software
+state, adopting the RTC reading on the very first read — the cold start with a
+battery-backed clock that the manual describes. An unset clock deliberately
+does not tick: counting up from zero would invent a moment rather than admit
+an unknown one. Internally the clock holds a julian day number plus seconds
+after midnight, the same form the absolute alarms compare against, and the
+field encoding is converted only at the bridge.
+
+`F$STime` sets it. The manual's battery-backed form is implemented too: a
+month field of 0 means "take date and time from the hardware", and a year
+supplied alongside it provides the century the RTC72421 does not store. What
+is **not** implemented is the other half of the description — "starts the
+system real-time clock ... and then linking the clock module". This kernel has
+no loadable clock module; its timer interrupt has been running since boot.
+There is nothing here to start, so the row stays 🟡 rather than claiming a
+completeness the machine does not have.
+
+One tolerance is recorded rather than tightened: a day that does not exist in
+its month is not rejected but carried forward by the julian formula, so
+31 September becomes 1 October. `Q9K_JulianFromDate` only checks month 1-12
+and day 1-31, and the manual says of `F$STime` that "the date and time are not
+checked for validity". Tightening that would be an invention beyond the
+original; the host suite pins the actual behaviour so it cannot drift
+unnoticed.
 
 **The question has since been decided, by disassembly rather than by taste.**
 Microware's own kernel `aker000b` unpacks the date at `0x2316` with
@@ -576,8 +610,8 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x12` | F$SchBit | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x13` | F$AllBit | Microware path exists; current Q9 compatibility is not fully verified |
 | 🟡 | `0x14` | F$DelBit | Microware path exists; current Q9 compatibility is not fully verified |
-| 🟡 | `0x15` | F$Time | Reads the emulated RTC72421 at `$FFFFD000`; its date encoding contradicts `F$Julian` — see the note |
-| ❌ | `0x16` | F$STime | Not implemented |
+| ✅ | `0x15` | F$Time | Reads the kernel's software clock, which takes its starting value from the RTC72421 at `$FFFFD000` |
+| 🟡 | `0x16` | F$STime | Sets the software clock, including the battery-backed form (month field 0); the clock module it would otherwise link does not exist on this machine |
 | ✅ | `0x17` | F$CRC | 24-bit module CRC, accumulated across calls; verified against a real module and the documented CRCCon constant |
 | ✅ | `0x18` | F$GPrDsc | Read-only copy of a process descriptor, length-capped at the descriptor size |
 | ❌ | `0x19` | F$GBlkMp | Not implemented |

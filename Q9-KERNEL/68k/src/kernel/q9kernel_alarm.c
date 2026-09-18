@@ -58,6 +58,7 @@ extern int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError); /* q9kerne
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);                         /* q9kernel_procapi.c  */
 extern Q9_u32 Q9K_JulianFromDate(Q9_u32 year, Q9_u32 month, Q9_u32 day); /* q9kernel_date.c */
 extern void   Q9K_RtcRead(Q9_u32 *outDay, Q9_u32 *outSeconds);        /* unten in dieser Datei */
+extern void   Q9K_ClockRead(Q9_u32 *outDay, Q9_u32 *outSeconds);      /* q9kernel_clock.c */
 
 #ifndef Q9_D_PROC
 #define Q9_D_PROC 0x04CUL
@@ -192,6 +193,33 @@ static Q9_u32 Q9K_RtcBcd(Q9_u32 offset)
 }
 #endif
 
+/* Q9K_RtcReadFields -- der Hardwarestand in seinen Einzelfeldern.
+ *
+ * F$STime braucht die Felder einzeln (s. q9kernel_clock.c: bei Monat 0
+ * stammt das Jahrhundert vom Aufrufer, der Rest aus der Uhr), waehrend
+ * jeder andere Aufrufer mit Tageszahl und Sekunden besser bedient ist.
+ * Deshalb liest diese Routine die Hardware, und Q9K_RtcRead rechnet
+ * darueber nur noch um -- statt beides getrennt aus denselben Registern
+ * zu lesen und auseinanderlaufen zu lassen. */
+void Q9K_RtcReadFields(Q9_u32 *outYear, Q9_u32 *outMonth, Q9_u32 *outDay,
+                       Q9_u32 *outHour, Q9_u32 *outMin, Q9_u32 *outSec)
+{
+#ifdef Q9K_TEST_RTC_OVERRIDE
+    /* Im Hosttest gibt es keine RTC -- dort stellt der Test die Uhr. */
+    extern unsigned long g_rtcYear, g_rtcMonth, g_rtcDay;
+    extern unsigned long g_rtcHour, g_rtcMin, g_rtcSec;
+    *outYear = g_rtcYear; *outMonth = g_rtcMonth; *outDay = g_rtcDay;
+    *outHour = g_rtcHour; *outMin = g_rtcMin; *outSec = g_rtcSec;
+#else
+    *outSec   = Q9K_RtcBcd(0);
+    *outMin   = Q9K_RtcBcd(2);
+    *outHour  = Q9K_RtcBcd(4);
+    *outDay   = Q9K_RtcBcd(6);
+    *outMonth = Q9K_RtcBcd(8);
+    *outYear  = Q9K_RtcBcd(10) + 2000UL;
+#endif
+}
+
 void Q9K_RtcRead(Q9_u32 *outDay, Q9_u32 *outSeconds)
 {
 #ifdef Q9K_TEST_RTC_OVERRIDE
@@ -201,13 +229,8 @@ void Q9K_RtcRead(Q9_u32 *outDay, Q9_u32 *outSeconds)
     *outSeconds = g_nowSec;
     return;
 #else
-    Q9_u32 sec   = Q9K_RtcBcd(0);
-    Q9_u32 min   = Q9K_RtcBcd(2);
-    Q9_u32 hour  = Q9K_RtcBcd(4);
-    Q9_u32 day   = Q9K_RtcBcd(6);
-    Q9_u32 month = Q9K_RtcBcd(8);
-    Q9_u32 year  = Q9K_RtcBcd(10) + 2000UL;
-
+    Q9_u32 year, month, day, hour, min, sec;
+    Q9K_RtcReadFields(&year, &month, &day, &hour, &min, &sec);
     *outSeconds = hour * 3600UL + min * 60UL + sec;
     *outDay = Q9K_JulianFromDate(year, month, day);
 #endif
@@ -343,14 +366,16 @@ Q9_u32 Q9K_AlarmTick(void)
              * greater than or equal to the alarm time"), damit ein
              * verschlafener Zeitpunkt nicht einfach verfaellt.
              *
-             * Die Uhr wird hoechstens EINMAL pro Tick gelesen, und nur
-             * wenn ueberhaupt ein absoluter Alarm eingetragen ist: der
-             * Tick laeuft 100-mal je Sekunde, und ein RTC-Zugriff ist
-             * teurer als ein Zahlenvergleich. */
+             * Gelesen wird die SYSTEMUHR (q9kernel_clock.c), nicht die
+             * Hardware: was F$STime stellt, muss auch fuer Alarme
+             * gelten, sonst feuert ein Alarm nach gestellter Uhr zum
+             * falschen Zeitpunkt. Die Uhr wird hoechstens EINMAL pro Tick
+             * gelesen, und nur wenn ueberhaupt ein absoluter Alarm
+             * eingetragen ist. */
             Q9_u32 day = Q9K_GetU32(Q9K_ALARM_DAY(i));
 
             if (!haveNow) {
-                Q9K_RtcRead(&nowDay, &nowSec);
+                Q9K_ClockRead(&nowDay, &nowSec);
                 haveNow = 1;
             }
             if (nowDay < day)
