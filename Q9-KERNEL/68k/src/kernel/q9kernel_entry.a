@@ -639,6 +639,7 @@ Q9K_AlarmScratch_Signal    equ $1A98      * Q9_u32, d2.w EIN
 Q9K_AlarmScratch_Ticks     equ $1A9C      * Q9_u32, d3.l EIN
 Q9K_AlarmScratch_Error     equ $1AA0      * Q9_u32, d1.w AUS bei Fehler
 Q9K_AlarmScratch_Success   equ $1AA4      * Q9_u32, 0/1
+Q9K_AlarmScratch_Date      equ $1AA8      * Q9_u32, d4.l EIN = Datum/Tageszahl
 
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
@@ -4366,21 +4367,41 @@ Q9K_SysFTime:
         add.l   d4,d2
         move.l  d2,d0
 
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-18): hier wurde das Datum als
+* DEZIMALZAHL zusammengesetzt (Jahr*10000 + Monat*100 + Tag, also
+* 20260918). Das reale "yyyymmdd" meint aber FELDER -- Jahr im oberen
+* Wort, dann je ein Byte Monat und Tag. Bewiesen am Originalkernel
+* (MWOS/OS9/68000/CMDS/BOOTOBJS/aker000b, F$Julian-Code ab $2316):
+*
+*     movem.l d0-d4,-(a7)
+*     moveq   #0,d3
+*     move.b  d1,d3        * Tag = unterstes Byte
+*     asr.l   #8,d1
+*     move.b  d1,d2        * Monat = naechstes Byte
+*     asr.l   #8,d1        * Jahr  = oberes Wort
+*     cmpi.w  #$62e,d1     * 1582, die Kalenderumstellung
+*     cmpi.b  #$f,d3       * Tag 15
+*     muls.w  #$5b5,d1     * 1461, der Vier-Jahres-Zyklus
+*
+* Folge des Fehlers: F$Time und F$Julian (q9kernel_date.c, das die
+* Felder korrekt erwartet) waren zueinander inkompatibel -- wer das
+* Ergebnis des einen an den anderen weiterreichte, bekam Unsinn, ohne
+* dass ein Test es gemerkt haette.
         moveq   #0,d0
         move.b  10(a0),d0
         bsr     Q9K_BcdToBinary
         addi.l  #2000,d0
-        mulu    #10000,d0
+        swap    d0                              * Jahr ins obere Wort
         move.l  d0,d1
         moveq   #0,d0
         move.b  8(a0),d0
         bsr     Q9K_BcdToBinary
-        mulu    #100,d0
-        add.l   d0,d1
+        lsl.w   #8,d0                            * Monat ins zweite Byte
+        or.l    d0,d1
         moveq   #0,d0
         move.b  6(a0),d0
         bsr     Q9K_BcdToBinary
-        add.l   d0,d1
+        or.l    d0,d1                             * Tag ins unterste Byte
 
         movem.l (sp)+,d2-d4/a0/a3-a5
         andi    #$fe,ccr
@@ -5540,8 +5561,12 @@ Q9K_SysFDatMod_Fail:
 *   A$Delete (0): d0.l = Alarm-ID (0 = alle eigenen), keine Ausgabe
 *   A$Set    (1): d2.w = Signalcode, d3.l = Intervall -> d0.l = Alarm-ID
 *   A$Cycle  (2): wie A$Set, wiederholt sich
-* A$AtDate/A$AtJul/A$Reset melden E$UnkSvc, solange keine Systemuhr
-* laeuft -- Begruendung s. Kopfkommentar von q9kernel_alarm.c.
+*   A$AtDate (3): d2.w = Signalcode, d3.l = Uhrzeit und d4.l = Datum,
+*                 beide feldkodiert wie bei F$Time -> d0.l = Alarm-ID
+*   A$AtJul  (4): wie A$AtDate, aber d3.l = Sekunden nach Mitternacht
+*                 und d4.l = julianische Tageszahl
+* Nur A$Reset meldet E$UnkSvc -- die Beschreibung sagt nicht, was es
+* zuruecksetzen soll (s. Kopfkommentar von q9kernel_alarm.c).
 Q9K_SysFAlarm:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
@@ -5551,6 +5576,7 @@ Q9K_SysFAlarm:
         clr.l   Q9K_AlarmScratch_Signal
         move.w  d2,Q9K_AlarmScratch_Signal+2
         move.l  d3,Q9K_AlarmScratch_Ticks
+        move.l  d4,Q9K_AlarmScratch_Date
         bsr     Q9K_SysAlarmImpl
         movea.l (sp)+,a6
         tst.w   Q9K_AlarmScratch_Success+2
