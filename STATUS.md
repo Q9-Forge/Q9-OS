@@ -560,6 +560,45 @@ checked for validity". Tightening that would be an invention beyond the
 original; the host suite pins the actual behaviour so it cannot drift
 unnoticed.
 
+**The three bit-map calls, and what measuring them turned up.** `F$SchBit`
+(`0x12`), `F$AllBit` (`0x13`) and `F$DelBit` (`0x14`) form one cycle: search a
+free run, allocate it, hand it back. RBF manages disk cluster allocation with
+them. All three now have a kernel-native implementation in
+`q9kernel_bitmap.c`, covered by 49 host checks.
+
+`F$SchBit`'s failure case is unusual and is reproduced exactly: when no run is
+large enough it sets carry but returns **no error code** — `d0.w`/`d1.w` carry
+the start and size of the largest run found instead, so the caller can decide
+whether less will do. Reading `d1.w` as an error number there yields silent
+nonsense, which is why it is spelled out at length in the source.
+
+Two things were measured rather than assumed, and both are recorded because
+they cost time:
+
+- **These calls currently do nothing on the running system.** `F$AllBit` on a
+  zeroed buffer reports success and leaves the buffer at zero. A control probe
+  with a deliberately unassigned call code returned carry correctly, so the
+  measurement setup was sound.
+- **The reason is that the loaded Microware IOMan claims them.** Its F$SSvc
+  marker table (`$1400` + call code) reads 1 for both `$12` and `$13`, which
+  matches the manual ("The IOMan module implements F$SchBit"). While that IOMan
+  is loaded its handler runs, not this kernel's — and, as measured, without
+  touching the bit map.
+
+So the new implementation is the kernel's own path for running **without** a
+foreign IOMan, which is where this project is headed. It cannot be proven in
+the emulator as things stand: a live test there would measure IOMan's handler,
+not this one. The rows therefore stay 🟡 with the reason named, and no live
+marker was added — a green marker that measures something other than what it
+claims is worse than none.
+
+The bit order is an open point, stated as such: the manual only says "bit
+numbers range from 0 to n-1". This implementation puts bit 0 at the most
+significant bit of byte 0. Deciding it needs IOMan's `F$AllBit` handler
+disassembled, the same way the date format was settled. Until then all three
+calls share one order, so any caller going exclusively through them gets
+consistent results; the host suite pins the order so it cannot drift.
+
 **The question has since been decided, by disassembly rather than by taste.**
 Microware's own kernel `aker000b` unpacks the date at `0x2316` with
 `move.b d1,d3` / `asr.l #8,d1` / `move.b d1,d2` / `asr.l #8,d1` — byte-wise
@@ -607,9 +646,9 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x0F` | F$PErr | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
 | ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
-| 🟡 | `0x12` | F$SchBit | Microware path exists; current Q9 compatibility is not fully verified |
-| 🟡 | `0x13` | F$AllBit | Microware path exists; current Q9 compatibility is not fully verified |
-| 🟡 | `0x14` | F$DelBit | Microware path exists; current Q9 compatibility is not fully verified |
+| 🟡 | `0x12` | F$SchBit | Kernel-native implementation, host-tested, including the unusual carry case; the loaded Microware IOMan claims the call via F$SSvc, so it is not reachable in the emulator — see the note |
+| 🟡 | `0x13` | F$AllBit | Kernel-native implementation, host-tested; same IOMan claim as `0x12` |
+| 🟡 | `0x14` | F$DelBit | Kernel-native implementation, host-tested; same IOMan claim as `0x12` |
 | ✅ | `0x15` | F$Time | Reads the kernel's software clock, which takes its starting value from the RTC72421 at `$FFFFD000` |
 | 🟡 | `0x16` | F$STime | Sets the software clock, including the battery-backed form (month field 0); the clock module it would otherwise link does not exist on this machine |
 | ✅ | `0x17` | F$CRC | 24-bit module CRC, accumulated across calls; verified against a real module and the documented CRCCon constant |
