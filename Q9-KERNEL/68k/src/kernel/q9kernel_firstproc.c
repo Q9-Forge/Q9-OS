@@ -399,6 +399,21 @@ void Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 regIndex, Q9_u32 value)   /* s. Hi
     Q9K_SetU8(addr + 3, (Q9_u8)value);
 }
 
+/* Gegenstueck zu Q9K_SetFrameReg -- byteweise aus demselben Grund: der
+ * Rahmen liegt im Prozessspeicher mit 4-Byte-Registern, waehrend Q9_u32
+ * auf einem Testhost breiter ist. Gebraucht seit q9kernel_icpt.c den
+ * Registersatz eines unterbrochenen Prozesses in den Rahmen der
+ * Intercept-Routine uebernimmt. */
+Q9_u32 Q9K_GetFrameReg(Q9_u32 frameBase, Q9_u32 regIndex)
+{
+    Q9_u32 addr = frameBase + regIndex * 4UL;
+
+    return ((Q9_u32)Q9K_GetU8(addr + 0) << 24)
+         | ((Q9_u32)Q9K_GetU8(addr + 1) << 16)
+         | ((Q9_u32)Q9K_GetU8(addr + 2) << 8)
+         | (Q9_u32)Q9K_GetU8(addr + 3);
+}
+
 /* Holt EINEN Deskriptor aus der Punkt-5/6-Freiliste -- die dortige
  * Freiliste wurde nur AUFGEBAUT (q9kernel_tables.c), Pop war nicht Teil
  * von Punkt 5/6. Rueckgabe 0 = Pool erschoepft. */
