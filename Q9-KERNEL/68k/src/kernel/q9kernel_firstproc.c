@@ -343,7 +343,9 @@ static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = va
  * Felder) -- byteweise statt Pointer-Cast, gleiche Begruendung/Konvention
  * wie q9kernel_moddir.c's Q9K_ReadU32BE (Host-Endianness/Alignment-
  * Unabhaengigkeit). */
-static Q9_u32 Q9K_ReadHdrU32BE(Q9_u32 addr)
+/* Nicht mehr static: q9kernel_chain.c baut denselben Prozessrahmen auf
+ * und braucht dieselben drei Bausteine (s. dortigen Kopfkommentar). */
+Q9_u32 Q9K_ReadHdrU32BE(Q9_u32 addr)
 {
     const Q9_u8 *p = (const Q9_u8 *)addr;
     return ((Q9_u32)p[0] << 24) | ((Q9_u32)p[1] << 16) | ((Q9_u32)p[2] << 8) | (Q9_u32)p[3];
@@ -387,7 +389,7 @@ static Q9_u16 Q9K_ReadHdrU16BE(Q9_u32 addr)
  * Deshalb stattdessen byteweise, host- UND zielunabhaengig eindeutige
  * Zusammensetzung -- gleiche Vorsicht/Technik wie schon bei fremden
  * Modulkopf-Feldern (Q9K_ReadHdrU32BE, q9kernel_moddir.c). */
-static void Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 regIndex, Q9_u32 value)
+void Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 regIndex, Q9_u32 value)   /* s. Hinweis bei Q9K_ReadHdrU32BE */
 {
     Q9_u32 addr = frameBase + regIndex * 4UL;
 
@@ -601,7 +603,7 @@ Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority)
  * werden NICHT gelesen -- vermutlich die reale OS-9-Modul-CRC (letzte 3
  * Byte des Moduls) plus ein Fuellbyte; da die Anzahl der Gruppen fest
  * (zwei) ist, muss danach ohnehin nichts mehr gelesen werden. */
-static void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
+void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)             /* s. Hinweis bei Q9K_ReadHdrU32BE */
 {
     Q9_u32 idataOff = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_IDATA);
     Q9_u32 irefsOff = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_IREFS);

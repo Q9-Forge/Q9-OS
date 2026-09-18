@@ -69,6 +69,10 @@
 *   o = F$GBlkMp refused a buffer too small for the terminator
 *   l = F$Sema released a semaphore nobody was waiting on
 *   w = F$Sema refused an unknown operation and a null pointer
+*   e = F$Chain refused an unknown module and left the caller intact
+*   C = F$Chain reached chaintgt -- the process now runs another program
+*       (written by chaintgt.a, not by this module; X there means the
+*        jump arrived with wrong registers)
 *   ! = either operation failed
 *******************************************************************************
 Q9Prgrm                 equ     1
@@ -796,9 +800,42 @@ Q9K_SemaOk:
 
         moveq   #'#',d7
         move.b  d7,$FFFFF006
-        moveq   #0,d1
+
+* F$Chain ($05) -- ZULETZT, weil es nicht zurueckkehrt: es ersetzt das
+* Programm dieses Prozesses durch chaintgt, das daraufhin 'C' ausgibt und
+* sich beendet.  Dass ueberhaupt noch etwas nach dem '#' erscheint, ist
+* der Beweis; 'X' statt 'C' hiesse, der Sprung kam an, aber mit falschen
+* Registern (s. chaintgt.a).
+*
+* Zuvor die Abweisung: ein Modul, das es nicht gibt, MUSS mit Carry
+* zurueckkehren und den Aufrufer unversehrt lassen -- andernfalls staende
+* dieser Prozess ohne Programm da.  Genau diese Reihenfolge (erst alles
+* Neue beschaffen, dann erst das Alte abbauen) ist der Kern der
+* Implementierung, und hier wird sie auf der echten Maschine geprueft.
+
+        moveq   #1,d0                          * Typ/Sprache: Programm/Objekt
+        moveq   #0,d1                          * kein Zusatzspeicher
+        moveq   #0,d2                          * keine Parameter
+        moveq   #0,d3                          * keine Pfade
+        moveq   #0,d4                          * Prioritaet beibehalten
+        lea     Q9K_NoSuchName(pc),a0
+        suba.l  a1,a1
         trap    #0
-        dc.w    6                               * F$Exit
+        dc.w    $0005                          * F$Chain
+        bcc     Q9K_NativeFailed               * muss abgewiesen werden
+        moveq   #'e',d7                        * Aufrufer lebt noch -- genau darum geht es
+        move.b  d7,$FFFFF006
+
+        moveq   #1,d0
+        moveq   #0,d1
+        moveq   #0,d2
+        moveq   #0,d3
+        moveq   #0,d4
+        lea     Q9K_ChainTgtName(pc),a0
+        suba.l  a1,a1
+        trap    #0
+        dc.w    $0005                          * F$Chain -- kehrt nicht zurueck
+        bra     Q9K_NativeFailed               * kaeme es doch zurueck, ist es ein Fehler
 
 Q9K_NativeFailed:
         moveq   #'!',d7
@@ -818,6 +855,12 @@ Q9K_AttachExit:
         moveq   #1,d1
         trap    #0
         dc.w    6                               * F$Exit
+
+Q9K_ChainTgtName:
+        dc.b    "chaintgt",0
+
+Q9K_NoSuchName:
+        dc.b    "kein_solches_modul",0
 
 Q9K_AttachName:
         dc.b    "c0",0
