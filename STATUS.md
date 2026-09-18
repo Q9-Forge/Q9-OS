@@ -510,7 +510,8 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtkbhiolw@#`.
+The emulator regression now ends `…KNX` … `Wvtkbhiolw@#e` followed by `C`
+from the chained-to module.
 
 **A contradiction between the two time sources, found while extending F$Alarm
 and worth fixing before anything builds on it.** `F$Alarm`'s absolute variants
@@ -559,6 +560,45 @@ and day 1-31, and the manual says of `F$STime` that "the date and time are not
 checked for validity". Tightening that would be an invention beyond the
 original; the host suite pins the actual behaviour so it cannot drift
 unnoticed.
+
+**F$Chain** (`0x05`) runs a new program without creating a process — "similar
+to a Fork command followed by an Exit", but in the same process, with the open
+paths untouched. That last part is the point of the call: a program can hand
+over to another one with the same input and output.
+
+Two things dictate the shape of the implementation, and both were worth the
+care:
+
+**The failure case must leave the caller intact.** If the module is not found
+or memory runs short, the old process simply continues and gets a carry. So
+everything new is acquired first — module linked, memory taken, parameters
+copied, frame built — and nothing old is torn down until that has succeeded. An
+implementation that cleans up first leaves a process with no program behind on
+every failure, and failure (a typo in the name) is the more likely case. The
+live test checks exactly this: it chains to a module that does not exist and
+then carries on running.
+
+**The old memory block must not be freed while the kernel is still running in
+it.** The caller's stack lives in that block, and this code runs on it. The
+release therefore sits in its own function that the assembly side calls only
+after switching to the stack in the new block. Doing both in one go would work
+almost every time — until the next allocation overwrote the freed stack, and
+then unreproducibly.
+
+Not implemented is loading from disk when the module is not already in memory.
+The manual lists it as the second step, but `F$Load` still hangs in the external
+RBF path (see `0x01`), so a module that is not resident reports `E$MNF` — the
+same limit F$Fork has, and it disappears with `F$Load`.
+
+Two mistakes during this work are worth recording. First, three constants
+(`Q9K_INITIAL_SR` and all three module-header offsets) were *guessed* rather
+than copied from `q9kernel_firstproc.c`; the host suite went green because the
+test shared the same wrong values, and only the emulator showed it, as a
+`Vektor=4` crash. A test that shares the assumption under test proves nothing.
+Second, a run that appeared to hang in `Q9K_AllocMem` turned out to be a
+60-second timeout cutting into the memory tracer's very long output — the
+allocation had succeeded all along. Both were diagnosed from the raw console
+bytes rather than guessed at.
 
 **A method worth recording, because it unblocks the rest of this list.** Several
 calls are marked here as not implemented with the reason "the manual gives no
@@ -719,7 +759,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
 | ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
-| ❌ | `0x05` | F$Chain | Not implemented |
+| 🟡 | `0x05` | F$Chain | Replaces the caller's program in place, emulator-verified in both the success and the refusal path; loading from disk when the module is not in memory waits on `F$Load` |
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
 | ⛔ | `0x07` | F$Mem | Withdrawn in real OS-9/68K ("F$Mem is no longer available. Use F$SRqMem instead."); deliberately not implemented |
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
