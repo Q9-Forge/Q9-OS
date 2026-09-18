@@ -69,6 +69,10 @@
 *   o = F$GBlkMp refused a buffer too small for the terminator
 *   l = F$Sema released a semaphore nobody was waiting on
 *   w = F$Sema refused an unknown operation and a null pointer
+*   ( = F$Icpt registered an intercept routine
+*   + = F$SigReset accepted a call with no open intercept
+*       (the actual signal -> routine -> F$RTE round trip cannot be shown
+*        here while the timer does not tick -- see STATUS.md)
 *   e = F$Chain refused an unknown module and left the caller intact
 *   C = F$Chain reached chaintgt -- the process now runs another program
 *       (written by chaintgt.a, not by this module; X there means the
@@ -801,6 +805,42 @@ Q9K_SemaOk:
         moveq   #'#',d7
         move.b  d7,$FFFFF006
 
+* F$Icpt/F$RTE: eine Intercept-Routine eintragen und ein Signal wirklich
+* EMPFANGEN.  Bis heute wurde ein Signal nur in P$Signal abgelegt, die
+* eingetragene Routine lief nie.
+*
+* Der Signalgeber ist hier der Alarm: F$Alarm weckt nach kurzer Zeit aus
+* dem Timer-Interrupt heraus, und der Empfaenger schlaeft zu diesem
+* Zeitpunkt -- genau die Lage, fuer die die Zustellung gebaut ist (wer
+* gerade laeuft, hat seinen Zustand in den Registern, s. q9kernel_icpt.c).
+* So braucht der Test keinen zweiten Prozess.
+        lea     Q9K_IcptRoutine(pc),a0
+        trap    #0
+        dc.w    $0009                          * F$Icpt
+        bcs     Q9K_NativeFailed
+        moveq   #'(',d7                        * Routine eingetragen
+        move.b  d7,$FFFFF006
+
+* HIER FEHLT DER EIGENTLICHE NACHWEIS, und zwar aus einem Grund, der
+* nichts mit F$Icpt zu tun hat: eine Zustellung braucht einen
+* Signalgeber, und der naheliegende (F$Alarm, aus dem Timer-Interrupt)
+* feuert in diesem Aufbau nie -- der Dump meldet "Timer-Interrupts: 0
+* gesamt".  Aus demselben Grund kehrt auch ein blosser F$Sleep(50) nicht
+* zurueck, gemessen mit einem eigenen Marker.  Beides ist ein
+* bestehender Befund und in STATUS.md festgehalten.
+*
+* Der Durchlauf Signal -> Routine -> F$RTE ist deshalb nur im Hosttest
+* abgedeckt (test_q9kernel_icpt.c).  Sobald der Tick laeuft, genuegen
+* hier drei Zeilen: Alarm setzen, schlafen, Marker nach dem Aufwachen.
+
+* F$SigReset ($63) kennt laut Handbuch keinen Fehlerfall -- auch nicht
+* ohne offenen Intercept.
+        trap    #0
+        dc.w    $0063                          * F$SigReset
+        bcs     Q9K_NativeFailed
+        moveq   #'+',d7
+        move.b  d7,$FFFFF006
+
 * F$Chain ($05) -- ZULETZT, weil es nicht zurueckkehrt: es ersetzt das
 * Programm dieses Prozesses durch chaintgt, das daraufhin 'C' ausgibt und
 * sich beendet.  Dass ueberhaupt noch etwas nach dem '#' erscheint, ist
@@ -855,6 +895,22 @@ Q9K_AttachExit:
         moveq   #1,d1
         trap    #0
         dc.w    6                               * F$Exit
+
+* Die Intercept-Routine.  Das Handbuch verlangt sie "short and fast" --
+* hier: einen Marker ausgeben und per F$RTE zurueck.  d1.w traegt beim
+* Eintritt den Signalcode.
+Q9K_IcptRoutine:
+        cmpi.w  #17,d1                         * genau das gesendete Signal?
+        bne     Q9K_IcptWrongSignal
+        moveq   #'*',d7
+        move.b  d7,$FFFFF006
+        bra     Q9K_IcptDone
+Q9K_IcptWrongSignal:
+        moveq   #'!',d7
+        move.b  d7,$FFFFF006
+Q9K_IcptDone:
+        trap    #0
+        dc.w    $001E                          * F$RTE -- zurueck ins Hauptprogramm
 
 Q9K_ChainTgtName:
         dc.b    "chaintgt",0

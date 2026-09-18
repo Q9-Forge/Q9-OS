@@ -73,6 +73,7 @@ extern void   Q9K_SchedInsert(Q9_u32 desc);    /* q9kernel_sched.c */
 extern void   Q9K_SleepQInsert(Q9_u32 desc);   /* q9kernel_sched.c */
 extern void   Q9K_SchedWake(Q9_u32 desc);      /* q9kernel_sched.c -- schlafenden Prozess wecken */
 extern Q9_u32 Q9K_ProcLookup(Q9_u16 pid);      /* q9kernel_procapi.c -- PID -> Deskriptor        */
+extern int    Q9K_IcptDeliver(Q9_u32 desc, Q9_u16 signal);  /* q9kernel_icpt.c */
 extern Q9_u32 Q9K_SchedFirstPick(void);        /* q9kernel_sched.c -- "naechsten Prozess waehlen,
                                                   * kein aktueller zum Wiedereinreihen", gleiche
                                                   * Wiederverwendung wie schon bei F$Exit/F$Wait */
@@ -315,6 +316,21 @@ int Q9K_ProcSend(Q9_u16 pid, Q9_u16 signal, Q9_u16 *outError)
     if (signal != Q9K_SIGNAL_KILL && signal != Q9K_SIGNAL_WAKE
         && Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF) != 0) {
         return 1;
+    }
+
+    /* NACHTRAG 2026-09-18 (F$Icpt/F$RTE): hat der Empfaenger eine
+     * Intercept-Routine eingetragen, wird sie jetzt wirklich AUSGEFUEHRT
+     * und nicht mehr bloss vermerkt -- q9kernel_icpt.c setzt dafuer einen
+     * zweiten Prozessrahmen auf seinem Stack auf.
+     *
+     * NUR fuer einen Empfaenger, der gerade NICHT laeuft: wer laeuft, hat
+     * seinen Zustand in den CPU-Registern, sein P$SavedSP ist veraltet,
+     * und ein daraus gebauter Rahmen wuerde ihn an einer beliebigen
+     * Stelle fortsetzen. Fuer ihn bleibt es beim Ablegen in P$Signal --
+     * zugestellt wird beim naechsten Mal. S$Wake ist ausgenommen: es ist
+     * kein zuzustellendes Signal, sondern nur "lauf weiter". */
+    if (signal != Q9K_SIGNAL_WAKE && desc != Q9K_GetU32(Q9_D_PROC)) {
+        (void)Q9K_IcptDeliver(desc, signal);
     }
 
     Q9K_SchedWake(desc);

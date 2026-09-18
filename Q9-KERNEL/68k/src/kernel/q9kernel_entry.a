@@ -699,6 +699,11 @@ Q9K_ChainScratch_OldBlock  equ $1BC4      * Q9_u32, alter Block
 Q9K_ChainScratch_OldSize   equ $1BC8      * Q9_u32, dessen Groesse
 Q9K_ChainScratch_OldMod    equ $1BCC      * Q9_u32, altes Primaermodul
 
+* F$RTE / F$SigReset (2026-09-18, s. q9kernel_icpt.c).
+Q9K_IcptScratch_Ok         equ $1BD0      * Q9_u32, 0/1
+Q9K_IcptScratch_Error      equ $1BD4      * Q9_u32, d1.w AUS bei Fehler
+Q9K_IcptScratch_Depth      equ $1BD8      * Q9_u32, verbliebene Verschachtelungstiefe
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -4758,6 +4763,68 @@ Q9K_SysFChain:
 Q9K_SysFChain_Fail:
         move.w  Q9K_ChainScratch_Error+2,d1
         ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFRTE -- F$RTE (Callcode $1E). Reale ABI, 68k_tech.pdf S.481:
+* keine Ein- und Ausgaben. Beendet die Intercept-Routine und setzt das
+* Hauptprogramm fort; stehen weitere Signale an, laeuft die Routine
+* erneut ("until the queue is exhausted").
+*
+* Wie F$Sleep, F$Sema und F$Chain endet dieser Handler NICHT mit rts: er
+* wechselt auf einen anderen Rahmen desselben Prozesses und kehrt per rte
+* dorthin zurueck. Q9K_SysRTEImpl hat P$SavedSP bereits umgesetzt -- auf
+* den Rahmen des Hauptprogramms, oder, wenn noch ein Signal anstand, auf
+* einen frischen Intercept-Rahmen.
+*
+* Der Fehlerfall (F$RTE ohne offenen Intercept) kehrt dagegen ganz normal
+* mit Carry zurueck: da wurde nichts umgesetzt, und der Aufrufer laeuft
+* weiter, wo er war.
+*******************************************************************************
+Q9K_SysFRTE:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SysRTEImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_IcptScratch_Ok+2
+        beq     Q9K_SysFRTE_Fail
+
+        tst.w   Q9K_InTrapPath
+        beq     Q9K_SysFRTE_NoFrame
+
+        movea.l Q9_D_Proc,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+
+Q9K_SysFRTE_Fail:
+        move.w  Q9K_IcptScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+Q9K_SysFRTE_NoFrame:
+* P$SavedSP ist bereits umgesetzt, ein Zurueck gibt es nicht mehr. Ohne
+* Exception-Rahmen laesst sich der Wechsel aber nicht ausfuehren.
+* Derselbe Fall wie bei F$Chain, und dieselbe Behandlung.
+        moveq   #K_IDLE,d0
+        bra     Q9K_KernelPanic
+
+*******************************************************************************
+* Q9K_SysFSigReset -- F$SigReset (Callcode $63). Reale ABI, 68k_tech.pdf
+* S.502: keine Ein- und Ausgaben, und ausdruecklich auch kein Fehlerfall
+* ("Error Output: None").
+*
+* Verwirft den gesicherten Kontext, statt per F$RTE zurueckzukehren --
+* fuer ein Programm, das die Intercept-Routine per longjmp() verlaesst.
+* Anders als F$RTE wechselt es NICHT den Rahmen: der Aufrufer laeuft
+* weiter, wo er ist. Deshalb hier ein ganz gewoehnliches rts.
+*******************************************************************************
+Q9K_SysFSigReset:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SysSigResetImpl
+        movea.l (sp)+,a6
+        andi    #$fe,ccr
         rts
 
 Q9K_SysFChain_NoFrame:
