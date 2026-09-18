@@ -566,14 +566,19 @@ ABI" — `F$Chain`, `F$NProc`, `F$FModul`, `F$Panic`, `F$Event`, `F$FIRQ`,
 `F$AllRAM` and others appear in Appendix D only as cross-references or index
 entries, without input and output registers.
 
-That obstacle is gone. Microware's own C bindings carry the calling convention
-in compiled form, and `MWOS/OS9/68020/LIB/os_lib.l` contains a binding for
-essentially every system call in the table — including all of the ones above.
-Disassembling the few instructions before each `trap #0` gives the register
-usage directly, which is how `F$Sema` below was settled. The recipe: find the
-`trap #0` (`4E40`, with the call code relocated to `0000` in the object), read
-the register moves immediately preceding it, and cross-check the structure
-offsets against the matching header in `MWOS/OS9/SRC/DEFS`.
+That obstacle is largely gone. Microware's own C bindings carry the calling
+convention in compiled form, and `MWOS/OS9/68020/LIB/os_lib.l` holds a binding
+for most of the table. Disassembling the few instructions before each `trap #0`
+gives the register usage directly, which is how `F$Sema` below was settled. The
+recipe: find the `trap #0` (`4E40`, with the call code relocated to `0000` in
+the object), read the register moves immediately preceding it, and cross-check
+any structure offsets against the matching header in `MWOS/OS9/SRC/DEFS`.
+
+Checked one by one rather than assumed — the library covers `F$Chain`,
+`F$NProc`, `F$Panic`, `F$Event`, `F$FIRQ`, `F$GSPUMp`, `F$SysDbg`, `F$STrap`,
+`F$RTE`, `F$SigReset` and `F$DFork`, but **not** `F$FModul`, `F$AllRAM`,
+`F$POSK` or `F$MBuf`. Those four have neither a manual entry nor a binding, and
+for them the only remaining source is the original kernel itself.
 
 Where a manual entry does exist it stays the primary source; the library
 settles what the manual leaves open, the way the original kernel settled the
