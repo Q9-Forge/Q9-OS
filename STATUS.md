@@ -614,14 +614,40 @@ again; only `Q9K_TickCount` stays):
   slot 1 zombie). The only place that writes that state is `Q9K_ProcExit`,
   whose marker never fired.
 
-That last pair is the contradiction to chase next: either a descriptor reaches
-the zombie state without passing through `Q9K_ProcExit`, or the zombie in slot
-1 is an earlier test child and the process that vanished sits in a slot beyond
-the three sampled. The next step is to widen the pool scan and follow the
-descriptor of the interrupted process specifically.
+**A third round resolved that contradiction, and names the fault.** The test
+program was made to print its own descriptor (`D_Proc`) before entering a loop
+long enough to span a tick, and `Q9K_ProcExit` was made to print the descriptor
+it is terminating. They are the same:
 
-What is now certain: the timer works, the switch mechanism works three times,
-and something removes a process from the ready queue without terminating it.
+```
+P87c0 … (56c94-07880) … Z87c0
+ │              │            └─ Q9K_ProcExit terminates 87c0, status 0
+ │              └─ last switch: 87c0 saved at PC 56c94, TestProcA resumed
+ └─ the test program's own descriptor
+```
+
+So **the interrupted process terminates itself with `F$Exit(0)`** — while its
+code is sitting in a counting loop and never reaches the marker just past it.
+Its descriptor is otherwise intact at that moment (ID 2, priority 10, age 13, a
+plausible `SavedSP`), so nothing overwrote it; the state was set deliberately,
+through the one path that sets it.
+
+That only fits one explanation: **after being interrupted, the process resumes
+at the wrong address and runs into an `F$Exit` there.** The context is not
+restored correctly across a timer switch. The earlier readings all follow from
+this — the ready queue looks empty because the process left it by terminating,
+no fourth switch occurs because there is nothing left to switch to, and
+`F$Sleep` never returns because a sleeper that is woken meets the same fate.
+
+Certain now: the timer works, the switch mechanism saves a plausible PC, and
+the fault is in restoring the context — not in the scheduler's bookkeeping.
+The next step is to compare the frame as saved against the frame as loaded on
+resume, in `Q9K_TimerIRQHandler` itself.
+
+(An earlier note here said no process is ever terminated, based on a marker at
+the head of `Q9K_ProcExit` that never appeared. That marker was faulty — a
+marker at the zombie assignment itself fires reliably. The finding above
+replaces it.)
 
 **The intercept subsystem: F$Icpt now actually runs the routine.** Until now
 `F$Icpt` could only register one. A signal was dropped into `P$Signal` and the
