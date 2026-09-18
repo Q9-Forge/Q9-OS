@@ -423,6 +423,24 @@ it, and failing on real OS-9/68K just the same. `F$UAcct` appears nowhere.
 `F$SysDbg`, by contrast, is genuinely used by `break`, `debug`, `sysgo` and
 `pcf`, and the ROM does contain RomBug — see the note on that below.
 
+**On F$SysDbg, a correction.** It was first marked withdrawn on the assumption
+that Q9-OS ships no system debugger. That was wrong, and checking the ROM proved
+it: **RomBug is in the boot ROM**, complete with breakpoint management (`b
+<addr>`, `k`, `rst`) and a `NuRomBug:` prompt. It sits at ROM offset `0x2882`,
+well before the first OS-9 module at `0x158AC`, so it belongs to the boot
+monitor itself rather than to any module — in the mapped address space that puts
+it around `$FE002882`.
+
+The call is genuinely used, too: `break`, `debug`, `sysgo` and `pcf` all issue
+it. And the mechanism is simple — real OS-9 keeps the debugger's entry point in
+the system global `D_SysDbg` and F$SysDbg just jumps there. Our kernel even has
+a placeholder for it, though on an invented address and filled by nobody.
+
+What is missing is only the entry point: text location is not an entry point,
+and finding the monitor's real one means disassembling the boot ROM. That is its
+own task, not a side note — which is why this is now marked open rather than
+withdrawn. Once the address is known, F$SysDbg is a handful of instructions.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
@@ -499,7 +517,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x4B` | F$AllPrc | Allocates and clears a process descriptor; without an MMU this is the documented direct F$AllPD case |
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
 | ❌ | `0x4E` | F$FModul | Not implemented |
-| ⛔ | `0x52` | F$SysDbg | Calls the system debugger "if one exists"; Q9-OS ships none, so there is nothing for the kernel to implement |
+| ❌ | `0x52` | F$SysDbg | RomBug **is** present in the boot ROM; what is missing is the entry point for `D_SysDbg` — see the note below |
 | ❌ | `0x53` | F$Event | A whole subsystem (32-byte event records, wait queues, link/unlink, signalling), not a single call |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
