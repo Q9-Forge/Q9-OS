@@ -510,7 +510,7 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtkbhio@#`.
+The emulator regression now ends `…KNX` … `Wvtkbhiolw@#`.
 
 **A contradiction between the two time sources, found while extending F$Alarm
 and worth fixing before anything builds on it.** `F$Alarm`'s absolute variants
@@ -559,6 +559,42 @@ and day 1-31, and the manual says of `F$STime` that "the date and time are not
 checked for validity". Tightening that would be an invention beyond the
 original; the host suite pins the actual behaviour so it cannot drift
 unnoticed.
+
+**F$Sema** (`0x62`), and an ABI that had to be recovered. The manual describes
+semaphores at length — the structure, the states, the P/V operation codes — but
+never says which registers the call expects. That was settled by disassembling
+Microware's own library, `MWOS/OS9/68020/LIB/os_lib.l`: `_os_sema_p` at `$9310`
+and `_os_sema_v` at `$9386` give the whole convention — `d0.l` = pointer to the
+semaphore, `d1.w` = 1 for P or 2 for V. The structure offsets visible in that
+code (`s_value` +0, `s_lock` +4, the `s_flags` byte tested at +`$1f`, `s_sync`
++32) match `semaphore.h` exactly, which independently confirms header and code
+belong together.
+
+The same disassembly explains why this call is small: **the uncontended case
+never reaches the kernel at all.** User code takes the semaphore itself with
+`tas` and returns; only when that fails does it call F$Sema(P), and only then
+must the kernel suspend the caller. Likewise it releases the semaphore itself
+and calls F$Sema(V) only when `s_lock` shows someone is still waiting. And
+after waking, the user code retries the `tas` on its own — so the kernel never
+has to promise that the woken process actually gets the semaphore, only that it
+gets woken. The manual says exactly this: the first process in the queue "is
+activated and retries the reserve operation".
+
+Waiters are queued in the semaphore itself and chained through the same
+descriptor field the ready queue uses. A waiting process is deliberately **not**
+put on the sleep list: both chain through that one field, and a process in both
+at once would destroy both lists. The original has a separate state for this
+(`'p'`, per `process.a`), and so does this implementation.
+
+P is split across two calls into C, which matters: the queueing happens only
+*after* the assembly side has saved the caller's register set and updated
+`SavedSP`. Queueing first would leave the waiting process with a stale stack
+pointer, and the wake-up would land nowhere.
+
+The live test covers V and both refusals. **P is host-tested only** — it blocks
+the caller by design until another process releases, so proving it in the
+emulator needs a second process. That gap is named rather than papered over
+with a marker that would suggest otherwise.
 
 **F$GBlkMp** (`0x19`) is the status report that `mfree` and similar tools use:
 the addresses and sizes of the free RAM blocks, copied into the caller's buffer
@@ -732,7 +768,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | ❌ | `0x61` | F$FIRQ | Not implemented |
-| ❌ | `0x62` | F$Sema | Not implemented |
+| 🟡 | `0x62` | F$Sema | P and V implemented against an ABI recovered by disassembly; V and the refusals are emulator-verified, P is host-tested only (it blocks by design) |
 | ❌ | `0x63` | F$SigReset | Clears the intercept context stack; needs intercept routines to actually run first (see F$Icpt) |
 
 ## I$ input/output system calls
