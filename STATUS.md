@@ -441,6 +441,18 @@ and finding the monitor's real one means disassembling the boot ROM. That is its
 own task, not a side note — which is why this is now marked open rather than
 withdrawn. Once the address is known, F$SysDbg is a handful of instructions.
 
+**F$Load: one hypothesis tested and ruled out (2026-09-18).** After the boot
+stack turned out to have been sitting inside the boot modules and corrupting
+`cfide`, it was worth asking whether the long-standing `F$Load` hang had the
+same cause — the symptom, RBF reading LBA 65 over and over, would fit corrupted
+driver code just as well as a directory-advance bug. It does not: with the stack
+fix in place, a normal boot still reaches "Hallo aus einem echten Programm!" and
+then never emits the `l` marker that follows a successful `F$Load`, only
+scheduler output. The load still does not return. The cause therefore lies
+where it was originally suspected, in the external `F$Load`/RBF directory
+advance, and not in memory corruption. Recorded so the cheap check is not
+repeated.
+
 The host regression suite was repaired in the same pass. Four of the sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
