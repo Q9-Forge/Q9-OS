@@ -481,6 +481,22 @@ than rounded.
 others did: the description does not say what it is meant to reset. Guessing
 there would produce a call that silently does the wrong thing.
 
+**An address collision introduced by that same change, found immediately
+after and fixed.** The F$Alarm scratch block sat at `$1A90`, directly behind a
+table of 8 entries of 16 bytes (`$1A00`-`$1A7F`). Raising the entry size to 24
+bytes for the absolute variants grew the table to `$1ABF` — slot 6 then landed
+exactly on `_Func` and slot 7 on `_Date`. Nothing would have shown this until
+the seventh simultaneous alarm, and then as silent corruption of the call
+arguments mid-call. No test could see it either: the host test puts table and
+scratch in two separate arrays and does not model the real address layout at
+all.
+
+The block now lives at `$1B00`, and a compile-time check in
+`q9kernel_alarm.c` turns any future recurrence into a build error rather than
+a runtime puzzle — verified by temporarily widening the stride and watching the
+build fail. A sweep of the kernel's other table/scratch pairs (IRQ table at
+`$1500`, memory-owner table at `$1710`) found no second instance.
+
 On the time unit, an honest limitation: the description says an interval may be
 given "in system clock ticks, or 256ths of a second" but does not say at that
 point how the kernel tells the two apart. This version counts ticks throughout —

@@ -387,15 +387,38 @@ Q9_u32 Q9K_AlarmTick(void)
     return fired;
 }
 
-/* Scratch-Bruecke fuer F$Alarm (2026-09-18). */
+/* Scratch-Bruecke fuer F$Alarm (2026-09-18).
+ *
+ * ADRESSFALLE, hier einmal teuer bezahlt: der Block lag urspruenglich ab
+ * $1A90, direkt hinter einer Tabelle aus 8 Eintraegen zu 16 Byte
+ * ($1A00-$1A7F). Als die absoluten Alarme die Eintragsgroesse auf 24 Byte
+ * anhoben, wuchs die Tabelle bis $1ABF -- Slot 6 lag danach exakt auf
+ * _FUNC und Slot 7 auf _DATE. Gemerkt haette es erst der siebte
+ * gleichzeitige Alarm, und dann als stille Verfaelschung der Argumente
+ * mitten im Aufruf. Kein Test konnte das sehen: der Hosttest legt Tabelle
+ * und Scratch in zwei getrennte Felder und bildet die echte Adresslage
+ * gar nicht ab.
+ *
+ * Deshalb liegt der Block jetzt bei $1B00 mit Luft dazwischen -- und die
+ * Pruefung darunter macht daraus einen Baufehler statt eines Laufzeit-
+ * raetsels. */
 #ifndef Q9K_ALARM_SCRATCH_FUNC
-#define Q9K_ALARM_SCRATCH_FUNC   0x1A90UL /* Q9_u32, d1.w EIN = Funktionscode   */
-#define Q9K_ALARM_SCRATCH_IDIN   0x1A94UL /* Q9_u32, d0.l EIN / d0.l AUS = ID   */
-#define Q9K_ALARM_SCRATCH_SIGNAL 0x1A98UL /* Q9_u32, d2.w EIN                   */
-#define Q9K_ALARM_SCRATCH_TICKS  0x1A9CUL /* Q9_u32, d3.l EIN = Intervall/Sekunden */
-#define Q9K_ALARM_SCRATCH_DATE   0x1AA8UL /* Q9_u32, d4.l EIN = Datum/Tageszahl    */
-#define Q9K_ALARM_SCRATCH_ERROR  0x1AA0UL /* Q9_u32, d1.w AUS bei Fehler        */
-#define Q9K_ALARM_SCRATCH_SUCCESS 0x1AA4UL /* Q9_u32, 0/1                       */
+#define Q9K_ALARM_SCRATCH_FUNC   0x1B00UL /* Q9_u32, d1.w EIN = Funktionscode   */
+#define Q9K_ALARM_SCRATCH_IDIN   0x1B04UL /* Q9_u32, d0.l EIN / d0.l AUS = ID   */
+#define Q9K_ALARM_SCRATCH_SIGNAL 0x1B08UL /* Q9_u32, d2.w EIN                   */
+#define Q9K_ALARM_SCRATCH_TICKS  0x1B0CUL /* Q9_u32, d3.l EIN = Intervall/Sekunden */
+#define Q9K_ALARM_SCRATCH_ERROR  0x1B10UL /* Q9_u32, d1.w AUS bei Fehler        */
+#define Q9K_ALARM_SCRATCH_SUCCESS 0x1B14UL /* Q9_u32, 0/1                       */
+#define Q9K_ALARM_SCRATCH_DATE   0x1B18UL /* Q9_u32, d4.l EIN = Datum/Tageszahl    */
+#define Q9K_ALARM_ADDRESSES_ARE_REAL 1
+#endif
+
+/* Baut nicht, wenn die Alarmtabelle je wieder in den Scratch-Block
+ * hineinwaechst. Nur im echten Kernelbau aktiv -- im Hosttest sind beide
+ * Adressen Zeigerausdruecke und keine Konstanten. */
+#ifdef Q9K_ALARM_ADDRESSES_ARE_REAL
+typedef char Q9K_AlarmTableMustNotReachScratch[
+    (Q9K_ALARM_NEXTID + 4UL <= Q9K_ALARM_SCRATCH_FUNC) ? 1 : -1];
 #endif
 
 void Q9K_SysAlarmImpl(void)
