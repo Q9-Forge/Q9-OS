@@ -24,10 +24,12 @@ static unsigned char g_alarmTable[0x200];
 /* Real 16 Byte je Eintrag mit 4-Byte-Feldern -- auf diesem Host ist
  * Q9_u32 8 Byte breit, deshalb grosszuegig auf 32-Byte-Eintraege
  * gelegt. Betrifft NUR diesen Test. */
-#define Q9K_ALARM_STRIDE          32UL
+#define Q9K_ALARM_STRIDE          48UL
 #define Q9K_ALARM_OFF_PID          8UL
 #define Q9K_ALARM_OFF_SIGNAL      16UL
 #define Q9K_ALARM_OFF_TICKS       24UL
+#define Q9K_ALARM_OFF_DAY         32UL
+#define Q9K_ALARM_OFF_SEC         40UL
 #define Q9K_ALARM_NEXTID          ((unsigned long)(g_alarmTable + 0x100))
 #define Q9K_ALARM_SCRATCH_FUNC    ((unsigned long)(g_fakeGlobals + 0x020))
 #define Q9K_ALARM_SCRATCH_IDIN    ((unsigned long)(g_fakeGlobals + 0x040))
@@ -35,6 +37,7 @@ static unsigned char g_alarmTable[0x200];
 #define Q9K_ALARM_SCRATCH_TICKS   ((unsigned long)(g_fakeGlobals + 0x080))
 #define Q9K_ALARM_SCRATCH_ERROR   ((unsigned long)(g_fakeGlobals + 0x0A0))
 #define Q9K_ALARM_SCRATCH_SUCCESS ((unsigned long)(g_fakeGlobals + 0x0C0))
+#define Q9K_ALARM_SCRATCH_DATE    ((unsigned long)(g_fakeGlobals + 0x0E0))
 
 /* Steuerbare Stubs. Beide Funktionen sind in ihren eigenen Testsuiten
  * abgedeckt (test_q9kernel_procsleep.c bzw. test_q9kernel_procapi.c). */
@@ -55,6 +58,21 @@ unsigned short Q9K_ProcIdForDesc(unsigned long desc)
 {
     return desc ? g_idForDesc : 0;
 }
+
+/* Q9K_JulianFromDate lebt in q9kernel_date.c (dort gegen JULBASE und die
+ * Wochentagsformel geprueft). Hier eine einfache, monoton steigende
+ * Ersatzrechnung -- dieser Test prueft die Alarmlogik, nicht die
+ * Kalenderarithmetik. */
+unsigned long Q9K_JulianFromDate(unsigned long y, unsigned long m, unsigned long d)
+{
+    if (m < 1 || m > 12 || d < 1 || d > 31) return 0;
+    return y * 400UL + m * 31UL + d;
+}
+
+/* Steuerbare Uhr: der Test stellt die "Gegenwart", statt sich auf die
+ * echte RTC zu verlassen (die es auf dem Host nicht gibt). */
+static unsigned long g_nowDay = 1000, g_nowSec = 0;
+#define Q9K_TEST_RTC_OVERRIDE 1
 
 #include "q9kernel_alarm.c"
 
@@ -183,11 +201,77 @@ int main(void)
     check("Bridge A$Delete meldet Erfolg",
           Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 1);
 
-    /* Die absoluten Varianten und A$Reset melden sauber "kenne ich
-     * nicht", statt ohne Systemuhr zu raten (s. Kopfkommentar). */
-    Q9K_SetU32(Q9K_ALARM_SCRATCH_FUNC, 3);   /* A$AtDate */
+    /* Absolute Alarme (A$AtJul / A$AtDate): faellig, sobald die Uhr das
+     * Ziel erreicht -- nicht frueher, aber auch dann noch, wenn der
+     * Zeitpunkt verschlafen wurde. */
+    reset();
+    g_nowDay = 1000; g_nowSec = 100;
+    err = 0xFFFF;
+    check("A$AtJul nimmt einen absoluten Alarm an",
+          (Q9_u32)Q9K_AlarmSetAbsolute(55, 1000, 200, &id, &err), 1);
+    check("vor dem Zeitpunkt passiert nichts", Q9K_AlarmTick(), 0);
+    g_nowSec = 199;
+    check("eine Sekunde davor immer noch nichts", Q9K_AlarmTick(), 0);
+    g_nowSec = 200;
+    check("genau zum Zeitpunkt loest er aus", Q9K_AlarmTick(), 1);
+    check("mit dem richtigen Signal", (Q9_u32)g_sendLastSignal, 55);
+    check("und ist danach abgeraeumt", Q9K_GetU32(Q9K_ALARM_ID(0)), 0);
+
+    /* Ein verschlafener Zeitpunkt verfaellt nicht -- die Beschreibung
+     * sagt "greater than or equal". */
+    reset();
+    g_nowDay = 1000; g_nowSec = 0;
+    Q9K_AlarmSetAbsolute(56, 1000, 500, &id, &err);
+    g_nowSec = 4000;                      /* weit darueber hinaus */
+    check("ein verpasster Zeitpunkt loest trotzdem aus", Q9K_AlarmTick(), 1);
+
+    /* Ein spaeterer Tag zaehlt, nicht nur die Uhrzeit. */
+    reset();
+    g_nowDay = 1000; g_nowSec = 50000;
+    Q9K_AlarmSetAbsolute(57, 1001, 10, &id, &err);
+    check("am Vortag bleibt er still, auch spaet am Tag", Q9K_AlarmTick(), 0);
+    g_nowDay = 1001; g_nowSec = 10;
+    check("am Zieltag loest er aus", Q9K_AlarmTick(), 1);
+
+    reset();
+    err = 0;
+    check("Tageszahl 0 wird abgewiesen",
+          (Q9_u32)Q9K_AlarmSetAbsolute(1, 0, 0, &id, &err), 0);
+    err = 0;
+    check("eine Sekundenzahl ab dem Tagesende wird abgewiesen",
+          (Q9_u32)Q9K_AlarmSetAbsolute(1, 1000, 86400, &id, &err), 0);
+
+    /* Bridge: A$AtDate rechnet das Kalenderdatum selbst um. */
+    reset();
+    g_nowDay = 0; g_nowSec = 0;
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_FUNC, 3);                 /* A$AtDate */
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_SIGNAL, 12);
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_TICKS, (1UL << 16) | (2UL << 8) | 3UL);  /* 01:02:03 */
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_DATE, (2026UL << 16) | (9UL << 8) | 18UL);
     Q9K_SysAlarmImpl();
-    check("Bridge weist A$AtDate ab", Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 0);
+    check("Bridge A$AtDate nimmt ein Kalenderdatum an",
+          Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 1);
+    check("und legt die umgerechnete Tageszahl ab",
+          Q9K_GetU32(Q9K_ALARM_DAY(0)), Q9K_JulianFromDate(2026, 9, 18));
+    check("und die aus hh/mm/ss gerechnete Sekundenzahl",
+          Q9K_GetU32(Q9K_ALARM_SEC(0)), 1UL * 3600UL + 2UL * 60UL + 3UL);
+
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_TICKS, (25UL << 16));     /* Stunde 25 */
+    Q9K_SysAlarmImpl();
+    check("Bridge A$AtDate weist eine unmoegliche Uhrzeit ab",
+          Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 0);
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_TICKS, (1UL << 16) | (2UL << 8) | 3UL);
+
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_DATE, (2026UL << 16) | (13UL << 8) | 18UL);  /* Monat 13 */
+    Q9K_SysAlarmImpl();
+    check("Bridge A$AtDate weist ein unmoegliches Datum ab",
+          Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 0);
+
+    /* A$Reset bleibt unbekannt -- die Beschreibung sagt nicht, was es
+     * zuruecksetzen soll. */
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_FUNC, 5);
+    Q9K_SysAlarmImpl();
+    check("Bridge weist A$Reset ab", Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 0);
     check("und meldet E_UNKSVC", Q9K_GetU32(Q9K_ALARM_SCRATCH_ERROR), Q9K_E_UNKSVC);
 
     Q9K_SetU32(Q9K_ALARM_SCRATCH_FUNC, 99);  /* unbekannt */
