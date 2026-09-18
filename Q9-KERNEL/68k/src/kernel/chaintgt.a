@@ -1,0 +1,58 @@
+* chaintgt.a -- Zielmodul fuer den F$Chain-Regressionstest (2026-09-18).
+*
+* iattachsvc ruft am Ende seines Durchlaufs F$Chain auf dieses Modul.
+* Gelingt der Chain, laeuft DERSELBE Prozess mit diesem Programm weiter;
+* der Marker 'C' auf der DUART ist dann der Beweis, dass der Sprung ins
+* neue Programm wirklich stattgefunden hat.
+*
+* Bewusst so klein wie moeglich: der Marker geht direkt an den DUART-
+* Ausgaberegister, ohne einen einzigen Systemaufruf. Ein Test, der zum
+* Beweis erst I$Write braeuchte, wuerde bei einem Fehler nicht zwischen
+* "Chain hat nicht funktioniert" und "Ausgabe hat nicht funktioniert"
+* unterscheiden koennen.
+*
+* Was danach noch geprueft wird: a3 muss auf diesen Modulkopf zeigen und
+* d0.w die unveraenderte Prozess-ID des Aufrufers tragen -- F$Chain
+* erzeugt keinen neuen Prozess, es ersetzt nur dessen Programm. Stimmt
+* eines davon nicht, erscheint statt 'C' ein 'X'.
+*
+* psect-Format s. forkchild.a (dort ausfuehrlich hergeleitet).
+
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_ChainTgtEdition     equ     1
+Q9K_ChainTgtStackSize   equ     $1000
+
+        psect   chaintgt,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_ChainTgtEdition,Q9K_ChainTgtStackSize,Q9K_ChainTgtStart
+
+        vsect
+Q9K_ChainTgtData:
+        ds.l    1                               * ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_ChainTgtStart:
+* d0.w traegt die Prozess-ID, a3 den Zeiger auf das eigene Modul (Table
+* D-7, bei F$Chain identisch zu F$Fork).
+        tst.w   d0                              * eine Prozess-ID ist nie 0
+        beq     Q9K_ChainTgtBad
+        move.l  a3,d1
+        beq     Q9K_ChainTgtBad                 * a3 muss auf das Modul zeigen
+        lea     Q9K_ChainTgtStart(pc),a0
+        cmpa.l  a0,a3                           * a3 muss VOR dem Einstieg liegen (Modulkopf)
+        bcc     Q9K_ChainTgtBad
+
+        moveq   #'C',d7
+        move.b  d7,$FFFFF006
+        bra     Q9K_ChainTgtExit
+
+Q9K_ChainTgtBad:
+        moveq   #'X',d7
+        move.b  d7,$FFFFF006
+
+Q9K_ChainTgtExit:
+* Sauber beenden -- der Prozess gibt seinen Speicher frei.
+        moveq   #0,d1                           * Exit-Status 0
+        trap    #0
+        dc.w    6                               * F$Exit
+
+        endsect
