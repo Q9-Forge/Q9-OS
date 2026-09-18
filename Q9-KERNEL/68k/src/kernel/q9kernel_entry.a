@@ -656,6 +656,15 @@ Q9K_STimeScratch_Date      equ $1B34      * Q9_u32, d1.l EIN (F$STime) / AUS (F$
 Q9K_STimeScratch_Error     equ $1B38      * Q9_u32, d1.w AUS bei Fehler
 Q9K_STimeScratch_Success   equ $1B3C      * Q9_u32, 0/1
 
+* Bitmap-Aufrufe F$SchBit/F$AllBit/F$DelBit (2026-09-18, s.
+* q9kernel_bitmap.c).
+Q9K_BitmapScratch_Start    equ $1B40      * Q9_u32, d0.w EIN / AUS
+Q9K_BitmapScratch_Count    equ $1B44      * Q9_u32, d1.w EIN / AUS
+Q9K_BitmapScratch_Base     equ $1B48      * Q9_u32, (a0) EIN
+Q9K_BitmapScratch_End      equ $1B4C      * Q9_u32, (a1) EIN, nur F$SchBit
+Q9K_BitmapScratch_Error    equ $1B50      * Q9_u32, d1.w AUS bei Fehler
+Q9K_BitmapScratch_Ok       equ $1B54      * Q9_u32, 0/1
+
 * Abschnitt "IOMan-Einbindung" (2026-09-02, Registerrahmen-Fund): haelt beim
 * Trampolin-Aufrufweg (PEA+RTS direkt in den SysDis-Slot, KEIN echtes TRAP #0)
 * die vom Aufrufer bereitgestellte Registerrahmen-Basis (a5) fest, damit der
@@ -4455,6 +4464,84 @@ Q9K_SysFSTime:
         rts
 Q9K_SysFSTime_Fail:
         move.w  Q9K_STimeScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFSchBit -- F$SchBit (Callcode $12). Reale ABI, 68k_tech.pdf S.484:
+* EIN d0.w = Startbit der Suche, d1.w = benoetigte Bitzahl, (a0) =
+* Bitmapanfang, (a1) = Bitmapende+1.
+* AUS d0.w = gefundenes Startbit, d1.w = gefundene Bitzahl.
+*
+* ACHTUNG, UNGEWOEHNLICHER FEHLERFALL: findet sich kein ausreichend
+* grosser Bereich, wird zwar Carry gesetzt, d1.w traegt dann aber KEINEN
+* Fehlercode, sondern die Groesse des groessten gefundenen Blocks (d0.w
+* dessen Anfang) -- "it returns with the carry set, beginning bit number,
+* and size of the largest block found". Deshalb wird hier in beiden
+* Faellen dasselbe zurueckgeschrieben und nur das Carry unterschieden.
+*******************************************************************************
+Q9K_SysFSchBit:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_BitmapScratch_Start          * obere Worte nullen, C liest 32 Bit
+        move.w  d0,Q9K_BitmapScratch_Start+2
+        clr.l   Q9K_BitmapScratch_Count
+        move.w  d1,Q9K_BitmapScratch_Count+2
+        move.l  a0,Q9K_BitmapScratch_Base
+        move.l  a1,Q9K_BitmapScratch_End
+        bsr     Q9K_SysSchBitImpl
+        movea.l (sp)+,a6
+        move.w  Q9K_BitmapScratch_Start+2,d0     * in BEIDEN Faellen gueltig
+        move.w  Q9K_BitmapScratch_Count+2,d1
+        tst.w   Q9K_BitmapScratch_Ok+2
+        beq     Q9K_SysFSchBit_NotFound
+        andi    #$fe,ccr
+        rts
+Q9K_SysFSchBit_NotFound:
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFAllBit -- F$AllBit (Callcode $13), Q9K_SysFDelBit -- F$DelBit
+* (Callcode $14). Reale ABI, 68k_tech.pdf S.369 und 394: EIN d0.w = erstes
+* Bit, d1.w = Anzahl, (a0) = Bitmapanfang. AUS: keine.
+*
+* Gesetztes Bit = belegt. Bis 2026-09-18 waren beide Codes unbelegt und
+* liefen in einen Handler, der Erfolg meldete, ohne etwas zu tun -- am
+* laufenden System gemessen (s. Kopfkommentar q9kernel_bitmap.c).
+*******************************************************************************
+Q9K_SysFAllBit:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_BitmapArgsIn
+        bsr     Q9K_SysAllBitImpl
+        bra     Q9K_BitmapReturn
+
+Q9K_SysFDelBit:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_BitmapArgsIn
+        bsr     Q9K_SysDelBitImpl
+        bra     Q9K_BitmapReturn
+
+* Gemeinsame Argumentuebergabe und Rueckkehr der beiden -- sie
+* unterscheiden sich nur in der gerufenen C-Funktion.
+Q9K_BitmapArgsIn:
+        clr.l   Q9K_BitmapScratch_Start
+        move.w  d0,Q9K_BitmapScratch_Start+2
+        clr.l   Q9K_BitmapScratch_Count
+        move.w  d1,Q9K_BitmapScratch_Count+2
+        move.l  a0,Q9K_BitmapScratch_Base
+        rts
+
+Q9K_BitmapReturn:
+        movea.l (sp)+,a6
+        tst.w   Q9K_BitmapScratch_Ok+2
+        beq     Q9K_BitmapReturn_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_BitmapReturn_Fail:
+        move.w  Q9K_BitmapScratch_Error+2,d1
         ori     #1,ccr
         rts
 
