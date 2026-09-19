@@ -771,16 +771,21 @@ further reads: whatever state could still be fetched there belongs to the
 failed save, not to the original fault, and that one is already in
 `Q9K_ExcInfo_*` as far as the first round got.
 
-What is proven: a Zero Divide with no registered handler produces exactly one
-`E` and no re-entry — the diagnostic completes and the process stops while the
-rest of the system keeps running (the other process goes on printing). What is
-**not** proven: the case that produced the endless chain in the first place, an
-Illegal Instruction with no handler, now prints neither `E` nor `R` — it simply
-falls silent. So the endless chain is gone, but whether the guard is what stops
-it, or whether that path never reaches `Q9K_ExcTrap` at all, is unresolved.
+**Both cases are now measured, including the one that produced the endless
+chain.** Registering a handler for a *different* vector (`T_TRAPV`) and then
+executing an Illegal Instruction gives it no handler at all — and the result is
+a single `E`, no `R`, no chain. The diagnostic completes, the faulting process
+stops, and the rest of the system keeps running.
 
-The guard costs two instructions and cannot make matters worse; it stays in on
-that basis rather than on a complete proof.
+So the exception path now behaves correctly in both directions: with a
+registered handler the process handles its own fault (`i`), without one the
+kernel reports and halts that process alone (`E`).
+
+An earlier note here said the Illegal-Instruction case "simply falls silent"
+and left it unresolved. That was a broken measurement, not a finding: the test
+jumped past the F$STrap block with a `bra` that skipped considerably more than
+intended, so the exception under observation was never the one being reached.
+Registering for a different vector isolates the case without moving any code.
 
 Two further limits, both stated rather than hidden: the separate exception
 stack from `(a0)` is recorded in `P$ExStk` but not switched to — `(a0) = 0`,
