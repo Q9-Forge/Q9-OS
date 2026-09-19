@@ -510,8 +510,8 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+Tie` followed by
-`C` from the chained-to module — the four digits being the kernel's own tick
+The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+TiyzYe` followed
+by `C` from the chained-to module — the four digits being the kernel's own tick
 counter.
 
 **A contradiction between the two time sources, found while extending F$Alarm
@@ -694,6 +694,49 @@ for them the only remaining source is the original kernel itself.
 Where a manual entry does exist it stays the primary source; the library
 settles what the manual leaves open, the way the original kernel settled the
 date format.
+
+**F$Event** (`0x53`) is the event system — "multiple-value semaphores", as the
+manual puts it. Unlike a semaphore an event carries a counter, and a waiter
+names the range of values it wants to be woken in. The manual's own example is
+a printer pool: initial value = number of printers, wait increment −1, signal
+increment +1.
+
+Ten of the twelve functions are implemented and emulator-verified: create,
+delete, link, unlink, read, set, set-relative, signal, pulse and info. The live
+test walks a full life cycle — create with initial value 5, signal (giving 6),
+read it back, unlink, delete, and confirm the event is then gone.
+
+`Ev$Wait` and `Ev$WaitR` are **not** implemented and say so with `E$UnkSvc`.
+They need the caller suspended and woken later, which is the same process
+switch `F$Sema` already performs; a silent success there would be the worst
+possible answer, since the caller would carry on as though it had waited.
+
+The function codes come from `MWOS/OS9/SRC/DEFS/event.a` (counted off as
+`do.b 1` from zero), the 32-byte record layout from the same file, and the
+error codes from `funcs.a` — whose counting base sits `$4C` away from the real
+values, a shift confirmed against two codes this kernel already knows
+(`E$UnkSvc` `$D0`, `E$BPAddr` `$D2`). For "table full" the manual names
+`E$EvFull`, which `funcs.a` does not contain; `E$Full` (`$F8`) is reported
+instead and that is noted in the source rather than inventing a code.
+
+Two things the host suite pinned down that would otherwise have been silent
+faults. **The event ID is not the table index**: it carries a serial number in
+the high word, because a bare index is reused the moment an event is deleted,
+and an old ID would then quietly address a different event. And **the saturating
+arithmetic reads the sign bit explicitly** instead of casting: on a 64-bit test
+host `$80000010` is a positive number, so the downward saturation never
+triggered — the code now computes on 32 bits regardless of the compiler's word
+width.
+
+**An assembler lesson that also casts doubt on an earlier explanation.** The
+handler could not reach its C function: `bsr` was out of range (16-bit
+PC-relative), and an absolute `jsr` from this relocatable module never
+returned. The fix is a pointer cell that C fills at boot. Notably, `F$STrap`
+hit the *same symptom* — a C call from assembly that did not return — and that
+was attributed there to the compiler's stack-check prologue in an exception
+context. That explanation may well have been wrong too; the lookup was rewritten
+in assembler and works, so the question is moot in practice, but the note there
+should not be read as settled.
 
 **F$STrap** (`0x0E`) lets a process catch its own program-error exceptions —
 bus error, illegal instruction, zero divide and the rest. The call takes a
@@ -986,7 +1029,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
 | ❌ | `0x4E` | F$FModul | Not implemented |
 | ❌ | `0x52` | F$SysDbg | RomBug **is** present in the boot ROM; what is missing is the entry point for `D_SysDbg` — see the note below |
-| ❌ | `0x53` | F$Event | A whole subsystem (32-byte event records, wait queues, link/unlink, signalling), not a single call |
+| 🟡 | `0x53` | F$Event | Ten of the twelve functions work — create, delete, link, unlink, read, set, set-relative, signal, pulse, info — emulator-verified; `Ev$Wait`/`Ev$WaitR` still report `E$UnkSvc` |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
 | 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work — A$Set now emulator-verified by an alarm that actually comes due and delivers its signal; only A$Reset is unimplemented, its purpose being undocumented |
