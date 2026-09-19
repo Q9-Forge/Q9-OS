@@ -317,6 +317,17 @@ int Q9K_ProcRetPD(Q9_u32 dbtAddr, Q9_u16 num, Q9_u16 *outError)
         return 0;
     }
 
+    /* The descriptor repeats its number in PD_PD.  IOMan relies on this
+     * invariant when walking the DBT; checking it before returning the slot
+     * also prevents a stale/corrupt DBT entry from returning an unrelated
+     * pool object to the free list. */
+#ifndef Q9K_TEST_PATHPOOL_FREE_HOOK
+    if (Q9K_ReadU16BE(desc + Q9K_PATHDESC_NUM_OFF) != num) {
+        *outError = 0x00C9U;            /* E_BPNUM -- inconsistent slot */
+        return 0;
+    }
+#endif
+
     Q9K_WriteU32BE_At(dbtAddr + (Q9_u32)num * 4UL, 0);
     Q9K_PathPoolFree(desc);
     return 1;

@@ -1107,7 +1107,7 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x31` | F$RetPD | Basic descriptor return path exists; full validation remains open |
 | 🟡 | `0x32` | F$SSvc | Service registration path exists; broader service semantics remain open |
 | 🟡 | `0x33` | F$IODel | Microware path exists; current Q9 compatibility is not fully verified |
-| 🟡 | `0x37` | F$GProcP | Basic process-property path exists; full property set remains open |
+| ✅ | `0x37` | F$GProcP | PID-to-process-descriptor lookup implemented and host-tested; broader process-property APIs are tracked separately |
 | ✅ | `0x38` | F$Move | Memory move path implemented |
 | ❌ | `0x39` | F$AllRAM | Not implemented |
 | 🟡 | `0x3A` | F$Permit | Q9 flat-address-space compatibility handler is wired and succeeds; per-process MMU permission maps remain open |
