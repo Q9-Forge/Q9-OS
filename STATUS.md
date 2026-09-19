@@ -1167,7 +1167,7 @@ still stalls in RBF directory/position advancement.
 | 🟡 | `0x8D` | I$GetStt | Native `SS_Opt` and console `SS_Ready` support validate the current process path; file/device status codes remain open |
 | 🟡 | `0x8E` | I$SetStt | Native `SS_Opt` support now validates the current process path; other status codes remain open |
 | 🟡 | `0x8F` | I$Close | Native path-table removal, descriptor validation, reference counting, and process-exit cleanup are implemented and verified; full file-manager close semantics remain open |
-| 🟡 | `0x92` | I$SGetSt | Minimal Q9-native `SS_Opt` support for direct system paths; permission, device-name, and file-manager semantics remain open |
+| 🟡 | `0x92` | I$SGetSt | Q9-native `SS_Opt` and console `SS.Ready` support for direct system paths; permission, device-name, and file-manager semantics remain open |
 
 ## Current interpretation
 
