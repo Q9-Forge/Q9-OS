@@ -1094,7 +1094,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x24` | F$DExit | Not implemented |
 | ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
-| 🟡 | `0x27` | F$SetSys | Basic handler exists; full system configuration semantics remain open |
+| 🟡 | `0x27` | F$SetSys | Known csl memory-increment variable `$7C` is now persistent and host-tested; the broader system-variable catalogue remains open |
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking and emulator test complete |
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |
 | 🟡 | `0x2A` | F$IRQ | Kernel path exists; complete interrupt-device coverage remains open |

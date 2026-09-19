@@ -54,9 +54,8 @@ int main(void)
     checkU32("F2: Wert auf 0 gesetzt", value, 0UL);
     checkU32("F2: Fehlercode E$UnkSvc (0xD0)", error, 0xD0UL);
 
-    /* Fall 3: Schreiben wird weiterhin bestaetigt, aber NICHT gespeichert
-     * -- ein anschliessendes Lesen derselben Variable liefert weiterhin
-     * den Standardwert, nicht den zuvor "geschriebenen" Wert. */
+    /* Fall 3: Schreiben der bekannten Variable bleibt persistent und wird
+     * beim anschliessenden Lesen wieder geliefert. */
     value = 0; error = 0xDEADUL;
     ok = Q9K_ProcSetSys(0x7CUL, 0UL /* kein GETFLAG = schreiben */, 12345UL, &value, &error);
     checkU32("F3: Schreiben meldet Erfolg", (unsigned long)ok, 1UL);
@@ -64,7 +63,7 @@ int main(void)
     checkU32("F3: kein Fehlercode", error, 0UL);
     value = 0;
     ok = Q9K_ProcSetSys(0x7CUL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
-    checkU32("F3: nachfolgendes Lesen unveraendert (nicht gespeichert)", value, 4096UL);
+    checkU32("F3: nachfolgendes Lesen liefert den gespeicherten Wert", value, 12345UL);
 
     /* Fall 4: Scratch-Bruecke Q9K_SysSetSysImpl liest/schreibt die
      * richtigen Zellen -- Erfolgsfall. */
@@ -73,8 +72,8 @@ int main(void)
     *(unsigned long *)Q9K_SetSysScratch_Value   = 0xFFFFFFFFUL;
     *(unsigned long *)Q9K_SetSysScratch_Success = 0xFFFFFFFFUL;
     Q9K_SysSetSysImpl();
-    checkU32("F4: Scratch-Bruecke liefert 4096 in Q9K_SetSysScratch_Value",
-             *(unsigned long *)Q9K_SetSysScratch_Value, 4096UL);
+    checkU32("F4: Scratch-Bruecke liefert den gespeicherten Wert",
+             *(unsigned long *)Q9K_SetSysScratch_Value, 12345UL);
     checkU32("F4: Scratch-Bruecke setzt Success=1",
              *(unsigned long *)Q9K_SetSysScratch_Success, 1UL);
 
