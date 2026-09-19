@@ -281,12 +281,27 @@ int main(void)
     check("Bridge A$AtDate weist ein unmoegliches Datum ab",
           Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 0);
 
-    /* A$Reset bleibt unbekannt -- die Beschreibung sagt nicht, was es
-     * zuruecksetzen soll. */
-    Q9K_SetU32(Q9K_ALARM_SCRATCH_FUNC, 5);
+    /* A$Reset setzt einen bestehenden Alarm mit derselben ID neu. */
+    reset();
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_FUNC, 1);
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_SIGNAL, 21);
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_TICKS, 5);
     Q9K_SysAlarmImpl();
-    check("Bridge weist A$Reset ab", Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 0);
-    check("und meldet E_UNKSVC", Q9K_GetU32(Q9K_ALARM_SCRATCH_ERROR), Q9K_E_UNKSVC);
+    check("Bridge legt Alarm fuer A$Reset an",
+          Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 1);
+    id = Q9K_GetU32(Q9K_ALARM_SCRATCH_IDIN);
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_FUNC, 5);
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_SIGNAL, 22);
+    Q9K_SetU32(Q9K_ALARM_SCRATCH_TICKS, 7);
+    Q9K_SysAlarmImpl();
+    check("Bridge akzeptiert A$Reset",
+          Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 1);
+    check("A$Reset behaelt die Alarm-ID",
+          Q9K_GetU32(Q9K_ALARM_SCRATCH_IDIN), id);
+    check("A$Reset setzt das neue Intervall",
+          Q9K_GetU32(Q9K_ALARM_TICKS(0)), 7);
+    check("A$Reset setzt das neue Signal",
+          Q9K_GetU32(Q9K_ALARM_SIGNAL(0)) & 0xFFFFUL, 22);
 
     Q9K_SetU32(Q9K_ALARM_SCRATCH_FUNC, 99);  /* unbekannt */
     Q9K_SysAlarmImpl();

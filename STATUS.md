@@ -477,9 +477,13 @@ than or equal", so an alarm whose time passed while the machine was busy is not
 silently dropped. An impossible date or time is refused with `E$BPAddr` rather
 than rounded.
 
-**A$Reset still returns `E$UnkSvc`**, and for a different reason than the
-others did: the description does not say what it is meant to reset. Guessing
-there would produce a call that silently does the wrong thing.
+**A$Reset is now implemented.** The Microware DPIO declaration
+`_os_alarm_reset(alarm_id, signal_code, interval)` resolves the previously
+missing semantics: the existing alarm keeps its ID while its signal and
+relative interval are replaced. This also restarts a cyclic alarm and turns a
+previously absolute alarm into a relative one. Invalid IDs, missing processes,
+and zero intervals are rejected; the native regression suite covers all of
+these paths.
 
 **An address collision introduced by that same change, found immediately
 after and fixed.** The F$Alarm scratch block sat at `$1A90`, directly behind a
@@ -1121,7 +1125,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified on both wait paths, the blocking one with a forked second process doing the signalling |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
-| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work — A$Set now emulator-verified by an alarm that actually comes due and delivers its signal; only A$Reset is unimplemented, its purpose being undocumented |
+| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul, A$AtDate and A$Reset are implemented; A$Set is emulator-verified, while the complete alarm matrix remains host-tested |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Flat-address-space handler rejects 32-bit range wraparound; MMU/permission validation remains open |
 | ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |

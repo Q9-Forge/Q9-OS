@@ -6372,8 +6372,8 @@ Q9K_SysFDatMod_Fail:
 *                 beide feldkodiert wie bei F$Time -> d0.l = Alarm-ID
 *   A$AtJul  (4): wie A$AtDate, aber d3.l = Sekunden nach Mitternacht
 *                 und d4.l = julianische Tageszahl
-* Nur A$Reset meldet E$UnkSvc -- die Beschreibung sagt nicht, was es
-* zuruecksetzen soll (s. Kopfkommentar von q9kernel_alarm.c).
+*   A$Reset (5): d0.l = Alarm-ID, d2.w = neues Signal, d3.l = Intervall;
+*                 setzt den bestehenden eigenen Alarm mit stabiler ID neu.
 Q9K_SysFAlarm:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
