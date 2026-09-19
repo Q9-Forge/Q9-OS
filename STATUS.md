@@ -1138,6 +1138,17 @@ globals. All sixteen suites build and pass again.
 
 ## I$ input/output system calls
 
+The I$ dispatch is built into the 68k kernel: `q9kernel_cinit.c` installs the
+native handlers in both `D_UsrDis` and `D_SysDis`, and `q9kernel_entry.a`
+contains the corresponding callcode trampolines.  The external Microware
+IOMan is also connected and reaches these system-dispatch entries; this is
+verified end-to-end for `I$Attach`/`I$Detach` through RBF/CF and for the
+current IOMan boot path.  “Native” below means Q9's own minimal console/path
+implementation, whereas the Microware route still supplies the real device
+and filesystem semantics.  The two routes must not be reported as one fully
+complete filesystem implementation: the current external `F$Load` trace
+still stalls in RBF directory/position advancement.
+
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
 | 🔷 | `0x80` | I$Attach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; Q9-native device semantics remain open |
