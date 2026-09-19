@@ -82,6 +82,7 @@
 *       (the actual signal -> routine -> F$RTE round trip cannot be shown
 *        here while the timer does not tick -- see STATUS.md)
 *   y = F$Event created an event
+*   = = F$Event Ev$Wait/Ev$WaitR returned without blocking
 *   z = signalling and reading it gave the expected value
 *   Y = after unlink and delete the event is gone
 *   e = F$Chain refused an unknown module and left the caller intact
@@ -961,6 +962,43 @@ Q9K_IllHandlerDone:
         cmpi.l  #6,d1                          * 5 + Signal-Inkrement 1
         bne     Q9K_NativeFailed
         moveq   #'z',d7
+        move.b  d7,$FFFFF006
+
+* Ev$Wait ($04) und Ev$WaitR ($05), beide im NICHT blockierenden Fall:
+* liegt der Wert im verlangten Bereich, kehrt der Aufruf sofort zurueck,
+* gibt den Wert VOR dem Wait-Inkrement zurueck und rueckt den Ereigniswert
+* um dieses Inkrement weiter.  Der blockierende Zweig laesst sich hier
+* nicht pruefen -- dafuer braeuchte es einen zweiten Prozess, der
+* signalisiert, und F$Fork ist noch nicht verbuergt; er ist im Hosttest
+* abgedeckt und im Assembler Zeile fuer Zeile das erprobte F$Sema-Muster.
+        moveq   #4,d1                          * Ev$Wait
+        move.l  d4,d0
+        moveq   #0,d2                          * min 0
+        moveq   #10,d3                         * max 10 -- 6 liegt darin
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+        cmpi.l  #6,d1                          * Wert VOR dem Inkrement
+        bne     Q9K_NativeFailed
+
+        moveq   #5,d1                          * Ev$WaitR -- Grenzen relativ
+        move.l  d4,d0
+        moveq   #-5,d2                         * also [5-5, 5+5] = [0,10]
+        moveq   #5,d3
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+        cmpi.l  #5,d1                          * 6 war um -1 weitergerueckt
+        bne     Q9K_NativeFailed
+
+        moveq   #6,d1                          * Ev$Read -- zweimal -1
+        move.l  d4,d0
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+        cmpi.l  #4,d1
+        bne     Q9K_NativeFailed
+        moveq   #'=',d7
         move.b  d7,$FFFFF006
 
         moveq   #1,d1                          * Ev$UnLnk -- Zaehler auf 0
