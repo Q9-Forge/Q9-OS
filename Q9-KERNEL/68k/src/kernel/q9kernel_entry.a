@@ -3180,7 +3180,16 @@ Q9K_TrapUnknown:
 * mitwandern, sobald es echte Adressraeume gibt -- sonst wird aus einer
 * Schutzpruefung stillschweigend eine Zusicherung ohne Deckung.
 Q9K_SysFChkMem:
-        andi    #$fe,ccr                         * Carry loeschen -- Bereich gilt als zulaessig
+        move.l  d2,-(sp)
+        move.l  a2,d2
+        add.l   d0,d2                            * Ende des Bereichs (exklusiv)
+        bcs     Q9K_SysFChkMem_Bad
+        move.l  (sp)+,d2
+        andi    #$fe,ccr                         * kein Ueberlauf -> zulaessig
+        rts
+Q9K_SysFChkMem_Bad:
+        move.l  (sp)+,d2
+        ori     #$01,ccr                         * 32-Bit-Bereich ueberlaeuft
         rts
 
 * Q9K_SysFPermit / Q9K_SysFProtect / Q9K_SysFAllTsk / Q9K_SysFDelTsk /

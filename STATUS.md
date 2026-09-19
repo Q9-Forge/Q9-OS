@@ -1123,7 +1123,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
 | 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work — A$Set now emulator-verified by an alarm that actually comes due and delivers its signal; only A$Reset is unimplemented, its purpose being undocumented |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
-| 🟡 | `0x58` | F$ChkMem | Flat-address-space check handler is implemented and succeeds; range/permission validation remains open |
+| 🟡 | `0x58` | F$ChkMem | Flat-address-space handler rejects 32-bit range wraparound; MMU/permission validation remains open |
 | ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |
 | 🟡 | `0x5A` | F$CCtl | Handler/dispatch path exists; cache-control implementation remains open |
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired; processor/task-map reporting remains hardware-specific and open |
