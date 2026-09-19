@@ -35,15 +35,28 @@
  * (Wort), zwei Warteschlangenzeiger (Langworte) -- zusammen die 32 Byte,
  * die dieselbe Datei als Ev_Size festhaelt.
  *
- * WAS DIESE FASSUNG KANN, und was noch nicht: alles ausser Warten.
- * Ev$Wait und Ev$WaitR fehlen; sie setzen voraus, dass der Aufrufer
- * angehalten und spaeter wieder geweckt wird, und das ist derselbe
- * Prozesswechsel, den F$Sema schon fuehrt (s. q9kernel_sema.c). Der Rest
- * -- anlegen, loeschen, verbinden, lesen, setzen, signalisieren -- steht
- * vollstaendig und ist fuer sich brauchbar: ein Ereignis ist damit ein
- * benannter, systemweiter Zaehler, den mehrere Prozesse teilen koennen.
- * Ev$Signl durchsucht die Warteschlange bereits; sie ist nur immer leer,
- * solange niemand warten kann.
+ * DAS WARTEN, und wie die Werte dabei wandern. Ev$Wait vergleicht den
+ * Ereigniswert mit dem Bereich aus d2/d3. Liegt er darin, addiert der
+ * Aufruf das Wait-Inkrement und kehrt sofort zurueck -- niemand wartet.
+ * Liegt er ausserhalb, kommt der Aufrufer in eine FIFO-Warteschlange und
+ * wird angehalten, bis ein Signal den Wert in den Bereich bringt.
+ *
+ * Ev$Signl arbeitet die Schlange nach der Regel des Handbuchs ab: Wert um
+ * das Signal-Inkrement erhoehen, den ersten passenden Wartenden wecken,
+ * das Wait-Inkrement addieren, weitersuchen. Ist das oberste Bit des
+ * Funktionsworts gesetzt, laeuft das, bis niemand mehr passt; sonst wird
+ * genau einer geweckt.
+ *
+ * DEUTUNG, und sie ist eine: Das Handbuch listet "the signal
+ * auto-increment is added" als ersten Schritt einer Sequenz, die es "the
+ * same for each event in the queue" nennt. Woertlich gelesen kaeme das
+ * Signal-Inkrement bei jedem geweckten Prozess erneut dazu. Diese Fassung
+ * addiert es EINMAL je Ev$Signl und danach nur noch das Wait-Inkrement je
+ * gewecktem Prozess -- das ist die Lesart, die zum Druckerbeispiel des
+ * Handbuchs passt: ein freigegebener Drucker (+1) weckt einen Wartenden,
+ * der ihn nimmt (-1), und der Zaehler steht wieder dort, wo er war. Die
+ * woertliche Lesart liesse den Zaehler bei jedem Wecken um die Summe
+ * beider Inkremente steigen, was keinem Bestand entspraeche.
  *
  * ZU DEN FEHLERCODES: E$EvntID ($BD), E$EvNF ($BE), E$EvBusy ($BF) und
  * E$BNam ($EB) sind aus funcs.a durchgezaehlt. Die Zaehlung dort beginnt
@@ -108,6 +121,24 @@ typedef unsigned char  Q9_u8;
 #ifndef Q9K_EVENT_NEXTID
 #define Q9K_EVENT_NEXTID (Q9K_EVENT_BASE + Q9K_EVENT_SLOTS * Q9K_EVENT_STRIDE)
 #endif
+
+/* Der Wertebereich, auf den ein Prozess wartet, gehoert zu IHM und nicht
+ * zum Ereignis -- mehrere Wartende koennen verschiedene Bereiche nennen.
+ * Zwei eigene Deskriptorfelder hinter den bekannten, gleiche Bauart wie
+ * Q9K_PROCDESC_ICPTDEPTH_OFF ($1CC). */
+#ifndef Q9K_PROCDESC_EVMIN_OFF
+#define Q9K_PROCDESC_EVMIN_OFF 0x1D0UL
+#define Q9K_PROCDESC_EVMAX_OFF 0x1D4UL
+#endif
+#ifndef Q9K_READYQ_NEXT_OFF
+#define Q9K_READYQ_NEXT_OFF 0x30UL
+#endif
+#ifndef Q9_D_PROC
+#define Q9_D_PROC 0x04CUL
+#endif
+
+extern int    Q9K_ProcAProc(Q9_u32 desc, Q9_u16 *outError);   /* q9kernel_procapi.c */
+extern Q9_u32 Q9K_SchedFirstPick(void);                       /* q9kernel_sched.c   */
 
 #ifndef Q9K_CELL_ACCESSORS_PROVIDED
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
@@ -363,6 +394,72 @@ static Q9_u32 Q9K_EventAddSaturating(Q9_u32 value, long delta)
     return (Q9_u32)r & 0xFFFFFFFFUL;
 }
 
+/* --- Warteschlange ------------------------------------------------
+ *
+ * Verkettet wie die Semaphor-Schlange: Kopf und Schwanz im Ereignis
+ * (Ev_QueueN/Ev_QueueP), die Prozesse untereinander ueber dasselbe
+ * Deskriptorfeld, das sonst die Ready-Queue benutzt. Ein Prozess steht
+ * immer nur in EINER Schlange, und solange er auf ein Ereignis wartet,
+ * ist er nicht lauffaehig (s. q9kernel_sema.c, gleiche Begruendung). */
+
+static int Q9K_EventValueInRange(Q9_u32 value, Q9_u32 minValue, Q9_u32 maxValue)
+{
+    /* Vorzeichenbehaftet vergleichen, und zwar auf 32 Bit: der Wert hat
+     * "a range of two billion", also beide Vorzeichen. Der Cast auf einen
+     * "long" des Uebersetzers taugt dafuer nicht (s.
+     * Q9K_EventAddSaturating). */
+    long v   = (long)(value    & 0x7FFFFFFFUL);
+    long lo  = (long)(minValue & 0x7FFFFFFFUL);
+    long hi  = (long)(maxValue & 0x7FFFFFFFUL);
+
+    if (value    & 0x80000000UL) v  -= 0x40000000L + 0x40000000L;
+    if (minValue & 0x80000000UL) lo -= 0x40000000L + 0x40000000L;
+    if (maxValue & 0x80000000UL) hi -= 0x40000000L + 0x40000000L;
+    return (v >= lo && v <= hi) ? 1 : 0;
+}
+
+void Q9K_EventEnqueue(Q9_u32 entry, Q9_u32 desc)
+{
+    Q9_u32 tail = Q9K_GetU32(entry + Q9K_EVENT_OFF_QPREV);
+
+    Q9K_SetU32(desc + Q9K_READYQ_NEXT_OFF, 0UL);
+    if (tail == 0UL)
+        Q9K_SetU32(entry + Q9K_EVENT_OFF_QNEXT, desc);
+    else
+        Q9K_SetU32(tail + Q9K_READYQ_NEXT_OFF, desc);
+    Q9K_SetU32(entry + Q9K_EVENT_OFF_QPREV, desc);
+}
+
+/* Den ersten Wartenden entnehmen, dessen Bereich den Wert enthaelt.
+ * Durchsucht die ganze Schlange, nicht nur den Kopf: die Reihenfolge ist
+ * FIFO, aber ein Wartender mit unpassendem Bereich darf die hinter ihm
+ * Stehenden nicht blockieren. 0 = niemand passt. */
+Q9_u32 Q9K_EventDequeueInRange(Q9_u32 entry, Q9_u32 value)
+{
+    Q9_u32 node = Q9K_GetU32(entry + Q9K_EVENT_OFF_QNEXT);
+    Q9_u32 prev = 0UL;
+
+    while (node != 0UL) {
+        Q9_u32 next = Q9K_GetU32(node + Q9K_READYQ_NEXT_OFF);
+
+        if (Q9K_EventValueInRange(value,
+                                  Q9K_GetU32(node + Q9K_PROCDESC_EVMIN_OFF),
+                                  Q9K_GetU32(node + Q9K_PROCDESC_EVMAX_OFF))) {
+            if (prev == 0UL)
+                Q9K_SetU32(entry + Q9K_EVENT_OFF_QNEXT, next);
+            else
+                Q9K_SetU32(prev + Q9K_READYQ_NEXT_OFF, next);
+            if (next == 0UL)
+                Q9K_SetU32(entry + Q9K_EVENT_OFF_QPREV, prev);
+            Q9K_SetU32(node + Q9K_READYQ_NEXT_OFF, 0UL);
+            return node;
+        }
+        prev = node;
+        node = next;
+    }
+    return 0UL;
+}
+
 /* Q9K_EventSignalCommon -- der gemeinsame Kern von Ev$Signl, Ev$Set,
  * Ev$SetR und Ev$Pulse.
  *
@@ -373,6 +470,7 @@ static Q9_u32 Q9K_EventAddSaturating(Q9_u32 value, long delta)
  * Das Wecken der Wartenden ist vorbereitet, aber die Schlange ist immer
  * leer, solange Ev$Wait fehlt -- s. Kopfkommentar. */
 static int Q9K_EventSignalCommon(Q9_u32 id, Q9_u32 newValue, int restore,
+                                 int wakeAll,
                                  Q9_u32 *outPrevious, Q9_u16 *outError)
 {
     long slot = Q9K_EventFindById(id);
@@ -386,8 +484,33 @@ static int Q9K_EventSignalCommon(Q9_u32 id, Q9_u32 newValue, int restore,
     previous = Q9K_GetU32(entry + Q9K_EVENT_OFF_VALUE);
     Q9K_SetU32(entry + Q9K_EVENT_OFF_VALUE, newValue);
 
-    /* Hier durchsucht das Original die Warteschlange und weckt, wer in
-     * den Wertebereich faellt. */
+    /* Die Warteschlange abarbeiten: wer in den Bereich faellt, wird
+     * geweckt, und danach rueckt der Wert um das Wait-Inkrement weiter --
+     * der Geweckte "nimmt" also, was das Signal freigegeben hat. Ohne das
+     * oberste Bit im Funktionswort genau einer, sonst alle, die passen. */
+    if (!restore) {
+        Q9_u32 entryValue = newValue;
+        Q9_u16 waitInc = Q9K_GetU16(entry + Q9K_EVENT_OFF_INCW);
+        int rounds = 0;
+
+        for (;;) {
+            Q9_u32 waiter = Q9K_EventDequeueInRange(entry, entryValue);
+            Q9_u16 werr = 0U;
+
+            if (waiter == 0UL)
+                break;
+            (void)Q9K_ProcAProc(waiter, &werr);
+            entryValue = Q9K_EventAddSaturating(entryValue, (long)(short)waitInc);
+            Q9K_SetU32(entry + Q9K_EVENT_OFF_VALUE, entryValue);
+            rounds++;
+            if (!wakeAll)
+                break;
+            /* Sicherung gegen eine kaputte Schlange: mehr Runden als
+             * Prozessplaetze kann es nicht geben. */
+            if (rounds > (int)Q9K_EVENT_SLOTS * 4)
+                break;
+        }
+    }
 
     if (restore)
         Q9K_SetU32(entry + Q9K_EVENT_OFF_VALUE, previous);
@@ -397,7 +520,7 @@ static int Q9K_EventSignalCommon(Q9_u32 id, Q9_u32 newValue, int restore,
     return 1;
 }
 
-int Q9K_EventSignal(Q9_u32 id, Q9_u16 *outError)
+int Q9K_EventSignal(Q9_u32 id, int wakeAll, Q9_u16 *outError)
 {
     long slot = Q9K_EventFindById(id);
     Q9_u32 entry, value;
@@ -410,15 +533,17 @@ int Q9K_EventSignal(Q9_u32 id, Q9_u16 *outError)
     value = Q9K_EventAddSaturating(
                 Q9K_GetU32(entry + Q9K_EVENT_OFF_VALUE),
                 (long)(short)Q9K_GetU16(entry + Q9K_EVENT_OFF_INCS));
-    return Q9K_EventSignalCommon(id, value, 0, 0, outError);
+    return Q9K_EventSignalCommon(id, value, 0, wakeAll, 0, outError);
 }
 
-int Q9K_EventSet(Q9_u32 id, Q9_u32 newValue, Q9_u32 *outPrevious, Q9_u16 *outError)
+int Q9K_EventSet(Q9_u32 id, Q9_u32 newValue, int wakeAll,
+                 Q9_u32 *outPrevious, Q9_u16 *outError)
 {
-    return Q9K_EventSignalCommon(id, newValue, 0, outPrevious, outError);
+    return Q9K_EventSignalCommon(id, newValue, 0, wakeAll, outPrevious, outError);
 }
 
-int Q9K_EventSetRelative(Q9_u32 id, long delta, Q9_u32 *outPrevious, Q9_u16 *outError)
+int Q9K_EventSetRelative(Q9_u32 id, long delta, int wakeAll,
+                         Q9_u32 *outPrevious, Q9_u16 *outError)
 {
     long slot = Q9K_EventFindById(id);
     Q9_u32 value;
@@ -430,12 +555,12 @@ int Q9K_EventSetRelative(Q9_u32 id, long delta, Q9_u32 *outPrevious, Q9_u16 *out
     value = Q9K_EventAddSaturating(
                 Q9K_GetU32(Q9K_EVENT_SLOT((Q9_u32)slot) + Q9K_EVENT_OFF_VALUE),
                 delta);
-    return Q9K_EventSignalCommon(id, value, 0, outPrevious, outError);
+    return Q9K_EventSignalCommon(id, value, 0, wakeAll, outPrevious, outError);
 }
 
-int Q9K_EventPulse(Q9_u32 id, Q9_u32 pulseValue, Q9_u16 *outError)
+int Q9K_EventPulse(Q9_u32 id, Q9_u32 pulseValue, int wakeAll, Q9_u16 *outError)
 {
-    return Q9K_EventSignalCommon(id, pulseValue, 1, 0, outError);
+    return Q9K_EventSignalCommon(id, pulseValue, 1, wakeAll, 0, outError);
 }
 
 /* Q9K_EventInfo -- Ev$Info: den 32-Byte-Eintrag des ersten aktiven
@@ -466,6 +591,59 @@ int Q9K_EventInfo(Q9_u32 startIndex, Q9_u32 bufAddr,
     return 0;
 }
 
+/* Q9K_EventWaitCheck -- der entscheidende Teil von Ev$Wait: liegt der
+ * Wert im Bereich?
+ *
+ * Rueckgabe 1 = der Aufrufer laeuft sofort weiter; das Wait-Inkrement ist
+ * dann bereits angewandt und *outValue traegt den Wert VOR dem Inkrement,
+ * so wie das Handbuch ihn als "actual event value" zurueckgibt.
+ * Rueckgabe 0 mit *outError == 0 = der Aufrufer muss warten (die ASM-Seite
+ * ruft dann Q9K_EventWaitEnqueue, nachdem sie den Registersatz gesichert
+ * hat -- dieselbe Zweiteilung wie bei F$Sema, und aus demselben Grund:
+ * vorher eingereiht traegt der Wartende einen veralteten Stackzeiger). */
+int Q9K_EventWaitCheck(Q9_u32 id, Q9_u32 minValue, Q9_u32 maxValue,
+                       Q9_u32 *outValue, Q9_u16 *outError)
+{
+    long slot = Q9K_EventFindById(id);
+    Q9_u32 entry, value;
+
+    *outError = 0U;
+    if (slot < 0L) {
+        *outError = Q9K_E_EVNTID;
+        return 0;
+    }
+    entry = Q9K_EVENT_SLOT((Q9_u32)slot);
+    value = Q9K_GetU32(entry + Q9K_EVENT_OFF_VALUE);
+    *outValue = value;
+
+    if (!Q9K_EventValueInRange(value, minValue, maxValue))
+        return 0;                       /* warten -- kein Fehler */
+
+    Q9K_SetU32(entry + Q9K_EVENT_OFF_VALUE,
+               Q9K_EventAddSaturating(value,
+                   (long)(short)Q9K_GetU16(entry + Q9K_EVENT_OFF_INCW)));
+    return 1;
+}
+
+/* Q9K_EventWaitEnqueue -- zweiter Teil von Ev$Wait, von der ASM-Seite
+ * erst NACH dem Sichern des Registersatzes gerufen. Reiht den Aufrufer
+ * ein und waehlt den naechsten lauffaehigen Prozess. */
+void Q9K_EventWaitEnqueue(Q9_u32 id, Q9_u32 minValue, Q9_u32 maxValue,
+                          Q9_u32 *outNext)
+{
+    long slot = Q9K_EventFindById(id);
+    Q9_u32 self = Q9K_GetU32(Q9_D_PROC);
+
+    *outNext = 0UL;
+    if (slot < 0L || self == 0UL)
+        return;
+
+    Q9K_SetU32(self + Q9K_PROCDESC_EVMIN_OFF, minValue);
+    Q9K_SetU32(self + Q9K_PROCDESC_EVMAX_OFF, maxValue);
+    Q9K_EventEnqueue(Q9K_EVENT_SLOT((Q9_u32)slot), self);
+    *outNext = Q9K_SchedFirstPick();
+}
+
 /* --- Bruecke ------------------------------------------------------
  *
  * Ein Aufruf, zwoelf Funktionen: die Registerbelegung wechselt je nach
@@ -480,6 +658,8 @@ int Q9K_EventInfo(Q9_u32 startIndex, Q9_u32 bufAddr,
 #define Q9K_EVENT_SCRATCH_A0    0x1E34UL /* Q9_u32, (a0) EIN                 */
 #define Q9K_EVENT_SCRATCH_ERROR 0x1E38UL /* Q9_u32, d1.w AUS bei Fehler      */
 #define Q9K_EVENT_SCRATCH_OK    0x1E3CUL /* Q9_u32, 0/1                      */
+#define Q9K_EVENT_SCRATCH_WAIT  0x1E44UL /* Q9_u32, 1 = Aufrufer muss warten */
+#define Q9K_EVENT_SCRATCH_NEXT  0x1E48UL /* Q9_u32, naechster Prozess        */
 #endif
 
 #define Q9K_EV_LINK  0U
@@ -500,7 +680,11 @@ void Q9K_SysEventImpl(void)
     /* Das oberste Bit des Funktionsworts ist bei Ev$Signl/Set/SetR/Pulse
      * ein Schalter ("MS bit set to activate all processes in range") und
      * gehoert nicht zum Code. */
-    Q9_u32 func = Q9K_GetU32(Q9K_EVENT_SCRATCH_FUNC) & 0x7FFFUL;
+    Q9_u32 rawFunc = Q9K_GetU32(Q9K_EVENT_SCRATCH_FUNC);
+    Q9_u32 func = rawFunc & 0x7FFFUL;
+    /* "MS bit set to activate all processes in range" -- der Schalter
+     * gehoert nicht zum Funktionscode. */
+    int wakeAll = (rawFunc & 0x8000UL) ? 1 : 0;
     Q9_u32 d0   = Q9K_GetU32(Q9K_EVENT_SCRATCH_D0);
     Q9_u32 d2   = Q9K_GetU32(Q9K_EVENT_SCRATCH_D2);
     Q9_u32 a0   = Q9K_GetU32(Q9K_EVENT_SCRATCH_A0);
@@ -509,6 +693,7 @@ void Q9K_SysEventImpl(void)
     int ok = 0;
 
     Q9K_SetU32(Q9K_EVENT_SCRATCH_OK, 0UL);
+    Q9K_SetU32(Q9K_EVENT_SCRATCH_WAIT, 0UL);
 
     switch (func) {
     case Q9K_EV_CREAT:
@@ -533,17 +718,17 @@ void Q9K_SysEventImpl(void)
         if (ok) Q9K_SetU32(Q9K_EVENT_SCRATCH_D1, out);
         break;
     case Q9K_EV_SIGNL:
-        ok = Q9K_EventSignal(d0, &err);
+        ok = Q9K_EventSignal(d0, wakeAll, &err);
         break;
     case Q9K_EV_PULSE:
-        ok = Q9K_EventPulse(d0, d2, &err);
+        ok = Q9K_EventPulse(d0, d2, wakeAll, &err);
         break;
     case Q9K_EV_SET:
-        ok = Q9K_EventSet(d0, d2, &out, &err);
+        ok = Q9K_EventSet(d0, d2, wakeAll, &out, &err);
         if (ok) Q9K_SetU32(Q9K_EVENT_SCRATCH_D1, out);
         break;
     case Q9K_EV_SETR:
-        ok = Q9K_EventSetRelative(d0, (long)(signed long)d2, &out, &err);
+        ok = Q9K_EventSetRelative(d0, (long)(signed long)d2, wakeAll, &out, &err);
         if (ok) Q9K_SetU32(Q9K_EVENT_SCRATCH_D1, out);
         break;
     case Q9K_EV_INFO:
@@ -552,11 +737,36 @@ void Q9K_SysEventImpl(void)
         break;
     case Q9K_EV_WAIT:
     case Q9K_EV_WAITR:
-        /* Noch nicht umgesetzt -- s. Kopfkommentar. Ein stiller Erfolg
-         * waere hier besonders schaedlich: der Aufrufer liefe weiter, als
-         * haette er das Ereignis abgewartet. */
-        err = Q9K_E_UNKSVC;
-        ok = 0;
+        {
+            Q9_u32 lo = d2;
+            Q9_u32 hi = Q9K_GetU32(Q9K_EVENT_SCRATCH_D3);
+
+            if (func == Q9K_EV_WAITR) {
+                /* Relativ: die Grenzen gelten gegenueber dem AKTUELLEN
+                 * Wert. Ev$WaitR gibt sie deshalb auch absolut zurueck. */
+                Q9_u32 now = 0UL;
+                Q9_u16 rerr = 0U;
+                if (!Q9K_EventRead(d0, &now, &rerr)) {
+                    err = rerr; ok = 0; break;
+                }
+                lo = Q9K_EventAddSaturating(now, (long)(signed long)d2);
+                hi = Q9K_EventAddSaturating(now, (long)(signed long)hi);
+                Q9K_SetU32(Q9K_EVENT_SCRATCH_D2, lo);
+                Q9K_SetU32(Q9K_EVENT_SCRATCH_D3, hi);
+            }
+
+            ok = Q9K_EventWaitCheck(d0, lo, hi, &out, &err);
+            Q9K_SetU32(Q9K_EVENT_SCRATCH_D1, out);
+            if (!ok && err == 0U) {
+                /* Nicht im Bereich: warten. Die ASM-Seite erkennt das an
+                 * der Wartezelle und sichert erst den Registersatz. */
+                Q9K_SetU32(Q9K_EVENT_SCRATCH_WAIT, 1UL);
+                Q9K_SetU32(Q9K_EVENT_SCRATCH_D2, lo);
+                Q9K_SetU32(Q9K_EVENT_SCRATCH_D3, hi);
+                Q9K_SetU32(Q9K_EVENT_SCRATCH_OK, 1UL);
+                return;
+            }
+        }
         break;
     default:
         err = Q9K_E_UNKSVC;
@@ -569,4 +779,16 @@ void Q9K_SysEventImpl(void)
         return;
     }
     Q9K_SetU32(Q9K_EVENT_SCRATCH_OK, 1UL);
+}
+
+/* Zweiter Teil des Wartens, von der ASM-Seite nach dem Sichern gerufen. */
+void Q9K_SysEventWaitImpl(void)
+{
+    Q9_u32 next = 0UL;
+
+    Q9K_EventWaitEnqueue(Q9K_GetU32(Q9K_EVENT_SCRATCH_D0),
+                         Q9K_GetU32(Q9K_EVENT_SCRATCH_D2),
+                         Q9K_GetU32(Q9K_EVENT_SCRATCH_D3),
+                         &next);
+    Q9K_SetU32(Q9K_EVENT_SCRATCH_NEXT, next);
 }
