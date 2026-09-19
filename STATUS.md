@@ -658,10 +658,11 @@ after switching to the stack in the new block. Doing both in one go would work
 almost every time — until the next allocation overwrote the freed stack, and
 then unreproducibly.
 
-Not implemented is loading from disk when the module is not already in memory.
-The manual lists it as the second step, but `F$Load` still hangs in the external
-RBF path (see `0x01`), so a module that is not resident reports `E$MNF` — the
-same limit F$Fork has, and it disappears with `F$Load`.
+Starting a non-resident module from disk is still open in `F$Chain`: the
+in-place replacement path itself is complete, while the additional
+load-then-chain integration needs a dedicated end-to-end test. `F$Load`'s
+external RBF path is no longer the blocker; it is emulator-verified separately
+for `/dd/CMDS/echo` (see `0x01`).
 
 Two mistakes during this work are worth recording. First, three constants
 (`Q9K_INITIAL_SR` and all three module-header offsets) were *guessed* rather
@@ -673,11 +674,9 @@ Second, a run that appeared to hang in `Q9K_AllocMem` turned out to be a
 allocation had succeeded all along. Both were diagnosed from the raw console
 bytes rather than guessed at.
 
-**A method worth recording, because it unblocks the rest of this list.** Several
-calls are marked here as not implemented with the reason "the manual gives no
-ABI" — `F$Chain`, `F$NProc`, `F$FModul`, `F$Panic`, `F$Event`, `F$FIRQ`,
-`F$AllRAM` and others appear in Appendix D only as cross-references or index
-entries, without input and output registers.
+**A method worth recording for the remaining ABI gaps.** Several calls are
+marked not implemented because Appendix D gives only a cross-reference or
+index entry — notably `F$FModul`, `F$AllRAM`, `F$POSK` and `F$MBuf`.
 
 That obstacle is largely gone. Microware's own C bindings carry the calling
 convention in compiled form, and `MWOS/OS9/68020/LIB/os_lib.l` holds a binding
@@ -689,9 +688,10 @@ any structure offsets against the matching header in `MWOS/OS9/SRC/DEFS`.
 
 Checked one by one rather than assumed — the library covers `F$Chain`,
 `F$NProc`, `F$Panic`, `F$Event`, `F$FIRQ`, `F$GSPUMp`, `F$SysDbg`, `F$STrap`,
-`F$RTE`, `F$SigReset` and `F$DFork`, but **not** `F$FModul`, `F$AllRAM`,
-`F$POSK` or `F$MBuf`. Those four have neither a manual entry nor a binding, and
-for them the only remaining source is the original kernel itself.
+`F$RTE`, `F$SigReset` and `F$DFork`. The binding settles register usage where
+it exists; the remaining F$FIRQ work is the hardware table/dispatch layer.
+`F$FModul`, `F$AllRAM`, `F$POSK` and `F$MBuf` have neither a manual entry nor a
+binding, and for them the only remaining source is the original kernel itself.
 
 Where a manual entry does exist it stays the primary source; the library
 settles what the manual leaves open, the way the original kernel settled the
