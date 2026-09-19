@@ -555,6 +555,24 @@ Q9K_AttachStart:
         moveq   #'f',d7
         move.b  d7,$FFFFF006
 
+* F$RetPD: return the descriptor allocated above and verify that the DBT
+* slot is empty again.  This closes the real IOMan descriptor lifecycle.
+        lea     Q9K_PathDbt(pc),a0
+        move.w  d5,d0
+        trap    #0
+        dc.w    $0031                          * F$RetPD
+        bcs     Q9K_NativeFailed
+        moveq   #'R',d7
+        move.b  d7,$FFFFF006
+
+        lea     Q9K_PathDbt(pc),a0
+        move.w  d5,d0
+        trap    #0
+        dc.w    $002f                          * F$FindPD must now fail
+        bcc     Q9K_NativeFailed
+        moveq   #'r',d7
+        move.b  d7,$FFFFF006
+
 * F$SigMask: d1.l = 1 masks, -1 unmasks, 0 clears.  A critical section
 * the way a real caller would write it.
         moveq   #0,d0
