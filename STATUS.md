@@ -510,8 +510,9 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtkbhiolw@#(+e` followed by `C`
-from the chained-to module.
+The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+e` followed by
+`C` from the chained-to module — the four digits being the kernel's own tick
+counter.
 
 **A contradiction between the two time sources, found while extending F$Alarm
 and worth fixing before anything builds on it.** `F$Alarm`'s absolute variants
@@ -561,93 +562,45 @@ checked for validity". Tightening that would be an invention beyond the
 original; the host suite pins the actual behaviour so it cannot drift
 unnoticed.
 
-**A process interrupted by a timer tick never runs again — and a correction to
-what this file said a moment ago.**
+**THE TIMER PATH IS SOUND — and the three entries that stood here claiming
+otherwise were all wrong, from one and the same measurement mistake.**
 
-The previous entry here claimed "the timer does not tick", on the strength of
-the kernel dump reporting `Timer-Interrupts: 0 gesamt`. **That was wrong.** That
-figure is produced by counting hits on a *hardcoded PC address* (`$75a2`, see
-`Q9-Flux/src/kernel/m68krt.c`, commented "Adressen fuer den aktuellen Build").
-This kernel has grown a great deal since that address was written down, so the
-counter now watches an address the timer handler no longer occupies. It reads 0
-no matter what the hardware does.
-
-The kernel therefore counts its own ticks now, in `Q9K_TickCount` (`$1BE0`),
-incremented in `Q9K_TimerIRQHandler` and printed by the live test. **It reads 3
-by the time the test runs: the timer ticks.**
-
-What actually happens is narrower and worse. A process that is *interrupted by
-a tick* does not get the CPU back. Measured directly: a plain counting loop in
-the test program — no system call at all — never reaches the marker after it
-when the loop is long enough to span a tick, while the same loop shortened to
-fit between two ticks completes normally. In the long case the console fills
-with `A` from `Q9K_TestProcA`, the parent's diagnostic loop, which keeps the
-CPU from then on. (That `A` is not an idle indicator, as first assumed — it is
-that loop.)
-
-This is what actually blocks the tick-dependent calls:
-
-- `F$Sleep(50)` — half a second — never returns, measured with a marker either
-  side.
-- Alarms never come due for their target. The earlier emulator check passed
-  only because it deleted the alarm straight away.
-- The software clock does not advance. `F$STime`/`F$Time` still work, needing
-  no tick to set or read the clock — which is why this went unnoticed.
-
-The row for `F$Sleep` (`0x0A`) says "complete timing coverage remains open".
-That is far too kind either way: a plain sleep does not wake.
-
-**What a second round of measurement narrowed it down to** (instruments added
-temporarily inside `Q9K_SchedReschedule` and `Q9K_ProcExit`, then removed
-again; only `Q9K_TickCount` stays):
-
-- Exactly **three** process switches happen, then none ever again. Printed from
-  the switch branch itself: `w83>87`, `w87>83`, `w83>87` — two descriptors
-  alternating, as intended, and then silence.
-- From then on the **ready queue is permanently empty**, sampled every 256 time
-  slices: `[0]`, over and over. `Q9K_SchedPickHighestAge` therefore returns 0
-  and the running process simply keeps the CPU — which is exactly what is
-  observed, `Q9K_TestProcA` filling the console with `A`.
-- **No process is ever terminated.** A marker at the head of `Q9K_ProcExit`
-  never appears.
-- Yet one pool slot reads state **`z` — zombie** (`[0az.]`: slot 0 active,
-  slot 1 zombie). The only place that writes that state is `Q9K_ProcExit`,
-  whose marker never fired.
-
-**A third round resolved that contradiction, and names the fault.** The test
-program was made to print its own descriptor (`D_Proc`) before entering a loop
-long enough to span a tick, and `Q9K_ProcExit` was made to print the descriptor
-it is terminating. They are the same:
+What this file said over three rounds: that the timer does not tick, that
+`F$Sleep` never returns, that a process interrupted by a tick never runs again,
+and finally that the context is not restored across a switch. **None of it is
+true.** Measured properly, with the intercept test in place:
 
 ```
-P87c0 … (56c94-07880) … Z87c0
- │              │            └─ Q9K_ProcExit terminates 87c0, status 0
- │              └─ last switch: 87c0 saved at PC 56c94, TestProcA resumed
- └─ the test program's own descriptor
+Wvtkbhiolw@#0003 ( * ) > + e … C      Vektor=0
+                 │ │ │ │ │ │      └─ F$Chain into another module
+                 │ │ │ │ │ └─ F$Chain refused an unknown module
+                 │ │ │ │ └─ F$SigReset
+                 │ │ │ └─ the software clock advanced across a 2 s sleep
+                 │ │ └─ F$RTE returned into the main program behind F$Sleep
+                 │ └─ the intercept routine ran, with the right signal code
+                 └─ F$Icpt registered it
 ```
 
-So **the interrupted process terminates itself with `F$Exit(0)`** — while its
-code is sitting in a counting loop and never reaches the marker just past it.
-Its descriptor is otherwise intact at that moment (ID 2, priority 10, age 13, a
-plausible `SavedSP`), so nothing overwrote it; the state was set deliberately,
-through the one path that sets it.
+An alarm set for 5 ticks fires out of the timer interrupt, wakes the sleeping
+process, its intercept routine runs and returns — and a separate two-second
+sleep shows the clock moving. The timer ticks, sleeps end, alarms come due,
+the clock advances, and a switched-out process resumes at exactly the PC it was
+saved at (measured: `(56c94-07880)` then `(07880-56c94)`).
 
-That only fits one explanation: **after being interrupted, the process resumes
-at the wrong address and runs into an `F$Exit` there.** The context is not
-restored correctly across a timer switch. The earlier readings all follow from
-this — the ready queue looks empty because the process left it by terminating,
-no fourth switch occurs because there is nothing left to switch to, and
-`F$Sleep` never returns because a sleeper that is woken meets the same fate.
+**The mistake, worth recording because it produced four wrong entries in a
+row:** the console in the direct-attach test is flooded by `Q9K_TestProcA`, the
+parent's diagnostic loop, which prints `A` continuously. Every reading was taken
+from a ~40-character window after the marker string — and in that window the
+flood had already buried everything that followed. Filtering the `A` out of the
+full log shows the markers were there all along. A short window onto a noisy
+channel is not a measurement; the check that settled it was
+`''.join(c for c in log if c != 'A')`, which should have been the first thing
+tried rather than the last.
 
-Certain now: the timer works, the switch mechanism saves a plausible PC, and
-the fault is in restoring the context — not in the scheduler's bookkeeping.
-The next step is to compare the frame as saved against the frame as loaded on
-resume, in `Q9K_TimerIRQHandler` itself.
-
-(An earlier note here said no process is ever terminated, based on a marker at
-the head of `Q9K_ProcExit` that never appeared. That marker was faulty — a
-marker at the zombie assignment itself fires reliably. The finding above
-replaces it.)
+The ready queue "being empty" and the process "vanishing" had the same origin:
+the test program had simply run to completion, chained into `chaintgt` and
+exited normally — which is why `Q9K_ProcExit` fired with status 0 on the test
+program's own descriptor. That was never a fault.
 
 **The intercept subsystem: F$Icpt now actually runs the routine.** Until now
 `F$Icpt` could only register one. A signal was dropped into `P$Signal` and the
@@ -674,11 +627,10 @@ is running has their state in the CPU registers, so `P$SavedSP` is stale and a
 frame built from it would resume them anywhere. For a running process the
 signal is stored as before and delivered at the next switch.
 
-The emulator proves the registration and `F$SigReset`. The round trip
-signal → routine → `F$RTE` is host-tested only, for the reason above: delivery
-needs a sender, and the natural one — an alarm — never reaches its target while
-an interrupted process cannot resume. Once that is fixed, three lines in the
-live test suffice.
+The emulator proves the whole round trip: an alarm set for 5 ticks fires from
+the timer interrupt, wakes the sleeping process, its routine runs with the
+right signal code, `F$RTE` returns into the main program behind the `F$Sleep`,
+and execution continues normally from there.
 
 **F$Chain** (`0x05`) runs a new program without creating a process — "similar
 to a Fork command followed by an Exit", but in the same process, with the open
@@ -882,8 +834,8 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
 | ⛔ | `0x07` | F$Mem | Withdrawn in real OS-9/68K ("F$Mem is no longer available. Use F$SRqMem instead."); deliberately not implemented |
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
-| 🟡 | `0x09` | F$Icpt | Registers the routine and now really **runs** it on delivery, by stacking a second process frame; host-tested, emulator proof blocked by the dead timer — see the note |
-| 🟡 | `0x0A` | F$Sleep | Scheduler sleep path exists; complete timing coverage remains open |
+| ✅ | `0x09` | F$Icpt | Registers the routine and really **runs** it on delivery, by stacking a second process frame; emulator-verified end to end (alarm → routine → `F$RTE`) |
+| ✅ | `0x0A` | F$Sleep | Sleeps end on time and on an early signal; emulator-verified with a 2 s sleep across which the clock advanced |
 | ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead, and that route now works here (see the scheduler note) |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
@@ -903,7 +855,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x1B` | F$CpyMem | Copy with owner-PID validation; no address translation is needed while all processes share one flat address space |
 | ✅ | `0x1C` | F$SUser | Changes the caller's own group/user ID in the process descriptor; only the documented "user 0.0 may change freely" case is implemented |
 | ✅ | `0x1D` | F$UnLoad | Same lookup rule as F$Link and the same counter as F$UnLink, keyed by module name |
-| 🟡 | `0x1E` | F$RTE | Unstacks the intercept frame and re-enters the routine when another signal is pending; host-tested |
+| ✅ | `0x1E` | F$RTE | Unstacks the intercept frame and re-enters the routine when another signal is pending; emulator-verified |
 | ✅ | `0x1F` | F$GPrDBT | Pointer table assembled from the process pool, one entry per slot, 0 for a free one |
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | 🟡 | `0x21` | F$TLink | Trap linking works; unlink and complete lifetime handling remain open |
@@ -939,7 +891,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x53` | F$Event | A whole subsystem (32-byte event records, wait queues, link/unlink, signalling), not a single call |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
-| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work; only A$Reset is unimplemented, its purpose being undocumented |
+| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work — A$Set now emulator-verified by an alarm that actually comes due and delivers its signal; only A$Reset is unimplemented, its purpose being undocumented |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Basic memory-check path exists; full protection semantics remain open |
 | ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |
