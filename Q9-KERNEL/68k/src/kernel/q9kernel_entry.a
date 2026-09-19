@@ -4981,7 +4981,7 @@ Q9K_SysFEvent_Wait:
 
         lea     Q9K_CRuntimeData(pc),a6
         movea.l Q9K_EventWaitImplPtr,a1
-        jsr     (a1)
+        jsr     (a1)                       * einreihen + naechsten waehlen
 
         move.l  Q9K_EventScratch_Next,d0
         tst.l   d0
@@ -4991,6 +4991,9 @@ Q9K_SysFEvent_Wait:
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysFEvent_Idle:
+* Kein Prozess mehr bereit -- gleiche Semantik wie bei F$Sema: dass ALLE
+* Prozesse auf Ereignisse warten, ist ein Deadlock im Anwendungsentwurf,
+* und der Kernel meldet ihn, statt still stehenzubleiben.
         moveq   #K_IDLE,d0
         bra     Q9K_KernelPanic
 Q9K_SysFEvent_NoFrame:
