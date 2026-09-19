@@ -695,6 +695,50 @@ Where a manual entry does exist it stays the primary source; the library
 settles what the manual leaves open, the way the original kernel settled the
 date format.
 
+**F$NProc** (`0x2D`) is "Start Next Process": no input, no return, system
+state. The manual is unusually explicit about the one thing that shapes the
+whole implementation — "The process calling NProc should already be in one of
+the system's process queues. If it is not, the calling process becomes unknown
+to the system even though the process descriptor still exists." So this
+implementation deliberately does **not** re-queue the caller. It takes the next
+process off the ready list and switches into it; whoever called without having
+queued themselves first is gone. That is the semantics, not an omission, and it
+is why the call is system-state: it exists for drivers and managers that keep
+their own queues.
+
+The register set is still saved and `SavedSP` still written, because the normal
+case is a caller that *is* on some queue and will be resumed later. Skipping
+that would leave it holding a stale stack pointer — the same trap as `F$Sema`
+and `Ev$Wait`.
+
+When no process is ready the manual has OS-9 wait for an interrupt and look
+again. This kernel goes through `F$Panic(K$Idle)` instead — the same path
+`F$Sema` and `Ev$Wait` take, and the one the manual describes under `F$Panic`
+itself: "F$Panic is called only when the kernel believes there are no processes
+remaining to be executed." A panic service installed through `F$SSvc` is
+therefore exactly where a system would intervene.
+
+Proving it needs a second process, because the call by definition never returns
+to whoever made it. `nproctgt` is forked, announces itself with `n`, and calls
+`F$NProc`; the parent sleeps briefly so the child actually runs, then carries on
+to its remaining tests. Three observations together make the proof: `n` appears
+(the child ran), `N` never appears (the call did not return), and the parent's
+later markers appear (the switch really happened rather than hanging).
+
+**A limit reached while adding it, worth recording because it will come back.**
+The kernel has grown past the 16-bit reach of `bsr`. Adding two dispatch entries
+in `q9kernel_cinit.c` was enough to push the distance from `q9kernel_entry.a`
+into the last modules of the link list over 32 KiB. The assembler accepts it
+silently; `l68` then reports `operand size error` **without naming the place**,
+which makes it an expensive thing to diagnose. Two rules follow, and both are
+now written into the source: new C files go at the **end** of the link list in
+`build.sh`, so existing distances do not move; and calls into the last modules
+go through a pointer cell that `q9kernel_cinit.c` fills at boot
+(`Q9K_StrapImplPtr` and the six below it), the same pattern `F$Event` already
+used. Seven calls — `F$STrap`, `F$RTE`, `F$SigReset`, `F$Chain` (twice),
+`F$Sema` (twice) — were converted, which buys room for several more calls before
+the next one has to be.
+
 **F$Event** (`0x53`) is the event system — "multiple-value semaphores", as the
 manual puts it. Unlike a semaphore an event carries a counter, and a waiter
 names the range of values it wants to be woken in. The manual's own example is
@@ -738,9 +782,23 @@ went to sleep. The host suite now checks it too (`Q9K_SetFrameReg` at the d1
 slot of the frame `SavedSP` points at, carrying the value before the wait
 increment), but it was the two-process test on real hardware that produced it.
 
-A second, smaller lesson from the same hunt: a diagnostic that writes straight
-to the DUART must wait for TXRDY. Without that wait, consecutive characters are
-dropped, and a missing marker reads exactly like code that never ran.
+A second lesson from the same hunt, and this one is about how the hunt itself
+went wrong. When the first diagnostic markers came out incomplete, the
+explanation reached for was that consecutive writes to the DUART drop
+characters without a TXRDY wait. That was wrong: the missing markers were code
+that genuinely never ran, because the test was calling function code 9
+(`Ev$Pulse`, which restores the old value and therefore wakes nobody) instead
+of 10 (`Ev$Set`). Adding the TXRDY wait changed nothing; fixing the function
+code produced every marker at once. A later run on `chaintgt` pointed the other
+way again — a lone TXRDY wait loop there produced no output at all until a plain
+unguarded write preceded it.
+
+So the honest state of it: character loss on this console has not been
+demonstrated, the TXRDY question is unresolved, and the real lesson is the
+older one — a missing marker means "this code did not run" until something
+proves otherwise. `chaintgt` now writes a `c` the moment it starts, before
+touching the stack or any subroutine, so that question can be answered directly
+instead of inferred.
 
 The function codes come from `MWOS/OS9/SRC/DEFS/event.a` (counted off as
 `do.b 1` from zero), the 32-byte record layout from the same file, and the
@@ -1042,7 +1100,7 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x2A` | F$IRQ | Kernel path exists; complete interrupt-device coverage remains open |
 | 🟡 | `0x2B` | F$IOQu | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; immediate preemption still open |
-| ❌ | `0x2D` | F$NProc | Not implemented |
+| ✅ | `0x2D` | F$NProc | Takes the next process off the ready list and switches into it. The caller is deliberately not re-queued — that is the manual's own semantics. Emulator-verified with a forked process that calls it and correctly never comes back |
 | 🟡 | `0x2E` | F$VModul | Validation path exists; complete loader integration remains open |
 | ✅ | `0x2F` | F$FindPD | Path/process number to descriptor address, same DBT structure as F$AllPD/F$RetPD |
 | 🟡 | `0x30` | F$AllPD | Basic descriptor allocation path exists; full OS-9 semantics remain open |

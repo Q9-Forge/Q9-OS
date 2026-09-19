@@ -1,0 +1,70 @@
+*******************************************************************************
+* nproctgt.a -- Zielmodul fuer den F$NProc-Test.
+*
+* F$NProc laesst sich nur von aussen pruefen, denn sein dokumentiertes
+* Verhalten ist, dass der Aufrufer NICHT zurueckkommt (68k_tech.pdf
+* S.468): "F$NProc takes the next process out of the active process
+* queue and initiates its execution." Und weiter: "The process calling
+* NProc should already be in one of the system's process queues. If it
+* is not, the calling process becomes unknown to the system even though
+* the process descriptor still exists."
+*
+* Dieses Modul steht auf keiner Warteschlange -- es laeuft ja gerade.
+* Es muss also nach dem Aufruf verschwinden.  Der Beweis besteht
+* deshalb aus zwei Teilen, und BEIDE werden gebraucht:
+*
+*   'n' erscheint  -> das Modul lief wirklich an
+*   'N' erscheint NICHT -> F$NProc ist nicht zurueckgekehrt
+*   und der Elternprozess laeuft weiter -> es wurde wirklich
+*       umgeschaltet, statt einfach stehenzubleiben
+*
+* Waere F$NProc ein wirkungsloser Rumpf, kaeme 'N'.  Wuerde es haengen,
+* bliebe der Elternprozess ebenfalls stehen und der Lauf liefe in den
+* Timeout.  Nur die Kombination beweist den Wechsel.
+*
+* Aufbau wie forkchild.a/evsigtgt.a -- eigenstaendig assembliert, eigene
+* DUART-Ausgabe, kein Link gegen den Kernel.  Zu psect und vsect s. den
+* ausfuehrlichen Kopfkommentar in forkchild.a.
+*******************************************************************************
+
+Q9Prgrm                 equ     1
+Q9Objct                 equ     1
+Q9K_NProcTgtEdition     equ     1
+Q9K_NProcTgtStackSize   equ     $800
+
+Q9_IO_DUART_SRA  equ    $FFFFF002
+Q9_IO_DUART_THRA equ    $FFFFF006
+
+        psect   nproctgt,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_NProcTgtEdition,Q9K_NProcTgtStackSize,Q9K_NProcTgtStart
+
+        vsect
+Q9K_NProcTgtData:
+        ds.l    1
+        ends
+
+Q9K_NProcTgtStart:
+        moveq   #'n',d7
+        bsr     Q9K_NProcTgtWriteD7
+
+        trap    #0
+        dc.w    $002d                           * F$NProc -- kein Rueckweg
+
+* Ab hier darf nichts mehr laufen.  Tut es doch, ist das der Befund.
+        moveq   #'N',d7
+        bsr     Q9K_NProcTgtWriteD7
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                               * F$Exit
+
+Q9K_NProcTgtWriteD7:
+        movem.l a0/d6,-(sp)
+        movea.l #Q9_IO_DUART_SRA,a0
+Q9K_NProcTgtDiagWait:
+        move.b  (a0),d6
+        btst    #2,d6
+        beq     Q9K_NProcTgtDiagWait
+        move.b  d7,Q9_IO_DUART_THRA
+        movem.l (sp)+,a0/d6
+        rts
+
+        endsect

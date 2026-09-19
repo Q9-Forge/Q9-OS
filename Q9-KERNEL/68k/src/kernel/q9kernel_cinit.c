@@ -152,6 +152,18 @@ extern void   Q9K_SysFSTrap(void);        /* q9kernel_entry.a, F$STrap (Callcode
 extern void   Q9K_SysFEvent(void);        /* q9kernel_entry.a, F$Event (Callcode 0x53) */
 extern void   Q9K_SysEventImpl(void);     /* q9kernel_event.c -- Adresse s. unten */
 extern void   Q9K_SysEventWaitImpl(void); /* q9kernel_event.c, zweiter Teil von Ev$Wait */
+extern void   Q9K_SysNProcImpl(void);     /* q9kernel_nproc.c, C-Teil von F$NProc */
+/* C-Teile der zuletzt gelinkten Module, ueber Zellen erreicht -- s. den
+ * ausfuehrlichen Grund bei Q9K_StrapImplPtr in q9kernel_entry.a: ein
+ * "bsr" bis dorthin sprengt die 16-Bit-Reichweite. */
+extern void   Q9K_SysSTrapImpl(void);
+extern void   Q9K_SysRTEImpl(void);
+extern void   Q9K_SysSigResetImpl(void);
+extern void   Q9K_SysChainImpl(void);
+extern void   Q9K_SysChainReleaseImpl(void);
+extern void   Q9K_SysSemaImpl(void);
+extern void   Q9K_SysSemaWaitImpl(void);
+extern void   Q9K_SysFNProc(void);        /* q9kernel_entry.a, Handler fuer F$NProc (0x2d) */
 extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
 extern void   Q9K_MemTraceInit(void);     /* q9kernel_debug.c */
 extern void   Q9K_ProcMemTrackInit(void); /* q9kernel_sysmem.c */
@@ -533,7 +545,16 @@ void Q9K_CInit(void)
                      * Q9K_EventImplPtr in q9kernel_entry.a. */
                     Q9K_PutU32(0x1E40UL, (Q9_u32)(unsigned long)Q9K_SysEventImpl);
                     Q9K_PutU32(0x1E4CUL, (Q9_u32)(unsigned long)Q9K_SysEventWaitImpl);
+                    Q9K_PutU32(0x1E54UL, (Q9_u32)(unsigned long)Q9K_SysNProcImpl);
+                    Q9K_PutU32(0x1E58UL, (Q9_u32)(unsigned long)Q9K_SysSTrapImpl);
+                    Q9K_PutU32(0x1E5CUL, (Q9_u32)(unsigned long)Q9K_SysRTEImpl);
+                    Q9K_PutU32(0x1E60UL, (Q9_u32)(unsigned long)Q9K_SysSigResetImpl);
+                    Q9K_PutU32(0x1E64UL, (Q9_u32)(unsigned long)Q9K_SysChainImpl);
+                    Q9K_PutU32(0x1E68UL, (Q9_u32)(unsigned long)Q9K_SysChainReleaseImpl);
+                    Q9K_PutU32(0x1E6CUL, (Q9_u32)(unsigned long)Q9K_SysSemaImpl);
+                    Q9K_PutU32(0x1E70UL, (Q9_u32)(unsigned long)Q9K_SysSemaWaitImpl);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
+                    Q9K_PutU32(usrdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
                     Q9K_PutU32(usrdisBase + 0x08UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSend);
 
@@ -605,6 +626,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x0eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSTrap);
                     Q9K_PutU32(sysdisBase + 0x53UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFEvent);
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
+                    Q9K_PutU32(sysdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(sysdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
                     Q9K_PutU32(sysdisBase + 0x08UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSend);
 
