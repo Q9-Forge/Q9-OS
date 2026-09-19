@@ -1129,7 +1129,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Flat-address-space handler rejects 32-bit range wraparound; MMU/permission validation remains open |
 | ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |
-| 🟡 | `0x5A` | F$CCtl | Handler/dispatch path exists; cache-control implementation remains open |
+| 🟡 | `0x5A` | F$CCtl | Handler is wired and live dispatch-verified; on the cacheless Q9 target every control request is a successful no-op, while real CACR/cache maintenance remains hardware-specific |
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired; processor/task-map reporting remains hardware-specific and open |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
 | ❌ | `0x5D` | F$POSK | Not implemented |
