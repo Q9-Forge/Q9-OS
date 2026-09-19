@@ -18,7 +18,7 @@
  *   IN:  d0.w = User-Trap-Nummer (1-15)
  *        d1.l = optionale Speichergroesse (0 = Vorgabe aus M$Mem nehmen)
  *        (a0) = Modulnamenzeiger (0 oder leerer String = Trap entfernen
- *               -- HIER NOCH NICHT IMPLEMENTIERT, s. u.)
+ *               -- entfernt den Handler und gibt seinen Speicher frei)
  *   OUT (Erfolg): (a0) = hinter den Namen aktualisiert,
  *        (a1) = Trap-Ausfuehrungs-Einsprung (M$Exec des Trap-Moduls),
  *        (a2) = Trap-Modulzeiger, Carry geloescht.
@@ -53,8 +53,7 @@
  * ein Trap-Modul je NUR ueber F$TLink (ohne vorheriges F$Load) verfuegbar
  * sein soll.
  *
- * Ebenfalls NICHT implementiert: Entfernen eines Traps (namePtr=0),
- * die "bereits installiert"-Kollisionspruefung nutzt einen plausiblen,
+ * Die "bereits installiert"-Kollisionspruefung nutzt einen plausiblen,
  * aber nicht im Handbuch konkret benannten Fehlercode (E$ModBsy, wie
  * bei anderen "schon belegt"-Faellen in diesem Kernel).
  */
@@ -69,7 +68,9 @@ typedef unsigned char  Q9_u8;
  * gemeinsamer Header, gleiche schlanke Konvention wie ueberall in diesem
  * Kernel. */
 extern Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name);
+extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);
 extern int    Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outSize, Q9_u16 *outError);
+extern void   Q9K_ProcSRtMem(Q9_u32 addr, Q9_u32 size);
 extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
 #if defined(Q9K_MEMTRACE_ARENA)
 extern void   Q9K_MemTraceSetModule(Q9_u32 header);
@@ -107,6 +108,7 @@ extern void   Q9K_MemTraceClearModule(void);
 #define Q9K_TRAPTBL_OFF_MODPTR    0UL
 #define Q9K_TRAPTBL_OFF_EXECENTRY 4UL
 #define Q9K_TRAPTBL_OFF_STATICPTR 8UL
+#define Q9K_TRAPTBL_SIZE_BASE      0x280UL
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
@@ -321,6 +323,7 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
     Q9_u32 hdr;
     Q9_u32 size;
     Q9_u32 staticPtr = 0;
+    Q9_u32 grantedSize = 0;
 
     *outPastName  = 0;
     *outModPtr    = 0;
@@ -328,6 +331,30 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
     *outInitEntry = 0;
     *outStaticPtr = 0;
     *outError     = 0;
+
+    if (trapNum < 1UL || trapNum > 15UL) {
+        *outError = Q9K_ERR_PARAM;
+        return 0;
+    }
+
+    curProc = Q9K_GetU32(Q9_D_PROC);
+    slotAddr = curProc + Q9K_PROCDESC_TRAPTBL_OFF + (trapNum - 1UL) * Q9K_TRAPTBL_ENTRY_SIZE;
+
+    /* NULL removes the handler and returns its process-owned static block. */
+    if (namePtr == 0) {
+        Q9_u32 oldMod = Q9K_GetU32(slotAddr + Q9K_TRAPTBL_OFF_MODPTR);
+        Q9_u32 oldStatic = Q9K_GetU32(slotAddr + Q9K_TRAPTBL_OFF_STATICPTR);
+        Q9_u32 oldSize = Q9K_GetU32(curProc + Q9K_TRAPTBL_SIZE_BASE + (trapNum - 1UL) * 4UL);
+        if (oldMod != 0)
+            Q9K_ModDirUnlinkByHeader(oldMod);
+        if (oldStatic != 0 && oldSize != 0)
+            Q9K_ProcSRtMem(oldStatic, oldSize);
+        Q9K_SetU32(slotAddr + Q9K_TRAPTBL_OFF_MODPTR, 0);
+        Q9K_SetU32(slotAddr + Q9K_TRAPTBL_OFF_EXECENTRY, 0);
+        Q9K_SetU32(slotAddr + Q9K_TRAPTBL_OFF_STATICPTR, 0);
+        Q9K_SetU32(curProc + Q9K_TRAPTBL_SIZE_BASE + (trapNum - 1UL) * 4UL, 0);
+        return 1;
+    }
 
     /* Namensende bestimmen -- NUL-terminiert, wie bei jedem eigenen
      * Testaufruf dieses Kernels (echte Pfadname-Trennzeichen-Erkennung
@@ -338,14 +365,6 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
         p++;
     p++;
     *outPastName = p;
-
-    if (trapNum < 1UL || trapNum > 15UL) {
-        *outError = Q9K_ERR_PARAM;
-        return 0;
-    }
-
-    curProc = Q9K_GetU32(Q9_D_PROC);
-    slotAddr = curProc + Q9K_PROCDESC_TRAPTBL_OFF + (trapNum - 1UL) * Q9K_TRAPTBL_ENTRY_SIZE;
 
     if (Q9K_GetU32(slotAddr + Q9K_TRAPTBL_OFF_MODPTR) != 0) {
         *outError = Q9K_ERR_MODBSY;   /* fuer diesen Trap ist schon etwas installiert */
@@ -372,7 +391,6 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
         size = Q9K_TLinkReadU32BE(hdr + Q9K_MH_MEM);
 
     if (size != 0) {
-        Q9_u32 grantedSize = 0;
         Q9_u16 memErr = 0;
 
         /* F$TLink performs this allocation on behalf of the linked module,
@@ -407,6 +425,8 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
     Q9K_SetU32(slotAddr + Q9K_TRAPTBL_OFF_MODPTR, hdr);
     Q9K_SetU32(slotAddr + Q9K_TRAPTBL_OFF_EXECENTRY, *outExecEntry);
     Q9K_SetU32(slotAddr + Q9K_TRAPTBL_OFF_STATICPTR, staticPtr);
+    Q9K_SetU32(curProc + Q9K_TRAPTBL_SIZE_BASE + (trapNum - 1UL) * 4UL,
+               staticPtr != 0 ? grantedSize : 0);
 
     return 1;
 }
