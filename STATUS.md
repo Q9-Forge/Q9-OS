@@ -1043,7 +1043,7 @@ above. This was a genuine defect, not a cosmetic one: any program feeding
 `F$Time`'s output into `F$Julian` — the ordinary way to compute a date
 difference — would have got nonsense back.
 
-The host regression suite was repaired in the same pass. Four of the sixteen
+The host regression suite was repaired in the same pass. Four of the original sixteen
 suites had silently stopped building or running: `q9kernel_sysmem.c` and
 `q9kernel_moddir.c` gained memory-trace calls whose stubs were missing from
 their tests, `q9kernel_procend.c` gained a `Q9K_ProcMemReleaseAll` dependency,
@@ -1051,7 +1051,7 @@ and `test_q9kernel_sysmem.c` plus `test_q9kernel_firstproc.c` reached real
 kernel addresses (`$1710`, `$004C`, `$0404`, `$1284`) because those constants
 were not redirectable. The constants now follow the `#ifndef` convention used
 elsewhere in the kernel, and the tests redirect them into their own fake
-globals. All sixteen suites build and pass again.
+globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 
 ## F$ system calls
 
