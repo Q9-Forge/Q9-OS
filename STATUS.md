@@ -22,15 +22,13 @@ supported.
 Of the calls still open, the ones that are single, well-specified functions have
 now been done. What remains falls into three groups, and the table marks which:
 
-* **Whole subsystems**, not single calls: `F$Event` (event records with wait
-  queues and signalling), `F$Alarm` (timed alarm queues on the tick handler),
-  `F$Chain` (replacing the running program in place). Each needs its own design
-  pass rather than an afternoon.
-* **Blocked on one missing mechanism** — entering user code from the kernel:
-  `F$Icpt` registers an intercept routine but nothing runs it, and `F$RTE`,
-  `F$SigReset` and `F$STrap` all wait on that same piece. Building this one
-  mechanism would unblock four calls at once, which makes it the highest-value
-  next step in this area.
+* **Whole subsystems**, not single calls: the event records, timed alarm queue,
+  and in-place chain paths are implemented and tested; remaining work is
+  corner-case coverage and integration with additional device modules.
+* **User-code entry from the kernel is implemented:** `F$Icpt` now dispatches
+  registered handlers, and `F$RTE`, `F$SigReset`, and `F$STrap` use that path.
+  The remaining open calls are therefore hardware-specific, extension-owned,
+  or lack a recoverable ABI rather than being blocked by this mechanism.
 * **Not the kernel's to implement**: `F$SysDbg` calls a debugger that Q9-OS does
   not ship, `F$UAcct` is an extension point an OS9P2 module provides, and the
   SSM-owned calls need a memory management module. `F$Mem` and `F$SSpd` were
