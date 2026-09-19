@@ -85,6 +85,9 @@
 *   = = F$Event Ev$Wait/Ev$WaitR returned without blocking
 *   z = signalling and reading it gave the expected value
 *   Y = after unlink and delete the event is gone
+*   p, S = the forked evsigtgt is alive, and has signalled (it writes these)
+*   ~ = Ev$Wait really blocked and was woken by that signal -- the proof is
+*       the order: '~' appears after 'S', so this process stood still
 *   e = F$Chain refused an unknown module and left the caller intact
 *   C = F$Chain reached chaintgt -- the process now runs another program
 *       (written by chaintgt.a, not by this module; X there means the
@@ -1021,6 +1024,61 @@ Q9K_IllHandlerDone:
         moveq   #'Y',d7
         move.b  d7,$FFFFF006
 
+* Der blockierende Zweig von Ev$Wait -- mit zwei Prozessen, weil er sich
+* mit einem grundsaetzlich nicht zeigen laesst: wer wartet, kann sich
+* nicht selbst wecken.  Ablauf: zweites Ereignis "q9wait" mit Wert 0
+* anlegen, evsigtgt forken, dann auf den Bereich [5,10] warten.  Der Wert
+* liegt ausserhalb, dieser Prozess wird also eingereiht; das Kind setzt
+* ihn nach kurzem Troedeln auf 7 und weckt ihn damit.
+*
+* Der Beweis steckt in der REIHENFOLGE auf der Konsole: 'p' und 'S'
+* stammen vom Kind, '~' von hier.  Erscheint '~' nach 'S', dann stand
+* dieser Prozess wirklich still und ist ueber den gesicherten
+* Registersatz zurueckgekommen.
+        moveq   #2,d1                          * Ev$Creat
+        moveq   #0,d0                          * Startwert 0 -- ausserhalb [5,10]
+        moveq   #0,d2                          * Wait-Inkrement 0: der Wert
+        moveq   #1,d3                          * bleibt nach dem Wecken pruefbar
+        lea     Q9K_EvWaitName(pc),a0
+        trap    #0
+        dc.w    $0053                          * F$Event
+        bcs     Q9K_NativeFailed
+        move.l  d0,d5                          * ID merken (d4 gleich fuer F$Fork)
+
+        moveq   #1,d0                          * Typ/Sprache: Programm/Objekt
+        moveq   #0,d1                          * kein Zusatzspeicher
+        moveq   #0,d2                          * keine Parameter
+        moveq   #0,d3                          * keine Pfade
+        moveq   #0,d4                          * Prioritaet beibehalten
+        lea     Q9K_EvSigTgtName(pc),a0
+        suba.l  a1,a1
+        trap    #0
+        dc.w    $0003                          * F$Fork
+        bcs     Q9K_NativeFailed
+
+        moveq   #4,d1                          * Ev$Wait -- hier bleibt er stehen
+        move.l  d5,d0
+        moveq   #5,d2                          * min 5
+        moveq   #10,d3                         * max 10
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+        cmpi.l  #7,d1                          * genau der Wert, den das Kind setzte
+        bne     Q9K_NativeFailed
+        moveq   #'~',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #1,d1                          * Ev$UnLnk
+        move.l  d5,d0
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+        moveq   #3,d1                          * Ev$Delet
+        lea     Q9K_EvWaitName(pc),a0
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+
 * F$Chain ($05) -- ZULETZT, weil es nicht zurueckkehrt: es ersetzt das
 * Programm dieses Prozesses durch chaintgt, das daraufhin 'C' ausgibt und
 * sich beendet.  Dass ueberhaupt noch etwas nach dem '#' erscheint, ist
@@ -1143,6 +1201,12 @@ Q9K_ExcTable:
         dc.w    $0010,Q9K_IllHandler-Q9K_ExcTable-4
         dc.w    -1                             * Ende der Tabelle
 
+Q9K_EvWaitName:
+        dc.b    "q9wait",0
+        dc.b    0
+Q9K_EvSigTgtName:
+        dc.b    "evsigtgt",0
+        dc.b    0
 Q9K_EventName:
         dc.b    "q9test",0
 

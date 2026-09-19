@@ -33,6 +33,7 @@ static unsigned char g_cells[0x400];
 #define Q9K_PROCDESC_EVMIN_OFF 0x40UL
 #define Q9K_PROCDESC_EVMAX_OFF 0x48UL
 #define Q9K_READYQ_NEXT_OFF    0x50UL
+#define Q9K_PROCDESC_SAVEDSP_OFF 0x58UL
 
 /* Prozesswechsel gibt es auf dem Host nicht. */
 static int g_aprocCalls;
@@ -43,6 +44,19 @@ int Q9K_ProcAProc(unsigned long desc, unsigned short *outError)
 }
 static unsigned long g_nextPick;
 unsigned long Q9K_SchedFirstPick(void) { return g_nextPick; }
+
+/* Der Rueckgabewert landet im gesicherten Registersatz des Wartenden.
+ * Hier wird nur mitgeschrieben, WAS wohin geschrieben wurde -- den
+ * echten 68k-Rahmen gibt es auf dem Host nicht. */
+static unsigned long g_frameBase, g_frameValue;
+static unsigned long g_frameIndex = 0xFFFFFFFFUL;
+static int g_frameWrites;
+void Q9K_SetFrameReg(unsigned long frameBase, unsigned long regIndex,
+                     unsigned long value)
+{
+    g_frameBase = frameBase; g_frameIndex = regIndex; g_frameValue = value;
+    g_frameWrites++;
+}
 
 /* Die Ereignistabelle behaelt ihre ECHTEN Feldabstaende: alle Zugriffe
  * darauf laufen ueber Q9K_GetU16/GetU8 oder gezielte 4-Byte-Felder, und
@@ -87,6 +101,8 @@ static void reset(void)
 {
     memset(g_cells, 0, sizeof g_cells);
     g_aprocCalls = 0; g_aprocLast = 0; g_nextPick = 0;
+    g_frameWrites = 0; g_frameBase = 0; g_frameValue = 0;
+    g_frameIndex = 0xFFFFFFFFUL;
     memset(g_table, 0, sizeof g_table);
     memset(g_name, 0, sizeof g_name);
     memset(g_buf, 0, sizeof g_buf);
@@ -295,6 +311,7 @@ int main(void)
 
         memset(proc, 0, sizeof proc);
         Q9K_SetU32(Q9_D_PROC, desc);
+        Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, 0xC0DE00UL);
         g_nextPick = 0x4242;
         Q9K_EventWaitEnqueue(id, 1, 9, &next);
         check("der Wartende waehlt einen naechsten Prozess", next, 0x4242);
@@ -313,6 +330,18 @@ int main(void)
               Q9K_GetU32(entry + Q9K_EVENT_OFF_QNEXT), 0);
         Q9K_EventRead(id, &value, &err);
         check("der Wert steht nach Signal +1 und Wait -1 wieder bei 0", value, 0);
+
+        /* Der Geweckte kehrt ueber movem/rte zurueck und holt d1 aus
+         * seinem gesicherten Registersatz -- dort muss der Wert also
+         * stehen, und zwar derselbe wie auf dem nicht blockierenden Weg:
+         * der VOR dem Wait-Inkrement. Fehlte das, kaeme der Aufrufer mit
+         * dem d1 zurueck, das er beim Einschlafen zufaellig hatte. */
+        check("der Rueckgabewert wurde in den Registersatz gelegt",
+              (Q9_u32)g_frameWrites, 1);
+        check("und zwar an den Platz von d1", g_frameIndex, 1);
+        check("in den Rahmen, auf den SavedSP zeigt", g_frameBase,
+              Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF));
+        check("mit dem Wert vor dem Wait-Inkrement", g_frameValue, 1);
     }
 
     /* Ein Wartender ausserhalb des Bereichs bleibt liegen -- und blockiert
