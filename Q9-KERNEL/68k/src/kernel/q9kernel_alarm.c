@@ -12,11 +12,12 @@
  *   A$Cycle  = 2  wie A$Set, aber der Alarm wiederholt sich
  *   A$AtDate = 3  absolute Zeit (gregorianisch)   -- s. u.
  *   A$AtJul  = 4  absolute Zeit (julianisch)      -- s. u.
- *   A$Reset  = 5  -- s. u.
+ *   A$Reset  = 5  d0.l = Alarm-ID, d2.w = neues Signal, d3.l = Intervall
  *
  * UMGESETZT SIND A$Delete, A$Set, A$Cycle, A$AtDate UND A$AtJul. Nur
- * A$Reset meldet E$UnkSvc -- das Handbuch beschreibt nicht, was es
- * zuruecksetzen soll.
+ * A$Reset setzt einen bestehenden eigenen Alarm auf ein neues relatives
+ * Intervall zurueck. Diese Semantik ist durch die Microware-DPIO-API
+ * (_os_alarm_reset(alarm_id, signal, interval)) belegt.
  *
  * VORGESCHICHTE (2026-09-18, am selben Tag): die absoluten Varianten
  * fehlten zunaechst, erst mit der Begruendung "keine Systemuhr" (falsch --
@@ -107,6 +108,7 @@ extern void   Q9K_ClockRead(Q9_u32 *outDay, Q9_u32 *outSeconds);      /* q9kerne
 #define Q9K_A_CYCLE  2U
 #define Q9K_A_ATDATE 3U
 #define Q9K_A_ATJUL  4U
+#define Q9K_A_RESET  5U
 
 #define Q9K_E_UNKSVC 0x00D0U /* errno.h: Unknown Service Request */
 #define Q9K_E_BPADDR 0x00D2U /* errno.h: Bad Parameter/Address    */
@@ -168,6 +170,48 @@ int Q9K_AlarmSet(Q9_u16 signal, Q9_u32 ticks, Q9_u32 cycleTicks,
 
     *outId = id;
     return 1;
+}
+
+/* Q9K_AlarmReset -- A$Reset. Der Alarm bleibt derselbe (und damit bleibt
+ * seine ID stabil), aber Signal und relative Restzeit werden ersetzt. Ein
+ * zuvor absoluter Alarm wird dadurch bewusst relativ; ein vorhandenes
+ * Zyklusintervall bleibt erhalten, damit Reset auch fuer _os_alarm_cycle()
+ * den naheliegenden "neu starten"-Effekt hat. */
+int Q9K_AlarmReset(Q9_u32 id, Q9_u16 signal, Q9_u32 ticks,
+                   Q9_u16 *outError)
+{
+    Q9_u32 desc = Q9K_GetU32(Q9_D_PROC);
+    Q9_u16 pid;
+    Q9_u32 i;
+
+    *outError = 0;
+    if (ticks == 0UL) {
+        *outError = Q9K_E_BPADDR;
+        return 0;
+    }
+    if (desc == 0UL) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+    pid = Q9K_ProcIdForDesc(desc);
+    if (pid == 0) {
+        *outError = Q9K_E_PRCID;
+        return 0;
+    }
+    for (i = 0; i < Q9K_ALARM_SLOTS; ++i) {
+        Q9_u32 slotId = Q9K_GetU32(Q9K_ALARM_ID(i));
+        if (slotId != id || Q9K_GetU32(Q9K_ALARM_PID(i)) != (Q9_u32)pid)
+            continue;
+        Q9K_SetU32(Q9K_ALARM_SIGNAL(i),
+                   (Q9K_GetU32(Q9K_ALARM_SIGNAL(i)) & 0xFFFF0000UL) |
+                   (Q9_u32)signal);
+        Q9K_SetU32(Q9K_ALARM_TICKS(i), ticks);
+        Q9K_SetU32(Q9K_ALARM_DAY(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_SEC(i), 0UL);
+        return 1;
+    }
+    *outError = Q9K_E_BPADDR;
+    return 0;
 }
 
 
@@ -501,9 +545,13 @@ void Q9K_SysAlarmImpl(void)
             }
         }
         break;
+    case Q9K_A_RESET:
+        id = Q9K_GetU32(Q9K_ALARM_SCRATCH_IDIN);
+        ok = Q9K_AlarmReset(id,
+                            (Q9_u16)Q9K_GetU32(Q9K_ALARM_SCRATCH_SIGNAL),
+                            Q9K_GetU32(Q9K_ALARM_SCRATCH_TICKS), &err);
+        break;
     default:
-        /* A$Reset und alles Unbekannte: die Beschreibung sagt nicht,
-         * was A$Reset zuruecksetzen soll. */
         ok = 0;
         err = Q9K_E_UNKSVC;
         break;
