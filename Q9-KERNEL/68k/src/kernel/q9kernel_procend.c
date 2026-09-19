@@ -128,6 +128,15 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #ifndef Q9K_PROCDESC_ALLOCSIZE_OFF
 #define Q9K_PROCDESC_ALLOCSIZE_OFF  0x1B4UL
 #endif
+#ifndef Q9K_PROCDESC_TRAPTBL_OFF
+#define Q9K_PROCDESC_TRAPTBL_OFF    0x1CCUL
+#endif
+
+#define Q9K_TRAPTBL_ENTRY_SIZE      12UL
+#define Q9K_TRAPTBL_ENTRIES         15UL
+#define Q9K_TRAPTBL_OFF_MODPTR      0UL
+#define Q9K_TRAPTBL_OFF_EXECENTRY   4UL
+#define Q9K_TRAPTBL_OFF_STATICPTR   8UL
 
 #define Q9K_PROCDESC_STATE_ACTIVE  'a'
 #define Q9K_PROCDESC_STATE_ZOMBIE  'z'
@@ -166,6 +175,27 @@ static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
 static void   Q9K_SetU16(Q9_u32 addr, Q9_u16 value) { *(volatile Q9_u16 *)addr = value; }
 static Q9_u8  Q9K_GetU8(Q9_u32 addr) { return *(volatile Q9_u8 *)addr; }
 static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = value; }
+
+/* Drop the module references held by F$TLink.  Static blocks are owned by
+ * the process-memory tracker and are released by Q9K_ProcReleaseMemory;
+ * this routine only handles the directory references and clears the table
+ * so defensive repeated cleanup is harmless. */
+static void Q9K_ProcReleaseTrapLinks(Q9_u32 desc)
+{
+    Q9_u32 i;
+
+    for (i = 0; i < Q9K_TRAPTBL_ENTRIES; ++i) {
+        Q9_u32 slot = desc + Q9K_PROCDESC_TRAPTBL_OFF +
+                      i * Q9K_TRAPTBL_ENTRY_SIZE;
+        Q9_u32 mod = Q9K_GetU32(slot + Q9K_TRAPTBL_OFF_MODPTR);
+
+        if (mod != 0)
+            Q9K_ModDirUnlinkByHeader(mod);
+        Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_MODPTR, 0);
+        Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_EXECENTRY, 0);
+        Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_STATICPTR, 0);
+    }
+}
 
 /* Schreibt value in Register regIndex des 60-Byte-Registersatz-Bereichs
  * ab frameBase (0-7 = D0-D7, 8-14 = A0-A6) -- LOKALE Kopie von
@@ -231,6 +261,7 @@ static void Q9K_ProcReleaseMemory(Q9_u32 desc)
  * ParentDesc==0"), auf der der Pool-Scan unten beruht. */
 static void Q9K_ProcPoolFree(Q9_u32 desc)
 {
+    Q9K_ProcReleaseTrapLinks(desc);
     Q9K_ProcReleaseMemory(desc);
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
@@ -273,6 +304,10 @@ Q9_u32 Q9K_ProcExit(Q9_u32 callerDesc, Q9_u16 exitStatus)
         Q9K_ModDirUnlinkByHeader(modHdr);
         Q9K_SetU32(callerDesc + Q9K_PROCDESC_MODHDR_OFF, 0);
     }
+
+    /* Trap modules remain referenced independently of the primary module;
+     * release them before this process turns into a zombie. */
+    Q9K_ProcReleaseTrapLinks(callerDesc);
 
     /* Der aufrufende Prozess wird nach diesem Punkt nie mehr ueber seinen
      * bisherigen Kontext fortgesetzt. Q9K_FreeMem beschreibt nur den
