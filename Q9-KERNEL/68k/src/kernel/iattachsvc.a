@@ -989,6 +989,27 @@ Q9K_AttachExit:
 * Die Intercept-Routine.  Das Handbuch verlangt sie "short and fast" --
 * hier: einen Marker ausgeben und per F$RTE zurueck.  d1.w traegt beim
 * Eintritt den Signalcode.
+* Gibt d0.l als acht Hexziffern aus. Zerstoert d0/d2/d3.
+Q9K_EmitHex32:
+        move.l  d0,d3
+        moveq   #7,d2
+Q9K_EmitHex32Loop:
+        rol.l   #4,d3
+        move.l  d3,d0
+        andi.l  #$0f,d0
+        cmpi.b  #10,d0
+        blt     Q9K_EmitHex32Digit
+        addi.b  #'a'-10,d0
+        bra     Q9K_EmitHex32Out
+Q9K_EmitHex32Digit:
+        addi.b  #'0',d0
+Q9K_EmitHex32Out:
+        move.b  d0,$FFFFF006
+        dbra    d2,Q9K_EmitHex32Loop
+        moveq   #' ',d0
+        move.b  d0,$FFFFF006
+        rts
+
 * Gibt d0.b als zwei Hexziffern auf der DUART aus. Zerstoert d0/d2.
 Q9K_EmitHexByte:
         move.b  d0,d2
