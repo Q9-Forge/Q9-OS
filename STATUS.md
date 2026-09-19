@@ -1105,7 +1105,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x2F` | F$FindPD | Path/process number to descriptor address, same DBT structure as F$AllPD/F$RetPD |
 | 🟡 | `0x30` | F$AllPD | DBT allocation, descriptor clearing, host tests, and the real IOMan lifecycle probe are implemented; emulator confirmation remains open |
 | 🟡 | `0x31` | F$RetPD | DBT return with descriptor-number validation, host tests, and the real IOMan lifecycle probe are implemented; emulator confirmation remains open |
-| 🟡 | `0x32` | F$SSvc | Service registration path exists; broader service semantics remain open |
+| 🟡 | `0x32` | F$SSvc | Service-table registration, SysTrap routing, data pointers, kernel-slot protection, and empty-table handling are host-tested; live external-service dispatch remains open |
 | 🟡 | `0x33` | F$IODel | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x37` | F$GProcP | PID-to-process-descriptor lookup implemented and host-tested; broader process-property APIs are tracked separately |
 | ✅ | `0x38` | F$Move | Memory move path implemented |
