@@ -727,14 +727,39 @@ replaces the PC in that frame with the handler address, and the `rte` that
 follows jumps there with the register set untouched — the handler sees exactly
 the state in which the fault occurred.
 
-**What works and what does not.** Registration is proven on the machine (marker
-`T`, no carry). The *triggering* is not: a deliberate illegal instruction does
-not reach `Q9K_ExcTrap` at all — neither the handler lookup nor the kernel's own
-`E` diagnostic appears, so the vector does not arrive where the table says it
-should. That is a separate question about how the exception vectors are
-installed, not about this call, and it is unresolved. The live test therefore
-registers a handler and stops there: an exception that currently halts the
-kernel has no place in a regression run.
+**What works and what does not, after a second round of measurement that
+overturned the first explanation.**
+
+Registration is proven on the machine (marker `T`, no carry). The triggering is
+not — but *not* for the reason first recorded here. That entry claimed the
+exception "does not reach `Q9K_ExcTrap` at all" and blamed the vector
+installation. Measured directly, the vectors are fine:
+
+```
+VBR = 00000400   slot 4 = 000075da   Q9K_ExcTrap = 000075da
+```
+
+The vector points exactly where it should. What actually happens is worse and
+more interesting: **`Q9K_ExcTrap` re-enters itself endlessly.** A marker at its
+first instruction prints an unbroken run of `X` on a deliberate illegal
+instruction.
+
+The cause is visible in its own source. To produce a backtrace, the diagnostic
+section deliberately reads *past* the exception frame — `8(sp)` through
+`16(sp)`, plus a 64-byte stack copy. When the faulting process's stack ends
+there, that read faults in turn, and the new exception enters `Q9K_ExcTrap`
+again, forever. This is a pre-existing kernel fault, independent of `F$STrap`,
+and it explains why exception handling never worked here.
+
+The handler lookup has therefore been moved to the **very first instructions**
+of `Q9K_ExcTrap`, ahead of any diagnostic — a handler asked for afterwards
+would never be reached. With that in place the endless re-entry is gone, but
+the jump into the handler still does not arrive: after the illegal instruction
+the machine falls silent, with no handler marker, no `E` diagnostic and no
+re-entry. Where it goes instead is the open question.
+
+The live test registers a handler and stops there. An exception that currently
+halts the kernel has no place in a regression run.
 
 Two further limits, both stated rather than hidden: the separate exception
 stack from `(a0)` is recorded in `P$ExStk` but not switched to — `(a0) = 0`,

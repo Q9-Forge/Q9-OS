@@ -1542,6 +1542,37 @@ Q9K_TCallNotInstalled:
 * 68030-Exception-Frame: 0(sp)=SR, 2(sp)=PC, 6(sp)=Format/Vektor-Wort
 * (Vektornummer = (Wort & $0FFF) / 4).
 Q9K_ExcTrap:
+* NACHTRAG 2026-09-19 (F$STrap): die Frage "hat der Prozess einen eigenen
+* Behandler?" steht GANZ VORNE, noch vor jeder Diagnose. Der Grund ist
+* gemessen, nicht vermutet: die Diagnosesicherung weiter unten liest
+* absichtlich ueber den Ausnahmerahmen hinaus (8(sp) bis 16(sp) und 64
+* Byte Stackkopie, um einen Backtrace zu bekommen). Endet der Prozessstack
+* dort, loest genau dieses Lesen die naechste Ausnahme aus -- beobachtet
+* als endlose Kette von Wiedereintritten in Q9K_ExcTrap. Ein Behandler,
+* der erst dahinter gefragt wuerde, kaeme nie zum Zug.
+*
+* Der Ausnahmerahmen liegt nach dem movem 16 Byte tiefer: SR bei 16(sp),
+* PC bei 18(sp), Format-/Vektorwort bei 22(sp).
+        movem.l d0-d1/a0-a1,-(sp)
+        moveq   #0,d0
+        move.w  22(sp),d0
+        andi.l  #$0fff,d0
+        lsr.l   #2,d0                      * Vektornummer
+        move.l  d0,Q9K_StrapScratch_Vec
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+* jsr statt bsr: der Abstand zur C-Funktion sprengt den 16-Bit-PC-Bezug.
+        jsr     Q9K_SysExcDispatchImpl
+        movea.l (sp)+,a6
+        tst.l   Q9K_StrapScratch_Jump
+        beq     Q9K_ExcTrapNoUserHandler
+        move.l  Q9K_StrapScratch_Jump,d0
+        movem.l (sp)+,d0-d1/a0-a1          * Register des Verursachers zurueck
+        move.l  Q9K_StrapScratch_Jump,2(sp) * PC im Rahmen auf den Behandler
+        rte
+Q9K_ExcTrapNoUserHandler:
+        movem.l (sp)+,d0-d1/a0-a1
+
         move.w  (sp),Q9K_ExcInfo_SR
         move.l  2(sp),Q9K_ExcInfo_PC
         move.w  6(sp),Q9K_ExcInfo_Fmt
@@ -1572,35 +1603,6 @@ Q9K_ExcTrapStackCopy:
         move.l  (a0)+,(a1)+
         dbra    d0,Q9K_ExcTrapStackCopy
         addq.l  #4,sp
-* NACHTRAG 2026-09-19 (F$STrap): bevor der Kernel anhaelt, bekommt der
-* laufende Prozess die Gelegenheit, die Ausnahme selbst zu behandeln.
-* Hat er per F$STrap einen Behandler fuer genau diese Ausnahme
-* eingetragen, wird der PC IM AUSNAHMERAHMEN durch dessen Adresse
-* ersetzt -- das "rte" unten springt dann dorthin, mit unveraendertem
-* Registersatz. Hat er keinen, bleibt es beim bisherigen Verhalten.
-*
-* Die Vektornummer steht im Format-/Vektorwort des Rahmens:
-* (Wort & $0FFF) / 4.
-        movem.l d0-d1/a0-a1,-(sp)
-        moveq   #0,d0
-        move.w  Q9K_ExcInfo_Fmt,d0
-        andi.l  #$0fff,d0
-        lsr.l   #2,d0
-        move.l  d0,Q9K_StrapScratch_Vec
-        move.l  a6,-(sp)
-        lea     Q9K_CRuntimeData(pc),a6
-* jsr statt bsr: der Abstand von hier zur C-Funktion sprengt den
-* 16-Bit-PC-Bezug ("value ... too large for a pc relative (word) operand",
-* real am Linker aufgelaufen).
-        jsr     Q9K_SysExcDispatchImpl
-        movea.l (sp)+,a6
-        movem.l (sp)+,d0-d1/a0-a1          * Registersatz des Verursachers unangetastet
-        tst.l   Q9K_StrapScratch_Jump
-        beq     Q9K_ExcTrapNoHandler
-        move.l  Q9K_StrapScratch_Jump,2(sp)  * PC im Rahmen umbiegen
-        rte                                  * -> in den Behandler des Prozesses
-
-Q9K_ExcTrapNoHandler:
         moveq   #'E',d7
         bsr     Q9K_DiagWriteD7
 Q9K_ExcTrapSpin:
