@@ -151,6 +151,7 @@ extern void   Q9K_SysFSigReset(void);     /* q9kernel_entry.a, F$SigReset (Callc
 extern void   Q9K_SysFSTrap(void);        /* q9kernel_entry.a, F$STrap (Callcode 0x0E) */
 extern void   Q9K_SysFEvent(void);        /* q9kernel_entry.a, F$Event (Callcode 0x53) */
 extern void   Q9K_SysEventImpl(void);     /* q9kernel_event.c -- Adresse s. unten */
+extern void   Q9K_SysEventWaitImpl(void); /* q9kernel_event.c, zweiter Teil von Ev$Wait */
 extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
 extern void   Q9K_MemTraceInit(void);     /* q9kernel_debug.c */
 extern void   Q9K_ProcMemTrackInit(void); /* q9kernel_sysmem.c */
@@ -531,6 +532,7 @@ void Q9K_CInit(void)
                      * absolutem jsr (kam nicht zurueck) erreichen -- s.
                      * Q9K_EventImplPtr in q9kernel_entry.a. */
                     Q9K_PutU32(0x1E40UL, (Q9_u32)(unsigned long)Q9K_SysEventImpl);
+                    Q9K_PutU32(0x1E4CUL, (Q9_u32)(unsigned long)Q9K_SysEventWaitImpl);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
                     Q9K_PutU32(usrdisBase + 0x08UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSend);
