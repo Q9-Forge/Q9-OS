@@ -73,6 +73,9 @@
 *       emulator's "Timer-Interrupts" figure counts via a stale hardcoded
 *       PC address and reads 0 regardless)
 *   ( = F$Icpt registered an intercept routine
+*   * = the intercept routine really ran, with the right signal code
+*   ) = F$RTE returned into the main program behind the F$Sleep
+*   > = the software clock advanced across the sleep (< = it stood still)
 *   + = F$SigReset accepted a call with no open intercept
 *       (the actual signal -> routine -> F$RTE round trip cannot be shown
 *        here while the timer does not tick -- see STATUS.md)
@@ -833,6 +836,48 @@ Q9K_SemaOk:
         bcs     Q9K_NativeFailed
         moveq   #'(',d7                        * Routine eingetragen
         move.b  d7,$FFFFF006
+
+* Jetzt der eigentliche Nachweis: ein Alarm weckt aus dem Timer-Interrupt
+* heraus, waehrend dieser Prozess schlaeft -- genau die Lage, fuer die die
+* Zustellung gebaut ist.  Die Routine gibt '*' aus und kehrt per F$RTE
+* zurueck; ')' dahinter belegt, dass der Rahmen des Hauptprogramms den
+* Intercept unbeschadet ueberstanden hat.
+        moveq   #1,d1                          * A$Set
+        moveq   #0,d0
+        move.w  #17,d2                         * Signalcode
+        moveq   #5,d3                          * in 5 Ticks
+        trap    #0
+        dc.w    $0056                          * F$Alarm
+        bcs     Q9K_NativeFailed
+
+        move.l  #150,d0                        * laenger als der Alarm braucht
+        trap    #0
+        dc.w    $000A                          * F$Sleep -- der Alarm weckt vorzeitig
+        moveq   #')',d7
+        move.b  d7,$FFFFF006
+
+* Die Uhr getrennt pruefen, mit EIGENEM Schlaf ohne Alarm: der Alarm oben
+* weckt schon nach 5 Ticks, der Schlaf dauert dann 50 ms und die Sekunde
+* wechselt meist gar nicht -- daraus laesst sich ueber die Uhr nichts
+* schliessen.  Hier dagegen sind es volle zwei Sekunden.
+        trap    #0
+        dc.w    $0015                          * F$Time
+        move.l  d0,d4                          * Uhrzeit merken
+
+        move.l  #200,d0                        * 2 Sekunden
+        trap    #0
+        dc.w    $000A                          * F$Sleep
+        trap    #0
+        dc.w    $0015                          * F$Time
+        cmp.l   d4,d0
+        beq     Q9K_ClockStood
+        moveq   #'>',d7                        * Uhr laeuft mit
+        move.b  d7,$FFFFF006
+        bra     Q9K_ClockChecked
+Q9K_ClockStood:
+        moveq   #'<',d7                        * Uhr steht
+        move.b  d7,$FFFFF006
+Q9K_ClockChecked:
 
 * HIER FEHLT DER EIGENTLICHE NACHWEIS, und zwar aus einem Grund, der
 * nichts mit F$Icpt zu tun hat: eine Zustellung braucht einen
