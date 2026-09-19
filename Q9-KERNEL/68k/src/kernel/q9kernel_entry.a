@@ -565,6 +565,13 @@ Q9K_UnloadScratch_TyLang   equ $18E8      * Q9_u32, d0.w EIN
 Q9K_UnloadScratch_Name     equ $18EC      * Q9_u32, (a0) EIN
 Q9K_UnloadScratch_Error    equ $18F0      * Q9_u32, d1.w AUS bei Fehler
 Q9K_UnloadScratch_Success  equ $18F4      * Q9_u32, 0/1
+Q9K_FModulScratch_TyLang   equ $1A00      * Q9_u32, d0.w EIN
+Q9K_FModulScratch_Name     equ $1A04      * Q9_u32, (a0) EIN
+Q9K_FModulScratch_OutTy    equ $1A08      * Q9_u32, d0.w AUS
+Q9K_FModulScratch_OutAR    equ $1A0C      * Q9_u32, d1.w AUS
+Q9K_FModulScratch_Entry    equ $1A10      * Q9_u32, a2 AUS
+Q9K_FModulScratch_Error    equ $1A14      * Q9_u32, d1.w AUS bei Fehler
+Q9K_FModulScratch_Ok       equ $1A18      * Q9_u32, 0/1
 Q9K_CrcScratch_Count       equ $18F8      * Q9_u32, d0.l EIN
 Q9K_CrcScratch_Accum       equ $18FC      * Q9_u32, d1.l EIN/AUS
 Q9K_CrcScratch_Addr        equ $1900      * Q9_u32, (a0) EIN
@@ -5928,6 +5935,42 @@ Q9K_SysFCpyMem:
         rts
 Q9K_SysFCpyMem_Fail:
         move.w  Q9K_CpyMemScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFFModul -- F$FModul (Callcode $4E, "Find Module").
+* Looks up a module without changing its link count.  d0.w supplies the
+* type/language filter and a0 names the module; success returns the actual
+* type/language in d0.w, attributes/revision in d1.w and the directory entry
+* in a2.  The C side performs the same highest-revision search as F$Link.
+Q9K_SysFFModul:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        clr.l   Q9K_FModulScratch_TyLang
+        move.w  d0,Q9K_FModulScratch_TyLang+2
+        move.l  a0,Q9K_FModulScratch_Name
+        bsr     Q9K_SysFModulImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_FModulScratch_Ok+2
+        beq     Q9K_SysFFModul_Fail
+        move.w  Q9K_FModulScratch_OutTy+2,d0
+        move.w  Q9K_FModulScratch_OutAR+2,d1
+        movea.l Q9K_FModulScratch_Entry,a2
+        moveq   #255,d7
+Q9K_SysFFModul_SkipName:
+        tst.b   (a0)+
+        beq     Q9K_SysFFModul_NameDone
+        bmi     Q9K_SysFFModul_NameDone
+        dbra    d7,Q9K_SysFFModul_SkipName
+        move.w  #$00dd,d1
+        ori     #1,ccr
+        rts
+Q9K_SysFFModul_NameDone:
+        andi    #$fe,ccr
+        rts
+Q9K_SysFFModul_Fail:
+        move.w  Q9K_FModulScratch_Error+2,d1
         ori     #1,ccr
         rts
 
