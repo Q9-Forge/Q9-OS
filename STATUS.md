@@ -510,7 +510,7 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+e` followed by
+The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+Te` followed by
 `C` from the chained-to module — the four digits being the kernel's own tick
 counter.
 
@@ -695,6 +695,53 @@ Where a manual entry does exist it stays the primary source; the library
 settles what the manual leaves open, the way the original kernel settled the
 date format.
 
+**F$STrap** (`0x0E`) lets a process catch its own program-error exceptions —
+bus error, illegal instruction, zero divide and the rest. The call takes a
+table of word pairs terminated by -1, exactly as the manual prints it:
+
+```
+ExcpTbl  dc.w  T_TRAPV,OvfError-*-4
+         dc.w  T_CHK,CHKError-*-4
+         dc.w  -1
+```
+
+The first word is the exception as a **byte offset** into the CPU vector table
+(`T_IllIns` = 16, i.e. vector 4 — from `sysglob.a`, where the vectors are laid
+out with `org 0` and one long each). The second is a **PC-relative** distance:
+`Routine-*-4` means the routine sits four bytes past the start of the pair plus
+that distance, which is what makes the table relocatable — it lives inside a
+program module loaded at an arbitrary address. Both of those are easy to get
+silently wrong, and either mistake only shows up once an exception actually
+fires; the host suite pins them with 26 checks.
+
+Handlers go into `P$Except`, ten longs in the process descriptor, indexed by
+vector minus two. The field address was derived rather than guessed:
+`process.a` lists the descriptor fields without gaps, and two of them are
+independently known in this kernel (`P$SigVec` `$28`, `P$PModul` `$38`).
+Counting from there puts `P$Except` at `$3C` and `P$ExStk` at `$64` — both
+anchors match, so the derivation between them holds.
+
+The dispatch is deliberately tiny: when the exception hits, the 68030 frame is
+already on the stack with SR, PC and the format/vector word. The kernel only
+replaces the PC in that frame with the handler address, and the `rte` that
+follows jumps there with the register set untouched — the handler sees exactly
+the state in which the fault occurred.
+
+**What works and what does not.** Registration is proven on the machine (marker
+`T`, no carry). The *triggering* is not: a deliberate illegal instruction does
+not reach `Q9K_ExcTrap` at all — neither the handler lookup nor the kernel's own
+`E` diagnostic appears, so the vector does not arrive where the table says it
+should. That is a separate question about how the exception vectors are
+installed, not about this call, and it is unresolved. The live test therefore
+registers a handler and stops there: an exception that currently halts the
+kernel has no place in a regression run.
+
+Two further limits, both stated rather than hidden: the separate exception
+stack from `(a0)` is recorded in `P$ExStk` but not switched to — `(a0) = 0`,
+the documented normal case, works fully. And there is no way back to the code
+that faulted; the manual offers none, and a handler is expected to exit or
+`longjmp()` away.
+
 **F$Sema** (`0x62`), and an ABI that had to be recovered. The manual describes
 semaphores at length — the structure, the states, the P/V operation codes — but
 never says which registers the call expects. That was settled by disassembling
@@ -839,7 +886,7 @@ globals. All sixteen suites build and pass again.
 | ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead, and that route now works here (see the scheduler note) |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
-| ❌ | `0x0E` | F$STrap | Would register per-process exception handlers in P$Traps; running them needs the exception path to enter user code, which does not exist yet |
+| 🟡 | `0x0E` | F$STrap | Registers per-process handlers in P$Except, table parsing host-tested and registration emulator-verified; the exception itself does not yet reach `Q9K_ExcTrap` — see the note |
 | 🟡 | `0x0F` | F$PErr | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
 | ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
