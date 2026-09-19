@@ -510,7 +510,7 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
-The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+Te` followed by
+The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+Tie` followed by
 `C` from the chained-to module — the four digits being the kernel's own tick
 counter.
 
@@ -727,39 +727,42 @@ replaces the PC in that frame with the handler address, and the `rte` that
 follows jumps there with the register set untouched — the handler sees exactly
 the state in which the fault occurred.
 
-**What works and what does not, after a second round of measurement that
-overturned the first explanation.**
+**It works end to end — after two wrong explanations along the way, both worth
+recording.**
 
-Registration is proven on the machine (marker `T`, no carry). The triggering is
-not — but *not* for the reason first recorded here. That entry claimed the
-exception "does not reach `Q9K_ExcTrap` at all" and blamed the vector
-installation. Measured directly, the vectors are fine:
+The live test registers a handler for Illegal Instruction, then executes one
+deliberately. The emulator prints `T` (registered) and `i` (the process's own
+handler ran), and the test carries on normally afterwards.
+
+The first wrong explanation blamed the vector installation. Measured, the
+vectors are fine:
 
 ```
 VBR = 00000400   slot 4 = 000075da   Q9K_ExcTrap = 000075da
 ```
 
-The vector points exactly where it should. What actually happens is worse and
-more interesting: **`Q9K_ExcTrap` re-enters itself endlessly.** A marker at its
-first instruction prints an unbroken run of `X` on a deliberate illegal
-instruction.
+The second was closer but still not the cause. A marker on `Q9K_ExcTrap`'s
+first instruction showed it **re-entering itself endlessly** — an unbroken run
+of `X`. That is real, and it is a pre-existing fault: to produce a backtrace the
+diagnostic section deliberately reads *past* the exception frame (`8(sp)`
+through `16(sp)`, plus a 64-byte stack copy), and when the faulting process's
+stack ends there, that read faults in turn. So the handler lookup was moved
+ahead of any diagnostic, where it belongs — a handler asked for afterwards
+would never be reached.
 
-The cause is visible in its own source. To produce a backtrace, the diagnostic
-section deliberately reads *past* the exception frame — `8(sp)` through
-`16(sp)`, plus a 64-byte stack copy. When the faulting process's stack ends
-there, that read faults in turn, and the new exception enters `Q9K_ExcTrap`
-again, forever. This is a pre-existing kernel fault, independent of `F$STrap`,
-and it explains why exception handling never worked here.
+But the jump still did not arrive, and the marker trail said why: `X`, then the
+vector number `4`, and then nothing. **The lookup was calling into C**, and the
+answer was in `Q9K_ExcTrap`'s own header comment all along — that handler is
+written in assembler precisely because the compiler puts a stack-check prologue
+in front of every C function, and out of an exception context it does not hold.
+The first version reintroduced exactly what the comment warns against.
 
-The handler lookup has therefore been moved to the **very first instructions**
-of `Q9K_ExcTrap`, ahead of any diagnostic — a handler asked for afterwards
-would never be reached. With that in place the endless re-entry is gone, but
-the jump into the handler still does not arrive: after the illegal instruction
-the machine falls silent, with no handler marker, no `E` diagnostic and no
-re-entry. Where it goes instead is the open question.
+The lookup is now a dozen assembler instructions: vector number from the frame,
+minus two, range-checked, indexed into `P$Except` of the running process. The C
+function stays for the host test, with a note that the kernel does not call it.
 
-The live test registers a handler and stops there. An exception that currently
-halts the kernel has no place in a regression run.
+The pre-existing re-entry fault in the diagnostic section is untouched and
+remains for any exception that has *no* registered handler.
 
 Two further limits, both stated rather than hidden: the separate exception
 stack from `(a0)` is recorded in `P$ExStk` but not switched to — `(a0) = 0`,
@@ -911,7 +914,7 @@ globals. All sixteen suites build and pass again.
 | ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead, and that route now works here (see the scheduler note) |
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
-| 🟡 | `0x0E` | F$STrap | Registers per-process handlers in P$Except, table parsing host-tested and registration emulator-verified; the exception itself does not yet reach `Q9K_ExcTrap` — see the note |
+| ✅ | `0x0E` | F$STrap | Registers per-process handlers in P$Except and really dispatches into them; emulator-verified end to end on a deliberate Illegal Instruction |
 | 🟡 | `0x0F` | F$PErr | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
 | ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
