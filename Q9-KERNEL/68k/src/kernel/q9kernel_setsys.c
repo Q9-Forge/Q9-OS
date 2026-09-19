@@ -37,13 +37,10 @@
  * q9kernel_cinit.c): KEIN echtes, persistentes System-Global-Register
  * fuer beliebige Variablennummern implementiert -- dafuer fehlt die
  * vollstaendige Liste aller realen Variablennummern samt Bedeutung.
- * "Schreiben" wird bestaetigt (Carry geloescht), aber NICHT
- * gespeichert -- der EINZIGE live gefundene Aufrufer (s. o.) LIEST nur,
- * schreibt nie, ein Fehlschlag beim Schreiben haette daher keinen
- * bekannten Nutzen und koennte einen bislang unbekannten Aufrufer
- * unnoetig stoeren. "Lesen" liefert fuer die EINE live als Ausloeser
- * gefundene Variable (124/$7C, die csl-Speicherzuwachsgroesse) einen
- * sinnvollen Standardwert (4096 Byte, uebliche Seiten-/Blockgroesse).
+ * Die EINE live als Ausloeser gefundene Variable (124/$7C, die
+ * csl-Speicherzuwachsgroesse) wird als Kernel-Global gespeichert und mit
+ * einem sinnvollen Standardwert (4096 Byte, uebliche Seiten-/Blockgroesse)
+ * initialisiert. Andere Variablen bleiben unbekannt.
  *
  * NACHTRAG 2026-09-13 (Fortsetzung 60, auf Wunsch robuster gemacht):
  * "Lesen" einer ANDEREN, unbekannten Variable liefert jetzt E$UnkSvc
@@ -96,6 +93,17 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 #define Q9K_SETSYS_VAR_CSL_MALLOC_INCR 0x7CUL
 #define Q9K_SETSYS_DEFAULT_MALLOC_INCR 4096UL
 
+/* Persistent value for the one system variable currently used by csl. */
+/* BSS-only storage: initialized data is not permitted in this OS-9 module. */
+static Q9_u32 Q9K_SetSysMallocIncrement;
+
+static Q9_u32 Q9K_GetSetSysMallocIncrement(void)
+{
+    if (Q9K_SetSysMallocIncrement == 0UL)
+        Q9K_SetSysMallocIncrement = Q9K_SETSYS_DEFAULT_MALLOC_INCR;
+    return Q9K_SetSysMallocIncrement;
+}
+
 /* E$UnkSvc -- s. Kopfkommentar. */
 #define Q9K_ERR_UNKSVC 0x00D0UL
 
@@ -107,7 +115,7 @@ int Q9K_ProcSetSys(Q9_u32 varCode, Q9_u32 flags, Q9_u32 valueIn, Q9_u32 *outValu
 
     if ((flags & Q9K_SETSYS_GETFLAG) != 0) {
         if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
-            *outValue = Q9K_SETSYS_DEFAULT_MALLOC_INCR;
+            *outValue = Q9K_GetSetSysMallocIncrement();
             return 1;
         }
         *outValue = 0UL;
@@ -115,7 +123,15 @@ int Q9K_ProcSetSys(Q9_u32 varCode, Q9_u32 flags, Q9_u32 valueIn, Q9_u32 *outValu
         return 0;
     }
 
-    *outValue = valueIn;   /* bestaetigt, aber nicht gespeichert (s. Kopfkommentar) */
+    if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
+        if (valueIn == 0UL) {
+            *outValue = 0UL;
+            *outError = Q9K_ERR_UNKSVC;
+            return 0;
+        }
+        Q9K_SetSysMallocIncrement = valueIn;
+    }
+    *outValue = valueIn;
     return 1;
 }
 
