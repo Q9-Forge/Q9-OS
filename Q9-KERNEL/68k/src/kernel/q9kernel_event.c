@@ -139,6 +139,18 @@ typedef unsigned char  Q9_u8;
 
 extern int    Q9K_ProcAProc(Q9_u32 desc, Q9_u16 *outError);   /* q9kernel_procapi.c */
 extern Q9_u32 Q9K_SchedFirstPick(void);                       /* q9kernel_sched.c   */
+extern void   Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 regIndex, Q9_u32 value);
+                                                              /* q9kernel_firstproc.c */
+
+/* Offset des gesicherten Stackzeigers im Prozessdeskriptor -- ueber ihn
+ * findet das Wecken den Registersatz des Wartenden. */
+#ifndef Q9K_PROCDESC_SAVEDSP_OFF
+#define Q9K_PROCDESC_SAVEDSP_OFF 0x08UL
+#endif
+
+/* Platz von d1 im gesicherten Registersatz: movem.l d0-d7/a0-a6 legt d0
+ * an Index 0 ab, d1 also an Index 1. */
+#define Q9K_FRAMEREG_D1 1UL
 
 #ifndef Q9K_CELL_ACCESSORS_PROVIDED
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
@@ -467,8 +479,7 @@ Q9_u32 Q9K_EventDequeueInRange(Q9_u32 entry, Q9_u32 value)
  * den alten danach wieder her (das ist genau Ev$Pulse: "the original
  * event value is restored").
  *
- * Das Wecken der Wartenden ist vorbereitet, aber die Schlange ist immer
- * leer, solange Ev$Wait fehlt -- s. Kopfkommentar. */
+ * Danach wird die Warteschlange abgearbeitet -- s. den Kommentar dort. */
 static int Q9K_EventSignalCommon(Q9_u32 id, Q9_u32 newValue, int restore,
                                  int wakeAll,
                                  Q9_u32 *outPrevious, Q9_u16 *outError)
@@ -499,6 +510,16 @@ static int Q9K_EventSignalCommon(Q9_u32 id, Q9_u32 newValue, int restore,
 
             if (waiter == 0UL)
                 break;
+            /* Den Rueckgabewert in den gesicherten Registersatz des
+             * Wartenden legen, BEVOR er lauffaehig wird: er kehrt ueber
+             * movem/rte zurueck und holt d1 von dort. Ohne das traegt er
+             * den Wert, den er beim Einschlafen zufaellig in d1 hatte --
+             * ein Fehler, den erst der Zweiprozess-Test auf der Maschine
+             * gezeigt hat, weil der nicht blockierende Weg d1 direkt aus
+             * der Bruecke bekommt. Es ist derselbe Wert wie dort: der vor
+             * dem Wait-Inkrement. */
+            Q9K_SetFrameReg(Q9K_GetU32(waiter + Q9K_PROCDESC_SAVEDSP_OFF),
+                            Q9K_FRAMEREG_D1, entryValue);
             (void)Q9K_ProcAProc(waiter, &werr);
             entryValue = Q9K_EventAddSaturating(entryValue, (long)(short)waitInc);
             Q9K_SetU32(entry + Q9K_EVENT_OFF_VALUE, entryValue);
