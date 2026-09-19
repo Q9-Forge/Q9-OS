@@ -137,6 +137,7 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #define Q9K_TRAPTBL_OFF_MODPTR      0UL
 #define Q9K_TRAPTBL_OFF_EXECENTRY   4UL
 #define Q9K_TRAPTBL_OFF_STATICPTR   8UL
+#define Q9K_TRAPTBL_SIZE_BASE       0x280UL
 
 #define Q9K_PROCDESC_STATE_ACTIVE  'a'
 #define Q9K_PROCDESC_STATE_ZOMBIE  'z'
@@ -194,6 +195,7 @@ static void Q9K_ProcReleaseTrapLinks(Q9_u32 desc)
         Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_MODPTR, 0);
         Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_EXECENTRY, 0);
         Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_STATICPTR, 0);
+        Q9K_SetU32(desc + Q9K_TRAPTBL_SIZE_BASE + i * 4UL, 0);
     }
 }
 

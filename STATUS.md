@@ -1088,7 +1088,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x1E` | F$RTE | Unstacks the intercept frame and re-enters the routine when another signal is pending; emulator-verified |
 | ✅ | `0x1F` | F$GPrDBT | Pointer table assembled from the process pool, one entry per slot, 0 for a free one |
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
-| 🟡 | `0x21` | F$TLink | Trap linking works; per-process trap references and owned memory are now released on F$Exit; explicit namePtr=0 removal remains open |
+| ✅ | `0x21` | F$TLink | Links trap modules, initializes their state, supports `namePtr=0` removal, and releases references/owned memory on process exit |
 | ❌ | `0x22` | F$DFork | Not implemented |
 | ❌ | `0x23` | F$DExec | Not implemented |
 | ❌ | `0x24` | F$DExit | Not implemented |
