@@ -116,6 +116,15 @@ extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
 
 #define Q9K_E_MNF 0x00DDU /* errno.h: Module Not Found, wie in q9kernel_firstproc.c */
 
+/* F$FModul scratch: result block for the assembler bridge. */
+#define Q9K_FMODUL_SCRATCH_TYLANG 0x1A00UL
+#define Q9K_FMODUL_SCRATCH_NAME   0x1A04UL
+#define Q9K_FMODUL_SCRATCH_OUTTY  0x1A08UL
+#define Q9K_FMODUL_SCRATCH_OUTAR  0x1A0CUL
+#define Q9K_FMODUL_SCRATCH_ENTRY  0x1A10UL
+#define Q9K_FMODUL_SCRATCH_ERROR  0x1A14UL
+#define Q9K_FMODUL_SCRATCH_OK     0x1A18UL
+
 /* F$DatMod-Scratch (2026-09-18): hinter dem F$Trans-Block
  * ($19A8-$19B0, q9kernel_sysmem.c). */
 #ifndef Q9K_DATMOD_SCRATCH_SIZE
@@ -496,6 +505,29 @@ Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name)
                       (Q9_u16)(Q9K_ModDirGetU16(bestSlot + Q9K_MODDIR_LINKCNT_OFF) + 1));
 
     return Q9K_GetU32(bestSlot + Q9K_MODDIR_HDRPTR_OFF);
+}
+
+/* F$FModul -- side-effect-free module-directory lookup.  Unlike F$Link it
+ * must not increment the link count; it returns the selected entry and the
+ * copied type/attribute words through the fixed bridge scratch block. */
+void Q9K_SysFModulImpl(void)
+{
+    Q9_u16 desired = (Q9_u16)Q9K_GetU32(Q9K_FMODUL_SCRATCH_TYLANG);
+    const char *name = (const char *)(unsigned long)Q9K_GetU32(Q9K_FMODUL_SCRATCH_NAME);
+    Q9_u32 slot = Q9K_ModDirFindSlotByName(desired, name);
+
+    Q9K_SetU32(Q9K_FMODUL_SCRATCH_OK, 0);
+    if (slot == 0) {
+        Q9K_SetU32(Q9K_FMODUL_SCRATCH_ERROR, Q9K_E_MNF);
+        return;
+    }
+
+    Q9K_SetU32(Q9K_FMODUL_SCRATCH_OUTTY,
+               (Q9_u32)Q9K_ModDirGetU16(slot + Q9K_MODDIR_TYLANG_OFF));
+    Q9K_SetU32(Q9K_FMODUL_SCRATCH_OUTAR,
+               (Q9_u32)Q9K_ModDirGetU16(slot + Q9K_MODDIR_ATTREV_OFF));
+    Q9K_SetU32(Q9K_FMODUL_SCRATCH_ENTRY, slot);
+    Q9K_SetU32(Q9K_FMODUL_SCRATCH_OK, 1);
 }
 
 

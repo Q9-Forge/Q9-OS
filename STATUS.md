@@ -1116,7 +1116,7 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x40` | F$DelTsk | Q9 flat-address-space compatibility handler is wired for user and supervisor calls; task-image release remains open |
 | ✅ | `0x4B` | F$AllPrc | Allocates and clears a process descriptor; without an MMU this is the documented direct F$AllPD case |
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
-| ❌ | `0x4E` | F$FModul | Not implemented |
+| 🟡 | `0x4E` | F$FModul | Side-effect-free module-directory lookup is implemented with type/language filtering, highest-revision selection, result registers, and name-pointer advancement; emulator regression remains to be added |
 | ❌ | `0x52` | F$SysDbg | RomBug **is** present in the boot ROM; what is missing is the entry point for `D_SysDbg` — see the note below |
 | ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified on both wait paths, the blocking one with a forked second process doing the signalling |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
