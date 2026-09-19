@@ -1129,7 +1129,7 @@ globals. All sixteen suites build and pass again.
 | ❌ | `0x5B` | F$GSPUMp | Not implemented |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
 | ❌ | `0x5D` | F$POSK | Not implemented |
-| ❌ | `0x5E` | F$Panic | Diagnostic stub exists, but it is not a completed panic service |
+| 🟡 | `0x5E` | F$Panic | Default panic path is implemented: emits the panic code and halts; optional OS9P2-installed service hook remains open |
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | ❌ | `0x61` | F$FIRQ | Not implemented |
