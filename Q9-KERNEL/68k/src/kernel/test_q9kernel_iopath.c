@@ -74,10 +74,14 @@ int main(void)
     Q9_u32 poolBase = (Q9_u32)(unsigned long)g_pathPool;
     static const char name1[] = "/term";
     static const char name2[] = "/dd/SYS/motd";
+    static unsigned char name6[] = { 'e', 'c', 'h', (unsigned char)('o' | 0x80), 0 };
     Q9_u32 name1Addr = (Q9_u32)(unsigned long)name1;
     Q9_u32 name2Addr = (Q9_u32)(unsigned long)name2;
+    Q9_u32 name6Addr = (Q9_u32)(unsigned long)name6;
     Q9_u32 past = 0;
     Q9_u32 num1, num2, num3, num4, num5;
+    Q9_u32 nameStart;
+    Q9_u16 nameLen, nameDelim, nameErr;
     static unsigned char processDesc[0x200];
     static unsigned char processDesc2[0x200];
 
@@ -85,6 +89,18 @@ int main(void)
     memset(g_pathPool, 0xCC, sizeof(g_pathPool));
     memset(processDesc, 0, sizeof(processDesc));
     memset(processDesc2, 0, sizeof(processDesc2));
+
+    /* OS-9's high-bit terminated component form is used by the real
+     * system modules on some F$Load paths; it must parse like a NUL form. */
+    checkU32("F$PrsNam high-bit Abschluss erfolgreich",
+             (Q9_u32)Q9K_ProcPrsNam(name6Addr, &nameStart, &past,
+                                    &nameLen, &nameDelim, &nameErr), 1);
+    checkU32("F$PrsNam high-bit Abschluss Laenge 4 (echo)",
+             (Q9_u32)nameLen, 4);
+    checkU32("F$PrsNam high-bit Abschluss Trennzeichen 0",
+             (Q9_u32)nameDelim, 0);
+    checkU32("F$PrsNam high-bit Abschluss hinter dem Zeichen",
+             nameStart, name6Addr + (Q9_u32)sizeof(name6) - 1U);
 
     Q9K_SetU32(Q9K_PATHPOOL_BASE_ADDR, poolBase);
     buildFreeList(poolBase, Q9K_PATHDESC_SIZE, 4, Q9K_PATHPOOL_FREE_ADDR);

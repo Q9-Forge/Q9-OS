@@ -412,8 +412,16 @@ int Q9K_ProcPrsNam(Q9_u32 pathPtr, Q9_u32 *outNameStart, Q9_u32 *outPastName,
         i++;
 
     start = i;
-    while (Q9K_PrsNamIsNameChar(p[i]))
-        i++;
+    /* OS-9 pathlists may mark the final character of a component with
+     * bit 7 instead of appending a NUL.  Keep the marker out of the
+     * lexical check, include that character in the component, and stop
+     * immediately afterwards.  NUL-terminated host/native strings remain
+     * unchanged. */
+    while (Q9K_PrsNamIsNameChar((unsigned char)(p[i] & 0x7fU))) {
+        unsigned char c = p[i++];
+        if (c & 0x80U)
+            break;
+    }
 
     if (i == start) {                    /* leerer Name */
         *outError = 0x00D7U;
@@ -427,7 +435,7 @@ int Q9K_ProcPrsNam(Q9_u32 pathPtr, Q9_u32 *outNameStart, Q9_u32 *outPastName,
      * begruendet (s. Fortsetzung 24). */
     *outNameStart = pathPtr + i;
     *outLen       = (Q9_u16)(i - start);
-    *outDelim     = (Q9_u16)p[i];
+    *outDelim     = (p[i - 1] & 0x80U) ? 0U : (Q9_u16)p[i];
 
     /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-08, Fortsetzung 24, durch
      * echten RBF-Quellcode (SchDir/RBPNam) zweifelsfrei belegt): a0 muss
