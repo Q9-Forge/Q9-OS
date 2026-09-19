@@ -761,8 +761,26 @@ The lookup is now a dozen assembler instructions: vector number from the frame,
 minus two, range-checked, indexed into `P$Except` of the running process. The C
 function stays for the host test, with a note that the kernel does not call it.
 
-The pre-existing re-entry fault in the diagnostic section is untouched and
-remains for any exception that has *no* registered handler.
+**The re-entry fault now has a guard**, though its proof is partial and that is
+worth stating precisely.
+
+`Q9K_ExcTrap` counts its own nesting. The first entry runs the full diagnostic
+as before; a second one — which can only mean the diagnostic tripped over its
+own read — prints a single `R` straight to the DUART and stops. No `bsr`, no
+further reads: whatever state could still be fetched there belongs to the
+failed save, not to the original fault, and that one is already in
+`Q9K_ExcInfo_*` as far as the first round got.
+
+What is proven: a Zero Divide with no registered handler produces exactly one
+`E` and no re-entry — the diagnostic completes and the process stops while the
+rest of the system keeps running (the other process goes on printing). What is
+**not** proven: the case that produced the endless chain in the first place, an
+Illegal Instruction with no handler, now prints neither `E` nor `R` — it simply
+falls silent. So the endless chain is gone, but whether the guard is what stops
+it, or whether that path never reaches `Q9K_ExcTrap` at all, is unresolved.
+
+The guard costs two instructions and cannot make matters worse; it stays in on
+that basis rather than on a complete proof.
 
 Two further limits, both stated rather than hidden: the separate exception
 stack from `(a0)` is recorded in `P$ExStk` but not switched to — `(a0) = 0`,
