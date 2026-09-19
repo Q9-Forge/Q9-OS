@@ -734,6 +734,30 @@ Q9K_EventImplPtr           equ $1E40      * Q9_u32
 Q9K_EventScratch_Wait      equ $1E44      * Q9_u32, 1 = Aufrufer muss warten
 Q9K_EventScratch_Next      equ $1E48      * Q9_u32, naechster Prozess
 Q9K_EventWaitImplPtr       equ $1E4C      * Q9_u32, Einsprung Q9K_SysEventWaitImpl
+Q9K_NProcScratch_Next      equ $1E50      * Q9_u32, naechster Prozess (F$NProc)
+Q9K_NProcImplPtr           equ $1E54      * Q9_u32, Einsprung Q9K_SysNProcImpl
+
+* Einsprungzellen fuer die C-Teile der ZULETZT gelinkten Module.
+*
+* WARUM: "bsr" traegt nur eine 16-Bit-Verschiebung. Der Kernel ist
+* inzwischen so gross, dass der Abstand von hier bis in die letzten
+* Module der Link-Liste (build.sh) die 32-KiB-Grenze erreicht. Der
+* Assembler nimmt das klaglos an; erst l68 meldet "operand size error",
+* und zwar OHNE die Stelle zu nennen -- die Suche danach kostet jedes
+* Mal Zeit. Diese Aufrufe laufen deshalb ueber eine Zelle, die
+* q9kernel_cinit.c beim Booten fuellt.
+*
+* Dasselbe Muster wie bei Q9K_EventImplPtr. Wer einen neuen Syscall
+* ergaenzt, dessen C-Teil in einem spaeten Modul liegt, nimmt es gleich
+* mit -- und legt neue C-Dateien ans ENDE der Link-Liste, damit die
+* bestehenden Abstaende sich nicht verschieben.
+Q9K_StrapImplPtr           equ $1E58      * Q9K_SysSTrapImpl     (strap.c)
+Q9K_RTEImplPtr             equ $1E5C      * Q9K_SysRTEImpl       (icpt.c)
+Q9K_SigResetImplPtr        equ $1E60      * Q9K_SysSigResetImpl  (icpt.c)
+Q9K_ChainImplPtr           equ $1E64      * Q9K_SysChainImpl     (chain.c)
+Q9K_ChainReleaseImplPtr    equ $1E68      * Q9K_SysChainReleaseImpl
+Q9K_SemaImplPtr            equ $1E6C      * Q9K_SysSemaImpl      (sema.c)
+Q9K_SemaWaitImplPtr        equ $1E70      * Q9K_SysSemaWaitImpl
 
 * Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
 * Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
@@ -4777,7 +4801,8 @@ Q9K_SysFSema:
         move.l  d0,Q9K_SemaScratch_Ptr
         clr.l   Q9K_SemaScratch_Op              * oberes Wort nullen, C liest 32 Bit
         move.w  d1,Q9K_SemaScratch_Op+2
-        bsr     Q9K_SysSemaImpl
+        movea.l Q9K_SemaImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         tst.w   Q9K_SemaScratch_Ok+2
         beq     Q9K_SysFSema_Fail
@@ -4802,7 +4827,8 @@ Q9K_SysFSema_Wait:
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)  * SavedSP -- erst JETZT darf eingereiht werden
 
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysSemaWaitImpl              * einreihen + naechsten Prozess waehlen
+        movea.l Q9K_SemaWaitImplPtr,a1
+        jsr     (a1)              * einreihen + naechsten Prozess waehlen
 
         move.l  Q9K_SemaScratch_Next,d0
         tst.l   d0
@@ -4815,6 +4841,15 @@ Q9K_SysFSema_Idle:
 * Kein Prozess mehr bereit -- gleiche reale K$Idle-Semantik wie bei
 * F$Sleep. Dass ALLE Prozesse auf Semaphore warten, waere ein Deadlock im
 * Anwendungsentwurf; der Kernel meldet ihn, statt still stehenzubleiben.
+        moveq   #K_IDLE,d0
+        bra     Q9K_KernelPanic
+
+* Gemeinsamer Einsprung fuer die Wartepfade weiter unten (Ev$Wait,
+* F$NProc).  Sie liegen so weit hinten im Modul, dass ein "bra
+* Q9K_KernelPanic" von dort die 16-Bit-Reichweite des Sprungs sprengt --
+* der Assembler nimmt es an, erst l68 meldet "operand size error".
+* Dieses Sprungbrett steht nah genug an beiden Seiten.
+Q9K_PanicIdleBridge:
         moveq   #K_IDLE,d0
         bra     Q9K_KernelPanic
 
@@ -4862,7 +4897,8 @@ Q9K_SysFChain:
         move.w  d4,Q9K_ChainScratch_Priority+2
         move.l  a0,Q9K_ChainScratch_Name
         move.l  a1,Q9K_ChainScratch_Param
-        bsr     Q9K_SysChainImpl
+        movea.l Q9K_ChainImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         tst.w   Q9K_ChainScratch_Ok+2
         beq     Q9K_SysFChain_Fail
@@ -4875,7 +4911,8 @@ Q9K_SysFChain:
         movea.l Q9_D_Proc,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysChainReleaseImpl          * jetzt gefahrlos -- neuer Stack
+        movea.l Q9K_ChainReleaseImplPtr,a1
+        jsr     (a1)          * jetzt gefahrlos -- neuer Stack
         movem.l (sp)+,d0-d7/a0-a6
         rte                                      * Sprung ins neue Programm
 
@@ -4903,7 +4940,8 @@ Q9K_SysFChain_Fail:
 Q9K_SysFRTE:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysRTEImpl
+        movea.l Q9K_RTEImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         tst.w   Q9K_IcptScratch_Ok+2
         beq     Q9K_SysFRTE_Fail
@@ -4994,9 +5032,62 @@ Q9K_SysFEvent_Idle:
 * Kein Prozess mehr bereit -- gleiche Semantik wie bei F$Sema: dass ALLE
 * Prozesse auf Ereignisse warten, ist ein Deadlock im Anwendungsentwurf,
 * und der Kernel meldet ihn, statt still stehenzubleiben.
-        moveq   #K_IDLE,d0
-        bra     Q9K_KernelPanic
+        bra     Q9K_PanicIdleBridge
 Q9K_SysFEvent_NoFrame:
+        move.w  #$00d0,d1                  * E_UNKSVC -- ohne Rahmen kein Wechsel
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFNProc -- F$NProc (Callcode $2D). Reale ABI, 68k_tech.pdf S.468:
+* EIN keine.
+* AUS "Control does not return to caller."
+*     Im Fehlerfall Carry und d1.w.
+*
+* Das Handbuch ist an einer Stelle ungewoehnlich deutlich, und die
+* bestimmt den ganzen Entwurf: "The process calling NProc should already
+* be in one of the system's process queues. If it is not, the calling
+* process becomes unknown to the system even though the process
+* descriptor still exists."  Dieser Aufruf reiht den Aufrufer also
+* BEWUSST NICHT ein -- er nimmt nur den naechsten aus der Bereitliste
+* und springt hinein.  Wer sich vorher nicht selbst eingereiht hat, ist
+* weg; das ist die Semantik, nicht ein fehlender Handgriff.
+*
+* Der Registersatz wird trotzdem gesichert und SavedSP gesetzt: der
+* uebliche Fall ist ja gerade der, dass der Aufrufer auf irgendeiner
+* Schlange steht und spaeter fortgesetzt wird.  Sonst traegt er beim
+* Aufwachen einen veralteten Stackzeiger -- dieselbe Falle wie bei
+* F$Sema und Ev$Wait.
+*******************************************************************************
+Q9K_SysFNProc:
+        tst.w   Q9K_InTrapPath
+        beq     Q9K_SysFNProc_NoFrame
+
+        addq.l  #4,sp                      * jsr-Ruecksprungadresse verwerfen
+        movem.l d0-d7/a0-a6,-(sp)
+        andi.w  #$fffe,60(sp)              * Carry im gesicherten SR loeschen
+
+        movea.l Q9_D_Proc,a0
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
+
+        lea     Q9K_CRuntimeData(pc),a6
+        movea.l Q9K_NProcImplPtr,a1
+        jsr     (a1)                       * naechsten Prozess waehlen
+
+        move.l  Q9K_NProcScratch_Next,d0
+        tst.l   d0
+        beq     Q9K_SysFNProc_Idle
+        movea.l d0,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+Q9K_SysFNProc_Idle:
+* Keiner mehr bereit.  Das Handbuch sieht hier Warten auf einen
+* Interrupt vor; dieser Kernel geht ueber F$Panic(K$Idle) -- genau der
+* Fall, den das Handbuch bei F$Panic beschreibt, und die Stelle, an der
+* ein per F$SSvc installierter Panic-Dienst eingreifen kann.
+        bra     Q9K_PanicIdleBridge
+Q9K_SysFNProc_NoFrame:
         move.w  #$00d0,d1                  * E_UNKSVC -- ohne Rahmen kein Wechsel
         ori     #1,ccr
         rts
@@ -5021,7 +5112,8 @@ Q9K_SysFSTrap:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_StrapScratch_Stack
         move.l  a1,Q9K_StrapScratch_Table
-        bsr     Q9K_SysSTrapImpl
+        movea.l Q9K_StrapImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         tst.w   Q9K_StrapScratch_Ok+2
         beq     Q9K_SysFSTrap_Fail
@@ -5045,7 +5137,8 @@ Q9K_SysFSTrap_Fail:
 Q9K_SysFSigReset:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysSigResetImpl
+        movea.l Q9K_SigResetImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         andi    #$fe,ccr
         rts

@@ -31,6 +31,33 @@ Q9K_ChainTgtData:
         ends
 
 Q9K_ChainTgtStart:
+* Die ersten Ausgaben laufen bewusst OHNE Stack und ohne Unterprogramm:
+* sie sollen auch dann noch etwas zeigen, wenn nach dem Kettenwechsel
+* etwas mit dem Stack nicht stimmt.  'c' beantwortet die erste Frage,
+* die man nach einem F$Chain hat -- ist das neue Programm ueberhaupt
+* angelaufen?  Ohne diesen Marker sieht ein spaeter fehlendes 'C' aus
+* wie ein Sprung, der nie ankam.
+        move.b  #'c',$FFFFF006                  * angelaufen
+
+* Stackprobe: ein Langwort ablegen und zurueckholen.  Kommt derselbe
+* Wert wieder und steht sp danach wieder, wo er war, ist der Stack
+* benutzbar -- und erst dann darf dieses Modul bsr/movem verwenden.
+* Der Kettenwechsel gibt dem Prozess einen neuen Speicherbereich und
+* damit einen neuen Stack; dass der wirklich trägt, hat vorher niemand
+* nachgesehen.  Er trägt (Lauf vom 2026-09-19: c s C).
+        move.l  sp,d5
+        move.l  #$5A5A1234,d6
+        move.l  d6,-(sp)
+        move.l  (sp)+,d4
+        cmp.l   d6,d4
+        bne     Q9K_ChainTgtNoStack
+        cmp.l   sp,d5
+        bne     Q9K_ChainTgtNoStack
+        move.b  #'s',$FFFFF006                  * Stack tragfaehig
+        bra     Q9K_ChainTgtStackOk
+Q9K_ChainTgtNoStack:
+        move.b  #'S',$FFFFF006                  * Stack NICHT benutzbar
+Q9K_ChainTgtStackOk:
 * d0.w traegt die Prozess-ID, a3 den Zeiger auf das eigene Modul (Table
 * D-7, bei F$Chain identisch zu F$Fork).
         tst.w   d0                              * eine Prozess-ID ist nie 0
@@ -42,12 +69,28 @@ Q9K_ChainTgtStart:
         bcc     Q9K_ChainTgtBad
 
         moveq   #'C',d7
-        move.b  d7,$FFFFF006
+        bsr     Q9K_ChainTgtWriteD7
         bra     Q9K_ChainTgtExit
 
 Q9K_ChainTgtBad:
         moveq   #'X',d7
+        bsr     Q9K_ChainTgtWriteD7
+
+* Ausgabe MIT Warten auf TXRDY.  Vorher schrieb dieses Modul direkt ins
+* Sendregister, und genau dabei ging das 'C' verloren: es faellt
+* unmittelbar hinter den Prozesswechsel, waehrend die Leitung noch das
+* vorige Zeichen schiebt.  Ein fehlender Marker sieht dann aus wie Code,
+* der nie gelaufen ist -- hier hat das eine ganze Fehlersuche gekostet.
+Q9K_ChainTgtWriteD7:
+        movem.l a0/d6,-(sp)
+        movea.l #$FFFFF002,a0                   * Status A: Bit 2 = TXRDY
+Q9K_ChainTgtDiagWait:
+        move.b  (a0),d6
+        btst    #2,d6
+        beq     Q9K_ChainTgtDiagWait
         move.b  d7,$FFFFF006
+        movem.l (sp)+,a0/d6
+        rts
 
 Q9K_ChainTgtExit:
 * Sauber beenden -- der Prozess gibt seinen Speicher frei.

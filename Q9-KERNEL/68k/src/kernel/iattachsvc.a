@@ -88,7 +88,12 @@
 *   p, S = the forked evsigtgt is alive, and has signalled (it writes these)
 *   ~ = Ev$Wait really blocked and was woken by that signal -- the proof is
 *       the order: '~' appears after 'S', so this process stood still
+*   n = F$NProc: the forked nproctgt started (it writes this)
+*   m = this process came back from the sleep that let the child run
+*   N = F$NProc wrongly returned to its caller -- must NOT appear
 *   e = F$Chain refused an unknown module and left the caller intact
+*   c = F$Chain: the chained-to program started at all (chaintgt writes it)
+*   s = its new stack really carries a push and a pop (S = it does not)
 *   C = F$Chain reached chaintgt -- the process now runs another program
 *       (written by chaintgt.a, not by this module; X there means the
 *        jump arrived with wrong registers)
@@ -1079,6 +1084,36 @@ Q9K_IllHandlerDone:
         dc.w    $0053
         bcs     Q9K_NativeFailed
 
+* F$NProc ($2D) -- "Start Next Process". Der Beweis laesst sich nur von
+* aussen fuehren, denn der Aufruf kehrt nicht zurueck.  nproctgt wird
+* geforkt, meldet sich mit 'n' und ruft F$NProc; da es auf keiner
+* Warteschlange steht, verschwindet es danach -- genau das schreibt das
+* Handbuch vor (68k_tech.pdf S.468).
+*
+* Der kurze Schlaf danach ist nicht Bequemlichkeit, sondern macht die
+* Reihenfolge eindeutig: er gibt die CPU ab, das Kind laeuft, und
+* danach geht es hier weiter.  Im Log muss 'n' deshalb VOR dem 'C' von
+* chaintgt stehen, und 'N' darf nirgends auftauchen.  Bliebe F$NProc
+* wirkungslos, erschiene 'N'; bliebe es haengen, kaeme dieser Prozess
+* nicht mehr zurueck und der Lauf liefe in den Timeout.  Erst alle drei
+* Beobachtungen zusammen beweisen den Wechsel.
+        moveq   #1,d0                          * Typ/Sprache: Programm/Objekt
+        moveq   #0,d1                          * kein Zusatzspeicher
+        moveq   #0,d2                          * keine Parameter
+        moveq   #0,d3                          * keine Pfade
+        moveq   #0,d4                          * Prioritaet beibehalten
+        lea     Q9K_NProcTgtName(pc),a0
+        suba.l  a1,a1
+        trap    #0
+        dc.w    $0003                          * F$Fork
+        bcs     Q9K_NativeFailed
+
+        move.l  #100,d0                        * 1 Sekunde -- CPU abgeben
+        trap    #0
+        dc.w    $000A                          * F$Sleep
+        moveq   #'m',d7                        * hierher zurueckgekehrt
+        move.b  d7,$FFFFF006
+
 * F$Chain ($05) -- ZULETZT, weil es nicht zurueckkehrt: es ersetzt das
 * Programm dieses Prozesses durch chaintgt, das daraufhin 'C' ausgibt und
 * sich beendet.  Dass ueberhaupt noch etwas nach dem '#' erscheint, ist
@@ -1206,6 +1241,9 @@ Q9K_EvWaitName:
         dc.b    0
 Q9K_EvSigTgtName:
         dc.b    "evsigtgt",0
+        dc.b    0
+Q9K_NProcTgtName:
+        dc.b    "nproctgt",0
         dc.b    0
 Q9K_EventName:
         dc.b    "q9test",0
