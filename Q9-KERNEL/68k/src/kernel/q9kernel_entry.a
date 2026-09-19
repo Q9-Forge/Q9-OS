@@ -3969,9 +3969,19 @@ Q9K_SysFPrsNam_InputReady:
         move.l  a0,-(sp)                     * a0 gleich wieder gebraucht -- kurz rueckenfrei (4 Byte)
         movea.l sp,a0
         adda.l  #12,a0                         * a0 = sp VOR diesem push (4) + 8 (dieselbe Zielformel wie F$SRqMem/F$AllPD)
+        tst.w   Q9K_InTrapPath
+        beq     Q9K_SysFPrsNam_Frame
         cmpa.l  a0,a5
         movea.l (sp)+,a0
         bne     Q9K_SysFPrsNam_NoFrame
+Q9K_SysFPrsNam_Frame:
+        tst.w   Q9K_InTrapPath
+        bne     Q9K_SysFPrsNam_FrameReady
+        movea.l (sp)+,a0
+        bra     Q9K_SysFPrsNam_FrameWrite
+Q9K_SysFPrsNam_FrameReady:
+* a0 wurde beim Vergleich bereits vom Stack restauriert.
+Q9K_SysFPrsNam_FrameWrite:
         movem.l d0-d1,(a5)                            * R$d0/R$d1
         movem.l a0-a1,$20(a5)                          * R$a0/R$a1
 Q9K_SysFPrsNam_NoFrame:
