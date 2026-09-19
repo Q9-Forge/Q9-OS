@@ -1159,7 +1159,7 @@ still stalls in RBF directory/position advancement.
 | ❌ | `0x85` | I$MakDir | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x86` | I$ChgDir | Native data/execution directory storage is implemented and emulator-tested; device and file-manager resolution remain open |
 | ❌ | `0x87` | I$Delete | No Q9-OS implementation; only the Microware path exists |
-| 🟡 | `0x88` | I$Seek | Sequential Q9-native paths accept seek as a validated no-op; random-access semantics remain open |
+| 🟡 | `0x88` | I$Seek | Native paths now retain the requested absolute position in their descriptor; backing-file repositioning remains open |
 | 🟡 | `0x89` | I$Read | Minimal Q9-native blocking console input with path and read-mode validation is implemented; full device semantics remain open |
 | 🟡 | `0x8A` | I$Write | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
 | 🟡 | `0x8B` | I$ReadLn | Minimal Q9-native blocking line input with path and read-mode validation is implemented; editing and device semantics remain open |

@@ -5563,12 +5563,13 @@ Q9K_SysFISetStt_Fail:
         rts
 
 *******************************************************************************
-* Q9K_SysFISeek -- minimal native I$Seek implementation (Callcode $88).
-* Q9 console paths are sequential and have no seekable backing store.  OS-9
-* permits such file managers to treat I$Seek as a successful no-op.
+* Q9K_SysFISeek -- native I$Seek position bookkeeping (Callcode $88).
+* The userland ABI supplies the absolute byte position in d1.l.  Native
+* console paths still have no backing file, but retaining the logical
+* position makes the path descriptor state consistent for later SS.Pos use.
 *******************************************************************************
 Q9K_SysFISeek:
-        movem.l d0/d2/a1,-(sp)
+        movem.l d0-d1/d2/a1,-(sp)
         moveq   #0,d2
         move.w  d0,d2
         cmpi.l  #3,d2
@@ -5579,12 +5580,13 @@ Q9K_SysFISeek:
         adda.l  d2,a1
         tst.w   4(a1)
         beq     Q9K_SysFISeek_BadPath
+        move.l  4(sp),8(a1)                    * saved d1.l = requested position
 Q9K_SysFISeek_Ok:
-        movem.l (sp)+,d0/d2/a1
+        movem.l (sp)+,d0-d1/d2/a1
         andi    #$fe,ccr
         rts
 Q9K_SysFISeek_BadPath:
-        movem.l (sp)+,d0/d2/a1
+        movem.l (sp)+,d0-d1/d2/a1
         move.w  #$00c9,d1                     * E$BPNUM
         ori     #1,ccr
         rts
