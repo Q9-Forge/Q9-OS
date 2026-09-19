@@ -131,6 +131,12 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #ifndef Q9K_PROCDESC_TRAPTBL_OFF
 #define Q9K_PROCDESC_TRAPTBL_OFF    0x1CCUL
 #endif
+#ifndef Q9K_PROCDESC_PATH_OFF
+#define Q9K_PROCDESC_PATH_OFF       0x168UL
+#endif
+#ifndef Q9K_PROCDESC_PATH_COUNT
+#define Q9K_PROCDESC_PATH_COUNT     32UL
+#endif
 
 #define Q9K_TRAPTBL_ENTRY_SIZE      12UL
 #define Q9K_TRAPTBL_ENTRIES         15UL
@@ -138,6 +144,10 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #define Q9K_TRAPTBL_OFF_EXECENTRY   4UL
 #define Q9K_TRAPTBL_OFF_STATICPTR   8UL
 #define Q9K_TRAPTBL_SIZE_BASE       0x280UL
+#define Q9K_PATHPOOL_BASE_ADDR      0x1214UL
+#define Q9K_PATHPOOL_FREE_ADDR      0x121CUL
+#define Q9K_PATHDESC_SIZE           256UL
+#define Q9K_PATHDESC_REF_OFF        0x04UL
 
 #define Q9K_PROCDESC_STATE_ACTIVE  'a'
 #define Q9K_PROCDESC_STATE_ZOMBIE  'z'
@@ -176,6 +186,37 @@ static Q9_u16 Q9K_GetU16(Q9_u32 addr) { return *(volatile Q9_u16 *)addr; }
 static void   Q9K_SetU16(Q9_u32 addr, Q9_u16 value) { *(volatile Q9_u16 *)addr = value; }
 static Q9_u8  Q9K_GetU8(Q9_u32 addr) { return *(volatile Q9_u8 *)addr; }
 static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = value; }
+
+/* Close every native path still owned by a terminating process.  Dup'd
+ * descriptors are reference counted globally; only the final owner returns
+ * the descriptor to the path pool. */
+static void Q9K_ProcReleasePaths(Q9_u32 desc)
+{
+    Q9_u32 i;
+
+    for (i = 3; i < Q9K_PROCDESC_PATH_COUNT; ++i) {
+        Q9_u16 pathNum = Q9K_GetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL);
+        Q9_u32 pathDesc;
+        Q9_u16 refs;
+
+        if (pathNum == 0)
+            continue;
+        Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL, 0);
+        if (pathNum < 3)
+            continue;
+
+        pathDesc = Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR) +
+                   ((Q9_u32)pathNum - 3UL) * Q9K_PATHDESC_SIZE;
+        refs = Q9K_GetU16(pathDesc + Q9K_PATHDESC_REF_OFF);
+        if (refs > 0)
+            --refs;
+        Q9K_SetU16(pathDesc + Q9K_PATHDESC_REF_OFF, refs);
+        if (refs == 0) {
+            Q9K_SetU32(pathDesc, Q9K_GetU32(Q9K_PATHPOOL_FREE_ADDR));
+            Q9K_SetU32(Q9K_PATHPOOL_FREE_ADDR, pathDesc);
+        }
+    }
+}
 
 /* Drop the module references held by F$TLink.  Static blocks are owned by
  * the process-memory tracker and are released by Q9K_ProcReleaseMemory;
@@ -264,6 +305,7 @@ static void Q9K_ProcReleaseMemory(Q9_u32 desc)
 static void Q9K_ProcPoolFree(Q9_u32 desc)
 {
     Q9K_ProcReleaseTrapLinks(desc);
+    Q9K_ProcReleasePaths(desc);
     Q9K_ProcReleaseMemory(desc);
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
@@ -310,6 +352,7 @@ Q9_u32 Q9K_ProcExit(Q9_u32 callerDesc, Q9_u16 exitStatus)
     /* Trap modules remain referenced independently of the primary module;
      * release them before this process turns into a zombie. */
     Q9K_ProcReleaseTrapLinks(callerDesc);
+    Q9K_ProcReleasePaths(callerDesc);
 
     /* Der aufrufende Prozess wird nach diesem Punkt nie mehr ueber seinen
      * bisherigen Kontext fortgesetzt. Q9K_FreeMem beschreibt nur den

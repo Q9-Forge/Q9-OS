@@ -1155,7 +1155,7 @@ still stalls in RBF directory/position advancement.
 | 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; broader lifetime semantics remain open |
 | 🟡 | `0x82` | I$Dup | Native path-table duplication, descriptor validation, and reference counting are implemented and verified in the emulator; full file-manager semantics remain open |
 | ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
-| 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; process-local `P$Path` publication is tested, while full pathname/device semantics remain open |
+| 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; process-local `P$Path` publication and process-exit cleanup are covered, while full pathname/device semantics remain open |
 | ❌ | `0x85` | I$MakDir | No Q9-OS implementation; only the Microware path exists |
 | 🟡 | `0x86` | I$ChgDir | Native data/execution directory storage is implemented and emulator-tested; device and file-manager resolution remain open |
 | ❌ | `0x87` | I$Delete | No Q9-OS implementation; only the Microware path exists |
@@ -1166,7 +1166,7 @@ still stalls in RBF directory/position advancement.
 | 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
 | 🟡 | `0x8D` | I$GetStt | Native `SS_Opt` support now validates the current process path; other status codes remain open |
 | 🟡 | `0x8E` | I$SetStt | Native `SS_Opt` support now validates the current process path; other status codes remain open |
-| 🟡 | `0x8F` | I$Close | Native path-table removal, descriptor validation, and release with reference counting are implemented and verified in the emulator; full file-manager close semantics remain open |
+| 🟡 | `0x8F` | I$Close | Native path-table removal, descriptor validation, reference counting, and process-exit cleanup are implemented and verified; full file-manager close semantics remain open |
 | 🟡 | `0x92` | I$SGetSt | Minimal Q9-native `SS_Opt` support for direct system paths; permission, device-name, and file-manager semantics remain open |
 
 ## Current interpretation
