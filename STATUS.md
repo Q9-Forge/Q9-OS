@@ -701,15 +701,34 @@ names the range of values it wants to be woken in. The manual's own example is
 a printer pool: initial value = number of printers, wait increment −1, signal
 increment +1.
 
-Ten of the twelve functions are implemented and emulator-verified: create,
-delete, link, unlink, read, set, set-relative, signal, pulse and info. The live
-test walks a full life cycle — create with initial value 5, signal (giving 6),
-read it back, unlink, delete, and confirm the event is then gone.
+All twelve functions are implemented: create, delete, link, unlink, read, set,
+set-relative, signal, pulse, info, wait and wait-relative. The live test walks
+a full life cycle — create with initial value 5, signal (giving 6), read it
+back, `Ev$Wait` over the range 0…10 and `Ev$WaitR` over −5…+5, read again to
+see both wait increments applied, unlink, delete, and confirm the event is then
+gone.
 
-`Ev$Wait` and `Ev$WaitR` are **not** implemented and say so with `E$UnkSvc`.
-They need the caller suspended and woken later, which is the same process
-switch `F$Sema` already performs; a silent success there would be the worst
-possible answer, since the caller would carry on as though it had waited.
+`Ev$Wait` splits in two, exactly as `F$Sema` does and for the same reason. The
+C side first decides whether the value lies in the requested range: if it does,
+the call returns at once with the value **before** the wait increment, and the
+event moves on by that increment — nobody waits. If it does not, the assembler
+side saves the caller's register set on its own stack, updates `SavedSP`, and
+only **then** calls back into C to enqueue it and pick the next process.
+Enqueuing before the save would leave the waiter holding a stale stack pointer,
+and the wake-up would land nowhere.
+
+`Ev$Signl` walks that queue and wakes the waiters whose range now contains the
+value, adding each one's wait increment as it goes; with the function word's
+top bit set it wakes all of them instead of just the first. A waiter whose
+range does not match is skipped rather than blocking the ones behind it.
+
+What the emulator proves is the non-blocking path of both wait forms. The
+blocking path needs a second process to do the signalling, and `F$Fork` is not
+yet trustworthy enough to build that test on; it is covered by the host suite
+(63 checks, including out-of-range waiting, wake-by-signal, a non-matching
+waiter not blocking a matching one behind it, and the wake-all switch), and the
+assembler path is line for line the `F$Sema` one that is already proven on the
+machine.
 
 The function codes come from `MWOS/OS9/SRC/DEFS/event.a` (counted off as
 `do.b 1` from zero), the 32-byte record layout from the same file, and the
@@ -1029,7 +1048,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
 | ❌ | `0x4E` | F$FModul | Not implemented |
 | ❌ | `0x52` | F$SysDbg | RomBug **is** present in the boot ROM; what is missing is the entry point for `D_SysDbg` — see the note below |
-| 🟡 | `0x53` | F$Event | Ten of the twelve functions work — create, delete, link, unlink, read, set, set-relative, signal, pulse, info — emulator-verified; `Ev$Wait`/`Ev$WaitR` still report `E$UnkSvc` |
+| ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified through the non-blocking wait path; the blocking path is host-tested and shares the proven `F$Sema` switch |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
 | 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work — A$Set now emulator-verified by an alarm that actually comes due and delivers its signal; only A$Reset is unimplemented, its purpose being undocumented |

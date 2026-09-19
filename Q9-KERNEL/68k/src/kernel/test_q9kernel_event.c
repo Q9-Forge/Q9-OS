@@ -24,6 +24,25 @@ static unsigned char g_cells[0x400];
 #define Q9K_EVENT_SCRATCH_A0    CELL(0x0A0)
 #define Q9K_EVENT_SCRATCH_ERROR CELL(0x0C0)
 #define Q9K_EVENT_SCRATCH_OK    CELL(0x0E0)
+#define Q9K_EVENT_SCRATCH_WAIT  CELL(0x100)
+#define Q9K_EVENT_SCRATCH_NEXT  CELL(0x120)
+#define Q9_D_PROC               CELL(0x140)
+
+/* Eigene Deskriptorfelder fuer den Wertebereich -- auf Testbreite
+ * gezogen, wie ueberall. */
+#define Q9K_PROCDESC_EVMIN_OFF 0x40UL
+#define Q9K_PROCDESC_EVMAX_OFF 0x48UL
+#define Q9K_READYQ_NEXT_OFF    0x50UL
+
+/* Prozesswechsel gibt es auf dem Host nicht. */
+static int g_aprocCalls;
+static unsigned long g_aprocLast;
+int Q9K_ProcAProc(unsigned long desc, unsigned short *outError)
+{
+    (void)outError; g_aprocCalls++; g_aprocLast = desc; return 1;
+}
+static unsigned long g_nextPick;
+unsigned long Q9K_SchedFirstPick(void) { return g_nextPick; }
 
 /* Die Ereignistabelle behaelt ihre ECHTEN Feldabstaende: alle Zugriffe
  * darauf laufen ueber Q9K_GetU16/GetU8 oder gezielte 4-Byte-Felder, und
@@ -67,6 +86,7 @@ static void check(const char *label, Q9_u32 got, Q9_u32 want)
 static void reset(void)
 {
     memset(g_cells, 0, sizeof g_cells);
+    g_aprocCalls = 0; g_aprocLast = 0; g_nextPick = 0;
     memset(g_table, 0, sizeof g_table);
     memset(g_name, 0, sizeof g_name);
     memset(g_buf, 0, sizeof g_buf);
@@ -130,33 +150,33 @@ int main(void)
     reset();
     setName("zaehler");
     Q9K_EventCreate(NAME, 10, (Q9_u16)-2, 5, &id, &err);
-    Q9K_EventSignal(id, &err);
+    Q9K_EventSignal(id, 0, &err);
     Q9K_EventRead(id, &value, &err);
     check("Ev$Signl addiert das Signal-Inkrement", value, 15);
-    Q9K_EventSignal(id, &err);
+    Q9K_EventSignal(id, 0, &err);
     Q9K_EventRead(id, &value, &err);
     check("und tut das jedes Mal", value, 20);
 
     /* --- Setzen, absolut und relativ --- */
     check("Ev$Set setzt den Wert",
-          (Q9_u32)Q9K_EventSet(id, 100, &prev, &err), 1);
+          (Q9_u32)Q9K_EventSet(id, 100, 0, &prev, &err), 1);
     check("und meldet den vorherigen", prev, 20);
     Q9K_EventRead(id, &value, &err);
     check("der neue Wert steht drin", value, 100);
 
-    Q9K_EventSetRelative(id, -30, &prev, &err);
+    Q9K_EventSetRelative(id, -30, 0, &prev, &err);
     Q9K_EventRead(id, &value, &err);
     check("Ev$SetR rechnet relativ", value, 70);
     check("und meldet ebenfalls den vorherigen", prev, 100);
 
     /* Saettigung statt Umlauf: "overflows are set to $7fffffff". Ein
      * umlaufender Zaehler kippt von "sehr viel frei" auf "voll". */
-    Q9K_EventSet(id, 0x7FFFFFF0UL, &prev, &err);
-    Q9K_EventSetRelative(id, 1000, &prev, &err);
+    Q9K_EventSet(id, 0x7FFFFFF0UL, 0, &prev, &err);
+    Q9K_EventSetRelative(id, 1000, 0, &prev, &err);
     Q9K_EventRead(id, &value, &err);
     check("ein Ueberlauf saettigt bei 0x7fffffff", value, 0x7FFFFFFFUL);
-    Q9K_EventSet(id, 0x80000010UL, &prev, &err);
-    Q9K_EventSetRelative(id, -1000, &prev, &err);
+    Q9K_EventSet(id, 0x80000010UL, 0, &prev, &err);
+    Q9K_EventSetRelative(id, -1000, 0, &prev, &err);
     Q9K_EventRead(id, &value, &err);
     check("ein Unterlauf bei 0x80000000", value, 0x80000000UL);
 
@@ -164,7 +184,7 @@ int main(void)
     reset();
     setName("puls");
     Q9K_EventCreate(NAME, 7, 0, 1, &id, &err);
-    check("Ev$Pulse meldet Erfolg", (Q9_u32)Q9K_EventPulse(id, 99, &err), 1);
+    check("Ev$Pulse meldet Erfolg", (Q9_u32)Q9K_EventPulse(id, 99, 0, &err), 1);
     Q9K_EventRead(id, &value, &err);
     check("und laesst den Wert unveraendert zurueck", value, 7);
 
@@ -244,13 +264,100 @@ int main(void)
     Q9K_EventRead(id, &value, &err);
     check("und hat wirklich signalisiert", value, 6);
 
-    /* Ev$Wait fehlt noch und muss das SAGEN -- ein stiller Erfolg liesse
-     * den Aufrufer weiterlaufen, als haette er gewartet. */
-    Q9K_SetU32(Q9K_EVENT_SCRATCH_FUNC, 4);          /* Ev$Wait */
-    Q9K_SysEventImpl();
-    check("Bruecke Ev$Wait meldet, dass es fehlt",
-          Q9K_GetU32(Q9K_EVENT_SCRATCH_OK), 0);
-    check("mit E_UNKSVC", Q9K_GetU32(Q9K_EVENT_SCRATCH_ERROR), 0xD0);
+    /* --- Warten --- */
+    reset();
+    setName("warte");
+    Q9K_EventCreate(NAME, 0, (Q9_u16)-1, 1, &id, &err);   /* Wert 0, Wait -1, Signal +1 */
+
+    /* Wert 0 liegt NICHT im Bereich 1..9 -- der Aufrufer muss warten. */
+    check("ausserhalb des Bereichs wird gewartet",
+          (Q9_u32)Q9K_EventWaitCheck(id, 1, 9, &value, &err), 0);
+    check("und zwar ohne Fehler", (Q9_u32)err, 0);
+    check("der gemeldete Wert ist der aktuelle", value, 0);
+
+    /* Im Bereich: sofort weiter, und das Wait-Inkrement greift. */
+    Q9K_EventSet(id, 5, 0, &prev, &err);
+    check("im Bereich laeuft der Aufrufer sofort weiter",
+          (Q9_u32)Q9K_EventWaitCheck(id, 1, 9, &value, &err), 1);
+    check("der zurueckgegebene Wert ist der vor dem Inkrement", value, 5);
+    Q9K_EventRead(id, &value, &err);
+    check("und das Wait-Inkrement wurde angewandt", value, 4);
+
+    /* Einreihen und wecken. */
+    reset();
+    setName("warte2");
+    Q9K_EventCreate(NAME, 0, (Q9_u16)-1, 1, &id, &err);
+    {
+        static unsigned char proc[128];
+        Q9_u32 desc = (Q9_u32)(unsigned long)proc;
+        Q9_u32 next = 0;
+        Q9_u32 entry;
+
+        memset(proc, 0, sizeof proc);
+        Q9K_SetU32(Q9_D_PROC, desc);
+        g_nextPick = 0x4242;
+        Q9K_EventWaitEnqueue(id, 1, 9, &next);
+        check("der Wartende waehlt einen naechsten Prozess", next, 0x4242);
+
+        entry = Q9K_EVENT_SLOT((Q9_u32)Q9K_EventFindById(id));
+        check("und steht in der Schlange des Ereignisses",
+              Q9K_GetU32(entry + Q9K_EVENT_OFF_QNEXT), desc);
+        check("sein Bereich ist vermerkt",
+              Q9K_GetU32(desc + Q9K_PROCDESC_EVMIN_OFF), 1);
+
+        /* Ein Signal bringt den Wert auf 1 -- im Bereich, also wecken. */
+        Q9K_EventSignal(id, 0, &err);
+        check("das Signal weckt den Wartenden", (Q9_u32)g_aprocCalls, 1);
+        check("und zwar genau ihn", g_aprocLast, desc);
+        check("die Schlange ist danach leer",
+              Q9K_GetU32(entry + Q9K_EVENT_OFF_QNEXT), 0);
+        Q9K_EventRead(id, &value, &err);
+        check("der Wert steht nach Signal +1 und Wait -1 wieder bei 0", value, 0);
+    }
+
+    /* Ein Wartender ausserhalb des Bereichs bleibt liegen -- und blockiert
+     * die hinter ihm Stehenden nicht. */
+    reset();
+    setName("warte3");
+    Q9K_EventCreate(NAME, 0, 0, 1, &id, &err);
+    {
+        static unsigned char pa[128], pb[128];
+        Q9_u32 da = (Q9_u32)(unsigned long)pa, db = (Q9_u32)(unsigned long)pb;
+        Q9_u32 next = 0, entry;
+
+        memset(pa, 0, sizeof pa); memset(pb, 0, sizeof pb);
+        Q9K_SetU32(Q9_D_PROC, da);
+        Q9K_EventWaitEnqueue(id, 100, 200, &next);   /* weit weg */
+        Q9K_SetU32(Q9_D_PROC, db);
+        Q9K_EventWaitEnqueue(id, 1, 1, &next);       /* passt gleich */
+
+        Q9K_EventSignal(id, 0, &err);                /* Wert 0 -> 1 */
+        check("der passende Wartende wird geweckt", g_aprocLast, db);
+        check("obwohl ein unpassender vor ihm steht", (Q9_u32)g_aprocCalls, 1);
+        entry = Q9K_EVENT_SLOT((Q9_u32)Q9K_EventFindById(id));
+        check("der unpassende bleibt in der Schlange",
+              Q9K_GetU32(entry + Q9K_EVENT_OFF_QNEXT), da);
+    }
+
+    /* Mit gesetztem oberen Bit werden alle passenden geweckt. */
+    reset();
+    setName("alle");
+    Q9K_EventCreate(NAME, 0, 0, 1, &id, &err);
+    {
+        static unsigned char p1[128], p2[128], p3[128];
+        Q9_u32 next = 0;
+        memset(p1,0,sizeof p1); memset(p2,0,sizeof p2); memset(p3,0,sizeof p3);
+        Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)p1);
+        Q9K_EventWaitEnqueue(id, 1, 1, &next);
+        Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)p2);
+        Q9K_EventWaitEnqueue(id, 1, 1, &next);
+        Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)p3);
+        Q9K_EventWaitEnqueue(id, 1, 1, &next);
+
+        Q9K_EventSignal(id, 1, &err);                /* wakeAll */
+        check("mit gesetztem oberen Bit werden alle geweckt",
+              (Q9_u32)g_aprocCalls, 3);
+    }
 
     Q9K_SetU32(Q9K_EVENT_SCRATCH_FUNC, 12);         /* es gibt nur 0..11 */
     Q9K_SysEventImpl();

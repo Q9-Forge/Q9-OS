@@ -731,6 +731,9 @@ Q9K_EventScratch_Ok        equ $1E3C      * Q9_u32, 0/1
 * nicht). Ueber einen von C gefuellten Zeiger stimmt die Adresse in jedem
 * Fall -- dort erledigt der Uebersetzer die Verschiebung.
 Q9K_EventImplPtr           equ $1E40      * Q9_u32
+Q9K_EventScratch_Wait      equ $1E44      * Q9_u32, 1 = Aufrufer muss warten
+Q9K_EventScratch_Next      equ $1E48      * Q9_u32, naechster Prozess
+Q9K_EventWaitImplPtr       equ $1E4C      * Q9_u32, Einsprung Q9K_SysEventWaitImpl
 
 * Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
 * Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
@@ -4953,10 +4956,48 @@ Q9K_SysFEvent:
         movea.l (sp)+,a6
         tst.w   Q9K_EventScratch_Ok+2
         beq     Q9K_SysFEvent_Fail
+        tst.w   Q9K_EventScratch_Wait+2
+        bne     Q9K_SysFEvent_Wait
         move.l  Q9K_EventScratch_D0,d0
         move.l  Q9K_EventScratch_D1,d1
         andi    #$fe,ccr
         rts
+
+* Ev$Wait: der Wert liegt ausserhalb des gewuenschten Bereichs, der
+* Aufrufer muss warten. Derselbe Weg wie bei F$Sema -- Registersatz auf
+* seinem eigenen Stack sichern, SavedSP aktualisieren, und ERST DANN
+* einreihen: vorher eingereiht traegt der Wartende einen veralteten
+* Stackzeiger, und das Aufwachen landet im Nichts.
+Q9K_SysFEvent_Wait:
+        tst.w   Q9K_InTrapPath
+        beq     Q9K_SysFEvent_NoFrame
+
+        addq.l  #4,sp                      * jsr-Ruecksprungadresse verwerfen
+        movem.l d0-d7/a0-a6,-(sp)
+        andi.w  #$fffe,60(sp)              * Carry im gesicherten SR loeschen
+
+        movea.l Q9_D_Proc,a0
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
+
+        lea     Q9K_CRuntimeData(pc),a6
+        movea.l Q9K_EventWaitImplPtr,a1
+        jsr     (a1)
+
+        move.l  Q9K_EventScratch_Next,d0
+        tst.l   d0
+        beq     Q9K_SysFEvent_Idle
+        movea.l d0,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+Q9K_SysFEvent_Idle:
+        moveq   #K_IDLE,d0
+        bra     Q9K_KernelPanic
+Q9K_SysFEvent_NoFrame:
+        move.w  #$00d0,d1                  * E_UNKSVC -- ohne Rahmen kein Wechsel
+        ori     #1,ccr
+        rts
+
 Q9K_SysFEvent_Fail:
         move.w  Q9K_EventScratch_Error+2,d1
         ori     #1,ccr
