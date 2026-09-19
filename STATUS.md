@@ -1110,8 +1110,8 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x37` | F$GProcP | Basic process-property path exists; full property set remains open |
 | ✅ | `0x38` | F$Move | Memory move path implemented |
 | ❌ | `0x39` | F$AllRAM | Not implemented |
-| ❌ | `0x3A` | F$Permit | SSM-owned; not implemented in Q9-OS |
-| ❌ | `0x3B` | F$Protect | SSM-owned; not implemented in Q9-OS |
+| 🔷 | `0x3A` | F$Permit | Microware SSM owns and supplies this call in the real OS-9 path; Q9-native MMU/address-space protection is not implemented yet |
+| 🔷 | `0x3B` | F$Protect | Microware SSM owns and supplies this call in the real OS-9 path; Q9-native MMU/address-space protection is not implemented yet |
 | ❌ | `0x3F` | F$AllTsk | SSM-owned; not implemented in Q9-OS |
 | ❌ | `0x40` | F$DelTsk | SSM-owned; not implemented in Q9-OS |
 | ✅ | `0x4B` | F$AllPrc | Allocates and clears a process descriptor; without an MMU this is the documented direct F$AllPD case |
