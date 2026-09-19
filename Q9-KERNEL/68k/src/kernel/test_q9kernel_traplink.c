@@ -82,6 +82,12 @@ unsigned long Q9K_ModDirLinkByName(unsigned short desiredTyLang, const char *nam
     return g_modDirHdr;
 }
 
+unsigned long Q9K_ModDirUnlinkByHeader(unsigned long hdrAddr)
+{
+    (void)hdrAddr;
+    return 0;
+}
+
 static int           g_srqmemReturn = 1;
 static unsigned long g_srqmemOutAddr = 0;
 static unsigned long g_srqmemOutSize = 0;
@@ -96,6 +102,12 @@ int Q9K_ProcSRqMem(unsigned long requestedSize, unsigned long *outAddr, unsigned
     *outSize = g_srqmemOutSize;
     *outError = g_srqmemOutError;
     return g_srqmemReturn;
+}
+
+void Q9K_ProcSRtMem(unsigned long addr, unsigned long size)
+{
+    (void)addr;
+    (void)size;
 }
 
 /* NACHTRAG 2026-09-13 (Fortsetzung 58, Q9K_PatchCslFreelistBug): in
