@@ -722,13 +722,25 @@ value, adding each one's wait increment as it goes; with the function word's
 top bit set it wakes all of them instead of just the first. A waiter whose
 range does not match is skipped rather than blocking the ones behind it.
 
-What the emulator proves is the non-blocking path of both wait forms. The
-blocking path needs a second process to do the signalling, and `F$Fork` is not
-yet trustworthy enough to build that test on; it is covered by the host suite
-(63 checks, including out-of-range waiting, wake-by-signal, a non-matching
-waiter not blocking a matching one behind it, and the wake-all switch), and the
-assembler path is line for line the `F$Sema` one that is already proven on the
-machine.
+Both paths are proven on the machine. The blocking one needs a second process
+to do the signalling, so the live test forks one: `evsigtgt` links to the event
+the main program created, waits a moment, and sets its value into the range the
+main program is waiting for. The proof is the order of the markers — the child
+writes `p` and `S`, the woken parent writes `~`, and `~` appears after `S`, so
+the parent really did stand still.
+
+That test found a defect the host suite could not see. A woken process returns
+through `movem`/`rte` and takes `d1` from its saved register set, so the value
+has to be written *into that saved set* before it is made runnable — the
+non-blocking path gets `d1` straight from the bridge and never needed it. Until
+that was added, the caller came back with whatever `d1` happened to hold when it
+went to sleep. The host suite now checks it too (`Q9K_SetFrameReg` at the d1
+slot of the frame `SavedSP` points at, carrying the value before the wait
+increment), but it was the two-process test on real hardware that produced it.
+
+A second, smaller lesson from the same hunt: a diagnostic that writes straight
+to the DUART must wait for TXRDY. Without that wait, consecutive characters are
+dropped, and a missing marker reads exactly like code that never ran.
 
 The function codes come from `MWOS/OS9/SRC/DEFS/event.a` (counted off as
 `do.b 1` from zero), the 32-byte record layout from the same file, and the
@@ -1048,7 +1060,7 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
 | ❌ | `0x4E` | F$FModul | Not implemented |
 | ❌ | `0x52` | F$SysDbg | RomBug **is** present in the boot ROM; what is missing is the entry point for `D_SysDbg` — see the note below |
-| ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified through the non-blocking wait path; the blocking path is host-tested and shares the proven `F$Sema` switch |
+| ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified on both wait paths, the blocking one with a forked second process doing the signalling |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
 | 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work — A$Set now emulator-verified by an alarm that actually comes due and delivers its signal; only A$Reset is unimplemented, its purpose being undocumented |

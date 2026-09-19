@@ -166,6 +166,15 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
 echo "== Fertig: $OUTDIR/chaintgt =="
 file chaintgt || true
 
+echo "== evsigtgt.a bauen (Zielmodul fuer den blockierenden Ev\$Wait-Test, s. dortigen Kopfkommentar) =="
+cp "$SRCDIR"/evsigtgt.a .
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+    -o=evsigtgt.r "evsigtgt.a" < /dev/null
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+    -o=evsigtgt -f=orowoe evsigtgt.r < /dev/null
+echo "== Fertig: $OUTDIR/evsigtgt =="
+file evsigtgt || true
+
 echo "== iattachsvc.a bauen (I\$Attach/I\$Detach-Regressionstest) =="
 cp "$SRCDIR"/iattachsvc.a .
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \

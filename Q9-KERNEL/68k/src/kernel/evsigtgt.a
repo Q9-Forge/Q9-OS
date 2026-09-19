@@ -1,0 +1,121 @@
+*******************************************************************************
+* evsigtgt.a -- Zielmodul fuer den blockierenden Zweig von Ev$Wait.
+*
+* Warum es dieses Modul gibt: der interessante Teil von Ev$Wait ist der,
+* bei dem der Aufrufer wirklich stehenbleibt und spaeter von jemand
+* anderem geweckt wird. Das laesst sich mit EINEM Prozess grundsaetzlich
+* nicht zeigen -- wer wartet, kann sich nicht selbst signalisieren.
+* iattachsvc forkt deshalb dieses Modul und legt sich dann schlafen:
+*
+*   Eltern:  Ereignis anlegen (Wert 0), F$Fork, Ev$Wait auf [5,10]
+*            -> der Wert liegt ausserhalb, der Prozess wird eingereiht
+*            und der Scheduler nimmt den naechsten.
+*   Kind:    Ev$Link auf denselben Namen, Ev$Set auf 7
+*            -> jetzt liegt der Wert im Bereich, der Wartende wird
+*            geweckt, bekommt sein Wait-Inkrement und laeuft weiter.
+*
+* Dass der Elternprozess hinter seinem Ev$Wait ueberhaupt wieder
+* auftaucht, ist der ganze Beweis: der Registersatz wurde gesichert, der
+* Stackzeiger stimmte beim Aufwecken noch, und der Rueckweg ueber rte
+* traf das richtige Programm.
+*
+* Aufbau wie forkchild.a/chaintgt.a -- eigenstaendig assembliert, eigene
+* DUART-Ausgabe, kein Link gegen den Kernel.  Zu psect und vsect s. den
+* ausfuehrlichen Kopfkommentar in forkchild.a.
+*
+* Marker: 'p' = das Kind lebt und troedelt gleich.  'S' = signalisiert.  's' = das Ereignis war nicht auffindbar
+* oder das Setzen schlug fehl (dann bleibt der Elternteil stehen und der
+* Lauf laeuft in den Timeout -- 's' sagt, woran es lag).
+*******************************************************************************
+
+Q9Prgrm                 equ     1
+Q9Objct                 equ     1
+Q9K_EvSigEdition        equ     1
+Q9K_EvSigStackSize      equ     $800
+
+Q9_IO_DUART_SRA  equ    $FFFFF002
+Q9_IO_DUART_THRA equ    $FFFFF006
+
+Q9K_EvSigDelay   equ    $4000                   * wie Q9K_ForkChildDelay
+
+        psect   evsigtgt,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_EvSigEdition,Q9K_EvSigStackSize,Q9K_EvSigStart
+
+        vsect
+Q9K_EvSigData:
+        ds.l    1
+        ends
+
+Q9K_EvSigStart:
+* Ev$Link ($00) -- das Ereignis gehoert dem Elternprozess, dieses Modul
+* haengt sich nur daran.  d0.l kommt mit der ID zurueck.
+        moveq   #0,d1                           * Ev$Link
+        lea     Q9K_EvSigName(pc),a0
+        trap    #0
+        dc.w    $0053                           * F$Event
+        bcs     Q9K_EvSigFailed
+        move.l  d0,d4                           * ID merken
+
+* Erst ein Lebenszeichen, dann eine Weile trödeln.  Das ist kein
+* Schoenheitsfehler, sondern der Kern des Beweises: 'p' erscheint
+* SICHER, bevor der Elternteil geweckt werden kann.  Steht im Log
+* hinterher 'S' vor dem Aufwachmarker des Elternteils, dann hat dieser
+* wirklich gewartet und ist nicht einfach durchgelaufen.
+        moveq   #'p',d7
+        bsr     Q9K_EvSigWriteD7
+        move.l  #Q9K_EvSigDelay,d6
+Q9K_EvSigSpin:
+        subq.l  #1,d6
+        bne     Q9K_EvSigSpin
+
+* Ev$Set ($0A) -- Wert absolut auf 7 setzen.  NICHT $09: das ist Ev$Pulse,
+* das den alten Wert sofort wiederherstellt und deshalb niemanden weckt.  Das liegt im Bereich, auf
+* den der Elternteil wartet, also weckt dieser Aufruf ihn.
+        moveq   #10,d1                          * Ev$Set
+        move.l  d4,d0
+        moveq   #7,d2                           * neuer Wert
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_EvSigFailed
+
+* Den eigenen Link wieder zurueckgeben -- sonst kann der Elternteil das
+* Ereignis hinterher nicht loeschen (Ev$Delet verlangt Zaehler 0), und
+* genau daran ist dieser Test beim ersten Lauf gescheitert.  Der
+* Elternteil ist zwar seit dem Ev$Set lauffaehig, kommt aber erst dran,
+* wenn dieser Prozess abgibt -- die Reihenfolge hier ist also sicher.
+        moveq   #1,d1                           * Ev$UnLnk
+        move.l  d4,d0
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_EvSigFailed
+
+        moveq   #'S',d7
+        bsr     Q9K_EvSigWriteD7
+        bra     Q9K_EvSigExit
+
+Q9K_EvSigFailed:
+        moveq   #'s',d7
+        bsr     Q9K_EvSigWriteD7
+
+Q9K_EvSigExit:
+        moveq   #0,d1                           * Exit-Status 0
+        trap    #0
+        dc.w    6                               * F$Exit
+
+Q9K_EvSigWriteD7:
+        movem.l a0/d6,-(sp)
+        movea.l #Q9_IO_DUART_SRA,a0
+Q9K_EvSigDiagWait:
+        move.b  (a0),d6
+        btst    #2,d6
+        beq     Q9K_EvSigDiagWait
+        move.b  d7,Q9_IO_DUART_THRA
+        movem.l (sp)+,a0/d6
+        rts
+
+* Derselbe Name, den iattachsvc anlegt -- Ev$Link findet das Ereignis
+* ueber genau diese Zeichenkette.
+Q9K_EvSigName:
+        dc.b    "q9wait",0
+        dc.b    0                               * auf gerade Laenge auffuellen
+
+        endsect
