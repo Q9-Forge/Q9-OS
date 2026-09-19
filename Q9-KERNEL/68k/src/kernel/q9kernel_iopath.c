@@ -101,6 +101,7 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PATHDESC_NUM_OFF  0x00UL
 #define Q9K_PATHDESC_MODE_OFF 0x02UL
 #define Q9K_PATHDESC_REF_OFF  0x04UL       /* Q9-native open-reference count */
+#define Q9K_PATHDESC_POS_OFF  0x08UL       /* Q9-native logical file position */
 
 /* The current process owns the P$Path table.  Keep the offsets here in one
  * place so native I/O uses the same process layout as IOMan. */
@@ -485,6 +486,7 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
 
     Q9K_WriteU16BE(slot + Q9K_PATHDESC_NUM_OFF, (Q9_u16)descriptorNum);
     Q9K_WriteU16BE(slot + Q9K_PATHDESC_REF_OFF, 1);
+    Q9K_WriteU32BE_At(slot + Q9K_PATHDESC_POS_OFF, 0);
 
     /* Publish the descriptor number in the process table.  IOMan and the
      * native I/O handlers use this table as the authoritative path lookup. */
