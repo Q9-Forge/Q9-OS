@@ -105,6 +105,11 @@ extern void   Q9K_SysFIChgDir(void); /* q9kernel_entry.a, I$ChgDir (Callcode 0x8
 extern void   Q9K_SysFAllPD(void);   /* q9kernel_entry.a, F$AllPD (Callcode 0x30) */
 extern void   Q9K_SysFIRQ(void);     /* q9kernel_entry.a, F$IRQ  (Callcode 0x2a) */
 extern void   Q9K_SysFChkMem(void);  /* q9kernel_entry.a, F$ChkMem (Callcode 0x58) */
+extern void   Q9K_SysFPermit(void);  /* q9kernel_entry.a, F$Permit (Callcode 0x3a) */
+extern void   Q9K_SysFProtect(void); /* q9kernel_entry.a, F$Protect (Callcode 0x3b) */
+extern void   Q9K_SysFAllTsk(void);  /* q9kernel_entry.a, F$AllTsk (Callcode 0x3f) */
+extern void   Q9K_SysFDelTsk(void);  /* q9kernel_entry.a, F$DelTsk (Callcode 0x40) */
+extern void   Q9K_SysFGSPUMp(void);  /* q9kernel_entry.a, F$GSPUMp (Callcode 0x5b) */
 extern void   Q9K_SysFSend(void);    /* q9kernel_entry.a, F$Send   (Callcode 0x08) */
 extern void   Q9K_SysFPrsNam(void);  /* q9kernel_entry.a, F$PrsNam (Callcode 0x10) */   /* q9kernel_entry.a, TRAP-#0-Handler fuer I$Open (Callcode 0x84) */
 extern void   Q9K_SysFID(void);      /* q9kernel_entry.a, TRAP-#0-Handler fuer F$ID (Callcode 0x0c) */
@@ -556,6 +561,10 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
+                    Q9K_PutU32(usrdisBase + 0x3aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPermit);
+                    Q9K_PutU32(usrdisBase + 0x3bUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFProtect);
+                    Q9K_PutU32(usrdisBase + 0x40UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFDelTsk);
+                    Q9K_PutU32(usrdisBase + 0x5bUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGSPUMp);
                     Q9K_PutU32(usrdisBase + 0x08UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSend);
 
                     Q9K_PutU32(sysdisBase + 0x00UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFLink);
@@ -628,6 +637,11 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(sysdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(sysdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
+                    Q9K_PutU32(sysdisBase + 0x3aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPermit);
+                    Q9K_PutU32(sysdisBase + 0x3bUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFProtect);
+                    Q9K_PutU32(sysdisBase + 0x3fUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFAllTsk);
+                    Q9K_PutU32(sysdisBase + 0x40UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFDelTsk);
+                    Q9K_PutU32(sysdisBase + 0x5bUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFGSPUMp);
                     Q9K_PutU32(sysdisBase + 0x08UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSend);
 
                     /* ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per
