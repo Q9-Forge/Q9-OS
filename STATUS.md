@@ -1060,7 +1060,7 @@ globals. All sixteen suites build and pass again.
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
 | ✅ | `0x00` | F$Link | Kernel module lookup/link path implemented and exercised |
-| 🟡 | `0x01` | F$Load | External path is entered, but current `echo` and `date` file loads do not return; `csl` is resident |
+| ✅ | `0x01` | F$Load | Microware IOMan mass-storage path loads and validates external modules; emulator-verified with `/dd/CMDS/echo` (including the F$VModul return-buffer ABI) |
 | ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
 | ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
