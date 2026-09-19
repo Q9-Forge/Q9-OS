@@ -704,6 +704,15 @@ Q9K_IcptScratch_Ok         equ $1BD0      * Q9_u32, 0/1
 Q9K_IcptScratch_Error      equ $1BD4      * Q9_u32, d1.w AUS bei Fehler
 Q9K_IcptScratch_Depth      equ $1BD8      * Q9_u32, verbliebene Verschachtelungstiefe
 
+* F$STrap (2026-09-19, s. q9kernel_strap.c).
+Q9K_StrapScratch_Stack     equ $1BE4      * Q9_u32, (a0) EIN
+Q9K_StrapScratch_Table     equ $1BE8      * Q9_u32, (a1) EIN
+Q9K_StrapScratch_Error     equ $1BEC      * Q9_u32, d1.w AUS bei Fehler
+Q9K_StrapScratch_Ok        equ $1BF0      * Q9_u32, 0/1
+Q9K_StrapScratch_Count     equ $1BF4      * Q9_u32, eingetragene Behandler
+Q9K_StrapScratch_Vec       equ $1BF8      * Q9_u32, Vektornummer EIN
+Q9K_StrapScratch_Jump      equ $1BFC      * Q9_u32, Sprungziel AUS (0 = keins)
+
 * Eigener Tickzaehler (2026-09-18). Die Emulator-Diagnose
 * "Timer-Interrupts: N gesamt" zaehlt ueber eine HART KODIERTE
 * PC-Adresse ($75a2, s. Q9-Flux/src/kernel/m68krt.c) und ist damit nur
@@ -1563,6 +1572,35 @@ Q9K_ExcTrapStackCopy:
         move.l  (a0)+,(a1)+
         dbra    d0,Q9K_ExcTrapStackCopy
         addq.l  #4,sp
+* NACHTRAG 2026-09-19 (F$STrap): bevor der Kernel anhaelt, bekommt der
+* laufende Prozess die Gelegenheit, die Ausnahme selbst zu behandeln.
+* Hat er per F$STrap einen Behandler fuer genau diese Ausnahme
+* eingetragen, wird der PC IM AUSNAHMERAHMEN durch dessen Adresse
+* ersetzt -- das "rte" unten springt dann dorthin, mit unveraendertem
+* Registersatz. Hat er keinen, bleibt es beim bisherigen Verhalten.
+*
+* Die Vektornummer steht im Format-/Vektorwort des Rahmens:
+* (Wort & $0FFF) / 4.
+        movem.l d0-d1/a0-a1,-(sp)
+        moveq   #0,d0
+        move.w  Q9K_ExcInfo_Fmt,d0
+        andi.l  #$0fff,d0
+        lsr.l   #2,d0
+        move.l  d0,Q9K_StrapScratch_Vec
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+* jsr statt bsr: der Abstand von hier zur C-Funktion sprengt den
+* 16-Bit-PC-Bezug ("value ... too large for a pc relative (word) operand",
+* real am Linker aufgelaufen).
+        jsr     Q9K_SysExcDispatchImpl
+        movea.l (sp)+,a6
+        movem.l (sp)+,d0-d1/a0-a1          * Registersatz des Verursachers unangetastet
+        tst.l   Q9K_StrapScratch_Jump
+        beq     Q9K_ExcTrapNoHandler
+        move.l  Q9K_StrapScratch_Jump,2(sp)  * PC im Rahmen umbiegen
+        rte                                  * -> in den Behandler des Prozesses
+
+Q9K_ExcTrapNoHandler:
         moveq   #'E',d7
         bsr     Q9K_DiagWriteD7
 Q9K_ExcTrapSpin:
@@ -4817,6 +4855,32 @@ Q9K_SysFRTE_NoFrame:
 * Derselbe Fall wie bei F$Chain, und dieselbe Behandlung.
         moveq   #K_IDLE,d0
         bra     Q9K_KernelPanic
+
+*******************************************************************************
+* Q9K_SysFSTrap -- F$STrap (Callcode $0E). Reale ABI, 68k_tech.pdf S.513:
+* EIN (a0) = Stack fuer den Ausnahmefall (0 = der laufende), (a1) =
+* Zeiger auf die Initialisierungstabelle. AUS: keine; bei Fehler Carry
+* und d1.w.
+*
+* Traegt prozesseigene Behandler fuer Programmfehler-Ausnahmen in
+* P$Except ein. Ausgeloest werden sie in Q9K_ExcTrap oben -- s. dort und
+* den Kopfkommentar von q9kernel_strap.c.
+*******************************************************************************
+Q9K_SysFSTrap:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  a0,Q9K_StrapScratch_Stack
+        move.l  a1,Q9K_StrapScratch_Table
+        bsr     Q9K_SysSTrapImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_StrapScratch_Ok+2
+        beq     Q9K_SysFSTrap_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFSTrap_Fail:
+        move.w  Q9K_StrapScratch_Error+2,d1
+        ori     #1,ccr
+        rts
 
 *******************************************************************************
 * Q9K_SysFSigReset -- F$SigReset (Callcode $63). Reale ABI, 68k_tech.pdf
