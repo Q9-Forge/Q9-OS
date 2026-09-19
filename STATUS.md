@@ -1110,10 +1110,10 @@ globals. All sixteen suites build and pass again.
 | 🟡 | `0x37` | F$GProcP | Basic process-property path exists; full property set remains open |
 | ✅ | `0x38` | F$Move | Memory move path implemented |
 | ❌ | `0x39` | F$AllRAM | Not implemented |
-| 🔷 | `0x3A` | F$Permit | Microware SSM owns and supplies this call in the real OS-9 path; Q9-native MMU/address-space protection is not implemented yet |
-| 🔷 | `0x3B` | F$Protect | Microware SSM owns and supplies this call in the real OS-9 path; Q9-native MMU/address-space protection is not implemented yet |
-| ❌ | `0x3F` | F$AllTsk | SSM-owned; not implemented in Q9-OS |
-| ❌ | `0x40` | F$DelTsk | SSM-owned; not implemented in Q9-OS |
+| 🟡 | `0x3A` | F$Permit | Q9 flat-address-space compatibility handler is wired and succeeds; per-process MMU permission maps remain open |
+| 🟡 | `0x3B` | F$Protect | Q9 flat-address-space compatibility handler is wired and succeeds; denying access requires the future MMU layer |
+| 🟡 | `0x3F` | F$AllTsk | Q9 flat-address-space compatibility handler is wired for supervisor calls; hardware task-image setup remains open |
+| 🟡 | `0x40` | F$DelTsk | Q9 flat-address-space compatibility handler is wired for user and supervisor calls; task-image release remains open |
 | ✅ | `0x4B` | F$AllPrc | Allocates and clears a process descriptor; without an MMU this is the documented direct F$AllPD case |
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
 | ❌ | `0x4E` | F$FModul | Not implemented |
@@ -1123,10 +1123,10 @@ globals. All sixteen suites build and pass again.
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
 | 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul and A$AtDate all work — A$Set now emulator-verified by an alarm that actually comes due and delivers its signal; only A$Reset is unimplemented, its purpose being undocumented |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
-| 🟡 | `0x58` | F$ChkMem | Basic memory-check path exists; full protection semantics remain open |
+| 🟡 | `0x58` | F$ChkMem | Flat-address-space check handler is implemented and succeeds; range/permission validation remains open |
 | ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |
 | 🟡 | `0x5A` | F$CCtl | Handler/dispatch path exists; cache-control implementation remains open |
-| ❌ | `0x5B` | F$GSPUMp | Not implemented |
+| 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired; processor/task-map reporting remains hardware-specific and open |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
 | ❌ | `0x5D` | F$POSK | Not implemented |
 | 🟡 | `0x5E` | F$Panic | Default panic path is implemented: emits the panic code and halts; optional OS9P2-installed service hook remains open |

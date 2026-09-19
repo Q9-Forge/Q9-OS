@@ -3176,6 +3176,25 @@ Q9K_SysFChkMem:
         andi    #$fe,ccr                         * Carry loeschen -- Bereich gilt als zulaessig
         rts
 
+* Q9K_SysFPermit / Q9K_SysFProtect / Q9K_SysFAllTsk / Q9K_SysFDelTsk /
+* Q9K_SysFGSPUMp -- SSM entry points for the flat Q9 address-space model.
+*
+* The real Microware SSM updates per-process MMU/task images.  Q9 currently
+* has one physical address space and no MMU tables, so every address is
+* already accessible and there is no task image to allocate, release, or
+* query.  These are therefore deliberately real successful entry points,
+* rather than the old E$UnkSvc stub: they preserve all registers and clear
+* Carry, which is the correct observable result for the flat model.  Once
+* address spaces are introduced, this single compatibility path is the
+* narrow place where the MMU-backed bookkeeping must be replaced.
+Q9K_SysFPermit:
+Q9K_SysFProtect:
+Q9K_SysFAllTsk:
+Q9K_SysFDelTsk:
+Q9K_SysFGSPUMp:
+        andi    #$fe,ccr
+        rts
+
 * Q9K_SysFSend -- F$Send (Callcode $08, "Send Signal"), 2026-09-04.
 *
 * Real per Live-Analyse gefunden: die ISR von sc68681 ruft ihn ueber den
