@@ -125,8 +125,8 @@ caller's own PID, `F$SPrior` on that PID succeeds, and `F$SPrior` on an
 invalid PID is rejected. A separate boot with the regression switch disabled
 reported `Vektor=0`, so the normal boot path is unaffected. Two deliberate
 limitations remain: the priority is truncated to the descriptor's single
-priority byte, and the scheduler applies a changed priority only on the next
-ready-queue entry, so raising a running process' priority does not preempt
+priority byte, and a running process is not preempted in the middle of its
+current timeslice; waiting processes in the ready queue are reprioritized
 immediately.
 
 `F$CmpNam` (call code `0x11`) completes the pair that RBF uses to walk a

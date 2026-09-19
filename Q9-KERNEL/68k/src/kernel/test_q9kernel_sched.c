@@ -344,6 +344,18 @@ int main(void)
                  Q9K_SchedPickHighestAge(), lo);
 
         Q9K_SetU16(Q9K_SCHED_MINPTY_ADDR, 0);
+
+        /* F$SPrior/Scheduler integration: a process already waiting in the
+         * ready queue receives the new age immediately. */
+        Q9K_SetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF, Q9K_READYQ_SENTINEL_ADDR);
+        Q9K_SetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_PREV_OFF, Q9K_READYQ_SENTINEL_ADDR);
+        Q9K_SetU8(lo + Q9K_PROCDESC_PRIORITY_OFF, 2);
+        Q9K_SchedInsert(lo);
+        Q9K_SchedSetPriority(lo, 12);
+        checkU16("wartender Prozess bekommt neues Age sofort",
+                 Q9K_GetU16(lo + Q9K_PROCDESC_AGE_OFF), 12);
+        checkU32("repriorisierter Prozess bleibt waehlbar",
+                 Q9K_SchedPickHighestAge(), lo);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
