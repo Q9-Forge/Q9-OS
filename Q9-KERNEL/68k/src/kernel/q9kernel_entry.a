@@ -3931,6 +3931,14 @@ Q9K_SysFSleep_SwitchTo:
 * Namen, d0.b = Trennzeichen, d1.w = Namenslaenge; Carry + d1.w = E_BPNAM
 * bei Fehler. Details s. Q9K_ProcPrsNam in q9kernel_iopath.c.
 Q9K_SysFPrsNam:
+* Externe File-Manager-Aufrufe liefern den Eingabepfad im echten
+* Registerrahmen (R$a0 bei +$20). Bei einem direkten TRAP #0-Aufruf ist
+* a5 dagegen nur das normale Aufruferregister und darf nicht dereferenziert
+* werden; dort bleibt der ABI-Eingang im CPU-Register a0.
+        tst.w   Q9K_InTrapPath
+        bne     Q9K_SysFPrsNam_InputReady
+        movea.l $20(a5),a0
+Q9K_SysFPrsNam_InputReady:
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
         move.l  a0,Q9K_PrsNamScratch_Path
