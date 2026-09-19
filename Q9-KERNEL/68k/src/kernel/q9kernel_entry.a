@@ -1553,23 +1553,38 @@ Q9K_ExcTrap:
 *
 * Der Ausnahmerahmen liegt nach dem movem 16 Byte tiefer: SR bei 16(sp),
 * PC bei 18(sp), Format-/Vektorwort bei 22(sp).
+* Der Nachschlag laeuft BEWUSST in reinem Assembler, ohne C-Aufruf. Der
+* Kopfkommentar oben nennt den Grund, und ein erster Entwurf ist genau
+* darin gelaufen: der Compiler stellt jeder C-Funktion einen
+* Stack-Check-Prolog voran, und aus dem Ausnahmekontext heraus kehrte der
+* Aufruf nicht zurueck (gemessen: Marker vor dem Aufruf erscheint, der
+* dahinter nicht). Die Logik ist ohnehin kurz genug.
+*
+* Der Ausnahmerahmen liegt nach dem movem 16 Byte tiefer: SR bei 16(sp),
+* PC bei 18(sp), Format-/Vektorwort bei 22(sp).
         movem.l d0-d1/a0-a1,-(sp)
         moveq   #0,d0
         move.w  22(sp),d0
         andi.l  #$0fff,d0
-        lsr.l   #2,d0                      * Vektornummer
-        move.l  d0,Q9K_StrapScratch_Vec
-        move.l  a6,-(sp)
-        lea     Q9K_CRuntimeData(pc),a6
-* jsr statt bsr: der Abstand zur C-Funktion sprengt den 16-Bit-PC-Bezug.
-        jsr     Q9K_SysExcDispatchImpl
-        movea.l (sp)+,a6
-        tst.l   Q9K_StrapScratch_Jump
-        beq     Q9K_ExcTrapNoUserHandler
-        move.l  Q9K_StrapScratch_Jump,d0
-        movem.l (sp)+,d0-d1/a0-a1          * Register des Verursachers zurueck
-        move.l  Q9K_StrapScratch_Jump,2(sp) * PC im Rahmen auf den Behandler
+        lsr.l   #2,d0                      * d0 = Vektornummer
+        subi.l  #2,d0                      * Platz = Vektor - 2 (Bus Error = 0)
+        cmpi.l  #9,d0                      * nur 0..9 sind abfangbar
+        bhi     Q9K_ExcTrapNoUserHandler    * unsigned: faengt auch "kleiner 2" mit ab
+        movea.l Q9_D_Proc,a0
+        move.l  a0,d1
+        beq     Q9K_ExcTrapNoUserHandler    * kein laufender Prozess
+        lsl.l   #2,d0                      * Langwort-Index
+        adda.l  d0,a0
+        move.l  $3C(a0),d0                 * P$Except[Platz], s. q9kernel_strap.c
+        beq     Q9K_ExcTrapNoUserHandler    * kein eigener Behandler eingetragen
+
+* Eigener Behandler: den PC im Ausnahmerahmen darauf umbiegen; das "rte"
+* springt dann dorthin, mit unveraendertem Registersatz des Verursachers.
+        move.l  d0,Q9K_StrapScratch_Jump   * fuer Diagnosezwecke festhalten
+        movem.l (sp)+,d0-d1/a0-a1
+        move.l  Q9K_StrapScratch_Jump,2(sp)
         rte
+
 Q9K_ExcTrapNoUserHandler:
         movem.l (sp)+,d0-d1/a0-a1
 

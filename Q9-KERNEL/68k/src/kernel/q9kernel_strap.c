@@ -201,9 +201,21 @@ void Q9K_SysSTrapImpl(void)
     Q9K_SetU32(Q9K_STRAP_SCRATCH_OK, 1UL);
 }
 
-/* Q9K_SysExcDispatchImpl -- von Q9K_ExcTrap gerufen, BEVOR der Kernel
- * seine Diagnose ausgibt und anhaelt. Legt in Q9K_STRAP_SCRATCH_JUMP die
- * Adresse ab, auf die der Ausnahmerahmen umgebogen werden soll, oder 0. */
+/* Q9K_SysExcDispatchImpl -- dieselbe Auswahl, die Q9K_ExcTrap trifft,
+ * als C-Funktion.
+ *
+ * DER KERNEL RUFT SIE NICHT: Q9K_ExcTrap schlaegt den Behandler in
+ * Assembler nach (wenige Zeilen, s. dort). Ein erster Entwurf rief von
+ * dort diese Funktion -- und der Aufruf kehrte nicht zurueck. Der Grund
+ * steht im Kopfkommentar von Q9K_ExcTrap: der Compiler stellt jeder
+ * C-Funktion einen Stack-Check-Prolog voran, und aus dem Ausnahmekontext
+ * heraus traegt der nicht. Genau deshalb ist jener Handler ueberhaupt
+ * reiner Assembler.
+ *
+ * Sie bleibt trotzdem stehen, weil der Hosttest die Auswahllogik damit
+ * pruefen kann, ohne Assembler auszufuehren -- und weil beide Seiten
+ * dieselbe Zuordnung benutzen muessen, ist sie hier die lesbare
+ * Fassung der Regel. */
 void Q9K_SysExcDispatchImpl(void)
 {
     Q9K_SetU32(Q9K_STRAP_SCRATCH_JUMP,

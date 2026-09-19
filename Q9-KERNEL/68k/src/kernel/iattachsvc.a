@@ -77,7 +77,7 @@
 *   ) = F$RTE returned into the main program behind the F$Sleep
 *   > = the software clock advanced across the sleep (< = it stood still)
 *   T = F$STrap registered an exception handler
-*       (the handler itself is present but not yet triggered -- see STATUS.md)
+*   i = that handler really ran on a deliberate Illegal Instruction
 *   + = F$SigReset accepted a call with no open intercept
 *       (the actual signal -> routine -> F$RTE round trip cannot be shown
 *        here while the timer does not tick -- see STATUS.md)
@@ -917,13 +917,12 @@ Q9K_ClockChecked:
         moveq   #'T',d7                        * Behandler eingetragen
         move.b  d7,$FFFFF006
 
-* HIER FEHLT DER AUSLOESETEST, und zwar mit Absicht: eine absichtliche
-* "Illegal Instruction" (dc.w $4afc) erreicht Q9K_ExcTrap in diesem
-* Aufbau nicht -- gemessen, s. STATUS.md.  Solange sie stattdessen den
-* Kernel anhaelt, hat sie in einem Regressionstest nichts verloren; er
-* wuerde bei jedem Lauf stehenbleiben.  Eingetragen ist der Behandler
-* nachweislich (Marker oben, kein Carry).
-        bra     Q9K_IllHandlerDone             * am Behandler vorbei
+* Und jetzt der Ernstfall: eine absichtliche "Illegal Instruction".  Ohne
+* eingetragenen Behandler haelt der Kernel hier mit seiner Diagnose an;
+* mit einem springt er in den Behandler dieses Prozesses, der 'i' ausgibt
+* und den Test fortsetzt.
+        dc.w    $4afc                          * ILLEGAL -> Vektor 4
+        bra     Q9K_NativeFailed               * kaeme der Verursacher weiter, waere es falsch
 
 Q9K_IllHandler:
         moveq   #'i',d7                        * greift, sobald die Ausloesung ankommt
