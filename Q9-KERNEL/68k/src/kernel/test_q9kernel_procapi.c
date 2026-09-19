@@ -73,6 +73,10 @@ void Q9K_SchedInsert(unsigned long desc)
     g_schedInsertCalls++;
     g_schedInsertLast = desc;
 }
+void Q9K_SchedSetPriority(unsigned long desc, unsigned short priority)
+{
+    *(unsigned char *)(desc + 0x19UL) = (unsigned char)(priority & 0xFFU);
+}
 
 #include "q9kernel_procapi.c"
 
