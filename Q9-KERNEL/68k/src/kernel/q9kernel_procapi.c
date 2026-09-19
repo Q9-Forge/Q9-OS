@@ -38,6 +38,7 @@
 /* Aus q9kernel_sched.c -- externe Deklaration statt gemeinsamem Header,
  * gleiche schlanke Konvention wie ueberall in diesem Verzeichnis. */
 extern void Q9K_SchedInsert(unsigned long desc);
+extern void Q9K_SchedSetPriority(unsigned long desc, unsigned short priority);
 
 typedef unsigned long  Q9_u32;
 typedef unsigned short Q9_u16;
@@ -301,12 +302,10 @@ void Q9K_SysIDImpl(void)
  * real wortbreite Prioritaet wird deshalb auf 0..255 abgeschnitten,
  * dieselbe bewusste Vereinfachung wie bei Q9K_ProcFork/Q9K_ProcCreate.
  *
- * BEKANNTE EINSCHRAENKUNG: nur das Prioritaetsfeld wird geaendert. Der
- * Scheduler (q9kernel_sched.c, Q9K_SchedInsert) setzt Age=Prioritaet nur
- * BEIM Einhaengen in die Ready-Queue -- ein bereits eingehaengter Prozess
- * wirkt sich also erst beim naechsten Ready-Queue-Eintritt (z.B. nach
- * Schlaf/Block) mit der neuen Prioritaet aus, nicht sofort. Reale
- * Sofortwirkung (Preemption bei Prioritaetserhoehung) bleibt TODO.
+ * Ein wartender Prozess in der Ready-Queue bekommt sein Age sofort auf die
+ * neue Prioritaet gesetzt. Der laufende Prozess bleibt bis zum Ende seiner
+ * aktuellen Zeitscheibe aktiv; eine Repositionierung mitten im Syscall waere
+ * ein unsicherer Kontextwechsel.
  *
  * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt).
  */
@@ -321,7 +320,7 @@ int Q9K_ProcSPrior(Q9_u16 pid, Q9_u16 priority, Q9_u16 *outError)
         return 0;
     }
 
-    Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, (Q9_u8)(priority & 0xFFU));
+    Q9K_SchedSetPriority(desc, priority);
     return 1;
 }
 

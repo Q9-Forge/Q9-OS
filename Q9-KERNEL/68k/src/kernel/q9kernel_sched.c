@@ -246,6 +246,28 @@ void Q9K_SchedInsert(Q9_u32 desc)
     Q9K_ListAppend(Q9K_READYQ_SENTINEL_ADDR, desc);
 }
 
+/* Q9K_SchedSetPriority -- applies a changed priority to a descriptor and,
+ * when that descriptor is already waiting in the ready queue, refreshes its
+ * age immediately.  The running process is not in that queue and therefore
+ * keeps its current timeslice; it will receive the new priority when the
+ * scheduler requeues it.  This matches the useful part of F$SPrior without
+ * introducing an unsafe mid-instruction preemption from the syscall path. */
+void Q9K_SchedSetPriority(Q9_u32 desc, Q9_u16 priority)
+{
+    Q9_u32 node;
+    Q9_u8 stored = (Q9_u8)(priority & 0xFFU);
+
+    Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, stored);
+    node = Q9K_GetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF);
+    while (node != Q9K_READYQ_SENTINEL_ADDR) {
+        if (node == desc) {
+            Q9K_SetU16(desc + Q9K_PROCDESC_AGE_OFF, (Q9_u16)stored);
+            break;
+        }
+        node = Q9K_GetU32(node + Q9K_READYQ_NEXT_OFF);
+    }
+}
+
 /* Q9K_SchedWake -- einen schlafenden Prozess vorzeitig aktivieren
  * (2026-09-04, fuer F$Send).
  *
