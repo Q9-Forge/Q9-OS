@@ -1142,32 +1142,36 @@ The I$ dispatch is built into the 68k kernel: `q9kernel_cinit.c` installs the
 native handlers in both `D_UsrDis` and `D_SysDis`, and `q9kernel_entry.a`
 contains the corresponding callcode trampolines.  The external Microware
 IOMan is also connected and reaches these system-dispatch entries; this is
-verified end-to-end for `I$Attach`/`I$Detach` through RBF/CF and for the
-current IOMan boot path.  “Native” below means Q9's own minimal console/path
-implementation, whereas the Microware route still supplies the real device
-and filesystem semantics.  The two routes must not be reported as one fully
-complete filesystem implementation: the current external `F$Load` trace
-still stalls in RBF directory/position advancement.
+verified end-to-end for the I/O path through RBF/CF and for the current IOMan
+boot path.  The live module-address classification assigns every I$ entry
+point below to Microware IOMan; the native userland regression additionally
+passes real create/open/read/write/mkdir/delete/close round-trips on FAT16.
+“Native” below means Q9's own minimal console/path implementation, whereas
+the Microware route supplies the real device and filesystem semantics.  A
+diamond therefore marks the working Microware route even when the independent
+Q9-native replacement is still incomplete.  The current external `F$Load`
+trace still stalls in RBF directory/position advancement, which is tracked
+separately from I$ dispatch ownership.
 
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
 | 🔷 | `0x80` | I$Attach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; Q9-native device semantics remain open |
 | 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; broader lifetime semantics remain open |
-| 🟡 | `0x82` | I$Dup | Native path-table duplication, descriptor validation, and reference counting are implemented and verified in the emulator; full file-manager semantics remain open |
-| ❌ | `0x83` | I$Create | No Q9-OS implementation; only the Microware path exists |
-| 🟡 | `0x84` | I$Open | Minimal Q9-native console path is implemented; process-local `P$Path` publication and process-exit cleanup are covered, while full pathname/device semantics remain open |
-| ❌ | `0x85` | I$MakDir | No Q9-OS implementation; only the Microware path exists |
-| 🟡 | `0x86` | I$ChgDir | Native data/execution directory storage is implemented and emulator-tested; device and file-manager resolution remain open |
-| ❌ | `0x87` | I$Delete | No Q9-OS implementation; only the Microware path exists |
-| 🟡 | `0x88` | I$Seek | Native paths now retain the requested absolute position in their descriptor; backing-file repositioning remains open |
-| 🟡 | `0x89` | I$Read | Minimal Q9-native blocking console input with path and read-mode validation is implemented; full device semantics remain open |
-| 🟡 | `0x8A` | I$Write | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
-| 🟡 | `0x8B` | I$ReadLn | Minimal Q9-native blocking line input with path and read-mode validation is implemented; editing and device semantics remain open |
-| 🟡 | `0x8C` | I$WritLn | Minimal Q9-native console output with path and write-mode validation is implemented and emulator-tested; full device semantics remain open |
-| 🟡 | `0x8D` | I$GetStt | Native `SS_Opt` and console `SS_Ready` support validate the current process path; file/device status codes remain open |
-| 🟡 | `0x8E` | I$SetStt | Native `SS_Opt` support now validates the current process path; other status codes remain open |
-| 🟡 | `0x8F` | I$Close | Native path-table removal, descriptor validation, reference counting, and process-exit cleanup are implemented and verified; full file-manager close semantics remain open |
-| 🟡 | `0x92` | I$SGetSt | Q9-native `SS_Opt` and console `SS.Ready` support for direct system paths; permission, device-name, and file-manager semantics remain open |
+| 🔷 | `0x82` | I$Dup | Microware IOMan dispatch is present; Q9-native path-table duplication is implemented and emulator-verified, while native file-manager parity remains open |
+| 🔷 | `0x83` | I$Create | Microware IOMan/RBF/CF path is present and covered by the create/write round-trip; Q9-native implementation remains open |
+| 🔷 | `0x84` | I$Open | Microware IOMan/RBF/CF path is present and live-traced; Q9-native console/path handling remains minimal |
+| 🔷 | `0x85` | I$MakDir | Microware IOMan/RBF/CF path is present and covered by the FAT16 mkdir regression; Q9-native implementation remains open |
+| 🔷 | `0x86` | I$ChgDir | Microware IOMan path is present; Q9-native data/execution directory storage is emulator-tested, while device resolution remains open |
+| 🔷 | `0x87` | I$Delete | Microware IOMan/RBF/CF path is present and covered by the FAT16 delete regression; Q9-native implementation remains open |
+| 🔷 | `0x88` | I$Seek | Microware IOMan path is present; Q9-native paths retain the requested position, while native backing-file repositioning remains open |
+| 🔷 | `0x89` | I$Read | Microware IOMan/RBF/CF path is live-traced and covered by read-back tests; Q9-native console input remains minimal |
+| 🔷 | `0x8A` | I$Write | Microware IOMan/RBF/CF path is covered by the create/write round-trip; Q9-native console output remains minimal |
+| 🔷 | `0x8B` | I$ReadLn | Microware IOMan path is live-traced; Q9-native line input remains minimal |
+| 🔷 | `0x8C` | I$WritLn | Microware IOMan path is covered by userland output tests; Q9-native console output remains minimal |
+| 🔷 | `0x8D` | I$GetStt | Microware IOMan path is present; Q9-native `SS_Opt`/`SS_Ready` support covers only direct system paths |
+| 🔷 | `0x8E` | I$SetStt | Microware IOMan path is present; Q9-native `SS_Opt` support does not yet cover all status codes |
+| 🔷 | `0x8F` | I$Close | Microware IOMan/RBF/CF path is covered by close/read-back tests; Q9-native path cleanup is implemented and verified |
+| 🔷 | `0x92` | I$SGetSt | Microware IOMan path is present; Q9-native `SS_Opt`/`SS_Ready` support remains limited |
 
 ## Current interpretation
 
