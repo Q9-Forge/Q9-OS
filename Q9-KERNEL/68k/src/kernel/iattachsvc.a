@@ -81,6 +81,9 @@
 *   + = F$SigReset accepted a call with no open intercept
 *       (the actual signal -> routine -> F$RTE round trip cannot be shown
 *        here while the timer does not tick -- see STATUS.md)
+*   y = F$Event created an event
+*   z = signalling and reading it gave the expected value
+*   Y = after unlink and delete the event is gone
 *   e = F$Chain refused an unknown module and left the caller intact
 *   C = F$Chain reached chaintgt -- the process now runs another program
 *       (written by chaintgt.a, not by this module; X there means the
@@ -927,8 +930,58 @@ Q9K_ClockChecked:
 Q9K_IllHandler:
         moveq   #'i',d7                        * greift, sobald die Ausloesung ankommt
         move.b  d7,$FFFFF006
-        bra     Q9K_IllHandlerDone
+
 Q9K_IllHandlerDone:
+
+* F$Event ($53): ein Ereignis anlegen, signalisieren, lesen, wieder
+* loesen und loeschen -- der volle Lebenslauf ohne Warten.
+        moveq   #2,d1                          * Ev$Creat
+        moveq   #5,d0                          * Startwert 5
+        move.w  #$FFFF,d2                      * Wait-Inkrement -1
+        moveq   #1,d3                          * Signal-Inkrement +1
+        lea     Q9K_EventName(pc),a0
+        trap    #0
+        dc.w    $0053                          * F$Event
+        bcs     Q9K_NativeFailed
+        move.l  d0,d4                          * ID merken (d4 hier frei)
+        moveq   #'y',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #8,d1                          * Ev$Signl
+        move.l  d4,d0
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+
+        moveq   #6,d1                          * Ev$Read
+        move.l  d4,d0
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+        cmpi.l  #6,d1                          * 5 + Signal-Inkrement 1
+        bne     Q9K_NativeFailed
+        moveq   #'z',d7
+        move.b  d7,$FFFFF006
+
+        moveq   #1,d1                          * Ev$UnLnk -- Zaehler auf 0
+        move.l  d4,d0
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+
+        moveq   #3,d1                          * Ev$Delet
+        lea     Q9K_EventName(pc),a0
+        trap    #0
+        dc.w    $0053
+        bcs     Q9K_NativeFailed
+
+        moveq   #0,d1                          * Ev$Link -- darf nichts mehr finden
+        lea     Q9K_EventName(pc),a0
+        trap    #0
+        dc.w    $0053
+        bcc     Q9K_NativeFailed               * muss fehlschlagen
+        moveq   #'Y',d7
+        move.b  d7,$FFFFF006
 
 * F$Chain ($05) -- ZULETZT, weil es nicht zurueckkehrt: es ersetzt das
 * Programm dieses Prozesses durch chaintgt, das daraufhin 'C' ausgibt und
@@ -1051,6 +1104,9 @@ Q9K_IcptDone:
 Q9K_ExcTable:
         dc.w    $0010,Q9K_IllHandler-Q9K_ExcTable-4
         dc.w    -1                             * Ende der Tabelle
+
+Q9K_EventName:
+        dc.b    "q9test",0
 
 Q9K_ChainTgtName:
         dc.b    "chaintgt",0
