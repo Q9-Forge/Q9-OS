@@ -713,6 +713,11 @@ Q9K_StrapScratch_Count     equ $1BF4      * Q9_u32, eingetragene Behandler
 Q9K_StrapScratch_Vec       equ $1BF8      * Q9_u32, Vektornummer EIN
 Q9K_StrapScratch_Jump      equ $1BFC      * Q9_u32, Sprungziel AUS (0 = keins)
 
+* Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
+* Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
+* gebraucht, und ein Wortzugriff ist an dieser Stelle einer weniger.
+Q9K_ExcNesting             equ $1C00      * Q9_u16
+
 * Eigener Tickzaehler (2026-09-18). Die Emulator-Diagnose
 * "Timer-Interrupts: N gesamt" zaehlt ueber eine HART KODIERTE
 * PC-Adresse ($75a2, s. Q9-Flux/src/kernel/m68krt.c) und ist damit nur
@@ -1588,6 +1593,23 @@ Q9K_ExcTrap:
 Q9K_ExcTrapNoUserHandler:
         movem.l (sp)+,d0-d1/a0-a1
 
+* REKURSIONSSCHUTZ (2026-09-19). Die Sicherung unten liest ABSICHTLICH
+* ueber den Ausnahmerahmen hinaus -- 8(sp) bis 16(sp) und 64 Byte
+* Stackkopie, um einen Backtrace zu bekommen. Endet der Stack des
+* Verursachers dort, faellt genau dieses Lesen selbst aus, und die neue
+* Ausnahme landet wieder hier: eine endlose Kette, in der die eigentliche
+* Ursache nie sichtbar wird. Real gemessen als ununterbrochene Folge von
+* Markern an dieser Stelle.
+*
+* Der Zaehler macht daraus einen definierten Halt. Beim ERSTEN Eintritt
+* laeuft die volle Diagnose wie bisher; schlaegt sie fehl, meldet der
+* zweite Eintritt genau das und bleibt stehen -- ohne selbst noch einmal
+* zu lesen, und ohne bsr, weil auch der Stack fuer einen Unterprogramm-
+* aufruf an dieser Stelle nicht mehr tragen muss.
+        addq.w  #1,Q9K_ExcNesting
+        cmpi.w  #1,Q9K_ExcNesting
+        bne     Q9K_ExcTrapNested
+
         move.w  (sp),Q9K_ExcInfo_SR
         move.l  2(sp),Q9K_ExcInfo_PC
         move.w  6(sp),Q9K_ExcInfo_Fmt
@@ -1622,6 +1644,17 @@ Q9K_ExcTrapStackCopy:
         bsr     Q9K_DiagWriteD7
 Q9K_ExcTrapSpin:
         bra     Q9K_ExcTrapSpin                    * anhalten, wie bisher Q9K_ExcDefault
+
+* Zweiter (oder tieferer) Eintritt: die Diagnose oben hat sich an ihrem
+* eigenen Lesezugriff verschluckt. Nur noch ein Zeichen direkt auf die
+* DUART, dann Stillstand -- was hier noch an Zustand zu holen waere, ist
+* ohnehin der der fehlgeschlagenen Sicherung und nicht der des
+* urspruenglichen Fehlers. Der steht bereits in Q9K_ExcInfo_*, soweit die
+* erste Runde gekommen ist.
+Q9K_ExcTrapNested:
+        move.b  #'R',$FFFFF006
+Q9K_ExcTrapNestedSpin:
+        bra     Q9K_ExcTrapNestedSpin
 
 _stkhandler:
         moveq   #'S',d7                      * DIAGNOSE: Stack-Ueberlauf-Handler wurde aufgerufen
