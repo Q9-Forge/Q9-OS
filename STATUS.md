@@ -55,11 +55,9 @@ I/O replacements remain future work.
 
 The current `I$ChgDir("/dd")` measurement reaches its return PC again with
 `D0=$00000005` and `D1=$00008200`; it does not hang in the external IOMan
-call. The isolated `date` test reaches `F$Load("/dd/CMDS/date")` without an
-exception, but the load does not return in the current test window. CF
-tracing shows repeated reads of the same directory/file sector (`LBA 65`),
-so the remaining issue is currently classified as an RBF directory/position
-advance problem in the external `F$Load` path.
+call. The external loader regression now reaches both
+`F$Load("/dd/CMDS/echo")` and `F$Load("/dd/CMDS/date")`; both module loads
+complete through RBF, and the subsequent `echo` process runs successfully.
 
 The native `I$Open` path now also publishes each allocated path number in
 the current process' `P$Path` table. Host regression tests cover the first
