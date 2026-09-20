@@ -88,6 +88,15 @@ regression now passes in Q9-Flux as the marker sequence `ODCc@#`: native
 `I$Attach` and `I$Detach`. The direct-attach startup switch is compile-time
 gated and remains disabled in normal development boots.
 
+The direct Microware device regression was re-run on 2026-09-21 from a fresh
+development build. The boot image must be generated with `mkbootfile.sh
+--disk` and include `rbf`, `cfide`, `dd`, and `c0` in `Q9_DISK_MODULES`, plus
+the built `iattachsvc` module in `Q9_BOOT_MODULES`; omitting `--disk` leaves
+the test module unlinked or the device table empty and produces a misleading
+`E$MNF`. With the complete module set, Q9-Flux reached the `J...@#` marker
+sequence: `F$Fork`, `I$Attach("c0")`, and `I$Detach` all succeeded, with no
+failure marker and no recorded exception.
+
 The native `I$ChgDir` baseline is now included in the same child-process
 regression. Marker sequence `HODCc@#` confirms that a data-directory change
 (`d0=3`, `/dd`) stores successfully before the native path lifecycle and
