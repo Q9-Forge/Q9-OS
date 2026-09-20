@@ -1308,10 +1308,10 @@ separately from I$ dispatch ownership.
 | 🔷 | `0x86` | I$ChgDir | Microware IOMan path is present; Q9-native data/execution directory storage is emulator-tested, while device resolution remains open |
 | 🔷 | `0x87` | I$Delete | Microware IOMan/RBF/CF path is present and covered by the FAT16 delete regression; Q9-native implementation remains open |
 | 🔷 | `0x88` | I$Seek | Microware IOMan path is present; Q9-native paths resolve the process-local path table and retain the requested position, emulator-verified after `I$Open` (marker `k`); native backing-file repositioning remains open |
-| 🔷 | `0x89` | I$Read | Microware IOMan/RBF/CF path is live-traced and covered by read-back tests; Q9-native console input remains minimal |
-| 🔷 | `0x8A` | I$Write | Microware IOMan/RBF/CF path is covered by the create/write round-trip; Q9-native console output remains minimal |
-| 🔷 | `0x8B` | I$ReadLn | Microware IOMan path is live-traced; Q9-native line input remains minimal |
-| 🔷 | `0x8C` | I$WritLn | Microware IOMan path is covered by userland output tests; Q9-native console output remains minimal |
+| 🔷 | `0x89` | I$Read | Microware IOMan/RBF/CF path is live-traced and covered by read-back tests; native transfers now advance the logical path position, while console input remains minimal |
+| 🔷 | `0x8A` | I$Write | Microware IOMan/RBF/CF path is covered by the create/write round-trip; native transfers now advance the logical path position and are checked via `SS.Pos` (marker `w`) |
+| 🔷 | `0x8B` | I$ReadLn | Microware IOMan path is live-traced; native line input advances the logical path position, while editing remains minimal |
+| 🔷 | `0x8C` | I$WritLn | Microware IOMan path is covered by userland output tests; native line output advances the logical path position, while console semantics remain minimal |
 | 🔷 | `0x8D` | I$GetStt | Microware IOMan path is present; Q9-native `SS_Opt`/`SS_Ready`/`SS_Pos` support resolves duplicated local paths through `P$Path` and is emulator-verified (markers `t`/`!`); status coverage remains limited |
 | 🔷 | `0x8E` | I$SetStt | Microware IOMan path is present; Q9-native `SS_Opt` resolves duplicated local paths through `P$Path` and is emulator-verified (marker `u`); status coverage remains limited |
 | 🔷 | `0x8F` | I$Close | Microware IOMan/RBF/CF path is covered by close/read-back tests; Q9-native path cleanup is implemented and verified |
