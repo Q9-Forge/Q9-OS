@@ -58,6 +58,9 @@ static unsigned long g_fakePoolNext;
 #define Q9K_DELPRC_SCRATCH_ERROR   ((unsigned long)(g_fakeGlobals + 0x680))
 #define Q9K_DELPRC_SCRATCH_SUCCESS ((unsigned long)(g_fakeGlobals + 0x6A0))
 #define Q9K_PROCDESC_SAVEDSP_OFF 0x20UL
+#define Q9K_PROCDESC_DBGREG_OFF  0x340UL
+#define Q9K_PROCDESC_DBGPAR_OFF  0x348UL
+#define Q9K_PROCDESC_DBGINSTR_OFF 0x350UL
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x28UL
 /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): gleiche Grosszuegig-
  * keits-Begruendung wie oben -- reale Offsets waeren +0x04/+0x08/+0x0C. */
@@ -115,10 +118,13 @@ void Q9K_FreeMem(unsigned long addr, unsigned long size)
  * kommentar). Hier nur genug, um Q9K_ProcCreates Aufruf nachzubilden:
  * Age=Prioritaet setzen, hinten an Q9_D_ACTIVQ anhaengen. */
 #define Q9K_PROCDESC_AGE_OFF 0x30UL
+static unsigned long g_lastSchedInsert;
 static void Q9K_SchedInsert(unsigned long desc)
 {
     unsigned long tail = *(unsigned long *)(Q9_D_ACTIVQ + Q9K_READYQ_PREV_OFF);
     unsigned char priority = *(unsigned char *)(desc + Q9K_PROCDESC_PRIORITY_OFF);
+
+    g_lastSchedInsert = desc;
 
     *(unsigned short *)(desc + Q9K_PROCDESC_AGE_OFF) = (unsigned short)priority;
 
@@ -135,7 +141,7 @@ void Q9K_SchedRemove(unsigned long desc)
     g_schedRemoveCalls++;
 }
 void Q9K_WaitQInsert(unsigned long desc) { (void)desc; }
-unsigned long Q9K_SchedFirstPick(void) { return 0; }
+unsigned long Q9K_SchedFirstPick(void) { return g_lastSchedInsert; }
 
 /* Minimale Stubs fuer die echten q9kernel_moddir.c-Funktionen (dort
  * bereits ausfuehrlich eigenstaendig getestet, s. test_q9kernel_moddir.c)
@@ -614,18 +620,21 @@ int main(void)
      * from the ready queue and remains allocated in the WAITING state. */
     {
         static unsigned char debugPool[Q9K_PROCDESC_SIZE];
+        static unsigned char debugParent[Q9K_PROCDESC_SIZE];
         static unsigned char debugHdr[0x48];
-        static unsigned char registerImage[68];
+        static unsigned char registerImage[72];
         Q9_u32 debugBase = (Q9_u32)(unsigned long)debugPool;
         Q9_u16 error = 0xFFFF;
         Q9_u32 debugPid;
 
         memset(debugPool, 0, sizeof(debugPool));
+        memset(debugParent, 0, sizeof(debugParent));
         memset(debugHdr, 0, sizeof(debugHdr));
         memset(registerImage, 0xCC, sizeof(registerImage));
         buildFreeList(debugBase, Q9K_PROCDESC_SIZE, 1, Q9K_PROCPOOL_FREE_ADDR);
         Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, debugBase);
-        Q9K_SetU32(Q9_D_PROC, 0);
+        Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)debugParent);
+        *(Q9_u8 *)(debugParent + Q9K_PROCDESC_STATE_OFF) = 'a';
         putBE32(debugHdr, 0x30, 0x20);
         putBE32(debugHdr, 0x38, 16);
         putBE32(debugHdr, 0x3C, 256);
@@ -650,6 +659,21 @@ int main(void)
                                              1, 0, &error), 0);
         checkU32("F$DFork Null-Registerpuffer meldet E$BPAddr",
                  (Q9_u32)error, 0x00D2UL);
+
+        /* F$DExec restores the debugger-owned register image, parks the
+         * parent and selects the child for execution. */
+        putBE32(registerImage, 0, 0x11223344UL);
+        g_lastSchedInsert = 0;
+        Q9_u32 execError = 0;
+        checkU32("F$DExec waehlt den Debugger-Prozess als naechsten Kontext",
+                 Q9K_ProcDebugExec((Q9_u16)debugPid, 1, &execError),
+                 debugBase);
+        checkU32("F$DExec parkt den Elternprozess",
+                 (Q9_u32)*(Q9_u8 *)(debugParent + Q9K_PROCDESC_STATE_OFF), 'w');
+        checkU32("F$DExec setzt das Kind wieder aktiv",
+                 (Q9_u32)*(Q9_u8 *)(debugBase + Q9K_PROCDESC_STATE_OFF), 'a');
+        checkU32("F$DExec uebernimmt D0 aus dem Registerpuffer",
+                 getBE32(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF)), 0x11223344UL);
     }
 
 

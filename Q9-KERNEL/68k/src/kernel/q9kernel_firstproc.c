@@ -214,9 +214,11 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #ifndef Q9K_DEBUGFORK_REGIMAGE_SIZE
 #define Q9K_DEBUGFORK_REGIMAGE_SIZE 72UL
 #endif
+#ifndef Q9K_PROCDESC_DBGREG_OFF
 #define Q9K_PROCDESC_DBGREG_OFF 0x2A8UL
 #define Q9K_PROCDESC_DBGPAR_OFF 0x2ACUL
 #define Q9K_PROCDESC_DBGINSTR_OFF 0x2B0UL
+#endif
 #ifndef Q9_D_PROC
 #define Q9_D_PROC 0x04CUL
 #endif
