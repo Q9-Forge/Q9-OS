@@ -134,6 +134,8 @@ void Q9K_SchedRemove(unsigned long desc)
     (void)desc;
     g_schedRemoveCalls++;
 }
+void Q9K_WaitQInsert(unsigned long desc) { (void)desc; }
+unsigned long Q9K_SchedFirstPick(void) { return 0; }
 
 /* Minimale Stubs fuer die echten q9kernel_moddir.c-Funktionen (dort
  * bereits ausfuehrlich eigenstaendig getestet, s. test_q9kernel_moddir.c)

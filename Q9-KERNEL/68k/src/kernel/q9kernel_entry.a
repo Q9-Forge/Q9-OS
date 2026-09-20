@@ -801,6 +801,12 @@ Q9K_DExitImplPtr            equ $1EF8      * Q9K_SysDExitImpl
 Q9K_DExitScratch_Pid        equ $1EEC      * Q9_u16, d0.w EIN
 Q9K_DExitScratch_Error      equ $1EF0      * Q9_u16, d1.w AUS
 Q9K_DExitScratch_Ok         equ $1EF4      * Q9_u16, 0/1
+Q9K_DExecImplPtr            equ $1EFC      * Q9K_SysDExecImpl
+Q9K_DExecScratch_Pid        equ $1F00      * Q9_u16, d0.w EIN
+Q9K_DExecScratch_Count      equ $1F04      * Q9_u32, d1.l EIN
+Q9K_DExecScratch_Next       equ $1F08      * Q9_u32, next descriptor AUS
+Q9K_DExecScratch_Error      equ $1F0C      * Q9_u32, d1.w AUS
+Q9K_DExecScratch_Ok         equ $1F10      * Q9_u16, 0/1
 
 * Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
 * Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
@@ -3754,6 +3760,29 @@ Q9K_SysDExit:
         rts
 Q9K_SysDExit_Fail:
         move.w  Q9K_DExitScratch_Error,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysDExec -- F$DExec (Callcode 0x23), launch the suspended child.
+Q9K_SysDExec:
+        move.w  d0,Q9K_DExecScratch_Pid
+        move.l  d1,Q9K_DExecScratch_Count
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        movea.l Q9K_DExecImplPtr,a1
+        jsr     (a1)
+        movea.l (sp)+,a6
+        tst.w   Q9K_DExecScratch_Ok
+        beq     Q9K_SysDExec_Fail
+        addq.l  #4,sp
+        movem.l d0-d7/a0-a6,-(sp)
+        movea.l Q9K_DExecScratch_Next,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+Q9K_SysDExec_Fail:
+        move.w  Q9K_DExecScratch_Error,d1
         ori     #1,ccr
         rts
 

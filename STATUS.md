@@ -1202,9 +1202,9 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x1F` | F$GPrDBT | Pointer table assembled from the process pool, one entry per slot, 0 for a free one |
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | ✅ | `0x21` | F$TLink | Links trap modules, initializes their state, supports `namePtr=0` removal, and releases references/owned memory on process exit |
-| ❌ | `0x22` | F$DFork | Not implemented |
-| ❌ | `0x23` | F$DExec | Not implemented |
-| ❌ | `0x24` | F$DExit | Not implemented |
+| 🟢 | `0x22` | F$DFork | Suspended child, 72-byte register image and debugger ownership are implemented; host-tested |
+| 🟡 | `0x23` | F$DExec | Suspended-child resume, register restore and parent parking are implemented; trace/breakpoint stop handling remains |
+| 🟢 | `0x24` | F$DExit | Validates debugger ownership and releases the suspended child and all owned resources |
 | ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
 | 🟡 | `0x27` | F$SetSys | Known csl memory-increment variable `$7C` is now persistent and host-tested; the broader system-variable catalogue remains open |
