@@ -14,6 +14,8 @@
 * even when the I/O path under test is the failing path:
 *   @ = I$Attach succeeded
 *   # = I$Detach succeeded
+*   % = F$Mem information request returned size and upper bound (0x07)
+*   & = F$Mem correctly refused a resize with E$NoRAM
 *   H = native I$ChgDir succeeded (data directory)
 *   O = native I$Open succeeded
 *   w = native I$Write succeeded
@@ -826,6 +828,37 @@ Q9K_SemaFailed:
         lea     64(sp),sp
         bra     Q9K_NativeFailed
 Q9K_SemaOk:
+
+* F$Mem (Callcode $07): only the information request survives from
+* OS-9/68K V2.3 on -- "Only an information request (d0=0) works".  With
+* d0=0 the call must report the data area size in d0.l and its upper
+* bound in a1; a1 is cleared first so a stale value cannot pass as a
+* result.  The bound has to lie above the size, because it is the area's
+* base plus that size.
+        moveq   #0,d0
+        suba.l  a1,a1                          * no stale value may pass
+        trap    #0
+        dc.w    $0007                          * F$Mem, information request
+        bcs     Q9K_NativeFailed
+        tst.l   d0                             * a process always owns memory
+        beq     Q9K_NativeFailed
+        move.l  a1,d1                          * upper bound
+        beq     Q9K_NativeFailed
+        cmp.l   d0,d1                          * base + size must exceed size
+        bls     Q9K_NativeFailed
+        moveq   #'%',d7
+        move.b  d7,$FFFFF006
+
+* The other half of the same ABI: every resize must fail, and with the
+* code the reference kernel itself returns at $61da.
+        move.l  #$4000,d0                      * any non-zero request
+        trap    #0
+        dc.w    $0007                          * F$Mem, resize attempt
+        bcc     Q9K_NativeFailed               * must NOT succeed
+        cmpi.w  #$00ed,d1                      * E$NoRAM
+        bne     Q9K_NativeFailed
+        moveq   #'&',d7
+        move.b  d7,$FFFFF006
 
         moveq   #3,d0                           * Read + write access
         lea     Q9K_AttachName(pc),a0
