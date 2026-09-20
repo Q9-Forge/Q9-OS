@@ -444,17 +444,18 @@ Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList)
  * (0 = any)" -- Singular "byte", obwohl d0.w ein Wort ist); die
  * byteweise Lesart ist die einzige, die zu den realen Modulen passt.
  *
- * Bei mehreren Treffern (mehrere
- * Revisionen desselben Namens) wird die hoechste M$Rev behalten --
- * gleiches Prinzip wie Q9K_FindModuleByName (Thema 01, Revisions-
- * Tiebreak statt "ersten Treffer nehmen"). Bei Erfolg: Link-Zaehler
+ * Bei mehreren Treffern (mehrere Revisionen desselben Namens) waehlen
+ * F$Link/F$UnLoad die hoechste M$Rev; F$FModul folgt dagegen der
+ * Microware-Semantik und liefert den ersten passenden Verzeichniseintrag.
+ * Bei Erfolg: Link-Zaehler
  * des gewaehlten Eintrags erhoehen, Headerzeiger zurueckgeben.
  * Rueckgabe 0 = kein Treffer (E_MNF, s. Q9K_SysFLink). */
 /* Reine Suche ohne jede Nebenwirkung: liefert den BESTEN passenden
  * Verzeichnis-Slot (hoechste Revision) oder 0. Herausgeloest, damit
  * F$UnLoad denselben Treffer bestimmen kann wie F$Link, ohne dabei den
  * Link-Zaehler zu erhoehen (was es sofort wieder zuruecknehmen muesste). */
-static Q9_u32 Q9K_ModDirFindSlotByName(Q9_u16 desiredTyLang, const char *name)
+static Q9_u32 Q9K_ModDirFindSlotByName(Q9_u16 desiredTyLang, const char *name,
+                                       int highestRevision)
 {
     Q9_u32 slot = Q9K_GetU32(Q9K_MODDIR_HEAD_ADDR);
     Q9_u32 bestSlot = 0;
@@ -481,6 +482,8 @@ static Q9_u32 Q9K_ModDirFindSlotByName(Q9_u16 desiredTyLang, const char *name)
                 Q9K_ModDirNamesMatch((const Q9_u8 *)(hdrAddr + nameOffset), moduleSize - nameOffset, name)) {
                 Q9_u32 revision = ((const Q9_u8 *)hdrAddr)[0x15];
 
+                if (!highestRevision)
+                    return slot;
                 if (bestSlot == 0 || revision > bestRevision) {
                     bestSlot = slot;
                     bestRevision = revision;
@@ -496,7 +499,7 @@ static Q9_u32 Q9K_ModDirFindSlotByName(Q9_u16 desiredTyLang, const char *name)
 
 Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name)
 {
-    Q9_u32 bestSlot = Q9K_ModDirFindSlotByName(desiredTyLang, name);
+    Q9_u32 bestSlot = Q9K_ModDirFindSlotByName(desiredTyLang, name, 1);
 
     if (bestSlot == 0)
         return 0;
@@ -514,7 +517,7 @@ void Q9K_SysFModulImpl(void)
 {
     Q9_u16 desired = (Q9_u16)Q9K_GetU32(Q9K_FMODUL_SCRATCH_TYLANG);
     const char *name = (const char *)(unsigned long)Q9K_GetU32(Q9K_FMODUL_SCRATCH_NAME);
-    Q9_u32 slot = Q9K_ModDirFindSlotByName(desired, name);
+    Q9_u32 slot = Q9K_ModDirFindSlotByName(desired, name, 0);
 
     Q9K_SetU32(Q9K_FMODUL_SCRATCH_OK, 0);
     if (slot == 0) {
@@ -811,7 +814,7 @@ Q9_u32 Q9K_ModDirUnloadByName(Q9_u16 desiredTyLang, const char *name,
         return 0;
     }
 
-    slot = Q9K_ModDirFindSlotByName(desiredTyLang, name);
+    slot = Q9K_ModDirFindSlotByName(desiredTyLang, name, 1);
     if (slot == 0) {
         *outError = Q9K_E_MNF;
         return 0;
