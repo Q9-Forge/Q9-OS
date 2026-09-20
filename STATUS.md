@@ -504,7 +504,7 @@ advance, and not in memory corruption. Recorded so the cheap check is not
 repeated.
 
 **F$Load, measured — including a correction to the measurement itself
-(2026-09-20).** The boot test's `F$Load("/dd/CMDS/echo")` fails with `$D7`
+(2026-09-20).** The boot test's `F$Load("/dd/CMDS/echo")` originally failed with `$D7`
 (`E$BPNam`). That code has exactly two sources in this kernel, both inside
 `Q9K_ProcPrsNam`: "the path pointer is zero" and "the component is empty".
 
@@ -557,6 +557,14 @@ building `b9f9bfe` — the commit that marked `F$Load` ✅ "emulator-verified wi
 `/dd/CMDS/echo`" — in a separate worktree and running it produces the same `k`.
 The call has not passed this test at any point, so this is not a regression.
 Row downgraded to 🟡.
+
+**F$Load fixed (2026-09-20).** The external-trap path used A0 as a temporary
+pointer while looking up the registered A3 static-data pointer in the second
+half of USRDIS. It then entered IOMan with A0 equal to the USRDIS data table
+(`$18c00`) instead of the caller's pathname. Restoring R$a0 from the external
+OS-9 register frame immediately after that lookup fixes the handoff. A fresh
+68k build and emulator boot now produce the `l` success marker, allocate and
+validate `echo` (`F$VModul`), and print `Hallo aus einem echten Programm!`.
 
 One more measurement trap, recorded because it cost a wrong conclusion here:
 when filtering the console log, `Q9K_TestProcA`'s endless `A` output is usually
@@ -1159,7 +1167,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
 | ✅ | `0x00` | F$Link | Kernel module lookup/link path implemented and exercised |
-| 🟡 | `0x01` | F$Load | The Microware IOMan mass-storage path loads and validates external modules, but the boot test's own `F$Load("/dd/CMDS/echo")` still fails with `$D7` (E$BPNam) — measured, see the note below. Downgraded from ✅ until that call succeeds |
+| ✅ | `0x01` | F$Load | External IOMan/RBF load path fixed and emulator-verified with `/dd/CMDS/echo`; the pathname is preserved through the external trap frame, the module validates, and the follow-up program runs |
 | ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
 | ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
