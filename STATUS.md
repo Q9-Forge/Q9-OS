@@ -753,11 +753,13 @@ after switching to the stack in the new block. Doing both in one go would work
 almost every time — until the next allocation overwrote the freed stack, and
 then unreproducibly.
 
-Starting a non-resident module from disk is still open in `F$Chain`: the
-in-place replacement path itself is complete, while the additional
-load-then-chain integration needs a dedicated end-to-end test. `F$Load`'s
-external RBF path is no longer the blocker; it is emulator-verified separately
-for `/dd/CMDS/echo` (see `0x01`).
+Starting a non-resident module from disk now has an explicit load-then-chain
+fallback: after an `E$MNF` from the resident module directory, the handler
+invokes `F$Load` and retries the link without disturbing the old process on
+failure. The in-place replacement path and the resident emulator regression
+remain green; a dedicated live image containing a non-resident chain target is
+still needed to move the row below from 🟡 to ✅. `F$Load`'s external RBF path
+is no longer the blocker (verified for `/dd/CMDS/echo` and `/dd/CMDS/date`).
 
 Two mistakes during this work are worth recording. First, three constants
 (`Q9K_INITIAL_SR` and all three module-header offsets) were *guessed* rather

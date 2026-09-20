@@ -4979,6 +4979,7 @@ Q9K_SysFSema_NoFrame:
 *******************************************************************************
 Q9K_SysFChain:
         move.l  a6,-(sp)
+        movem.l d0-d4/a0-a1,-(sp)          * fuer optionalen F$Load-Fallback
         lea     Q9K_CRuntimeData(pc),a6
         clr.l   Q9K_ChainScratch_TypeLang        * obere Worte nullen, C liest 32 Bit
         move.w  d0,Q9K_ChainScratch_TypeLang+2
@@ -4992,9 +4993,29 @@ Q9K_SysFChain:
         move.l  a1,Q9K_ChainScratch_Param
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)
-        movea.l (sp)+,a6
+        tst.w   Q9K_ChainScratch_Ok+2
+        bne     Q9K_SysFChain_Success
+
+* Ist das Ziel noch nicht resident, laedt der echte F$Chain-Aufrufer es
+* ueber denselben IOMan/F$Load-Weg wie ein normales Kommando nach. Der
+* erste Versuch hat dabei bewusst nichts am alten Prozess veraendert; erst
+* nach erfolgreichem Laden wird der Moduldirectory-Link erneut versucht.
+        cmpi.w  #$00dd,Q9K_ChainScratch_Error+2       * E$MNF
+        bne     Q9K_SysFChain_Fail
+        moveq   #1,d0                                  * F$Load: Read_
+        clr.l   d1                                     * Speicherfarbe ungenutzt
+        movea.l 20(sp),a0                               * gesicherter Chain-Name
+        trap    #0
+        dc.w    $0001
+        bcs     Q9K_SysFChain_Fail
+        movea.l Q9K_ChainImplPtr,a1
+        jsr     (a1)                                   * jetzt muss Link greifen
         tst.w   Q9K_ChainScratch_Ok+2
         beq     Q9K_SysFChain_Fail
+
+Q9K_SysFChain_Success:
+        movem.l (sp)+,d0-d4/a0-a1
+        movea.l (sp)+,a6
 
         tst.w   Q9K_InTrapPath
         beq     Q9K_SysFChain_NoFrame
@@ -5010,6 +5031,8 @@ Q9K_SysFChain:
         rte                                      * Sprung ins neue Programm
 
 Q9K_SysFChain_Fail:
+        movem.l (sp)+,d0-d4/a0-a1
+        movea.l (sp)+,a6
         move.w  Q9K_ChainScratch_Error+2,d1
         ori     #1,ccr
         rts
