@@ -5018,6 +5018,7 @@ Q9K_SysFChain_CopyName:
         trap    #0
         dc.w    $0001
         bcs     Q9K_SysFChain_Fail
+        move.l  Q9K_ChainScratch_OldMod,Q9K_ChainScratch_Name
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)                                   * jetzt muss Link greifen
         tst.w   Q9K_ChainScratch_Ok+2
