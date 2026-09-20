@@ -1254,7 +1254,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x5E` | F$Panic | Default panic path is implemented: emits the panic code and halts; optional OS9P2-installed service hook remains open |
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
-| ❌ | `0x61` | F$FIRQ | Not implemented |
+| 🟡 | `0x61` | F$FIRQ | Registration, removal, duplicate-update handling, and the shared IRQ dispatcher are implemented and host-tested; complete device/level coverage remains hardware-specific and open |
 | 🟡 | `0x62` | F$Sema | P and V implemented against an ABI recovered by disassembly; V and the refusals are emulator-verified, P is host-tested only (it blocks by design) |
 | ✅ | `0x63` | F$SigReset | Discards the saved intercept context, for a routine left via `longjmp()`; emulator-verified |
 
