@@ -505,6 +505,11 @@ for the current ROM image the corresponding candidate is therefore
 `FE0004A4`, which is a real ROM branch target. The remaining work is to verify
 the debugger's expected saved-register/return-stack frame before wiring the
 SysCall, so a normal process cannot be corrupted by an incomplete trampoline.
+The ROM control flow now confirms that target: `FE0004A4` branches to
+`FE0004BA`, which saves the status register, checks the ROM debugger state via
+the adjacent service routine, and then enters the ROM diagnostic path. This is
+consistent with a debugger service entry, but it is not yet sufficient proof
+of the OS-9 register-image ABI by itself.
 
 **F$Load: one hypothesis tested and ruled out (2026-09-18).** After the boot
 stack turned out to have been sitting inside the boot modules and corrupting
