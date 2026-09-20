@@ -511,6 +511,13 @@ the adjacent service routine, and then enters the ROM diagnostic path. This is
 consistent with a debugger service entry, but it is not yet sufficient proof
 of the OS-9 register-image ABI by itself.
 
+The surrounding reference trampoline also makes two nested calls: `F$PwrMan`
+(`0x66`) before entering the debugger and `F$SysID` (`0x55`) during the return
+path. `F$PwrMan` is not part of the current Q9 syscall map, so a direct ROM jump
+would silently omit required state handling. `F$SysDbg` therefore remains open
+until that power-management preamble is either implemented compatibly or its
+ROM-specific no-op behavior is proven.
+
 **F$Load: one hypothesis tested and ruled out (2026-09-18).** After the boot
 stack turned out to have been sitting inside the boot modules and corrupting
 `cfide`, it was worth asking whether the long-standing `F$Load` hang had the
