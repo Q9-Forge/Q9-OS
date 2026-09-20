@@ -497,7 +497,14 @@ Q9_u32 Q9K_SchedReschedule(void)
  * gleich mit auf Q9K_SCHED_TSLICE aufladen. */
 Q9_u32 Q9K_SchedFirstPick(void)
 {
-    Q9_u32 first = Q9K_SchedPickHighestAge();
+    Q9_u32 first;
+    /* The private minimum-priority cell is not part of the historical
+     * system-global block and therefore is not guaranteed to be cleared by
+     * the early zero pass.  Start with the documented default (no filter),
+     * otherwise a stale value can make every freshly forked process
+     * ineligible for the first timer-driven switch. */
+    Q9K_SetU16(Q9K_SCHED_MINPTY_ADDR, 0);
+    first = Q9K_SchedPickHighestAge();
 
     if (first != 0) {
         Q9K_SetU32(Q9_D_PROC, first);
