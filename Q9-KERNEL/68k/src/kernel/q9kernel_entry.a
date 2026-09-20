@@ -4062,7 +4062,9 @@ Q9K_SysFPrsNam:
 * Externe File-Manager-Aufrufe liefern den Eingabepfad im echten
 * Registerrahmen (R$a0 bei +$20). Bei einem direkten TRAP #0-Aufruf ist
 * a5 dagegen nur das normale Aufruferregister und darf nicht dereferenziert
-* werden; dort bleibt der ABI-Eingang im CPU-Register a0.
+* werden; dort bleibt der ABI-Eingang im CPU-Register a0. Q9K_InTrapPath
+* ist dabei 1 fuer den direkten TRAP-#0-Weg und 0 fuer das externe
+* PEA+RTS-Trampolin.
         tst.w   Q9K_InTrapPath
         bne     Q9K_SysFPrsNam_InputReady
         movea.l $20(a5),a0
