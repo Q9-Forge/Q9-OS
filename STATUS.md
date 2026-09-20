@@ -1312,10 +1312,10 @@ separately from I$ dispatch ownership.
 | 🔷 | `0x8A` | I$Write | Microware IOMan/RBF/CF path is covered by the create/write round-trip; Q9-native console output remains minimal |
 | 🔷 | `0x8B` | I$ReadLn | Microware IOMan path is live-traced; Q9-native line input remains minimal |
 | 🔷 | `0x8C` | I$WritLn | Microware IOMan path is covered by userland output tests; Q9-native console output remains minimal |
-| 🔷 | `0x8D` | I$GetStt | Microware IOMan path is present; Q9-native `SS_Opt`/`SS_Ready` support covers only direct system paths |
-| 🔷 | `0x8E` | I$SetStt | Microware IOMan path is present; Q9-native `SS_Opt` support does not yet cover all status codes |
+| 🔷 | `0x8D` | I$GetStt | Microware IOMan path is present; Q9-native `SS_Opt`/`SS_Ready` support resolves duplicated local paths through `P$Path` and is emulator-verified (marker `t`); status coverage remains limited |
+| 🔷 | `0x8E` | I$SetStt | Microware IOMan path is present; Q9-native `SS_Opt` resolves duplicated local paths through `P$Path` and is emulator-verified (marker `u`); status coverage remains limited |
 | 🔷 | `0x8F` | I$Close | Microware IOMan/RBF/CF path is covered by close/read-back tests; Q9-native path cleanup is implemented and verified |
-| 🔷 | `0x92` | I$SGetSt | Microware IOMan path is present; Q9-native `SS_Opt`/`SS_Ready` support remains limited |
+| 🔷 | `0x92` | I$SGetSt | Microware IOMan path is present; Q9-native `SS_Opt`/`SS_Ready` resolves process-local paths through `P$Path`, while status coverage remains limited |
 
 ## Remaining kernel work outside the SysCalls
 
