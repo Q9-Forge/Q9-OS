@@ -2962,6 +2962,12 @@ Q9K_TrapCallExternal:
         add.w   d7,d7
         adda.w   #$0400,a0
         movea.l (a0,d7.w),a3
+* A0 wurde oben nur als Arbeitszeiger fuer die USRDIS-Tabelle benutzt.
+* Der externe Dienst erwartet dort aber weiterhin den Originaleingang
+* (bei F$Load den Pfadnamen). Aus dem echten R$-Rahmen restaurieren,
+* bevor der Fremdcode angesprungen wird; sonst sieht IOMan die Tabelle
+* selbst als Pfadzeiger (z. B. $18c00) und RBF bekommt einen leeren Namen.
+        movea.l $20(a5),a0
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04, beim ersten I$ReadLn): ab hier
 * laeuft FREMDER Code (ioman/scf/sc68681). Ruft der seinerseits einen Syscall
 * ueber das PEA+RTS-Trampolin, liegt auf dem Stack KEIN Exception-Frame --
