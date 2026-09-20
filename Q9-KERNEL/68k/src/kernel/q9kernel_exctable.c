@@ -19,12 +19,10 @@
  * Fuellzaehler ebenfalls bei 2, nicht bei 0 -- diese zwei Slots werden
  * separat/hardwareseitig behandelt, hier also bewusst nicht angefasst).
  *
- * INHALTLICH aber noch ohne echte Handler: alle Gruppen zeigen bisher
- * auf denselben generischen Halt-Handler (Q9K_ExcDefault) -- es gibt
- * noch keinen IRQ-Dispatcher, keinen Syscall-Dispatcher (TRAP #0,
- * Gruppe unten eigens kommentiert) und keine FPU-/MMU-Fehlerbehandlung.
- * Das ist kein Fake-Zustand, sondern ehrlich das, was heute existiert --
- * TODOs an den betroffenen Gruppen markiert.
+ * INHALTLICH zeigen die nicht speziell verdrahteten Gruppen weiterhin auf
+ * den generischen Halt-Handler (Q9K_ExcDefault). TRAP #0, TRAP #1-15 und
+ * die registrierten IRQ-/Autovektor-Pfade werden nach dem Aufbau gezielt auf
+ * ihre echten Dispatcher umgebogen; FPU-/MMU-Fehlerbehandlung bleibt offen.
  *
  * Konsistenzpruefung repliziert den echten Kernel: die Summe aller
  * counts MUSS exakt 254 ergeben (256 minus die 2 reservierten Reset-
@@ -152,12 +150,10 @@ static const Q9_u16 Q9K_ExcGroupCounts[] = {
  * der spaetere IRQ-Dispatch sie der ISR wieder vorlegen kann.
  * a0 = 0 bedeutet "Eintrag entfernen" (Treiber-Terminate).
  *
- * ACHTUNG, bewusst noch unvollstaendig: Diese Fassung FUEHRT die Tabelle
- * nur -- sie stellt noch KEINE Interrupts zu. Der Zweck ist zunaechst,
- * dass die Treiber-Initialisierung durchlaeuft (sc68681 ruft F$IRQ
- * dreimal und brach bisher an unserem Unimplemented-Stub mit E_UNKSVC
- * ab). Die Zustellung gehoert in den IRQ-Pfad (Q9K_TimerIRQHandler bzw.
- * einen dortigen Polling-Durchlauf) und ist ein eigener Schritt.
+ * Die Registrierung und die Zustellung laufen inzwischen getrennt: F$IRQ
+ * trägt den Eintrag ein, und Q9K_IRQDispatch fragt die passenden ISRn beim
+ * Geräte- oder Autovektor-Interrupt ab. Offen bleibt die vollständige
+ * Abdeckung aller Hardware-Level und Treiberkonventionen.
  * --------------------------------------------------------------------- */
 /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, Fortsetzung 51): bei 16
  * Eintraegen a 20 Byte reicht die Tabelle von $1500 bis $1640 -- das
