@@ -190,10 +190,27 @@ test asserts that the counter drops by exactly one.
 The emulator regression extended to `HOwWl\rLGSDCcergsIPpNnxMmUVuRYy@#`, with a
 separate boot reporting `Vektor=0`.
 
-`F$Mem` (`0x07`) is marked withdrawn rather than missing. The manual states
-plainly that "F$Mem is no longer available. Use F$SRqMem instead.", so
-implementing it would mean building something real OS-9/68K itself removed.
-`F$SRqMem` already covers the need and is green.
+**`F$Mem` (`0x07`) — a correction.** This was marked withdrawn here on the
+strength of a quotation, "F$Mem is no longer available. Use F$SRqMem instead."
+That sentence does not appear in the Technical Manual at all — searching both
+copies under `MWOS/DOC` for "no longer available" returns nothing, and it is
+not in `MWOS/OS9/SRC/DEFS` either. It should never have carried a status on its
+own.
+
+What the manual actually says, on the `F$Mem` page (pp. 465/466), is narrower
+and quite different: "If d0 equals 0, the call is considered an information
+request and the current upper bound and size is returned", and then "F$Mem
+calls to resize the data area always fail for versions of the kernel from OS-9
+for 68K V2.3 and greater. Only an information request (d0=0) works on OS-9 for
+68K V2.3 and greater."
+
+So `F$Mem` was not withdrawn; it was reduced to an information request. The
+resize half is genuinely dead on V2.3 and later, and `F$SRqMem` covers growth.
+The information half is live, documented, and registered in both dispatch
+tables of the reference kernel. A program asking for its data area's upper
+bound currently gets the unknown-service error here, which is wrong. Correct
+behaviour is `d0=0` returning size and upper bound, and every resize refused
+with `E$NoRAM`.
 
 `F$GPrDsc` (`0x18`), `F$GModDr` (`0x1A`) and `F$SetCRC` (`0x26`) build on the
 three calls above. `F$GPrDsc` copies a process descriptor out for inspection and
@@ -1064,7 +1081,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
 | 🟡 | `0x05` | F$Chain | Replaces the caller's program in place, emulator-verified in both the success and the refusal path; loading from disk when the module is not in memory waits on `F$Load` |
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
-| ⛔ | `0x07` | F$Mem | Withdrawn in real OS-9/68K ("F$Mem is no longer available. Use F$SRqMem instead."); deliberately not implemented |
+| ❌ | `0x07` | F$Mem | Not implemented. Previously marked ⛔ on an unsourced quotation — see the correction above. The manual reduces `F$Mem` to an information request (`d0=0` returns size and upper bound) rather than withdrawing it; resizing is dead from V2.3 on and belongs to `F$SRqMem` |
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
 | ✅ | `0x09` | F$Icpt | Registers the routine and really **runs** it on delivery, by stacking a second process frame; emulator-verified end to end (alarm → routine → `F$RTE`) |
 | ✅ | `0x0A` | F$Sleep | Sleeps end on time and on an early signal; emulator-verified with a 2 s sleep across which the clock advanced |
