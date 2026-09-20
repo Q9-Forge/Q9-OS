@@ -61,7 +61,15 @@ Dateien (manuelle Kette: `cpfe` → `ilink` → `iopt` → `be68k` → `opt68k` 
 
 ## Hosttests
 
-`gcc -Wall -Wextra -o test_q9kernel_<x> test_q9kernel_<x>.c && ./test_...`
+```
+gcc -Wall -Wextra -DQ9K_KERNEL_DEVELOPMENT -DQ9K_ALLOC_STANDARD \
+    -o test_q9kernel_<x> test_q9kernel_<x>.c && ./test_q9kernel_<x>
+```
+
+**Die beiden `-D`-Schalter sind nicht optional.** `q9kernel_config.h`
+verlangt die Variantenwahl per `#error`; ohne sie brechen die meisten
+Tests schon beim Übersetzen ab (gemessen: 24 von 27). Wer den Fehlschlag
+für ein Testergebnis hält, sucht den Fehler an der falschen Stelle.
 
 Die Tests `#include`n die Kernelquelle direkt und lenken die
 Scratch-Adressen per `#define` **vor** dem `#include` auf ein Fake-Array um.
