@@ -29,10 +29,12 @@ now been done. What remains falls into three groups, and the table marks which:
   registered handlers, and `F$RTE`, `F$SigReset`, and `F$STrap` use that path.
   The remaining open calls are therefore hardware-specific, extension-owned,
   or lack a recoverable ABI rather than being blocked by this mechanism.
-* **Not the kernel's to implement**: `F$SysDbg` calls a debugger that Q9-OS does
-  not ship, `F$UAcct` is an extension point an OS9P2 module provides, and the
-  SSM-owned calls need a memory management module. `F$Mem` and `F$SSpd` were
-  withdrawn in real OS-9/68K itself.
+* **Extension-owned or hardware-dependent**: `F$UAcct` is an extension point an
+  OS9P2 module provides, and the SSM-owned calls need a memory management
+  module. `F$SysDbg` is kept open because the boot ROM contains RomBug, but its
+  register-image trampoline and the preceding `F$PwrMan` call are not yet
+  reproduced safely. `F$Mem` and `F$SSpd` were withdrawn in real OS-9/68K
+  itself.
 
 A few calls have no page in the Technical Manual at all (`F$AllRAM`, `F$GBlkMp`,
 `F$FModul`, `F$Sema`, `F$MBuf`, `F$POSK`, `F$GSPUMp`). Those stay untouched on
