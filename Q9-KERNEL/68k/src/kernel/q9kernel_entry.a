@@ -5673,6 +5673,13 @@ Q9K_SysFIGetStt:
         move.l  a0,d3
         tst.l   d3
         beq     Q9K_SysFIGetStt_BadAddr
+        andi.l  #$1f,d2
+        movea.l Q9_D_Proc,a1
+        adda.l  #$168,a1
+        add.w   d2,d2
+        move.w  (a1,d2.w),d2
+        cmpi.w  #3,d2
+        bcs     Q9K_SysFIGetStt_BadPath
         subq.l  #3,d2
         lsl.l   #8,d2
         movea.l Q9K_PATHPOOL_BASE_ADDR,a1
@@ -5731,6 +5738,13 @@ Q9K_SysFISGetSt:
         move.l  a0,d3
         tst.l   d3
         beq     Q9K_SysFISGetSt_BadAddr
+        andi.l  #$1f,d2
+        movea.l Q9_D_Proc,a1
+        adda.l  #$168,a1
+        add.w   d2,d2
+        move.w  (a1,d2.w),d2
+        cmpi.w  #3,d2
+        bcs     Q9K_SysFISGetSt_BadPath
         subq.l  #3,d2
         lsl.l   #8,d2
         movea.l Q9K_PATHPOOL_BASE_ADDR,a1
@@ -5789,6 +5803,13 @@ Q9K_SysFISetStt:
         move.l  a0,d3
         tst.l   d3
         beq     Q9K_SysFISetStt_BadAddr
+        andi.l  #$1f,d2
+        movea.l Q9_D_Proc,a1
+        adda.l  #$168,a1
+        add.w   d2,d2
+        move.w  (a1,d2.w),d2
+        cmpi.w  #3,d2
+        bcs     Q9K_SysFISetStt_BadPath
         subq.l  #3,d2
         lsl.l   #8,d2
         movea.l Q9K_PATHPOOL_BASE_ADDR,a1
