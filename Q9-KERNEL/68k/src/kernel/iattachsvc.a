@@ -69,6 +69,7 @@
 *   h = F$STime refused an impossible month
 *   i = F$GBlkMp reported the free-memory map (d0=16 proves it was ours)
 *   o = F$GBlkMp refused a buffer too small for the terminator
+*   q = F$FModul found this module without changing its link count (0x4E)
 *   l = F$Sema released a semaphore nobody was waiting on
 *   w = F$Sema refused an unknown operation and a null pointer
 *   two hex digits = the kernel's own tick counter (see STATUS.md: the
@@ -114,6 +115,20 @@ Q9K_AttachData:
         ends
 
 Q9K_AttachStart:
+* F$FModul ($4E): side-effect-free lookup of the running test module.
+* The kernel must return the real type/language word (0x0101) and clear
+* carry.  This is deliberately done before any later F$Link/UnLoad activity,
+* so the test also proves that F$FModul itself did not alter the link count.
+        moveq   #0,d0                           * type/language: any
+        lea     Q9K_AttachModuleName(pc),a0
+        trap    #0
+        dc.w    $004e                          * F$FModul
+        bcs     Q9K_NativeFailed
+        cmpi.w  #$0101,d0
+        bne     Q9K_NativeFailed
+        moveq   #'q',d7
+        move.b  d7,$FFFFF006
+
         moveq   #3,d0                           * native Q9 I$ChgDir: data directory
         lea     Q9K_DirName(pc),a0
         trap    #0
@@ -1301,6 +1316,9 @@ Q9K_EventName:
 
 Q9K_ChainTgtName:
         dc.b    "chaintgt",0
+
+Q9K_AttachModuleName:
+        dc.b    "iattachsvc",0
 
 Q9K_NoSuchName:
         dc.b    "kein_solches_modul",0
