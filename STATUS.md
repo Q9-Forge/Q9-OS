@@ -529,9 +529,17 @@ arrives, it is simply empty. `a0` was never null at the handler either —
 a diagnostic there stayed silent across a full run, before and after the frame
 switch.
 
+The call also arrives by the ordinary route: logging `Q9K_InTrapPath` alongside
+the pointer gives `^0005A880/1:...`, and `1` means a real `TRAP #0`, not the
+`PEA+RTS` trampoline. So the register-frame convention does not apply to this
+call at all — `a0` is the right place to look, `a0` is what was looked at, and
+what it points to is empty. That closes the frame theory for good rather than
+leaving it as a maybe.
+
 The remaining question is who is supposed to fill that buffer, and the answer
 lies on the path from our `F$Load` into the Microware IOMan, not in
-`Q9K_ProcPrsNam`. Note also that the status this row carried was never earned:
+`Q9K_ProcPrsNam`. The next measurement is the caller's return address at the
+`F$PrsNam` entry, which names the module making the empty call. Note also that the status this row carried was never earned:
 building `b9f9bfe` — the commit that marked `F$Load` ✅ "emulator-verified with
 `/dd/CMDS/echo`" — in a separate worktree and running it produces the same `k`.
 The call has not passed this test at any point, so this is not a regression.
