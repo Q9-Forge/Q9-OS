@@ -783,6 +783,20 @@ Q9K_GBlkMpImplPtr          equ $1EB0      * Q9K_SysGBlkMpImpl
 Q9K_TimeImplPtr            equ $1E9C      * Q9K_SysTimeImpl
 Q9K_SSvcImplPtr            equ $1EB4      * Q9K_SysSSvcImpl
 Q9K_MemImplPtr             equ $1EB8      * Q9K_SysFMemImpl      (mem.c)
+Q9K_DForkImplPtr           equ $1EE8      * Q9K_SysDForkImpl       (firstproc.c)
+
+* F$DFork (2026-09-20): input bridge and initial register-image output.
+Q9K_DForkScratch_TypeLang  equ $1EBC      * Q9_u16, d0.w EIN
+Q9K_DForkScratch_AddMem    equ $1EC0      * Q9_u32, d1.l EIN
+Q9K_DForkScratch_ParamSize equ $1EC4      * Q9_u32, d2.l EIN
+Q9K_DForkScratch_NumPaths  equ $1EC8      * Q9_u16, d3.w EIN
+Q9K_DForkScratch_Priority  equ $1ECC      * Q9_u16, d4.w EIN
+Q9K_DForkScratch_Name      equ $1ED0      * Q9_u32, (a0) EIN/AUS
+Q9K_DForkScratch_Param     equ $1ED4      * Q9_u32, (a1) EIN
+Q9K_DForkScratch_RegBuf    equ $1ED8      * Q9_u32, (a2) EIN
+Q9K_DForkScratch_ChildPID  equ $1EDC      * Q9_u16, d0.w AUS
+Q9K_DForkScratch_Error     equ $1EE0      * Q9_u16, d1.w AUS
+Q9K_DForkScratch_Ok        equ $1EE4      * Q9_u16, 0/1
 
 * Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
 * Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
@@ -3680,6 +3694,45 @@ Q9K_SysFFork_NameDone:
 Q9K_SysFFork_Fail:
         move.w  Q9K_ForkScratch_ErrorCode,d1
         ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
+        rts
+
+*******************************************************************************
+* Q9K_SysDFork -- F$DFork (Callcode 0x22).  This is the debugger-controlled
+* sibling of F$Fork: build the same child image, copy its initial 68-byte
+* register frame into (a2), then leave the child out of the ready queue.
+Q9K_SysDFork:
+        move.w  d0,Q9K_DForkScratch_TypeLang
+        move.l  d1,Q9K_DForkScratch_AddMem
+        move.l  d2,Q9K_DForkScratch_ParamSize
+        move.w  d3,Q9K_DForkScratch_NumPaths
+        move.w  d4,Q9K_DForkScratch_Priority
+        move.l  a0,Q9K_DForkScratch_Name
+        move.l  a1,Q9K_DForkScratch_Param
+        move.l  a2,Q9K_DForkScratch_RegBuf
+
+        move.l  d1,-(sp)
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        movea.l Q9K_DForkImplPtr,a1
+        jsr     (a1)
+        movea.l (sp)+,a6
+        move.l  (sp)+,d1
+
+        tst.w   Q9K_DForkScratch_Ok
+        beq     Q9K_SysDFork_Fail
+        move.w  Q9K_DForkScratch_ChildPID,d0
+        movea.l Q9K_DForkScratch_Name,a0
+        movea.l Q9K_DForkScratch_RegBuf,a2
+Q9K_SysDFork_SkipName:
+        tst.b   (a0)+
+        beq     Q9K_SysDFork_NameDone
+        bpl     Q9K_SysDFork_SkipName
+Q9K_SysDFork_NameDone:
+        andi    #$fe,ccr
+        rts
+Q9K_SysDFork_Fail:
+        move.w  Q9K_DForkScratch_Error,d1
+        ori     #1,ccr
         rts
 
 *******************************************************************************

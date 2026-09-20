@@ -246,6 +246,16 @@ void Q9K_SchedInsert(Q9_u32 desc)
     Q9K_ListAppend(Q9K_READYQ_SENTINEL_ADDR, desc);
 }
 
+/* Entfernt einen bereits eingefuegten Prozess wieder aus der Ready-Queue.
+ * F$DFork braucht genau diesen atomaren Schritt: Q9K_ProcFork baut den
+ * vollstaendigen Prozessrahmen auf und verlinkt das Kind, bevor der
+ * Debugger es in seinem angehaltenen Zustand uebernimmt. */
+void Q9K_SchedRemove(Q9_u32 desc)
+{
+    if (desc != 0)
+        Q9K_ListUnlink(desc);
+}
+
 /* Q9K_SchedSetPriority -- applies a changed priority to a descriptor and,
  * when that descriptor is already waiting in the ready queue, refreshes its
  * age immediately.  The running process is not in that queue and therefore

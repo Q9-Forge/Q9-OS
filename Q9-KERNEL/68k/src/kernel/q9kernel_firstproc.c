@@ -122,6 +122,7 @@ extern Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name);   /*
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /* q9kernel_moddir.c */
 extern Q9_u32 Q9K_ProcLookup(Q9_u16 pid);                                     /* q9kernel_procapi.c */
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);                                 /* q9kernel_procapi.c */
+extern void   Q9K_SchedRemove(Q9_u32 desc);                                   /* q9kernel_sched.c */
 
 #ifndef Q9K_PROCPOOL_FREE_ADDR
 #define Q9K_PROCPOOL_FREE_ADDR 0x120CUL   /* s. q9kernel_tables.c */
@@ -201,6 +202,66 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_PROCDESC_STATE_ZOMBIE 'z'   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_WAITING 'w'  /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_SLEEPING 's' /* NACHTRAG 2026-08-30, s. Kopfkommentar */
+
+/* F$DFork keeps the child allocated but outside the ready queue.  The
+ * register image uses the same 68-byte layout as the child's initial fake
+ * frame: D0-D7/A0-A6, SR, PC and format/vector word. */
+#ifndef Q9K_DEBUGFORK_E_BPADDR
+#define Q9K_DEBUGFORK_E_BPADDR 0x00D2U
+#endif
+#ifndef Q9K_DEBUGFORK_REGIMAGE_SIZE
+#define Q9K_DEBUGFORK_REGIMAGE_SIZE 68UL
+#endif
+
+static Q9_u32 Q9K_GetU32(Q9_u32 addr);
+static Q9_u8  Q9K_GetU8(Q9_u32 addr);
+static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value);
+
+Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
+                    Q9_u32 namePtr, Q9_u32 paramPtr, Q9_u16 priority,
+                    Q9_u16 *outError);
+
+Q9_u32 Q9K_ProcDebugFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
+                         Q9_u32 namePtr, Q9_u32 paramPtr, Q9_u16 priority,
+                         Q9_u32 registerBuffer, Q9_u16 *outError)
+{
+    Q9_u32 pid;
+    Q9_u32 desc;
+    Q9_u32 frame;
+    Q9_u32 i;
+
+    *outError = 0;
+    if (registerBuffer == 0) {
+        *outError = Q9K_DEBUGFORK_E_BPADDR;
+        return 0;
+    }
+
+    pid = Q9K_ProcFork(typeLang, addMem, paramSize, namePtr, paramPtr,
+                       priority, outError);
+    if (pid == 0)
+        return 0;
+
+    desc = Q9K_ProcLookup((Q9_u16)pid);
+    if (desc == 0) {
+        *outError = Q9K_DEBUGFORK_E_BPADDR;
+        return 0;
+    }
+    frame = Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF);
+    if (frame == 0) {
+        *outError = Q9K_DEBUGFORK_E_BPADDR;
+        return 0;
+    }
+
+    /* Publish the child's initial register image before making it
+     * inaccessible to the scheduler.  Byte copies keep this bridge correct
+     * on the host test build as well as on the 68000 target. */
+    for (i = 0; i < Q9K_DEBUGFORK_REGIMAGE_SIZE; i++)
+        Q9K_SetU8(registerBuffer + i, Q9K_GetU8(frame + i));
+
+    Q9K_SchedRemove(desc);
+    Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
+    return pid;
+}
 
 /* F$AllPrc-/F$DelPrc-Scratch (2026-09-18), hinter dem F$GPrDBT-Block
  * ($194C-$1950, q9kernel_procapi.c). */
@@ -983,6 +1044,27 @@ void Q9K_SysForkImpl(void)
 
     Q9K_SetU16(Q9K_FORK_SCRATCH_CHILDPID, (Q9_u16)pid);
     Q9K_SetU16(Q9K_FORK_SCRATCH_SUCCESS, 1);
+}
+
+/* F$DFork bridge.  The child is fully constructed by Q9K_ProcDebugFork,
+ * but remains in the WAITING state and outside the ready queue until the
+ * future F$DExec call explicitly resumes it. */
+void Q9K_SysDForkImpl(void)
+{
+    Q9_u16 error = 0;
+    Q9_u32 pid = Q9K_ProcDebugFork(
+        Q9K_GetU16(0x1EBCUL), Q9K_GetU32(0x1EC0UL),
+        Q9K_GetU32(0x1EC4UL), Q9K_GetU32(0x1ED0UL),
+        Q9K_GetU32(0x1ED4UL), Q9K_GetU16(0x1ECCUL),
+        Q9K_GetU32(0x1ED8UL), &error);
+
+    if (pid == 0) {
+        Q9K_SetU16(0x1EE0UL, error);
+        Q9K_SetU16(0x1EE4UL, 0);
+        return;
+    }
+    Q9K_SetU16(0x1EDCUL, (Q9_u16)pid);
+    Q9K_SetU16(0x1EE4UL, 1);
 }
 
 /* Q9K_ProcAllPrc -- echte F$AllPrc-Kernlogik (Callcode $4B, "Allocate
