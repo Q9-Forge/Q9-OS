@@ -5002,9 +5002,18 @@ Q9K_SysFChain:
 * nach erfolgreichem Laden wird der Moduldirectory-Link erneut versucht.
         cmpi.w  #$00dd,Q9K_ChainScratch_Error+2       * E$MNF
         bne     Q9K_SysFChain_Fail
+* F$Load nimmt einen Pfad entgegen, F$Chain bekommt dagegen den nackten
+* Modulnamen. Fuer Kommandos wird deshalb ein eigener, persistenter Puffer
+* mit dem Standardpfad /dd/CMDS aufgebaut.
+        lea     Q9K_ChainLoadPath+9(pc),a1
+        movea.l 20(sp),a0
+Q9K_SysFChain_CopyName:
+        move.b  (a0)+,d0
+        move.b  d0,(a1)+
+        bne     Q9K_SysFChain_CopyName
         moveq   #1,d0                                  * F$Load: Read_
         clr.l   d1                                     * Speicherfarbe ungenutzt
-        movea.l 20(sp),a0                               * gesicherter Chain-Name
+        lea     Q9K_ChainLoadPath(pc),a0
         trap    #0
         dc.w    $0001
         bcs     Q9K_SysFChain_Fail
@@ -6803,6 +6812,15 @@ Q9K_MemTraceModuleAddrText: dc.b " A0-P=0x",0
 Q9K_DiagTextMemFul:         dc.b "E$MemFul",0
 Q9K_DiagTextNoRam:          dc.b "E$NoRAM",0
 Q9K_DiagTextBmCrc:          dc.b "E$BMCRC",0
+Q9K_ChainLoadPath:
+        dc.b    "/dd/CMDS/"
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
+        dc.b    0,0,0,0,0,0,0,0
         dc.b    0       * keep the module end word-aligned
 
 * Q9K_ModuleEnd -- NACHTRAG 2026-08-19: nicht mehr fuer den
