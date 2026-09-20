@@ -5473,32 +5473,69 @@ Q9K_SysFSSvc:
         rts
 
 *******************************************************************************
+* Q9K_NativePathAdvance -- advance the logical position of a native path.
+* IN: d0.w = process-local path number, d1.l = number of transferred bytes.
+* Standard console paths have no pool descriptor and are left unchanged.
+*******************************************************************************
+Q9K_NativePathAdvance:
+        movem.l d2-d3/a1,-(sp)
+        moveq   #0,d2
+        move.w  d0,d2
+        cmpi.l  #32,d2
+        bcc     Q9K_NativePathAdvance_Done
+        movea.l Q9_D_Proc,a1
+        move.l  a1,d3
+        beq     Q9K_NativePathAdvance_Done
+        adda.l  #$168,a1
+        add.w   d2,d2
+        move.w  (a1,d2.w),d3
+        cmpi.w  #3,d3
+        bcs     Q9K_NativePathAdvance_Done
+        moveq   #0,d2
+        move.w  d3,d2
+        subq.l  #3,d2
+        lsl.l   #8,d2
+        movea.l Q9K_PATHPOOL_BASE_ADDR,a1
+        adda.l  d2,a1
+        tst.w   4(a1)
+        beq     Q9K_NativePathAdvance_Done
+        add.l   d1,8(a1)
+Q9K_NativePathAdvance_Done:
+        movem.l (sp)+,d2-d3/a1
+        rts
+
+*******************************************************************************
 * Q9K_SysFIWritLn -- minimal console I$WritLn implementation (Callcode $8c).
 * Handle standard console output directly while the external I/O stack is
 * still initializing, so sysgo diagnostics do not recurse through IOMan.
 * d0 = path number, d1 = byte count, a0 = source buffer.
 *******************************************************************************
 Q9K_SysFIWritLn:
-        movem.l d0-d2/d4/a0,-(sp)
+        movem.l d0-d3/d4/a0,-(sp)
         moveq   #2,d4                           * write access
         bsr     Q9K_ValidateNativePath
         bcs     Q9K_SysFIWritLn_Fail
         move.l  d1,d2
+        moveq   #0,d3
 Q9K_SysFIWritLn_Loop:
         tst.l   d2
         beq.s   Q9K_SysFIWritLn_Ok
         move.b  (a0)+,d0
         bsr     Q9K_IOManPutChar
+        addq.l  #1,d3
         cmpi.b  #$0d,d0                         * OS-9 line output ends at CR
         beq.s   Q9K_SysFIWritLn_Ok
         subq.l  #1,d2
         bra.s   Q9K_SysFIWritLn_Loop
 Q9K_SysFIWritLn_Ok:
-        movem.l (sp)+,d0-d2/d4/a0
+        move.l  (sp),d0
+        move.l  d3,d1
+        bsr     Q9K_NativePathAdvance
+        movem.l (sp)+,d0-d3/d4/a0
         andi    #$fe,ccr
         rts
 Q9K_SysFIWritLn_Fail:
-        movem.l (sp)+,d0-d2/d4/a0
+        movem.l (sp)+,d0-d3/d4/a0
         ori     #1,ccr
         rts
 
@@ -5571,6 +5608,9 @@ Q9K_SysFIWrite_Loop:
         subq.l  #1,d2
         bra.s   Q9K_SysFIWrite_Loop
 Q9K_SysFIWrite_Ok:
+        move.l  (sp),d0
+        move.l  4(sp),d1
+        bsr     Q9K_NativePathAdvance
         movem.l (sp)+,d0-d2/d4/a0
         andi    #$fe,ccr
         rts
@@ -5605,6 +5645,8 @@ Q9K_SysFIRead_Wait:
         subq.l  #1,d2
         bra.s   Q9K_SysFIRead_Loop
 Q9K_SysFIRead_Ok:
+        move.l  (sp),d0
+        bsr     Q9K_NativePathAdvance
         movem.l (sp)+,d0-d2/d4/a0/a1
         andi    #$fe,ccr
         rts
@@ -5644,6 +5686,8 @@ Q9K_SysFIReadLn_Wait:
         bra.s   Q9K_SysFIReadLn_Loop
 Q9K_SysFIReadLn_Ok:
         move.l  d3,d1
+        move.l  (sp),d0
+        bsr     Q9K_NativePathAdvance
         movem.l (sp)+,d0/d2-d4/a0/a1
         andi    #$fe,ccr
         rts
