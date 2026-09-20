@@ -1221,7 +1221,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x13` | F$AllBit | Kernel-native implementation, host-tested; same IOMan claim as `0x12` |
 | 🟡 | `0x14` | F$DelBit | Kernel-native implementation, host-tested; same IOMan claim as `0x12` |
 | ✅ | `0x15` | F$Time | Reads the kernel's software clock, which takes its starting value from the RTC72421 at `$FFFFD000` |
-| 🟡 | `0x16` | F$STime | Sets the software clock, including the battery-backed form (month field 0); the clock module it would otherwise link does not exist on this machine |
+| ✅ | `0x16` | F$STime | Sets the software clock, including the battery-backed form (month field 0); emulator-verified by setting a date/time, reading it back through `F$Time`, and rejecting month 13 (markers `b`/`h`). The external clock module is not needed for the native kernel path |
 | ✅ | `0x17` | F$CRC | 24-bit module CRC, accumulated across calls; verified against a real module and the documented CRCCon constant |
 | ✅ | `0x18` | F$GPrDsc | Read-only copy of a process descriptor, length-capped at the descriptor size |
 | ✅ | `0x19` | F$GBlkMp | Reports the free-memory map from the kernel's own free list, with the fragment count and totals; emulator-verified |
