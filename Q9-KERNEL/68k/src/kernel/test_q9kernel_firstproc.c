@@ -128,6 +128,13 @@ static void Q9K_SchedInsert(unsigned long desc)
     *(unsigned long *)(Q9_D_ACTIVQ + Q9K_READYQ_PREV_OFF) = desc;
 }
 
+static int g_schedRemoveCalls;
+void Q9K_SchedRemove(unsigned long desc)
+{
+    (void)desc;
+    g_schedRemoveCalls++;
+}
+
 /* Minimale Stubs fuer die echten q9kernel_moddir.c-Funktionen (dort
  * bereits ausfuehrlich eigenstaendig getestet, s. test_q9kernel_moddir.c)
  * -- fuer Q9K_ProcFork reicht ein einfaches, von den Testfaellen unten
@@ -598,6 +605,49 @@ int main(void)
             checkU32("F5: M$IData wurde kopiert UND per M$IRefs (Kodezeiger-Gruppe) reloziert (3+hdrAddr)",
                      relocatedCode, (Q9_u32)(unsigned int)(3 + (unsigned long)fakeHdr5));
         }
+    }
+
+
+    /* F$DFork: the child receives the initial register image but is removed
+     * from the ready queue and remains allocated in the WAITING state. */
+    {
+        static unsigned char debugPool[Q9K_PROCDESC_SIZE];
+        static unsigned char debugHdr[0x48];
+        static unsigned char registerImage[68];
+        Q9_u32 debugBase = (Q9_u32)(unsigned long)debugPool;
+        Q9_u16 error = 0xFFFF;
+        Q9_u32 debugPid;
+
+        memset(debugPool, 0, sizeof(debugPool));
+        memset(debugHdr, 0, sizeof(debugHdr));
+        memset(registerImage, 0xCC, sizeof(registerImage));
+        buildFreeList(debugBase, Q9K_PROCDESC_SIZE, 1, Q9K_PROCPOOL_FREE_ADDR);
+        Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, debugBase);
+        Q9K_SetU32(Q9_D_PROC, 0);
+        putBE32(debugHdr, 0x30, 0x20);
+        putBE32(debugHdr, 0x38, 16);
+        putBE32(debugHdr, 0x3C, 256);
+        g_stubModDirHdr = (unsigned long)debugHdr;
+        g_schedRemoveCalls = 0;
+        g_lookupResult = debugBase;
+
+        debugPid = Q9K_ProcDebugFork(0x0101, 0, 0,
+                                      (Q9_u32)(unsigned long)"prog", 0,
+                                      1, (Q9_u32)(unsigned long)registerImage,
+                                      &error);
+        checkU32("F$DFork liefert eine Kind-PID", (Q9_u32)(debugPid != 0), 1);
+        checkU32("F$DFork entfernt das Kind aus der Ready-Queue",
+                 (Q9_u32)g_schedRemoveCalls, 1);
+        checkU32("F$DFork laesst das Kind angehalten (State w)",
+                 (Q9_u32)*(Q9_u8 *)(debugBase + Q9K_PROCDESC_STATE_OFF), 'w');
+        checkU32("F$DFork Registerpuffer beginnt mit der Kind-PID",
+                 getBE32((unsigned long)registerImage), debugPid);
+        checkU32("F$DFork lehnt einen Null-Registerpuffer ab",
+                 (Q9_u32)Q9K_ProcDebugFork(0x0101, 0, 0,
+                                             (Q9_u32)(unsigned long)"prog", 0,
+                                             1, 0, &error), 0);
+        checkU32("F$DFork Null-Registerpuffer meldet E$BPAddr",
+                 (Q9_u32)error, 0x00D2UL);
     }
 
 
