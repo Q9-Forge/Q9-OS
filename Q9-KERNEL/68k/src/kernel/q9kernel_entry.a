@@ -4991,6 +4991,7 @@ Q9K_SysFChain:
         move.w  d4,Q9K_ChainScratch_Priority+2
         move.l  a0,Q9K_ChainScratch_Name
         move.l  a1,Q9K_ChainScratch_Param
+        move.l  a0,Q9K_ChainScratch_OldMod
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)
         tst.w   Q9K_ChainScratch_Ok+2
@@ -5006,7 +5007,7 @@ Q9K_SysFChain:
 * Modulnamen. Fuer Kommandos wird deshalb ein eigener, persistenter Puffer
 * mit dem Standardpfad /dd/CMDS aufgebaut.
         lea     Q9K_ChainLoadPath+9(pc),a1
-        movea.l Q9K_ChainScratch_Name,a0
+        movea.l Q9K_ChainScratch_OldMod,a0
 Q9K_SysFChain_CopyName:
         move.b  (a0)+,d0
         move.b  d0,(a1)+
