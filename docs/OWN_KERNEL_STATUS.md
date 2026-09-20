@@ -6,12 +6,168 @@ neu geschriebenen, OS-9/68K-kompatiblen Kernels. Ergänzt
 einem intern dokumentierten Plan um das, was davon **real läuft** — nachgewiesen im
 Q9-Flux-Emulator, nicht bloß implementiert.
 
-**Stand: 2026-09-04**, Branch `fix/ccr-error-signaling-flink-funlink` (PR #7).
+**Stand: 2026-09-20**, Branch `main`, Commit `7cabb1b`.
+
+---
+
+## ÜBERGABE (2026-09-20, zwölfte Arbeitssitzung — HIER ZUERST LESEN,
+ersetzt die Übergabe darunter; die von 2026-09-13 ist ab hier historisch)
+
+**Diese Datei war 134 Commits lang nicht fortgeschrieben.** Die Übergabe
+darunter endet am 13.09. bei Fortsetzung 61; seitdem ist sehr viel
+passiert, dokumentiert wurde es aber in **`STATUS.md`** im Wurzelverzeichnis.
+Das ist seit dem 16.09. die laufende Statusquelle: eine Tabelle über alle
+~97 Callcodes plus ein fortlaufender Abschnitt „Latest kernel
+verification". **Für den Stand eines einzelnen Systemaufrufs dort
+nachsehen, nicht hier.** Diese Datei bleibt für das, was eine Tabelle
+nicht trägt: offene Fragen, Messfallen, zurückgezogene Befunde.
+
+### Was seitdem fertig wurde (Auswahl, Details in `STATUS.md`)
+
+Der Kernel hat in diesen sechs Tagen den Sprung von „einzelne Aufrufe"
+zu „arbeitsfähiges System" gemacht:
+
+* **Zeit und Wecker:** eigene Softwareuhr, `F$STime`, `F$Time`
+  (Datumsformat korrigiert), `F$Alarm` mit `A$Set`/`A$Cycle`/`A$Delete`
+  und den absoluten Varianten.
+* **Prozess und Ablauf:** `F$Chain`, `F$NProc`, `F$SPrior` (Änderungen
+  wirken sofort), `F$AllPrc`/`F$DelPrc`, Mindestpriorität im Scheduler
+  (womit die vom Handbuch empfohlene `F$SSpd`-Ersatzroute funktioniert).
+* **Ausnahmen und Signale:** `F$Icpt` führt registrierte Routinen jetzt
+  wirklich aus, dazu `F$RTE`, `F$SigReset`, `F$STrap` (prozesseigene
+  Ausnahmebehandler) und ein Rekursionsschutz in `Q9K_ExcTrap`.
+* **Ereignisse und Sperren:** `F$Event` vollständig (inkl. blockierendem
+  `Ev$Wait`/`Ev$WaitR`), `F$Sema`.
+* **Speicher und Module:** `F$GBlkMp`, das Bitmap-Trio
+  `F$SchBit`/`F$AllBit`/`F$DelBit`, `F$FModul`, `F$Mem`
+  (Informationsabfrage).
+* **Ein- und Ausgabe:** native `I$Open`/`Dup`/`Close`/`ChgDir`/`Write`/
+  `WritLn`/`ReadLn`/`GetStt`/`SetStt`, Pfadfreigabe bei Prozessende,
+  SSM-Handler im Flachmodus.
+* **`F$Load` ist emulatorverifiziert** (`✅`) — der RBF-/Verzeichnis-
+  Hänger, der am 17.09. noch als Hauptengpass galt, ist weg.
+
+### DER OFFENE PUNKT: eine laufende Regressionsrücknahme
+
+**Das ist das Erste, was zu klären ist.** Die drei Commits `cdcd010`
+(„Accept OS-9 high-bit terminated path components"), `8ece62c` („Read F
+input from external register frame") und `04acb91` („Write external F
+results back to register frames") haben den `F$PrsNam`-Eingabepfad auf
+den `R$`-Registerrahmen umgestellt. Das ist eine **Regression gegenüber
+dem verifizierten `F$Load`-Weg**.
+
+Die Rücknahme war beim Schreiben dieser Übergabe **in Arbeit und nicht
+abgeschlossen**: in `q9kernel_entry.a` wird der Vorspann
+`tst.w Q9K_InTrapPath` / `movea.l $20(a5),a0` aus `Q9K_SysFPrsNam`
+wieder entfernt, in `q9kernel_iopath.c` die Hochbit-Behandlung in
+`Q9K_ProcPrsNam`, dazu ein zusätzlicher Hex-Marker für den
+`F$Load`-Fehlercode. Beides muss noch durch Bau und Emulator.
+
+Wer hier weitermacht: **zuerst `git status` prüfen.** Stehen `entry.a`
+und `iopath.c` noch als geändert da, ist diese Rücknahme unfertig und
+hat Vorrang vor allem anderen.
+
+### MESSFALLE, die vier falsche Befunde erzeugt hat
+
+Am 19.09. wurden mit `5b8a6d7` **vier Befunde auf einmal zurückgezogen**,
+die über drei Runden in `STATUS.md` gestanden hatten: der Zeitgeber ticke
+nicht, `F$Sleep` kehre nie zurück, ein von einem Tick unterbrochener
+Prozess laufe nie wieder, und der Kontext werde über einen Wechsel nicht
+wiederhergestellt. **Nichts davon stimmte.** Alle vier stammten aus
+*einem* Messfehler:
+
+> Die Konsole im Direct-Attach-Test wird von `Q9K_TestProcA` geflutet —
+> der Elternprozess druckt in seiner Diagnoseschleife ununterbrochen
+> `A`. Jede Ablesung wurde in einem ~40-Zeichen-Fenster hinter der
+> Markierung gemacht, und in diesem Fenster hatte die Flut längst alles
+> Nachfolgende begraben. Filtert man `A` aus dem vollständigen Protokoll,
+> standen die Markierungen die ganze Zeit da.
+
+Merksatz aus jenem Commit, der es auf den Punkt bringt: **„A short window
+onto a noisy channel is not a measurement."** Also: immer das
+vollständige Protokoll sichern und gezielt filtern, nie ein kurzes
+Fenster hinter einem Marker ablesen.
+
+Dasselbe galt für die „leere Ready-Queue" und den „verschwundenen
+Prozess": das Testprogramm war schlicht fertig, hatte nach `chaintgt`
+gekettet und sich normal beendet — deshalb lief `Q9K_ProcExit` mit
+Status 0 auf dem eigenen Deskriptor. Nie ein Fehler.
+
+Das ist **dasselbe Muster wie bei der Arena-Überlappungs-These** aus
+Fortsetzung 61 (unten), die ebenfalls zweimal behauptet und dann
+endgültig zurückgezogen wurde: eine beobachtete Speicherfreigabe war
+normales Prozessende, keine Korruption. Zweimal dieselbe Verwechslung —
+**ein normal endender Prozess sieht in Spuren aus wie ein Fehler.**
+
+### Status des alten Rätsels „csl traphandler mismatch"
+
+Die Übergabe darunter endet mit diesem ungeklärten Befund (`date` druckt
+`**** csl traphandler mismatch ****`, vier Hypothesen widerlegt). **Er
+taucht seit dem 14.09. in keinem Commit und in `STATUS.md` überhaupt
+nicht mehr auf.**
+
+Ob er behoben, durch andere Arbeiten nebenbei erledigt oder nur aus dem
+Blick geraten ist, **lässt sich aus den Commits nicht belegen** — hier
+wird deshalb bewusst nichts behauptet. Zwei Anhaltspunkte: `F$Load` ist
+inzwischen emulatorverifiziert, allerdings mit `/dd/CMDS/echo`, nicht mit
+`date`; und der Abschnitt zum isolierten `date`-Test in `STATUS.md`
+(Messstand 17.09.) steht unverändert da. **Erster Prüfschritt für die
+nächste Sitzung: `date` erneut laufen lassen und sehen, was jetzt
+passiert.**
+
+### Neue Werkzeuge und Methodik
+
+* **ABI aus dem Original zurückgewinnen, wenn das Handbuch schweigt.**
+  Das Verfahren ist mit `F$Sema` erprobt und in `cc4ba5a` festgehalten.
+  Mit `F$FModul` und `F$Mem` wurde es wiederholt.
+* **`dis68k.py`** (`Q9-OS-Research/kernel-68k/tools/`): disassembliert
+  einen Offsetbereich des Originalkernels mit capstone. Nötig, weil
+  **Ghidra Syscall-Einstiege als Daten führt** — sie sind über keinen
+  Kontrollfluss erreichbar, sondern werden ausschließlich über die
+  Dispatchtabelle betreten. Gilt für jeden noch nicht analysierten
+  Callcode.
+* **`Q9-OS-Research/kernel-68k/SYSCALL_ABI_UNDOCUMENTED_de.md`**: für die
+  Aufrufe ohne Handbucheintrag. Enthält unter anderem den Nachweis, dass
+  `F$AllRAM` (`$39`), `F$POSK` (`$5D`) und `F$SSpd` (`$0B`) im
+  Referenz-Build in *beiden* Tabellen auf dem Fehler-Stub `$8480` stehen
+  — für sie existiert kein Code, aus dem sich eine ABI herleiten ließe.
+* **Die 16-Bit-Reichweite von `bsr` ist erreicht.** Neue C-Module
+  gehören ans **Ende** der Link-Liste in `build.sh` (fünf Stellen), und
+  Aufrufe aus `entry.a` in die letzten Module laufen über Zeigerzellen
+  (Muster `Q9K_StrapImplPtr`, von `cinit.c` beim Booten gefüllt). `l68`
+  meldet sonst nur „operand size error" **ohne die Stelle**.
+* **Hosttest-Falle bei Deskriptor-Offsets:** auf dem Host ist
+  `unsigned long` 64 Bit, im Kernel 32. Felder, die nur vier Byte
+  auseinanderliegen (etwa `$1B0`/`$1B4`), überlappen sich beim Schreiben
+  im Test. Offsets im Hosttest umdefinieren — s. `test_q9kernel_chain.c`
+  und `test_q9kernel_mem.c`.
+
+### Nächste Schritte
+
+1. Die `F$PrsNam`-Rücknahme abschließen (s. o.) — hat Vorrang.
+2. `date` laufen lassen und den `traphandler mismatch` klären.
+3. `F$Mem` verdrahten: Handler in `q9kernel_entry.a`, Dispatch-Eintrag in
+   `q9kernel_cinit.c`. Der C-Teil (`q9kernel_mem.c`) ist gebaut, getestet
+   und gelinkt, aber **noch nicht erreichbar**; Scratch bei
+   `$1E74`–`$1E84`, Implementierung `Q9K_SysFMemImpl`.
+4. Emulator-Regressionen nachziehen für `F$FModul` und `F$Mem`.
+5. Weitere im Kernelmodul herleitbare Aufrufe: `F$DFork`/`F$DExec`/
+   `F$DExit` (`$22`–`$24`) als Gruppe, `F$FIRQ` (`$61`).
+
+### Arbeitsteilung
+
+An diesem Kernel arbeiten zeitweise **mehrere Sitzungen parallel**.
+Praktisch ist das nur begrenzt möglich: jeder neue Systemaufruf fasst
+dieselben vier Dateien an (`q9kernel_entry.a`, `q9kernel_cinit.c`,
+`build.sh`, `STATUS.md`). Vor Arbeit am Kernel deshalb prüfen, ob eine
+andere Sitzung läuft, und die Dateiaufteilung vorher absprechen.
+Kollisionsfrei ist Arbeit außerhalb des Kernelverzeichnisses — etwa
+ABI-Recherche im separaten Repo `Q9-OS-Research`.
 
 ---
 
 ## ÜBERGABE (2026-09-13, elfte Arbeitssitzung, Fortsetzung 61 —
-HIER ZUERST LESEN, ersetzt die Übergabe direkt darunter vollständig)
+historisch, s. oben)
 
 **Fortsetzung 61 (zweites echtes Kommandomodul "date" getestet):
 "csl traphandler mismatch" gefunden, Ursache trotz MEHRERER
