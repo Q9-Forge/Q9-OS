@@ -222,6 +222,15 @@ Q9K_AttachStart:
         move.b  d7,$FFFFF006
 
         move.w  d5,d0
+        clr.w   d1
+        lea     Q9K_OptBuffer(pc),a0
+        trap    #0
+        dc.w    $008e                          * I$SetStt on duplicated local path
+        bcs     Q9K_NativeFailed
+        moveq   #'u',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d5,d0
         trap    #0
         dc.w    $008f                          * I$Close duplicate
         bcs     Q9K_NativeFailed
