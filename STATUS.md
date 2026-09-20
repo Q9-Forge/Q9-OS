@@ -1286,6 +1286,31 @@ separately from I$ dispatch ownership.
 | 🔷 | `0x8F` | I$Close | Microware IOMan/RBF/CF path is covered by close/read-back tests; Q9-native path cleanup is implemented and verified |
 | 🔷 | `0x92` | I$SGetSt | Microware IOMan path is present; Q9-native `SS_Opt`/`SS_Ready` support remains limited |
 
+## Remaining kernel work outside the SysCalls
+
+The SysCall tables above are not the complete kernel roadmap. The following
+areas remain open independently of individual call-code implementations:
+
+1. **External IOMan/RBF/CF integration** — exercise complete loader and file
+   paths against real Microware modules; the `F$PrsNam`/RBF return path still has
+   a documented regression and verification gap.
+2. **Trap and context lifetime** — harden nested external traps, register-frame
+   ownership, and all return paths through IOMan, file managers, and drivers.
+3. **Scheduler** — finish real `F$DExec` trace/breakpoint stops and cover edge
+   cases involving preemption, process switching, and simultaneous IRQs.
+4. **Native Q9 I/O** — extend the minimal native path layer toward full device,
+   file, directory, status, and pathname semantics instead of relying on IOMan.
+5. **Memory protection/MMU** — replace flat-address compatibility behavior with
+   separate address spaces, page permissions, and real access checks.
+6. **Hardware-facing layers** — complete device IRQ/FIRQ coverage, task/SPU
+   mappings, cache controls, and other processor-specific services.
+7. **Boot and integration hardening** — test more boot modules and applications,
+   and verify memory limits, module-directory setup, init parameters, and failure
+   paths under longer emulator runs.
+8. **Status and regression hygiene** — keep `STATUS.md` and the historical
+   `docs/OWN_KERNEL_STATUS.md` synchronized and require every status change to
+   name the exact host or emulator evidence behind it.
+
 ## Current interpretation
 
 The kernel bootstrap and the basic process/memory path are usable.  The
