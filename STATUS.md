@@ -1225,8 +1225,8 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x2D` | F$NProc | Takes the next process off the ready list and switches into it. The caller is deliberately not re-queued — that is the manual's own semantics. Emulator-verified with a forked process that calls it and correctly never comes back |
 | 🟡 | `0x2E` | F$VModul | Header parity/CRC validation, size-bound handling, return-buffer ABI, and host tests are complete; full external loader integration remains open |
 | ✅ | `0x2F` | F$FindPD | Path/process number to descriptor address, same DBT structure as F$AllPD/F$RetPD |
-| 🟡 | `0x30` | F$AllPD | DBT allocation, descriptor clearing, host tests, and the real IOMan lifecycle probe are implemented; emulator confirmation remains open |
-| 🟡 | `0x31` | F$RetPD | DBT return with descriptor-number validation, host tests, and the real IOMan lifecycle probe are implemented; emulator confirmation remains open |
+| ✅ | `0x30` | F$AllPD | DBT allocation and descriptor clearing, host tests, and the direct `iattachsvc` emulator regression are verified; the marker sequence reaches the allocation before the later Microware attach/detach checks |
+| ✅ | `0x31` | F$RetPD | DBT return with descriptor-number validation, host tests, and the direct `iattachsvc` emulator regression are verified; the allocated descriptor is returned before the later Microware attach/detach checks |
 | ✅ | `0x32` | F$SSvc | Service-table registration, SysTrap routing, per-service data pointers, kernel-slot protection, and empty-table handling are host-tested; the direct `iattachsvc` emulator regression registers service `0x7F` and reaches it through a real TRAP, including the A3 data pointer |
 | 🟡 | `0x33` | F$IODel | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x37` | F$GProcP | PID-to-process-descriptor lookup implemented and host-tested; broader process-property APIs are tracked separately |
