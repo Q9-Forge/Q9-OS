@@ -4999,6 +4999,7 @@ Q9K_SysFChain:
         move.l  d4,16(a2)
         move.l  a0,20(a2)
         move.l  a1,24(a2)
+        move.w  Q9K_InTrapPath,28(a2)   * F$Load kann den aeusseren Trap-Kontext loeschen
         move.l  a0,Q9K_ChainScratch_OldMod
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)
@@ -5027,6 +5028,7 @@ Q9K_SysFChain_CopyName:
         trap    #0
         dc.w    $0001
         bcs     Q9K_SysFChain_Fail
+        lea     Q9K_ChainSavedTypeLang(pc),a2  * F$Load liefert sein Modul in a2 zurueck
         move.l  (a2),Q9K_ChainScratch_TypeLang
         move.l  4(a2),Q9K_ChainScratch_AddMem
         move.l  8(a2),Q9K_ChainScratch_ParamSz
@@ -5034,6 +5036,7 @@ Q9K_SysFChain_CopyName:
         move.l  16(a2),Q9K_ChainScratch_Priority
         move.l  20(a2),Q9K_ChainScratch_Name
         move.l  24(a2),Q9K_ChainScratch_Param
+        move.w  28(a2),Q9K_InTrapPath
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)                                   * jetzt muss Link greifen
         tst.w   Q9K_ChainScratch_Ok+2
@@ -6847,6 +6850,7 @@ Q9K_ChainSavedNumPaths: dc.l 0
 Q9K_ChainSavedPriority: dc.l 0
 Q9K_ChainSavedName:     dc.l 0
 Q9K_ChainSavedParam:    dc.l 0
+Q9K_ChainSavedTrapPath: dc.l 0
 
 * Q9K_ModuleEnd -- NACHTRAG 2026-08-19: nicht mehr fuer den
 * Selbstueberschreibungs-Schutz benutzt (s. ausfuehrlichen Fund-
