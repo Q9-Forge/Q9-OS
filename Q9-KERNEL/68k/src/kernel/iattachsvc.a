@@ -70,6 +70,7 @@
 *   i = F$GBlkMp reported the free-memory map (d0=16 proves it was ours)
 *   o = F$GBlkMp refused a buffer too small for the terminator
 *   q = F$FModul found this module without changing its link count (0x4E)
+*   [ = F$SSvc registered and dispatched an external service (0x32/0x7F)
 *   l = F$Sema released a semaphore nobody was waiting on
 *   w = F$Sema refused an unknown operation and a null pointer
 *   two hex digits = the kernel's own tick counter (see STATUS.md: the
@@ -115,6 +116,18 @@ Q9K_AttachData:
         ends
 
 Q9K_AttachStart:
+* F$SSvc ($32): register one non-kernel service and call it through the
+* normal TRAP #0 dispatcher.  The service routine checks the per-service
+* A3 data pointer before emitting '[', proving both halves of the ABI.
+        lea     Q9K_SsvcTable(pc),a1
+        lea     Q9K_SsvcData(pc),a3
+        trap    #0
+        dc.w    $0032                          * F$SSvc
+        bcs     Q9K_NativeFailed
+        moveq   #$7f,d0
+        trap    #0
+        dc.w    $007f                          * externally registered service
+
 * F$FModul ($4E): side-effect-free lookup of the running test module.
 * The kernel must return the real type/language word (0x0101) and clear
 * carry.  This is deliberately done before any later F$Link/UnLoad activity,
@@ -1319,6 +1332,27 @@ Q9K_ChainTgtName:
 
 Q9K_AttachModuleName:
         dc.b    "iattachsvc",0
+
+        align
+Q9K_SsvcTable:
+        dc.w    $007f
+        dc.w    Q9K_SsvcRoutine-Q9K_SsvcTable-4
+        dc.w    $ffff
+
+Q9K_SsvcData:
+        dc.l    0
+
+Q9K_SsvcRoutine:
+        lea     Q9K_SsvcData(pc),a0
+        cmpa.l  a0,a3
+        bne     Q9K_SsvcBadData
+        moveq   #'[',d7
+        move.b  d7,$FFFFF006
+        rts
+Q9K_SsvcBadData:
+        moveq   #'?',d7
+        move.b  d7,$FFFFF006
+        rts
 
 Q9K_NoSuchName:
         dc.b    "kein_solches_modul",0
