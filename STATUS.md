@@ -190,10 +190,62 @@ test asserts that the counter drops by exactly one.
 The emulator regression extended to `HOwWl\rLGSDCcergsIPpNnxMmUVuRYy@#`, with a
 separate boot reporting `Vektor=0`.
 
-`F$Mem` (`0x07`) is marked withdrawn rather than missing. The manual states
-plainly that "F$Mem is no longer available. Use F$SRqMem instead.", so
-implementing it would mean building something real OS-9/68K itself removed.
-`F$SRqMem` already covers the need and is green.
+**`F$Mem` (`0x07`) — a correction, and a correction to that correction.**
+This was marked withdrawn here on the strength of a quotation, "F$Mem is no
+longer available. Use F$SRqMem instead."
+
+That sentence was first thought to be absent from the manual entirely. It is
+not: it appears in `68k_tech.pdf` on page 313, in the error appendix, inside
+the description of **`E$NoRAM` (`000:237`, `$ED`)** — not on the `F$Mem` page,
+and not in the copies under `MWOS/DOC` that were searched. The quotation is
+therefore real and locatable; what it is not is a statement about the call as
+a whole. It explains why a *memory allocation request* returns `E$NoRAM`, and
+points to `F$SRqMem` for growth. Lifted out of that context it reads like an
+obituary for the whole call, which is how it ended up carrying a ⛔ here.
+
+The practical upshot is unchanged — the ⛔ was wrong — but the reason matters:
+the quotation was misapplied, not invented.
+
+What the manual actually says, on the `F$Mem` page (pp. 465/466), is narrower
+and quite different: "If d0 equals 0, the call is considered an information
+request and the current upper bound and size is returned", and then "F$Mem
+calls to resize the data area always fail for versions of the kernel from OS-9
+for 68K V2.3 and greater. Only an information request (d0=0) works on OS-9 for
+68K V2.3 and greater."
+
+So `F$Mem` was not withdrawn; it was reduced to an information request. The
+resize half is genuinely dead on V2.3 and later, and `F$SRqMem` covers growth.
+The information half is live, documented, and registered in both dispatch
+tables of the reference kernel.
+
+That half is now implemented, in `q9kernel_mem.c`. `d0=0` returns the data area
+size in `d0.l` and its upper bound in `a1`, both read from the current process
+descriptor's alloc base and size fields — the same pair `F$Chain` maintains and
+`F$Exit` releases. Every resize is refused with `E$NoRAM`.
+
+The ABI is verified from two independent sources that agree. Besides the manual
+pages above, the original was disassembled: the entry at module offset `$133C`
+(runtime `$843C`) is a thin shell that hands the register image and the `a1`
+slot to the worker at `$6102`, whose success path ends
+
+    621c  move.l $330(a4),(a0)    * d0.l = size of the data area
+    6220  move.l $32c(a4),d0      * base of the data area
+    6224  add.l  (a0),d0
+    6226  move.l d0,(a1)          * a1 = upper bound
+    6228  moveq  #0,d0            * success
+
+with `a4` being `$4c(a6)`, i.e. `D_Proc`. The refusal code is the original's
+own: at `$61d4` it compares the requested against the current size and falls
+through to `move.l #$ed,d0` — `E$NoRAM`. Note that Ghidra classifies `$133C` as
+data rather than code, because nothing reaches it through control flow; it is
+only ever entered through the dispatch table. It has to be disassembled
+explicitly.
+
+One deliberate narrowing: the original still *attempts* a shrink (`$61e2` ff.,
+including the `E$DelSP` check against the stack pointer). This kernel refuses
+that too, rather than half-building it — there is no partial return of a
+process block to the arena here (`Q9K_FreeMem` releases a block whole), and the
+manual requires the failure from V2.3 on anyway.
 
 `F$GPrDsc` (`0x18`), `F$GModDr` (`0x1A`) and `F$SetCRC` (`0x26`) build on the
 three calls above. `F$GPrDsc` copies a process descriptor out for inspection and
@@ -1064,7 +1116,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
 | 🟡 | `0x05` | F$Chain | Replaces the caller's program in place, emulator-verified in both the success and the refusal path; loading from disk when the module is not in memory waits on `F$Load` |
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
-| ⛔ | `0x07` | F$Mem | Withdrawn in real OS-9/68K ("F$Mem is no longer available. Use F$SRqMem instead."); deliberately not implemented |
+| 🟡 | `0x07` | F$Mem | Information request implemented (`d0=0` returns the data area size in `d0.l` and its upper bound in `a1`, read from the process descriptor's alloc base/size fields). Every resize is refused with `E$NoRAM`, which is what the reference kernel does at `$61da` and what the manual mandates from V2.3 on. ABI verified twice over: manual pp. 465/466 and the disassembled original at module offset `$133C`. Host tests cover it; emulator regression and the dispatch-table entry remain to be added |
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
 | ✅ | `0x09` | F$Icpt | Registers the routine and really **runs** it on delivery, by stacking a second process frame; emulator-verified end to end (alarm → routine → `F$RTE`) |
 | ✅ | `0x0A` | F$Sleep | Sleeps end on time and on an early signal; emulator-verified with a 2 s sleep across which the clock advanced |
@@ -1118,7 +1170,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x40` | F$DelTsk | Q9 flat-address-space compatibility handler is wired for user and supervisor calls; task-image release remains open |
 | ✅ | `0x4B` | F$AllPrc | Allocates and clears a process descriptor; without an MMU this is the documented direct F$AllPD case |
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
-| 🟡 | `0x4E` | F$FModul | Side-effect-free module-directory lookup is implemented with type/language filtering, highest-revision selection, result registers, and name-pointer advancement; emulator regression remains to be added |
+| 🟡 | `0x4E` | F$FModul | Side-effect-free module-directory lookup is implemented with type/language filtering, result registers, and name-pointer advancement; emulator regression remains to be added. **Deliberate divergence:** this picks the highest revision (shared with `F$Link` via `Q9K_ModDirFindSlotByName`), whereas the original takes the *first* match — at `$2820`/`$2826` it branches straight out to `$2844` without continuing the scan. Equivalent while only one entry per name and type exists |
 | ❌ | `0x52` | F$SysDbg | RomBug **is** present in the boot ROM; what is missing is the entry point for `D_SysDbg` — see the note below |
 | ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified on both wait paths, the blocking one with a forked second process doing the signalling |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
