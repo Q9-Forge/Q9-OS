@@ -1222,7 +1222,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x33` | F$IODel | Microware path exists; current Q9 compatibility is not fully verified |
 | ✅ | `0x37` | F$GProcP | PID-to-process-descriptor lookup implemented and host-tested; broader process-property APIs are tracked separately |
 | ✅ | `0x38` | F$Move | Memory move path implemented |
-| ❌ | `0x39` | F$AllRAM | Not implemented |
+| ⛔ | `0x39` | F$AllRAM | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, daher keine nachbildbare ABI |
 | 🟡 | `0x3A` | F$Permit | Q9 flat-address-space compatibility handler is wired and succeeds; per-process MMU permission maps remain open |
 | 🟡 | `0x3B` | F$Protect | Q9 flat-address-space compatibility handler is wired and succeeds; denying access requires the future MMU layer |
 | 🟡 | `0x3F` | F$AllTsk | Q9 flat-address-space compatibility handler is wired for supervisor calls; hardware task-image setup remains open |
@@ -1241,7 +1241,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x5A` | F$CCtl | Handler is wired and live dispatch-verified; on the cacheless Q9 target every control request is a successful no-op, while real CACR/cache maintenance remains hardware-specific |
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired; processor/task-map reporting remains hardware-specific and open |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
-| ❌ | `0x5D` | F$POSK | Not implemented |
+| ⛔ | `0x5D` | F$POSK | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, daher keine nachbildbare ABI |
 | 🟡 | `0x5E` | F$Panic | Default panic path is implemented: emits the panic code and halts; optional OS9P2-installed service hook remains open |
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
