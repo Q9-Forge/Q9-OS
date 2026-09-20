@@ -1203,7 +1203,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | ✅ | `0x21` | F$TLink | Links trap modules, initializes their state, supports `namePtr=0` removal, and releases references/owned memory on process exit |
 | 🟢 | `0x22` | F$DFork | Suspended child, 72-byte register image and debugger ownership are implemented; host-tested |
-| 🟡 | `0x23` | F$DExec | Suspended-child resume, register restore and parent parking are implemented; trace/breakpoint stop handling remains |
+| 🟡 | `0x23` | F$DExec | Suspended-child resume, 72-byte register restore and parent parking are implemented and host-tested; trace/breakpoint stop handling remains |
 | 🟢 | `0x24` | F$DExit | Validates debugger ownership and releases the suspended child and all owned resources |
 | ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
