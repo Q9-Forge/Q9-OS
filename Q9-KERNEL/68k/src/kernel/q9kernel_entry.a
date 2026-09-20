@@ -4979,7 +4979,7 @@ Q9K_SysFSema_NoFrame:
 *******************************************************************************
 Q9K_SysFChain:
         move.l  a6,-(sp)
-        movem.l d0-d4/a0-a1,-(sp)          * fuer optionalen F$Load-Fallback
+        movem.l d0-d4/a0-a2,-(sp)          * fuer optionalen F$Load-Fallback
         lea     Q9K_CRuntimeData(pc),a6
         clr.l   Q9K_ChainScratch_TypeLang        * obere Worte nullen, C liest 32 Bit
         move.w  d0,Q9K_ChainScratch_TypeLang+2
@@ -4991,13 +4991,14 @@ Q9K_SysFChain:
         move.w  d4,Q9K_ChainScratch_Priority+2
         move.l  a0,Q9K_ChainScratch_Name
         move.l  a1,Q9K_ChainScratch_Param
-        move.l  d0,Q9K_ChainSavedTypeLang
-        move.l  d1,Q9K_ChainSavedAddMem
-        move.l  d2,Q9K_ChainSavedParamSz
-        move.l  d3,Q9K_ChainSavedNumPaths
-        move.l  d4,Q9K_ChainSavedPriority
-        move.l  a0,Q9K_ChainSavedName
-        move.l  a1,Q9K_ChainSavedParam
+        lea     Q9K_ChainSavedTypeLang(pc),a2
+        move.l  d0,(a2)
+        move.l  d1,4(a2)
+        move.l  d2,8(a2)
+        move.l  d3,12(a2)
+        move.l  d4,16(a2)
+        move.l  a0,20(a2)
+        move.l  a1,24(a2)
         move.l  a0,Q9K_ChainScratch_OldMod
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)
@@ -5014,7 +5015,8 @@ Q9K_SysFChain:
 * Modulnamen. Fuer Kommandos wird deshalb ein eigener, persistenter Puffer
 * mit dem Standardpfad /dd/CMDS aufgebaut.
         lea     Q9K_ChainLoadPath+9(pc),a1
-        movea.l Q9K_ChainSavedName,a0
+        lea     Q9K_ChainSavedTypeLang(pc),a2
+        movea.l 20(a2),a0
 Q9K_SysFChain_CopyName:
         move.b  (a0)+,d0
         move.b  d0,(a1)+
@@ -5025,13 +5027,13 @@ Q9K_SysFChain_CopyName:
         trap    #0
         dc.w    $0001
         bcs     Q9K_SysFChain_Fail
-        move.l  Q9K_ChainSavedTypeLang,Q9K_ChainScratch_TypeLang
-        move.l  Q9K_ChainSavedAddMem,Q9K_ChainScratch_AddMem
-        move.l  Q9K_ChainSavedParamSz,Q9K_ChainScratch_ParamSz
-        move.l  Q9K_ChainSavedNumPaths,Q9K_ChainScratch_NumPaths
-        move.l  Q9K_ChainSavedPriority,Q9K_ChainScratch_Priority
-        move.l  Q9K_ChainSavedName,Q9K_ChainScratch_Name
-        move.l  Q9K_ChainSavedParam,Q9K_ChainScratch_Param
+        move.l  (a2),Q9K_ChainScratch_TypeLang
+        move.l  4(a2),Q9K_ChainScratch_AddMem
+        move.l  8(a2),Q9K_ChainScratch_ParamSz
+        move.l  12(a2),Q9K_ChainScratch_NumPaths
+        move.l  16(a2),Q9K_ChainScratch_Priority
+        move.l  20(a2),Q9K_ChainScratch_Name
+        move.l  24(a2),Q9K_ChainScratch_Param
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)                                   * jetzt muss Link greifen
         tst.w   Q9K_ChainScratch_Ok+2
@@ -5039,7 +5041,7 @@ Q9K_SysFChain_CopyName:
         bra     Q9K_SysFChain_Success
 
 Q9K_SysFChain_Success:
-        movem.l (sp)+,d0-d4/a0-a1
+        movem.l (sp)+,d0-d4/a0-a2
         movea.l (sp)+,a6
 
         tst.w   Q9K_InTrapPath
@@ -5056,7 +5058,7 @@ Q9K_SysFChain_Success:
         rte                                      * Sprung ins neue Programm
 
 Q9K_SysFChain_Fail:
-        movem.l (sp)+,d0-d4/a0-a1
+        movem.l (sp)+,d0-d4/a0-a2
         movea.l (sp)+,a6
         move.w  Q9K_ChainScratch_Error+2,d1
         ori     #1,ccr
