@@ -765,6 +765,18 @@ Q9K_ChainImplPtr           equ $1E64      * Q9K_SysChainImpl     (chain.c)
 Q9K_ChainReleaseImplPtr    equ $1E68      * Q9K_SysChainReleaseImpl
 Q9K_SemaImplPtr            equ $1E6C      * Q9K_SysSemaImpl      (sema.c)
 Q9K_SemaWaitImplPtr        equ $1E70      * Q9K_SysSemaWaitImpl
+Q9K_TLinkImplPtr           equ $1E88      * Q9K_SysTLinkImpl
+Q9K_SetSysImplPtr          equ $1E8C      * Q9K_SysSetSysImpl
+Q9K_JulianImplPtr          equ $1E90      * Q9K_SysJulianImpl
+Q9K_GregorImplPtr          equ $1E94      * Q9K_SysGregorImpl
+Q9K_AlarmImplPtr           equ $1E98      * Q9K_SysAlarmImpl
+Q9K_STimeImplPtr           equ $1EA0      * Q9K_SysSTimeImpl
+Q9K_SchBitImplPtr          equ $1EA4      * Q9K_SysSchBitImpl
+Q9K_AllBitImplPtr          equ $1EA8      * Q9K_SysAllBitImpl
+Q9K_DelBitImplPtr          equ $1EAC      * Q9K_SysDelBitImpl
+Q9K_GBlkMpImplPtr          equ $1EB0      * Q9K_SysGBlkMpImpl
+Q9K_TimeImplPtr            equ $1E9C      * Q9K_SysTimeImpl
+Q9K_SSvcImplPtr            equ $1EB4      * Q9K_SysSSvcImpl
 
 * Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
 * Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
@@ -4517,7 +4529,8 @@ Q9K_SysFTLink:
         move.l  d0,Q9K_TLinkScratch_TrapNum
         move.l  d1,Q9K_TLinkScratch_MemOvr
         move.l  a0,Q9K_TLinkScratch_NamePtr
-        bsr     Q9K_SysTLinkImpl
+        movea.l Q9K_TLinkImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         movem.l (sp)+,d1-d7/a3-a5
 
@@ -4681,9 +4694,19 @@ Q9K_SysFSRtMem:
 * bekam Unsinn, ohne dass ein Test es gemerkt haette.
 *******************************************************************************
 Q9K_SysFTime:
+* a1 wird hier MITGESICHERT, und das ist kein Vorsichtsschnoerkel: beim
+* Umstellen dieses Aufrufs auf die Zeigerzelle (a1 als Zwischenregister)
+* stuerzte der Bootlauf reproduzierbar mit Vektor 4 ab, waehrend
+* dieselbe Umstellung an elf anderen Handlern sauber lief.  F$Time gibt
+* laut Handbuch nur d0/d1 zurueck -- ein Aufrufer im Bootpfad verlaesst
+* sich also darauf, a1 unveraendert wiederzubekommen.  Wer diese zwei
+* Zeilen entfernt, bekommt den Absturz zurueck.
         move.l  a6,-(sp)
+        move.l  a1,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysTimeImpl
+        movea.l Q9K_TimeImplPtr,a1
+        jsr     (a1)
+        movea.l (sp)+,a1
         movea.l (sp)+,a6
         move.l  Q9K_STimeScratch_Time,d0
         move.l  Q9K_STimeScratch_Date,d1
@@ -4704,7 +4727,8 @@ Q9K_SysFSTime:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_STimeScratch_Time
         move.l  d1,Q9K_STimeScratch_Date
-        bsr     Q9K_SysSTimeImpl
+        movea.l Q9K_STimeImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         tst.w   Q9K_STimeScratch_Success+2
         beq     Q9K_SysFSTime_Fail
@@ -4737,7 +4761,8 @@ Q9K_SysFSchBit:
         move.w  d1,Q9K_BitmapScratch_Count+2
         move.l  a0,Q9K_BitmapScratch_Base
         move.l  a1,Q9K_BitmapScratch_End
-        bsr     Q9K_SysSchBitImpl
+        movea.l Q9K_SchBitImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         move.w  Q9K_BitmapScratch_Start+2,d0     * in BEIDEN Faellen gueltig
         move.w  Q9K_BitmapScratch_Count+2,d1
@@ -4762,14 +4787,16 @@ Q9K_SysFAllBit:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         bsr     Q9K_BitmapArgsIn
-        bsr     Q9K_SysAllBitImpl
+        movea.l Q9K_AllBitImplPtr,a1
+        jsr     (a1)
         bra     Q9K_BitmapReturn
 
 Q9K_SysFDelBit:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         bsr     Q9K_BitmapArgsIn
-        bsr     Q9K_SysDelBitImpl
+        movea.l Q9K_DelBitImplPtr,a1
+        jsr     (a1)
         bra     Q9K_BitmapReturn
 
 * Gemeinsame Argumentuebergabe und Rueckkehr der beiden -- sie
@@ -4813,7 +4840,8 @@ Q9K_SysFGBlkMp:
         move.l  d0,Q9K_BlkMpScratch_Begin
         move.l  d1,Q9K_BlkMpScratch_BufSize
         move.l  a0,Q9K_BlkMpScratch_Buf
-        bsr     Q9K_SysGBlkMpImpl
+        movea.l Q9K_GBlkMpImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         move.l  Q9K_BlkMpScratch_TotalRam,d2     * auch im Fehlerfall gueltig
         tst.w   Q9K_BlkMpScratch_Ok+2
@@ -5229,7 +5257,8 @@ Q9K_SysFSetSys:
         move.l  d0,Q9K_SetSysScratch_VarCode
         move.l  d1,Q9K_SetSysScratch_Flags
         move.l  d2,Q9K_SetSysScratch_Value
-        bsr     Q9K_SysSetSysImpl
+        movea.l Q9K_SetSysImplPtr,a1
+        jsr     (a1)
         move.l  Q9K_SetSysScratch_Value,d2   * Ergebnis VOR dem Wiederherstellen abholen (d2 selbst wird nicht gerettet)
         movea.l (sp)+,a6                     * eingehendes a6 wiederherstellen
         movem.l (sp)+,d0-d1/d3-d7/a0-a1/a3-a5
@@ -5265,7 +5294,8 @@ Q9K_SysFSSvc:
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  a1,Q9K_SSvcScratch_TablePtr
         move.l  a3,Q9K_SSvcScratch_DataPtr
-        bsr     Q9K_SysSSvcImpl
+        movea.l Q9K_SSvcImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         andi    #$fe,ccr                        * Carry im CCR loeschen -- immer "Erfolg"
@@ -6133,7 +6163,8 @@ Q9K_SysFJulian:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_DateScratch_Time
         move.l  d1,Q9K_DateScratch_Date
-        bsr     Q9K_SysJulianImpl
+        movea.l Q9K_JulianImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         tst.w   Q9K_DateScratch_Success+2
         beq     Q9K_SysFJulian_Fail
@@ -6156,7 +6187,8 @@ Q9K_SysFGregor:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_DateScratch_Time
         move.l  d1,Q9K_DateScratch_Date
-        bsr     Q9K_SysGregorImpl
+        movea.l Q9K_GregorImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         tst.w   Q9K_DateScratch_Success+2
         beq     Q9K_SysFGregor_Fail
@@ -6402,7 +6434,8 @@ Q9K_SysFAlarm:
         move.w  d2,Q9K_AlarmScratch_Signal+2
         move.l  d3,Q9K_AlarmScratch_Ticks
         move.l  d4,Q9K_AlarmScratch_Date
-        bsr     Q9K_SysAlarmImpl
+        movea.l Q9K_AlarmImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6
         tst.w   Q9K_AlarmScratch_Success+2
         beq     Q9K_SysFAlarm_Fail

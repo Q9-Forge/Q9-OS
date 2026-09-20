@@ -779,19 +779,31 @@ to its remaining tests. Three observations together make the proof: `n` appears
 (the child ran), `N` never appears (the call did not return), and the parent's
 later markers appear (the switch really happened rather than hanging).
 
-**A limit reached while adding it, worth recording because it will come back.**
-The kernel has grown past the 16-bit reach of `bsr`. Adding two dispatch entries
-in `q9kernel_cinit.c` was enough to push the distance from `q9kernel_entry.a`
-into the last modules of the link list over 32 KiB. The assembler accepts it
-silently; `l68` then reports `operand size error` **without naming the place**,
-which makes it an expensive thing to diagnose. Two rules follow, and both are
-now written into the source: new C files go at the **end** of the link list in
-`build.sh`, so existing distances do not move; and calls into the last modules
-go through a pointer cell that `q9kernel_cinit.c` fills at boot
-(`Q9K_StrapImplPtr` and the six below it), the same pattern `F$Event` already
-used. Seven calls — `F$STrap`, `F$RTE`, `F$SigReset`, `F$Chain` (twice),
-`F$Sema` (twice) — were converted, which buys room for several more calls before
-the next one has to be.
+**The reach limit, revisited — and one real ABI finding out of it.** The
+16-bit `bsr` reach ran out again almost immediately: adding `F$Mem` and
+`F$FModul` was enough that even a single extra diagnostic line in
+`q9kernel_iopath.c` brought `operand size error` back. Twelve more calls were
+therefore moved onto pointer cells — everything aimed at `q9kernel_traplink.r`
+and the modules after it (`F$TLink`, `F$SetSys`, `F$Julian`, `F$Gregor`,
+`F$Alarm`, `F$Time`, `F$STime`, `F$SchBit`, `F$AllBit`, `F$DelBit`, `F$GBlkMp`,
+`F$SSvc`).
+
+Eleven of them converted without incident. `F$Time` did not: the boot run died
+with `Vektor=4` every time, and bisecting the twelve one group at a time is what
+identified it. The cause is worth keeping, because it is a property of the call
+and not of the conversion — the conversion uses `a1` as the scratch register to
+reach the cell, and **something in the boot path relies on `F$Time` leaving `a1`
+untouched**. The manual lists only `d0`/`d1` as output, so preserving the rest
+is the caller's reasonable expectation; this kernel simply had never been asked
+to honour it before, because no handler had clobbered `a1` there. `F$Time` now
+saves and restores `a1` around the call, and all twelve run clean.
+
+The two rules from the first round still hold and are written into the source:
+new C files go at the **end** of the link list in `build.sh`, and calls into the
+last modules go through a pointer cell filled by `q9kernel_cinit.c` at boot.
+Worth adding a third: when converting a handler this way, check what the call
+promises to preserve. `a1` is free in most of these handlers only because the
+input has already been copied into scratch cells by that point.
 
 **F$Event** (`0x53`) is the event system — "multiple-value semaphores", as the
 manual puts it. Unlike a semaphore an event carries a counter, and a waiter
