@@ -210,12 +210,19 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_DEBUGFORK_E_BPADDR 0x00D2U
 #endif
 #ifndef Q9K_DEBUGFORK_REGIMAGE_SIZE
-#define Q9K_DEBUGFORK_REGIMAGE_SIZE 68UL
+#define Q9K_DEBUGFORK_REGIMAGE_SIZE 72UL
+#endif
+#define Q9K_PROCDESC_DBGREG_OFF 0x2A8UL
+#define Q9K_PROCDESC_DBGPAR_OFF 0x2ACUL
+#define Q9K_PROCDESC_DBGINSTR_OFF 0x2B0UL
+#ifndef Q9_D_PROC
+#define Q9_D_PROC 0x04CUL
 #endif
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr);
 static Q9_u8  Q9K_GetU8(Q9_u32 addr);
 static void   Q9K_SetU8(Q9_u32 addr, Q9_u8 value);
+static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value);
 
 Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
                     Q9_u32 namePtr, Q9_u32 paramPtr, Q9_u16 priority,
@@ -252,11 +259,19 @@ Q9_u32 Q9K_ProcDebugFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
         return 0;
     }
 
-    /* Publish the child's initial register image before making it
-     * inaccessible to the scheduler.  Byte copies keep this bridge correct
-     * on the host test build as well as on the 68000 target. */
-    for (i = 0; i < Q9K_DEBUGFORK_REGIMAGE_SIZE; i++)
+    /* Publish the external 72-byte R$ frame.  The scheduler's compact
+     * internal frame contains D0-D7/A0-A6 followed by SR/PC/format; derive
+     * the missing A7 from the post-restore stack boundary. */
+    for (i = 0; i < 60UL; ++i)
         Q9K_SetU8(registerBuffer + i, Q9K_GetU8(frame + i));
+    for (i = 0; i < 4UL; ++i)
+        Q9K_SetU8(registerBuffer + 60UL + i,
+                  (Q9_u8)((frame + 68UL) >> (24UL - i * 8UL)));
+    for (i = 0; i < 8UL; ++i)
+        Q9K_SetU8(registerBuffer + 64UL + i, Q9K_GetU8(frame + 60UL + i));
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGREG_OFF, registerBuffer);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGPAR_OFF, Q9K_GetU32(Q9_D_PROC));
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGINSTR_OFF, 0UL);
 
     Q9K_SchedRemove(desc);
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);

@@ -85,6 +85,8 @@ extern void   Q9K_SysFUnLink(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F
 extern void   Q9K_SysFFork(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Fork (Callcode 0x03) */
 extern void   Q9K_SysDFork(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$DFork (Callcode 0x22) */
 extern void   Q9K_SysDForkImpl(void); /* q9kernel_firstproc.c, F$DFork bridge (Callcode 0x22) */
+extern void   Q9K_SysDExit(void);     /* q9kernel_entry.a, F$DExit handler */
+extern void   Q9K_SysDExitImpl(void); /* q9kernel_procend.c, F$DExit bridge */
 extern void   Q9K_SysFWait(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Wait (Callcode 0x04) */
 extern void   Q9K_SysFExit(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Exit (Callcode 0x06) */
 extern void   Q9K_SysFSleep(void);   /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Sleep (Callcode 0x0a) */
@@ -497,6 +499,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x02UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFUnLink);
                     Q9K_PutU32(usrdisBase + 0x03UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFork);
                     Q9K_PutU32(usrdisBase + 0x22UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysDFork);
+                    Q9K_PutU32(usrdisBase + 0x24UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysDExit);
                     Q9K_PutU32(usrdisBase + 0x04UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFWait);
                     Q9K_PutU32(usrdisBase + 0x06UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFExit);
                     Q9K_PutU32(usrdisBase + 0x0aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSleep);
@@ -590,6 +593,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(0x1EB4UL, (Q9_u32)(unsigned long)Q9K_SysSSvcImpl);
                     Q9K_PutU32(0x1EB8UL, (Q9_u32)(unsigned long)Q9K_SysFMemImpl);
                     Q9K_PutU32(0x1EE8UL, (Q9_u32)(unsigned long)Q9K_SysDForkImpl);
+                    Q9K_PutU32(0x1EF8UL, (Q9_u32)(unsigned long)Q9K_SysDExitImpl);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
@@ -605,6 +609,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x02UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFUnLink);
                     Q9K_PutU32(sysdisBase + 0x03UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFork);
                     Q9K_PutU32(sysdisBase + 0x22UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysDFork);
+                    Q9K_PutU32(sysdisBase + 0x24UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysDExit);
                     Q9K_PutU32(sysdisBase + 0x04UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFWait);
                     Q9K_PutU32(sysdisBase + 0x06UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFExit);
                     Q9K_PutU32(sysdisBase + 0x0aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSleep);

@@ -152,6 +152,7 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #define Q9K_PROCDESC_STATE_ACTIVE  'a'
 #define Q9K_PROCDESC_STATE_ZOMBIE  'z'
 #define Q9K_PROCDESC_STATE_WAITING 'w'
+#define Q9K_PROCDESC_DBGPAR_OFF    0x2ACUL
 
 #ifndef Q9K_PROCDESC_SIZE
 #define Q9K_PROCDESC_SIZE 0x400UL  /* = P$PrcBody (echte Groesse), s. q9kernel_tables.c */
@@ -440,6 +441,35 @@ int Q9K_ProcWaitTryReap(Q9_u32 callerDesc, Q9_u32 *outChildPid, Q9_u16 *outExitS
     return 0;
 }
 
+/* F$DExit -- release a child that was created by F$DFork without turning it
+ * into a zombie.  Debugger ownership is checked through P$DbgPar so an
+ * unrelated process cannot tear down another debugger's suspended child. */
+int Q9K_ProcDebugExit(Q9_u16 childPid, Q9_u16 *outError)
+{
+    Q9_u32 base = Q9K_GetU32(Q9K_PROCPOOL_BASE_ADDR);
+    Q9_u32 count = Q9K_GetU32(Q9K_PROCPOOL_COUNT_ADDR);
+    Q9_u32 desc;
+    Q9_u32 owner;
+
+    *outError = 0;
+    if (childPid == 0 || (Q9_u32)childPid > count) {
+        *outError = 0x00E0U;
+        return 0;
+    }
+    desc = base + ((Q9_u32)childPid - 1UL) * Q9K_PROCDESC_SIZE;
+    if (Q9K_GetU8(desc + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_WAITING) {
+        *outError = 0x00E0U;
+        return 0;
+    }
+    owner = Q9K_GetU32(desc + Q9K_PROCDESC_DBGPAR_OFF);
+    if (owner == 0 || owner != Q9K_GetU32(Q9_D_PROC)) {
+        *outError = 0x00E0U;
+        return 0;
+    }
+    Q9K_ProcPoolFree(desc);
+    return 1;
+}
+
 /* Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
  * Q9K_SysFExit/Q9K_SysFWait (q9kernel_entry.a) -- gleiches, bereits
  * etabliertes Muster wie Q9K_FORK_SCRATCH_* (q9kernel_firstproc.c).
@@ -463,6 +493,9 @@ int Q9K_ProcWaitTryReap(Q9_u32 callerDesc, Q9_u32 *outChildPid, Q9_u16 *outExitS
 #ifndef Q9K_EXIT_SCRATCH_NEXT
 #define Q9K_EXIT_SCRATCH_NEXT       0x12ECUL   /* Q9_u32, naechster Deskriptor AUS */
 #endif
+#define Q9K_DEXIT_SCRATCH_PID       0x1EECUL
+#define Q9K_DEXIT_SCRATCH_ERROR     0x1EF0UL
+#define Q9K_DEXIT_SCRATCH_SUCCESS   0x1EF4UL
 
 /* Q9K_SysWaitImpl -- duenne, PARAMETERLOSE Bruecke zwischen dem
  * Assembler-Trampolin Q9K_SysFWait (q9kernel_entry.a) und
@@ -500,4 +533,13 @@ void Q9K_SysExitImpl(void)
     Q9_u32 next = Q9K_ProcExit(callerDesc, exitStatus);
 
     Q9K_SetU32(Q9K_EXIT_SCRATCH_NEXT, next);
+}
+
+void Q9K_SysDExitImpl(void)
+{
+    Q9_u16 error = 0;
+    int ok = Q9K_ProcDebugExit(Q9K_GetU16(Q9K_DEXIT_SCRATCH_PID), &error);
+
+    Q9K_SetU16(Q9K_DEXIT_SCRATCH_ERROR, error);
+    Q9K_SetU16(Q9K_DEXIT_SCRATCH_SUCCESS, (Q9_u16)(ok ? 1 : 0));
 }

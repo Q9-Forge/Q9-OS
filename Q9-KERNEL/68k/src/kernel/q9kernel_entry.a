@@ -797,6 +797,10 @@ Q9K_DForkScratch_RegBuf    equ $1ED8      * Q9_u32, (a2) EIN
 Q9K_DForkScratch_ChildPID  equ $1EDC      * Q9_u16, d0.w AUS
 Q9K_DForkScratch_Error     equ $1EE0      * Q9_u16, d1.w AUS
 Q9K_DForkScratch_Ok        equ $1EE4      * Q9_u16, 0/1
+Q9K_DExitImplPtr            equ $1EF8      * Q9K_SysDExitImpl
+Q9K_DExitScratch_Pid        equ $1EEC      * Q9_u16, d0.w EIN
+Q9K_DExitScratch_Error      equ $1EF0      * Q9_u16, d1.w AUS
+Q9K_DExitScratch_Ok         equ $1EF4      * Q9_u16, 0/1
 
 * Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
 * Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
@@ -3732,6 +3736,24 @@ Q9K_SysDFork_NameDone:
         rts
 Q9K_SysDFork_Fail:
         move.w  Q9K_DForkScratch_Error,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysDExit -- F$DExit (Callcode 0x24), release a suspended debug child.
+Q9K_SysDExit:
+        move.w  d0,Q9K_DExitScratch_Pid
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        movea.l Q9K_DExitImplPtr,a1
+        jsr     (a1)
+        movea.l (sp)+,a6
+        tst.w   Q9K_DExitScratch_Ok
+        beq     Q9K_SysDExit_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysDExit_Fail:
+        move.w  Q9K_DExitScratch_Error,d1
         ori     #1,ccr
         rts
 
