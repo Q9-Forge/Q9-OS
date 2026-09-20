@@ -123,6 +123,8 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);                       /*
 extern Q9_u32 Q9K_ProcLookup(Q9_u16 pid);                                     /* q9kernel_procapi.c */
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);                                 /* q9kernel_procapi.c */
 extern void   Q9K_SchedRemove(Q9_u32 desc);                                   /* q9kernel_sched.c */
+extern void   Q9K_WaitQInsert(Q9_u32 desc);                                   /* q9kernel_sched.c */
+extern Q9_u32 Q9K_SchedFirstPick(void);                                       /* q9kernel_sched.c */
 
 #ifndef Q9K_PROCPOOL_FREE_ADDR
 #define Q9K_PROCPOOL_FREE_ADDR 0x120CUL   /* s. q9kernel_tables.c */
@@ -1080,6 +1082,51 @@ void Q9K_SysDForkImpl(void)
     }
     Q9K_SetU16(0x1EDCUL, (Q9_u16)pid);
     Q9K_SetU16(0x1EE4UL, 1);
+}
+
+/* Start a suspended debug child and park its debugger parent.  The
+ * instruction counter is recorded for the trace-exception continuation;
+ * until that handler is active, execution proceeds until the child exits. */
+Q9_u32 Q9K_ProcDebugExec(Q9_u16 childPid, Q9_u32 instructionCount,
+                         Q9_u32 *outError)
+{
+    Q9_u32 desc, parent, frame, regbuf, i;
+
+    *outError = 0;
+    desc = Q9K_ProcLookup(childPid);
+    parent = Q9K_GetU32(Q9_D_PROC);
+    if (desc == 0 || parent == 0 ||
+        Q9K_GetU8(desc + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_WAITING ||
+        Q9K_GetU32(desc + Q9K_PROCDESC_DBGPAR_OFF) != parent) {
+        *outError = 0x00E0UL;
+        return 0;
+    }
+    frame = Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF);
+    regbuf = Q9K_GetU32(desc + Q9K_PROCDESC_DBGREG_OFF);
+    if (frame == 0 || regbuf == 0) {
+        *outError = 0x00D2UL;
+        return 0;
+    }
+    for (i = 0; i < 60UL; ++i)
+        Q9K_SetU8(frame + i, Q9K_GetU8(regbuf + i));
+    for (i = 0; i < 8UL; ++i)
+        Q9K_SetU8(frame + 60UL + i, Q9K_GetU8(regbuf + 64UL + i));
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGINSTR_OFF, instructionCount);
+    Q9K_SetU8(parent + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
+    Q9K_WaitQInsert(parent);
+    Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    Q9K_SchedInsert(desc);
+    return Q9K_SchedFirstPick();
+}
+
+void Q9K_SysDExecImpl(void)
+{
+    Q9_u32 error = 0;
+    Q9_u32 next = Q9K_ProcDebugExec(Q9K_GetU16(0x1F00UL),
+                                    Q9K_GetU32(0x1F04UL), &error);
+    Q9K_SetU32(0x1F08UL, next);
+    Q9K_SetU32(0x1F0CUL, error);
+    Q9K_SetU16(0x1F10UL, (Q9_u16)(next != 0 ? 1 : 0));
 }
 
 /* Q9K_ProcAllPrc -- echte F$AllPrc-Kernlogik (Callcode $4B, "Allocate
