@@ -139,6 +139,45 @@ beendet, schneidet den Dump **vor** dem Exception-Abschnitt ab — ein
 `Vektor=14` blieb so unsichtbar. Für echte Nachweise mit unerreichbarem
 Marker und Timeout laufen lassen.
 
+### Gemessen wurde etwas anderes, als man denkt
+
+Drei Varianten derselben Sache, alle real aufgetreten. Gemeinsames
+Merkmal: das Werkzeug **meldet** den Fehler, aber an einer Stelle, auf
+die niemand schaut.
+
+**Der Dump stammt aus einem früheren Lauf.** Wird der Emulator mit einem
+anderen CWD gestartet, kann er `local_images/q9dbg_dump.txt` nicht
+schreiben. Er sagt das ins Konsolenprotokoll („konnte … nicht zum
+Schreiben oeffnen") — aber das `Vektor=0`, das man danach aus der
+liegengebliebenen Datei liest, beschreibt einen alten Lauf. **Prüfen:**
+Zeitstempel des Dumps gegen die Laufzeit, und das Protokoll nach dieser
+Meldung durchsuchen. Verlässlicher ist, die Datei vor dem Lauf zu
+löschen.
+
+**Das Abbild enthält den neuen Code gar nicht.** Scheitert der Bau
+(typisch: `operand size error`), bootet der Emulator die zuvor
+geschriebene Bootkette weiter — jede Messung beschreibt dann die alte
+Fassung. Ein Befund über den Zweig, in dem eine frisch eingebaute
+Diagnose stumm blieb, war auf diese Weise falsch. **Prüfen:** nach jedem
+Bau auf `Errors:` und `operand size` sehen und den Zeitstempel des
+Artefakts vergleichen, bevor gemessen wird.
+
+**Der Filter verfälscht die Daten.** Die `A`-Flut aus `Q9K_TestProcA`
+wird beim Auswerten gern per `tr -d 'A'` entfernt — das löscht aber auch
+die Ziffer `A` aus jeder Hexzahl. Aus `0005A840` wird `0005840`, eine
+plausibel aussehende, falsche Adresse. **Nur außerhalb der Hex-Bereiche
+filtern**, und Marker so wählen, dass sie keine Hexziffern sind (`%`,
+`&` etwa statt `A`–`F`).
+
+### Ein fehlender Marker beweist nur eines
+
+Nämlich: *dieser Code lief nicht*. Warum, ist damit offen. Die
+Diagnoseausgabe wartet auf TXRDY, und eine solche Warteschleife kann
+selbst hängen — in `chaintgt` kam gar keine Ausgabe, bis ein
+ungeschütztes `move.b` davorgesetzt wurde. Die frühere Behauptung, ohne
+TXRDY-Prüfung gingen Zeichen verloren, wurde deshalb zurückgenommen:
+belegt ist keine der beiden Richtungen.
+
 ## Diagnosewerkzeuge
 
 **`Q9_BOARD_DEBUG=1`** — periodische Ausgabe des echten PC, funktioniert
