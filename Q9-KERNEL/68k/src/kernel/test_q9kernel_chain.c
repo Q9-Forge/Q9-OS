@@ -231,7 +231,7 @@ int main(void)
     err = 0;
     check("ein unbekanntes Modul laesst den Chain scheitern",
           (Q9_u32)Q9K_ProcChain(1, 0, 0, 0, 0, 0, 0, &err), 0);
-    check("mit E_MNF", (Q9_u32)err, 0xDB);
+    check("mit E_MNF ($DD)", (Q9_u32)err, 0xDD);
     check("es wurde kein Speicher angefordert", (Q9_u32)g_allocCalls, 0);
     check("nichts wurde freigegeben", (Q9_u32)g_freeCalls, 0);
     check("der Prozess behaelt sein altes Modul",
@@ -305,7 +305,7 @@ int main(void)
     Q9K_SetU32(Q9K_CHAIN_SCRATCH_TYPELANG, 1);
     Q9K_SysChainImpl();
     check("Bruecke meldet den Fehlschlag", Q9K_GetU32(Q9K_CHAIN_SCRATCH_OK), 0);
-    check("mit dem Fehlercode", Q9K_GetU32(Q9K_CHAIN_SCRATCH_ERROR), 0xDB);
+    check("mit dem Fehlercode E_MNF ($DD)", Q9K_GetU32(Q9K_CHAIN_SCRATCH_ERROR), 0xDD);
 
     printf("\n%s\n", failures ? "TESTS FEHLGESCHLAGEN" : "ALLE TESTS BESTANDEN");
     return failures ? 1 : 0;
