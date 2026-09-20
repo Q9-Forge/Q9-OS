@@ -536,10 +536,23 @@ call at all — `a0` is the right place to look, `a0` is what was looked at, and
 what it points to is empty. That closes the frame theory for good rather than
 leaving it as a maybe.
 
-The remaining question is who is supposed to fill that buffer, and the answer
-lies on the path from our `F$Load` into the Microware IOMan, not in
-`Q9K_ProcPrsNam`. The next measurement is the caller's return address at the
-`F$PrsNam` entry, which names the module making the empty call. Note also that the status this row carried was never earned:
+**And the caller is `rbf`.** Logging the top stack words at the handler entry
+gives the TRAP exception frame directly: `00007bb0 27040001 a7f20080` — the
+return address into the dispatcher, then `SR=$2704`, caller `PC=$0001a7f2`, and
+format/vector `$0080`, which is vector 32, `TRAP #0`, confirming the route once
+more. Matching that PC against the module directory in the same dump places it
+inside `rbf` (header `$19828`, size `$25a6`, so `$19828`–`$1bdce`), at module
+offset `+$fca`.
+
+So the chain is: our `F$Load` → Microware IOMan → `rbf`, and `rbf` calls
+`F$PrsNam` handing over a pointer to a buffer it has not filled. Nothing in
+`Q9K_ProcPrsNam` is wrong, and nothing about how it takes its input is wrong;
+the name never reaches `rbf` in the first place. The next place to look is what
+our side passes into IOMan when `F$Load` enters it — `I$Attach`/`I$Open` and the
+path string handed along with them — not anywhere in the parsing code.
+
+This is the point the investigation had not reached before, and it is why the
+three earlier commits could not have fixed it. Note also that the status this row carried was never earned:
 building `b9f9bfe` — the commit that marked `F$Load` ✅ "emulator-verified with
 `/dd/CMDS/echo`" — in a separate worktree and running it produces the same `k`.
 The call has not passed this test at any point, so this is not a regression.
