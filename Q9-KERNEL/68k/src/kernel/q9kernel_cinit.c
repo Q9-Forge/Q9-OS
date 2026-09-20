@@ -169,6 +169,18 @@ extern void   Q9K_SysChainImpl(void);
 extern void   Q9K_SysChainReleaseImpl(void);
 extern void   Q9K_SysSemaImpl(void);
 extern void   Q9K_SysSemaWaitImpl(void);
+extern void   Q9K_SysTLinkImpl(void);
+extern void   Q9K_SysSetSysImpl(void);
+extern void   Q9K_SysJulianImpl(void);
+extern void   Q9K_SysGregorImpl(void);
+extern void   Q9K_SysAlarmImpl(void);
+extern void   Q9K_SysSTimeImpl(void);
+extern void   Q9K_SysSchBitImpl(void);
+extern void   Q9K_SysAllBitImpl(void);
+extern void   Q9K_SysDelBitImpl(void);
+extern void   Q9K_SysGBlkMpImpl(void);
+extern void   Q9K_SysTimeImpl(void);
+extern void   Q9K_SysSSvcImpl(void);
 extern void   Q9K_SysFNProc(void);        /* q9kernel_entry.a, Handler fuer F$NProc (0x2d) */
 extern void   Q9K_SysUnimplemented(void); /* q9kernel_entry.a, genereller Fehler-Stub fuer alle nicht registrierten Slots */
 extern void   Q9K_MemTraceInit(void);     /* q9kernel_debug.c */
@@ -559,6 +571,18 @@ void Q9K_CInit(void)
                     Q9K_PutU32(0x1E68UL, (Q9_u32)(unsigned long)Q9K_SysChainReleaseImpl);
                     Q9K_PutU32(0x1E6CUL, (Q9_u32)(unsigned long)Q9K_SysSemaImpl);
                     Q9K_PutU32(0x1E70UL, (Q9_u32)(unsigned long)Q9K_SysSemaWaitImpl);
+                    Q9K_PutU32(0x1E88UL, (Q9_u32)(unsigned long)Q9K_SysTLinkImpl);
+                    Q9K_PutU32(0x1E8CUL, (Q9_u32)(unsigned long)Q9K_SysSetSysImpl);
+                    Q9K_PutU32(0x1E90UL, (Q9_u32)(unsigned long)Q9K_SysJulianImpl);
+                    Q9K_PutU32(0x1E94UL, (Q9_u32)(unsigned long)Q9K_SysGregorImpl);
+                    Q9K_PutU32(0x1E98UL, (Q9_u32)(unsigned long)Q9K_SysAlarmImpl);
+                    Q9K_PutU32(0x1EA0UL, (Q9_u32)(unsigned long)Q9K_SysSTimeImpl);
+                    Q9K_PutU32(0x1EA4UL, (Q9_u32)(unsigned long)Q9K_SysSchBitImpl);
+                    Q9K_PutU32(0x1EA8UL, (Q9_u32)(unsigned long)Q9K_SysAllBitImpl);
+                    Q9K_PutU32(0x1EACUL, (Q9_u32)(unsigned long)Q9K_SysDelBitImpl);
+                    Q9K_PutU32(0x1EB0UL, (Q9_u32)(unsigned long)Q9K_SysGBlkMpImpl);
+                    Q9K_PutU32(0x1E9CUL, (Q9_u32)(unsigned long)Q9K_SysTimeImpl);
+                    Q9K_PutU32(0x1EB4UL, (Q9_u32)(unsigned long)Q9K_SysSSvcImpl);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
