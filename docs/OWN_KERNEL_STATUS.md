@@ -99,6 +99,40 @@ endgültig zurückgezogen wurde: eine beobachtete Speicherfreigabe war
 normales Prozessende, keine Korruption. Zweimal dieselbe Verwechslung —
 **ein normal endender Prozess sieht in Spuren aus wie ein Fehler.**
 
+### Ein grünes Häkchen, das nie belegt war (`b9f9bfe`)
+
+`F$Load` stand kurzzeitig auf ✅ mit der Begründung „emulator-verified
+with `/dd/CMDS/echo`". Eine Nachprüfung hat das widerlegt, und zwar
+methodisch sauber: der fragliche Commit wurde **in einem eigenen
+Worktree ausgecheckt, gebaut und laufen gelassen**. Auch dort erscheint
+der Fehlschlag-Marker `k`. Der Aufruf hat diesen Test also nie
+bestanden — es ist **keine Regression**, sondern ein ✅, das auf einer
+anderen Messung beruhte als der, die die Tabellenzeile beschrieb.
+`F$Load` steht wieder auf 🟡.
+
+Daraus zwei Dinge, die über den Einzelfall hinausgehen. Erstens: **einen
+Statuswechsel gegen den Commit gegenprüfen, der ihn eingeführt hat** —
+ein Worktree kostet Minuten und beantwortet „war das je grün?"
+eindeutig. Zweitens: eine Statuszeile muss sagen, *welche* Messung sie
+trägt, sonst wandert sie beim nächsten Lesen an eine Beobachtung, die
+gar nicht zu ihr gehört.
+
+Der Befund selbst ist inzwischen weitergetrieben: der fehlschlagende
+`F$PrsNam`-Aufruf kommt per **TRAP #0** (nicht über das
+PEA+RTS-Trampolin, die 44-Byte-Rahmenkonvention gilt hier also gar
+nicht), mit einem **gültigen Zeiger auf einen leeren Puffer**, und der
+Aufrufer ist per Ausnahmerahmen-PC gegen die Moduldirectory als **`rbf`**
+identifiziert. An `Q9K_ProcPrsNam` ist nichts falsch; die nächste Stelle
+ist, was unsere Seite beim Eintritt in IOMan übergibt. Die drei Commits
+`cdcd010`/`8ece62c`/`04acb91` zielten auf ein Problem, das es an dieser
+Stelle nicht gibt.
+
+**Werkzeug dazu:** die Moduldirectory steht vollständig im
+`q9dbg_dump.txt` (Abschnitt „Moduldirectory-Kette ab
+`Q9K_MODDIR_HEAD_ADDR`") mit HdrPtr und Größe je Modul. Damit lässt sich
+eine beliebige PC in Sekunden einem Modul und einem Offset zuordnen —
+ohne Ghidra und ohne `annotate_trace.py`.
+
 ### Status des alten Rätsels „csl traphandler mismatch"
 
 Die Übergabe darunter endet mit diesem ungeklärten Befund (`date` druckt
