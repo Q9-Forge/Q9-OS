@@ -503,6 +503,33 @@ where it was originally suspected, in the external `F$Load`/RBF directory
 advance, and not in memory corruption. Recorded so the cheap check is not
 repeated.
 
+**F$Load, measured rather than inferred (2026-09-20), and a status correction.**
+The boot test's `F$Load("/dd/CMDS/echo")` fails, and it now says how: a hex dump
+of `d1` after the `k` marker gives `$D7`, `E$BPNam`. That code has exactly two
+sources in this kernel, both inside `Q9K_ProcPrsNam` — "the component is empty"
+and "the path pointer is zero". A diagnostic placed in the first of them stayed
+silent through a full run, which leaves the second: **the path pointer arrives
+as 0**.
+
+Three commits (`cdcd010`, `8ece62c`, `04acb91`) had reworked how `F$PrsNam`
+takes its input, on the theory that an external caller passes it in the `R$`
+register frame at `$20(a5)` rather than in `a0`. Measurement says that theory
+does not fix this: the failure is identical with the frame handling and without
+it. The handling is kept, because it serves the direct `TRAP #0` path correctly,
+but it is not the answer here and the source now says so.
+
+The status correction is the more important part. `F$Load` was marked ✅ at
+`b9f9bfe` as "emulator-verified with `/dd/CMDS/echo`". Building that exact
+commit in a separate worktree and running it shows the boot test emitting `k`
+there too — the failure predates all three of those commits. So this is **not a
+regression**; the call has not passed this test at any point, and the ✅ rested
+on some other measurement than the one the row describes. Row downgraded to 🟡.
+
+What is still unknown is where the caller does keep the path pointer. IOMan
+reaches `F$PrsNam` with neither `a0` nor `$20(a5)` holding it. That needs `a5`
+and its surroundings dumped at the entry to `Q9K_SysFPrsNam` — a measurement,
+not a fourth theory.
+
 `F$Alarm` (`0x56`) is a call with a function code in `d1.w`, and five of its
 six functions are now implemented: **A$Set** (one signal after an interval),
 **A$Cycle** (repeating), **A$Delete** (by ID, or all of the caller's own) and
@@ -1122,7 +1149,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
 | ✅ | `0x00` | F$Link | Kernel module lookup/link path implemented and exercised |
-| ✅ | `0x01` | F$Load | Microware IOMan mass-storage path loads and validates external modules; emulator-verified with `/dd/CMDS/echo` (including the F$VModul return-buffer ABI) |
+| 🟡 | `0x01` | F$Load | The Microware IOMan mass-storage path loads and validates external modules, but the boot test's own `F$Load("/dd/CMDS/echo")` still fails with `$D7` (E$BPNam) — measured, see the note below. Downgraded from ✅ until that call succeeds |
 | ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
 | ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
