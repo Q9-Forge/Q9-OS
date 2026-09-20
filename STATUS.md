@@ -1307,7 +1307,7 @@ separately from I$ dispatch ownership.
 | 🔷 | `0x85` | I$MakDir | Microware IOMan/RBF/CF path is present and covered by the FAT16 mkdir regression; Q9-native implementation remains open |
 | 🔷 | `0x86` | I$ChgDir | Microware IOMan path is present; Q9-native data/execution directory storage is emulator-tested, while device resolution remains open |
 | 🔷 | `0x87` | I$Delete | Microware IOMan/RBF/CF path is present and covered by the FAT16 delete regression; Q9-native implementation remains open |
-| 🔷 | `0x88` | I$Seek | Microware IOMan path is present; Q9-native paths retain the requested position, while native backing-file repositioning remains open |
+| 🔷 | `0x88` | I$Seek | Microware IOMan path is present; Q9-native paths resolve the process-local path table and retain the requested position, emulator-verified after `I$Open` (marker `k`); native backing-file repositioning remains open |
 | 🔷 | `0x89` | I$Read | Microware IOMan/RBF/CF path is live-traced and covered by read-back tests; Q9-native console input remains minimal |
 | 🔷 | `0x8A` | I$Write | Microware IOMan/RBF/CF path is covered by the create/write round-trip; Q9-native console output remains minimal |
 | 🔷 | `0x8B` | I$ReadLn | Microware IOMan path is live-traced; Q9-native line input remains minimal |
