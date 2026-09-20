@@ -76,7 +76,7 @@ extern void   Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 index, Q9_u32 value);
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);
 
 #ifndef Q9K_E_MNF
-#define Q9K_E_MNF    0xDBU
+#define Q9K_E_MNF    0xDDU
 #endif
 #ifndef Q9K_E_MEMFUL
 #define Q9K_E_MEMFUL 0xCFU
