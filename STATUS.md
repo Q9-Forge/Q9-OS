@@ -498,6 +498,14 @@ and finding the monitor's real one means disassembling the boot ROM. That is its
 own task, not a side note — which is why this is now marked open rather than
 withdrawn. Once the address is known, F$SysDbg is a handful of instructions.
 
+The reference-kernel startup code narrows this down substantially: it stores
+the debugger pointer as `D_SysRom + $10`, not as the address of the visible
+`NuRomBug` string. Q9-Flux passes the ROM service-table base in `D_SysRom`;
+for the current ROM image the corresponding candidate is therefore
+`FE0004A4`, which is a real ROM branch target. The remaining work is to verify
+the debugger's expected saved-register/return-stack frame before wiring the
+SysCall, so a normal process cannot be corrupted by an incomplete trampoline.
+
 **F$Load: one hypothesis tested and ruled out (2026-09-18).** After the boot
 stack turned out to have been sitting inside the boot modules and corrupting
 `cfide`, it was worth asking whether the long-standing `F$Load` hang had the
