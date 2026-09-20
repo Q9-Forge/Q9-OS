@@ -572,6 +572,11 @@ Q9K_FModulScratch_OutAR    equ $1A0C      * Q9_u32, d1.w AUS
 Q9K_FModulScratch_Entry    equ $1A10      * Q9_u32, a2 AUS
 Q9K_FModulScratch_Error    equ $1A14      * Q9_u32, d1.w AUS bei Fehler
 Q9K_FModulScratch_Ok       equ $1A18      * Q9_u32, 0/1
+Q9K_MemScratch_Request     equ $1E74      * Q9_u32, d0.l EIN
+Q9K_MemScratch_OutSize     equ $1E78      * Q9_u32, d0.l AUS
+Q9K_MemScratch_OutUpper    equ $1E7C      * Q9_u32, a1 AUS
+Q9K_MemScratch_Error       equ $1E80      * Q9_u32, d1.w AUS bei Fehler
+Q9K_MemScratch_Ok          equ $1E84      * Q9_u32, 0/1
 Q9K_CrcScratch_Count       equ $18F8      * Q9_u32, d0.l EIN
 Q9K_CrcScratch_Accum       equ $18FC      * Q9_u32, d1.l EIN/AUS
 Q9K_CrcScratch_Addr        equ $1900      * Q9_u32, (a0) EIN
@@ -777,6 +782,7 @@ Q9K_DelBitImplPtr          equ $1EAC      * Q9K_SysDelBitImpl
 Q9K_GBlkMpImplPtr          equ $1EB0      * Q9K_SysGBlkMpImpl
 Q9K_TimeImplPtr            equ $1E9C      * Q9K_SysTimeImpl
 Q9K_SSvcImplPtr            equ $1EB4      * Q9K_SysSSvcImpl
+Q9K_MemImplPtr             equ $1EB8      * Q9K_SysFMemImpl      (mem.c)
 
 * Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
 * Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
@@ -6028,6 +6034,48 @@ Q9K_SysFFModul_NameDone:
         rts
 Q9K_SysFFModul_Fail:
         move.w  Q9K_FModulScratch_Error+2,d1
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_SysFMem -- F$Mem (Callcode $07, "Resize Data Memory Area").
+*
+* Reale ABI, 68k_tech.pdf S.465/466, zusaetzlich am Originalkernel
+* verifiziert (Einstieg Modul-Offset $133C):
+*   EIN  d0.l = gewuenschte neue Groesse; 0 = Informationsabfrage
+*   AUS  d0.l = tatsaechliche Groesse des Datenbereichs
+*        a1   = Zeiger auf das neue Ende des Datensegments (+1)
+*   FEHLER cc = Carry, d1.w = Fehlercode
+*
+* Nur die Informationsabfrage ist umgesetzt; jede Groessenaenderung
+* wird mit E$NoRAM abgelehnt -- genau das dokumentierte Verhalten ab
+* OS-9/68K V2.3 ("Only an information request (d0=0) works"), und
+* derselbe Fehlercode, den der Originalkernel bei $61da liefert.
+* Vollstaendige Herleitung im Kopfkommentar von q9kernel_mem.c.
+*
+* a1 wird hier BEWUSST NICHT gesichert -- anders als bei Q9K_SysFTime,
+* wo genau das noetig war. Der Unterschied ist die ABI: bei F$Time ist
+* a1 gar kein Ausgaberegister, ein Aufrufer im Bootpfad verlaesst sich
+* dort also darauf, es unveraendert wiederzubekommen. Bei F$Mem IST a1
+* das Ergebnisregister. Deshalb darf es als Zwischenregister fuer die
+* Zeigerzelle dienen -- aber das Ergebnis MUSS danach aus der
+* Scratch-Zelle geladen werden, nie vorher, sonst ueberschreibt das
+* Laden der Zellenadresse es wieder.
+Q9K_SysFMem:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_MemScratch_Request     * d0.l EIN uebergeben
+        movea.l Q9K_MemImplPtr,a1             * a1 nur Zwischenregister
+        jsr     (a1)
+        movea.l (sp)+,a6
+        tst.l   Q9K_MemScratch_Ok
+        beq     Q9K_SysFMem_Fail
+        move.l  Q9K_MemScratch_OutSize,d0     * d0.l AUS
+        movea.l Q9K_MemScratch_OutUpper,a1    * a1 AUS -- NACH dem jsr
+        andi    #$fe,ccr
+        rts
+Q9K_SysFMem_Fail:
+        move.w  Q9K_MemScratch_Error+2,d1
         ori     #1,ccr
         rts
 
