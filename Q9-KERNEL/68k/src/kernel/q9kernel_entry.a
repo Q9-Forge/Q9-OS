@@ -5006,7 +5006,7 @@ Q9K_SysFChain:
 * Modulnamen. Fuer Kommandos wird deshalb ein eigener, persistenter Puffer
 * mit dem Standardpfad /dd/CMDS aufgebaut.
         lea     Q9K_ChainLoadPath+9(pc),a1
-        movea.l 4(sp),a0
+        movea.l Q9K_ChainScratch_Name,a0
 Q9K_SysFChain_CopyName:
         move.b  (a0)+,d0
         move.b  d0,(a1)+
@@ -5017,19 +5017,6 @@ Q9K_SysFChain_CopyName:
         trap    #0
         dc.w    $0001
         bcs     Q9K_SysFChain_Fail
-* Der verschachtelte F$Load darf keinen der Chain-Parameter veraendern;
-* fuer den zweiten Versuch werden sie aus dem gesicherten Trap-Einstieg
-* deshalb vollstaendig restauriert.
-        clr.l   Q9K_ChainScratch_TypeLang
-        move.w  26(sp),Q9K_ChainScratch_TypeLang+2
-        move.l  20(sp),Q9K_ChainScratch_AddMem
-        move.l  16(sp),Q9K_ChainScratch_ParamSz
-        clr.l   Q9K_ChainScratch_NumPaths
-        move.w  12(sp),Q9K_ChainScratch_NumPaths+2
-        clr.l   Q9K_ChainScratch_Priority
-        move.w  10(sp),Q9K_ChainScratch_Priority+2
-        move.l  4(sp),Q9K_ChainScratch_Name
-        move.l  (sp),Q9K_ChainScratch_Param
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)                                   * jetzt muss Link greifen
         tst.w   Q9K_ChainScratch_Ok+2
