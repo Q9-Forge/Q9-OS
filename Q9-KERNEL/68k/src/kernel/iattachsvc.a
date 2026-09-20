@@ -211,6 +211,18 @@ Q9K_AttachStart:
         move.b  d7,$FFFFF006
 
         move.w  d6,d0
+        moveq   #5,d1
+        lea     Q9K_OptBuffer(pc),a0
+        trap    #0
+        dc.w    $008d                          * SS.Pos after I$WritLn
+        bcs     Q9K_NativeFailed
+        move.l  Q9K_OptBuffer(pc),d1
+        cmpi.l  #$00001237,d1
+        bne     Q9K_NativeFailed
+        moveq   #'l',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d6,d0
         clr.w   d1
         lea     Q9K_OptBuffer(pc),a0
         trap    #0
