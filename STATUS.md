@@ -503,56 +503,45 @@ where it was originally suspected, in the external `F$Load`/RBF directory
 advance, and not in memory corruption. Recorded so the cheap check is not
 repeated.
 
-**F$Load, measured rather than inferred (2026-09-20), and a status correction.**
-The boot test's `F$Load("/dd/CMDS/echo")` fails, and it now says how: a hex dump
-of `d1` after the `k` marker gives `$D7`, `E$BPNam`. That code has exactly two
-sources in this kernel, both inside `Q9K_ProcPrsNam` — "the component is empty"
-and "the path pointer is zero". A diagnostic placed in the first of them stayed
-silent through a full run, which leaves the second: **the path pointer arrives
-as 0**.
+**F$Load, measured — including a correction to the measurement itself
+(2026-09-20).** The boot test's `F$Load("/dd/CMDS/echo")` fails with `$D7`
+(`E$BPNam`). That code has exactly two sources in this kernel, both inside
+`Q9K_ProcPrsNam`: "the path pointer is zero" and "the component is empty".
 
-Three commits (`cdcd010`, `8ece62c`, `04acb91`) had reworked how `F$PrsNam`
-takes its input, on the theory that an external caller passes it in the `R$`
-register frame at `$20(a5)` rather than in `a0`. Measurement says that theory
-does not fix this: the failure is identical with the frame handling and without
-it. The handling is kept, because it serves the direct `TRAP #0` path correctly,
-but it is not the answer here and the source now says so.
+The first attempt to tell them apart concluded it was the null-pointer branch,
+and that conclusion was wrong. The diagnostic that was supposed to fire in the
+other branch never did — but its build had failed with `operand size error`,
+and the run that followed therefore measured the *previous* kernel binary. The
+lesson is worth more than the finding: **after a failed build, the emulator
+still boots the old image, and every marker it produces describes the old
+code.** Check the linker result before believing a run.
 
-The status correction is the more important part. `F$Load` was marked ✅ at
-`b9f9bfe` as "emulator-verified with `/dd/CMDS/echo`". Building that exact
-commit in a separate worktree and running it shows the boot test emitting `k`
-there too — the failure predates all three of those commits. So this is **not a
-regression**; the call has not passed this test at any point, and the ✅ rested
-on some other measurement than the one the row describes. Row downgraded to 🟡.
+With both branches marked and a build that actually succeeded, the answer is
+the other one. The `^` marker fires once, immediately before the `k`: it is the
+**empty-component** branch. And the pointer it was handed is fine —
+`^0005A840:0000000000000000$` says the path pointer is `$0005A840`, a valid
+address, and the first eight bytes there are all zero. **IOMan calls `F$PrsNam`
+with a good pointer to an empty buffer.** The name never gets into it.
 
-What is still unknown is where the caller does keep the path pointer. IOMan
-reaches `F$PrsNam` with neither `a0` nor `$20(a5)` holding it. That needs `a5`
-and its surroundings dumped at the entry to `Q9K_SysFPrsNam` — a measurement,
-not a fourth theory.
+So the three commits that reworked where `F$PrsNam` takes its input
+(`cdcd010`, `8ece62c`, `04acb91`) were aimed at the wrong thing: the input
+arrives, it is simply empty. `a0` was never null at the handler either —
+a diagnostic there stayed silent across a full run, before and after the frame
+switch.
 
-`F$Alarm` (`0x56`) is a call with a function code in `d1.w`, and five of its
-six functions are now implemented: **A$Set** (one signal after an interval),
-**A$Cycle** (repeating), **A$Delete** (by ID, or all of the caller's own) and
-the two absolute variants **A$AtJul** and **A$AtDate**. The codes come from the
-real table in `funcs.a`, counted rather than guessed.
+The remaining question is who is supposed to fill that buffer, and the answer
+lies on the path from our `F$Load` into the Microware IOMan, not in
+`Q9K_ProcPrsNam`. Note also that the status this row carried was never earned:
+building `b9f9bfe` — the commit that marked `F$Load` ✅ "emulator-verified with
+`/dd/CMDS/echo`" — in a separate worktree and running it produces the same `k`.
+The call has not passed this test at any point, so this is not a regression.
+Row downgraded to 🟡.
 
-The three relative functions need no system clock — they count ticks, and the
-tick handler, signal delivery and process lookup all existed already. Delivery
-goes through the same `F$Send` path as any other signal, which means alarm
-signals honour the signal mask for free: if the recipient is masked, the alarm
-signal stays pending instead of being lost.
-
-The absolute variants were held back in the previous round on the grounds that
-there was no system clock. **That was wrong, and the note saying so has been
-corrected**: the board carries an RTC72421 at `$FFFFD000`, which the emulator
-mirrors from the host clock. `Q9K_RtcRead()` reads it, and each tick now
-compares the stored target against it. A$AtJul takes the julian day number and
-seconds after midnight directly; A$AtDate takes a calendar date in `d4.l` and a
-time in `d3.l`, both field-coded the way `F$Time` returns them, and converts via
-the `F$Julian` pair. A missed moment still fires — the description says "greater
-than or equal", so an alarm whose time passed while the machine was busy is not
-silently dropped. An impossible date or time is refused with `E$BPAddr` rather
-than rounded.
+One more measurement trap, recorded because it cost a wrong conclusion here:
+when filtering the console log, `Q9K_TestProcA`'s endless `A` output is usually
+stripped first — and that strips the `A` digits out of every hex number too.
+`0005A840` reads as `0005840`. Strip `A` only outside the region being read as
+hex.
 
 **A$Reset is now implemented.** The Microware DPIO declaration
 `_os_alarm_reset(alarm_id, signal_code, interval)` resolves the previously
