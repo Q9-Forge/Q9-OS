@@ -5017,10 +5017,24 @@ Q9K_SysFChain_CopyName:
         trap    #0
         dc.w    $0001
         bcs     Q9K_SysFChain_Fail
+* Der verschachtelte F$Load darf keinen der Chain-Parameter veraendern;
+* fuer den zweiten Versuch werden sie aus dem gesicherten Trap-Einstieg
+* deshalb vollstaendig restauriert.
+        clr.l   Q9K_ChainScratch_TypeLang
+        move.w  2(sp),Q9K_ChainScratch_TypeLang+2
+        move.l  4(sp),Q9K_ChainScratch_AddMem
+        move.l  8(sp),Q9K_ChainScratch_ParamSz
+        clr.l   Q9K_ChainScratch_NumPaths
+        move.w  14(sp),Q9K_ChainScratch_NumPaths+2
+        clr.l   Q9K_ChainScratch_Priority
+        move.w  18(sp),Q9K_ChainScratch_Priority+2
+        move.l  20(sp),Q9K_ChainScratch_Name
+        move.l  24(sp),Q9K_ChainScratch_Param
         movea.l Q9K_ChainImplPtr,a1
         jsr     (a1)                                   * jetzt muss Link greifen
         tst.w   Q9K_ChainScratch_Ok+2
         beq     Q9K_SysFChain_Fail
+        bra     Q9K_SysFChain_Success
 
 Q9K_SysFChain_Success:
         movem.l (sp)+,d0-d4/a0-a1
