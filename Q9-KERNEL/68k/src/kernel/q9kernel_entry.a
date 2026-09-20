@@ -5821,6 +5821,9 @@ Q9K_SysFISetStt_Fail:
 * The userland ABI supplies the absolute byte position in d1.l.  Native
 * console paths still have no backing file, but retaining the logical
 * position makes the path descriptor state consistent for later SS.Pos use.
+* The process-local path number is resolved through P$Path first; using
+* path-3 directly would address the wrong global descriptor after I$Dup or
+* when another process had opened a path before this one.
 *******************************************************************************
 Q9K_SysFISeek:
         movem.l d0-d1/d2/a1,-(sp)
@@ -5828,6 +5831,14 @@ Q9K_SysFISeek:
         move.w  d0,d2
         cmpi.l  #3,d2
         bcs     Q9K_SysFISeek_Ok
+        andi.l  #$1f,d2
+        movea.l Q9_D_Proc,a1
+        adda.l  #$168,a1                       * P$Path[local path]
+        add.w   d2,d2
+        move.w  (a1,d2.w),d2                    * global descriptor number
+        beq     Q9K_SysFISeek_BadPath
+        cmpi.w  #3,d2
+        bcs     Q9K_SysFISeek_BadPath
         subq.l  #3,d2
         lsl.l   #8,d2
         movea.l Q9K_PATHPOOL_BASE_ADDR,a1
