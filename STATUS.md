@@ -756,10 +756,12 @@ then unreproducibly.
 Starting a non-resident module from disk now has an explicit load-then-chain
 fallback: after an `E$MNF` from the resident module directory, the handler
 invokes `F$Load` and retries the link without disturbing the old process on
-failure. The in-place replacement path and the resident emulator regression
-remain green; a dedicated live image containing a non-resident chain target is
-still needed to move the row below from 🟡 to ✅. `F$Load`'s external RBF path
-is no longer the blocker (verified for `/dd/CMDS/echo` and `/dd/CMDS/date`).
+failure. This is now emulator-verified with a fresh boot image containing
+`/dd/CMDS/chaintgt`: `F$Chain("chaintgt")` first receives `E$MNF`, loads the
+module through the external IOMan/RBF path, restores its outer trap context,
+retries the link, and starts the target (`c s C`). The target then exits and
+the waiting parent resumes normally. `F$Load`'s return value in `a2` and its
+nested-trap state must both be restored before the retry.
 
 Two mistakes during this work are worth recording. First, three constants
 (`Q9K_INITIAL_SR` and all three module-header offsets) were *guessed* rather
@@ -1171,7 +1173,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
 | ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
 | ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
-| 🟡 | `0x05` | F$Chain | Replaces the caller's program in place, emulator-verified in both the success and the refusal path; loading from disk when the module is not in memory waits on `F$Load` |
+| ✅ | `0x05` | F$Chain | Replaces the caller's program in place; refusal, resident replacement, and the non-resident `E$MNF` → `F$Load` → retry path are emulator-verified with `chaintgt` (`c s C`) |
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
 | ✅ | `0x07` | F$Mem | Information request implemented, wired and **exercised on the machine**. Handler `Q9K_SysFMem` in `q9kernel_entry.a` (reached through pointer cell `$1EB8`), registered in both dispatch tables; `d0=0` returns the data area size in `d0.l` and its upper bound in `a1`, read from the current process descriptor's alloc base/size fields. Every resize is refused with `E$NoRAM` — the same code the reference kernel returns at `$61da`, and what the manual mandates from V2.3 on. ABI verified twice over: manual pp. 465/466 and the disassembled original at module offset `$133C`. Emulator regression in `iattachsvc.a` covers both halves (markers `%` and `&`), 27/27 host suites green, `Vektor=0` |
 | ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
