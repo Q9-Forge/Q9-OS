@@ -160,6 +160,14 @@ Q9K_AttachStart:
         move.b  d7,$FFFFF006
 
         move.w  d6,d0
+        move.l  #$00001234,d1
+        trap    #0
+        dc.w    $0088                          * I$Seek: native local path lookup
+        bcs     Q9K_NativeFailed
+        moveq   #'k',d7
+        move.b  d7,$FFFFF006
+
+        move.w  d6,d0
         moveq   #1,d1
         lea     Q9K_WriteByte(pc),a0
         trap    #0
