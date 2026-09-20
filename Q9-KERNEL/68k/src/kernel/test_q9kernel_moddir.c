@@ -285,7 +285,7 @@ int main(void)
         /* Ausgangslage schaffen: "foo" zweimal verlinken, Zaehler ablesen. */
         checkU32("F$Link(\"foo\") als Vorbereitung",
                  Q9K_ModDirLinkByName(0, "foo") != 0, 1);
-        slot = Q9K_ModDirFindSlotByName(0, "foo");
+        slot = Q9K_ModDirFindSlotByName(0, "foo", 1);
         checkU32("Suchroutine findet \"foo\"", slot != 0, 1);
         before = Q9K_ModDirGetU16(slot + Q9K_MODDIR_LINKCNT_OFF);
 
