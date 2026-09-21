@@ -114,7 +114,11 @@ extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
 #define Q9K_VMODUL_RETBUF 0x1650UL
 #endif
 
-#define Q9K_E_MNF 0x00DDU /* errno.h: Module Not Found, wie in q9kernel_firstproc.c */
+#define Q9K_E_MNF    0x00DDU /* errno.h: Module Not Found, wie in q9kernel_firstproc.c */
+#define Q9K_E_BMID   0x00CDU /* errno.h: Bad Module ID */
+#define Q9K_E_BMHP   0x00ECU /* errno.h: Bad Module Header Parity */
+#define Q9K_E_BMCRC  0x00E8U /* errno.h: Bad Module CRC */
+#define Q9K_E_MEMFUL 0x00CFU /* errno.h: Process/descriptor memory full */
 
 /* F$FModul scratch: result block for the assembler bridge. */
 #define Q9K_FMODUL_SCRATCH_TYLANG 0x1A00UL
@@ -141,7 +145,6 @@ extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
 
 #define Q9K_MT_DATA   0x04U   /* Q9_MT_DATA, s. common/src/q9moduleheader.h */
 #define Q9K_E_BNAM    0x00CEU /* errno.h: Bad Name */
-#define Q9K_E_MEMFUL  0x00CFU /* errno.h: Process Memory Full */
 
 /* F$UnLoad-/F$CRC-Scratch (2026-09-17): hinter dem F$CpyMem-Block
  * ($18D0-$18E4, q9kernel_procapi.c). Alle Zellen 32 Bit breit, der
@@ -667,16 +670,25 @@ Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
     Q9_u32 crc;
     Q9_u32 i;
     Q9_u32 realSize;
+    Q9_u32 directorySlot;
     Q9_u16 tyLang;
 
     *outError = 0;
 
+    /* Q9K_ValidModuleHeader assumes a readable candidate when its length is
+     * sufficient.  F$VModul receives untrusted module pointers, so reject a
+     * null/too-short buffer before entering that helper. */
+    if (hdr == 0 || size < 0x30UL) {
+        *outError = Q9K_E_BMID;
+        return 0;
+    }
+
     if (!Q9K_CheckSyncWord(hdr, size)) {
-        *outError = 0x00CDU;            /* E$BMID, Bad Module ID */
+        *outError = Q9K_E_BMID;
         return 0;
     }
     if (!Q9K_ValidModuleHeader(hdr, size)) {
-        *outError = 0x00ECU;            /* E$BMHP, Bad Module Header Parity */
+        *outError = Q9K_E_BMHP;
         return 0;
     }
 
@@ -686,8 +698,10 @@ Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
      * zugesicherte Pufferlaenge hinaus lesen -- ein beschaedigter Header
      * koennte theoretisch eine zu grosse Groesse behaupten. */
     realSize = Q9K_ReadU32BE(hdr + Q9K_MH_SIZE);
-    if (realSize == 0 || realSize > size)
-        realSize = size;
+    if (realSize < 0x30UL || realSize > size) {
+        *outError = Q9K_E_BMCRC;
+        return 0;
+    }
     tyLang = Q9K_GetU16BE((Q9_u32)(unsigned long)hdr + Q9K_MH_TYLANG);
 
     crc = 0xFFFFFFUL;
@@ -703,7 +717,7 @@ Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
         }
     }
     if (crc != 0x00800FE3UL) {
-        *outError = 0x00E8U;            /* E$BMCRC, Bad Module CRC */
+        *outError = Q9K_E_BMCRC;
         return 0;
     }
 
@@ -713,7 +727,11 @@ Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
      * schraenkt benutzbar, es fehlt nur der Verzeichniseintrag fuer eine
      * SPAETERE Namenssuche -- dafuer gibt es (noch) keinen eigenen, real
      * belegten Fehlercode-Fall. */
-    (void)Q9K_ModDirAdd(hdr);
+    directorySlot = Q9K_ModDirAdd(hdr);
+    if (directorySlot == 0) {
+        *outError = Q9K_E_MEMFUL;
+        return 0;
+    }
 
     /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, zweite Runde, per
      * Instruktionsspur/Registerfreeze in IOMans F$Load-Wrapper): weder
@@ -894,8 +912,6 @@ void Q9K_SysCrcImpl(void)
                                  Q9K_GetU32(Q9K_CRC_SCRATCH_ADDR),
                                  Q9K_GetU32(Q9K_CRC_SCRATCH_COUNT)));
 }
-
-#define Q9K_E_BMID 0x00CDU /* errno.h: Bad Module ID (Sync/Groesse unbrauchbar) */
 
 /* Modulkopf: 48 Byte, das letzte Wort ($2E) ist M$Parity; die drei
  * letzten Modulbytes sind der CRC. Beides aus den realen Definitionen
