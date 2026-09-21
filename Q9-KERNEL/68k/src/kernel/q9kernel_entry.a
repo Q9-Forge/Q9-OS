@@ -196,6 +196,7 @@ Q9_D_TotRam     equ     $06c                    * Gesamt-RAM-Groesse
 Q9_D_MpuTyp     equ     $3c8                    * erkannter CPU-Typ
 Q9_D_BootFlags  equ     $93c                    * Boot-Zeit-Flags (Register d3)
 Q9_D_Proc       equ     $04c                    * Zeiger auf den aktuell laufenden Prozessdeskriptor [VERIFIZIERT]
+Q9_D_SysDbg     equ     $59c                    * Einsprungadresse des Systemdebuggers
 
 * Q9-native path-pool globals (q9kernel_tables.c, shared with I$Open/I$Close).
 Q9K_PATHPOOL_BASE_ADDR equ $1214
@@ -1363,6 +1364,23 @@ Q9K_ZeroDone:
         move.l  d3,Q9_D_BootFlags(a6)            * Boot-Zeit-Flags
         move.l  a1,Q9_D_SysRom(a6)               * Boot-ROM-Einsprungpunkt
         move.l  a5,Q9_D_ExcJmp(a6)               * Exception-Tabellen-Speicherblock
+
+* Original-OS-9-ROM-ABI (MWOS/OS9/SRC/ROM/CBOOT/SYSBOOT/sbtglueasm.a):
+* a1 zeigt auf die Boot-ROM-Service-Tabelle; B_Debug ist das fuenfte
+* Langwort bei Offset $10.  D_SysDbg muss den dort gespeicherten
+* Funktionszeiger enthalten, nicht die Adresse des Tabellenfeldes.
+* Null/ungerade Werte werden nicht als Einsprung akzeptiert -- so bleibt
+* F$SysDbg bei fehlendem RomBug ein sauberer Fehler statt eines Sprungs in
+* Daten oder auf eine ungerade 68k-Adresse.
+        clr.l   Q9_D_SysDbg(a6)
+        move.l  a1,d2
+        tst.l   d2
+        beq.s   Q9K_NoRomDebugger
+        move.l  $10(a1),d2
+        btst    #0,d2
+        bne.s   Q9K_NoRomDebugger
+        move.l  d2,Q9_D_SysDbg(a6)
+Q9K_NoRomDebugger:
 
 * Weiter in C (src/kernel/q9kernel_cinit.c) -- noch nicht mit dieser
 * Datei gelinkt, s. Kopfkommentar
@@ -3238,6 +3256,27 @@ Q9K_SysFChkMem:
 Q9K_SysFChkMem_Bad:
         move.l  (sp)+,d2
         ori     #$01,ccr                         * 32-Bit-Bereich ueberlaeuft
+        rts
+
+*******************************************************************************
+* Q9K_SysFSysDbg -- F$SysDbg (Callcode $52).
+*
+* Der Original-OS-9-Bootcode legt den ROM-Debuggerzeiger aus dem B_Debug-
+* Feld der ROM-Service-Tabelle in D_SysDbg ab (sbtglueasm.a: B_Debug=$10).
+* Der Q9-Bootpfad uebernimmt diesen Zeiger bereits waehrend der
+* Registerinitialisierung.  Der eigentliche Call ist deshalb ein
+* konventioneller JSR zum ROM-Service; bei fehlendem/ungueltigem Zeiger wird
+* E$UnkSvc gemeldet.  Der ROM-Debugger selbst entscheidet, ob er nach dem
+* Debuggen per RTS/RTE zum unterbrochenen Kontext zurueckkehrt.
+Q9K_SysFSysDbg:
+        movea.l Q9_D_SysDbg,a0
+        move.l  a0,d0
+        tst.l   d0
+        beq.s   Q9K_SysFSysDbg_Missing
+        jmp     (a0)
+Q9K_SysFSysDbg_Missing:
+        move.w  #$00d0,d1                       * E$UnkSvc
+        ori     #$01,ccr
         rts
 
 * Q9K_SysFPermit / Q9K_SysFProtect / Q9K_SysFAllTsk / Q9K_SysFDelTsk /
