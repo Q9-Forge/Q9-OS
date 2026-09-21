@@ -53,6 +53,7 @@ static unsigned char g_bigBuf[0x400 + 16];
 #define Q9K_APROC_SCRATCH_DESC        ((unsigned long)(g_globals + 0x400))
 #define Q9K_APROC_SCRATCH_ERROR       ((unsigned long)(g_globals + 0x420))
 #define Q9K_APROC_SCRATCH_SUCCESS     ((unsigned long)(g_globals + 0x440))
+#define Q9K_APROC_SCRATCH_PREEMPT     ((unsigned long)(g_globals + 0x4A0))
 #define Q9K_GPRDBT_SCRATCH_BUF        ((unsigned long)(g_globals + 0x460))
 #define Q9K_GPRDBT_SCRATCH_COUNT      ((unsigned long)(g_globals + 0x480))
 /* P$User liegt real auf $14 und ist dort genau 4 Byte breit. Auf diesem
