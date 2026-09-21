@@ -43,8 +43,13 @@ den passenden `r68 -m<n>`-Wert an die Hand-Assemblerdateien und das passende
 `Q9K_ENABLE_MMU`/`Q9K_ENABLE_FPU` sind explizite Overrides möglich. Der
 Default bleibt 68000 ohne MMU/FPU. Nachweis: Development-Builds für 68000
 und 68030 enden mit `Errors: 00000` und zeigen im Log `r68 -m0`/
-`be68k -p68000` beziehungsweise `r68 -m3`/`be68k -p68020`; die Tabellen- und
-Init-Extension-Hosttests bestehen in beiden Profilen. Das aktiviert noch keine
+`be68k -p68000` beziehungsweise `r68 -m3`/`xcc -tp=030`; der installierte
+`be68k`-Backend erzeugt für dieses 030-Frontend weiterhin `-p68020`. Die
+exakte `xcc`-Auswahl und CPU-Defines sind damit korrekt gesetzt, echte
+030-only Codegenerierung bleibt aber eine Toolchain-Grenze. Die Tabellen- und
+Init-Extension-Hosttests bestehen in beiden Profilen. Ein 68040-Build mit
+`Q9K_ENABLE_FPU=1` endet ebenfalls mit `Errors: 00000` und zeigt
+`xcc -tp=040`, `be68k -p68040`, `Q9K_HAS_MMU` und `Q9K_HAS_FPU`. Das aktiviert noch keine
 echte PMMU-/FPU-Ausführung im Emulator.
 
 ---
