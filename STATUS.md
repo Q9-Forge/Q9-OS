@@ -81,7 +81,26 @@ The task/SPU calls (`F$AllTsk`, `F$DelTsk`, `F$GSPUMp`) remain coupled to the
 missing SSM/MMU task images documented above, so implementing them safely is
 blocked by that same platform boundary rather than by an unregistered syscall.
 
-## Latest kernel verification (2026-09-17)
+## Latest kernel verification (2026-09-21)
+
+Boot/integration hardening was extended and exercised from a fresh development
+kernel build. `Q9K_CInit` now gates the exception-table build, `init` module
+configuration, and the module-directory/process/path table allocation before
+starting the scheduler. Fatal stages are latched in the reserved RAM word
+`0x1224`: `1` = invalid exception source table, `2` = missing `init`, `3` =
+truncated `init` configuration, and `4` = insufficient kernel arena. The
+normal boot value remains `0`; returning from a fatal stage enters the existing
+entry halt loop instead of continuing with partially initialized globals.
+
+The host table regression still passes, including the deliberately exhausted
+arena case. A fresh 68k boot image containing the development kernel, `init`,
+`forkchild`, Microware `rbf`, `cfide`, `dd`, `c0`, and the built `iattachsvc`
+module ran for approximately 75 seconds. It reached both `Hallo von Q9-OS!`
+and `Hallo aus einem echten Programm!`; the output contained no illegal
+instruction, address/stack exception, panic, or failure marker. This covers
+the module-directory setup, init parameters, CF driver allocation/free paths,
+and a longer scheduler/application run. Deliberately malformed boot images
+for all four latched failure stages remain a future negative-emulator test.
 
 The external `F$SSvc` trap return path was corrected: the 72-byte service
 register frame is now removed with the correct stack adjustment before the
@@ -1426,9 +1445,10 @@ areas remain open independently of individual call-code implementations:
    separate address spaces, page permissions, and real access checks.
 5. **Hardware-facing layers** — complete device IRQ/FIRQ coverage, task/SPU
    mappings, cache controls, and other processor-specific services.
-6. **Boot and integration hardening** — test more boot modules and applications,
-   and verify memory limits, module-directory setup, init parameters, and failure
-   paths under longer emulator runs.
+6. **Boot and integration hardening** — normal multi-module boot, memory-arena
+   exhaustion handling, module-directory setup, init-parameter validation, and
+   a 75-second application run are covered; malformed-image negative emulator
+   tests and still longer stress runs remain.
 7. **Status and regression hygiene** — keep `STATUS.md` and the historical
    `docs/OWN_KERNEL_STATUS.md` synchronized and require every status change to
    name the exact host or emulator evidence behind it.

@@ -218,6 +218,14 @@ extern void Q9K_Diag6(void);
  *                                             SMP-Abschnitt. */
 #define Q9K_BOOTLIST_ADDR   0x1000UL
 #define Q9K_CPUCOUNT_ADDR   0x1200UL
+#define Q9K_BOOT_STATUS_ADDR 0x1224UL /* 0 = ready, nonzero = fatal init stage */
+
+/* Keep boot failures observable even when the final halt loop has no console
+ * yet.  The ROM/emulator can inspect this stable global after a failed boot. */
+static void Q9K_BootFail(Q9_u32 stage)
+{
+    *(volatile Q9_u32 *)Q9K_BOOT_STATUS_ADDR = stage;
+}
 
 /* Eigene Ready-Queue-Sentinel-Adresse (Abschnitt "Scheduler", 2026-08-21)
  * -- MUSS mit Q9K_READYQ_SENTINEL_ADDR in q9kernel_sched.c uebereinstimmen.
@@ -339,6 +347,7 @@ static void Q9K_InitEmptyQueue(Q9_u32 queueBase, Q9_u32 headOff, Q9_u32 tailOff)
 
 void Q9K_CInit(void)
 {
+    Q9K_BootFail(0);
     Q9K_MemTraceInit();
     Q9K_ProcMemTrackInit();
     Q9K_Diag4(); /* TEMPORAERE DIAGNOSE, s. o. */
@@ -405,11 +414,12 @@ void Q9K_CInit(void)
      * Speicherblock dafuer (s. q9kernel_entry.a). Alle Vektoren zeigen
      * bisher auf denselben generischen Halt-Handler (kein IRQ-/Syscall-
      * Dispatcher existiert noch, s. dortige Kopfkommentare/TODOs).
-     * Rueckgabewert (Konsistenzcheck der Quelltabelle) noch nicht
-     * ausgewertet -- kein Panic-Mechanismus vorhanden, dem ein
-     * Fehlschlag hier ohnehin mitgeteilt werden koennte (TODO, sobald
-     * es einen gibt). */
-    Q9K_BuildExcTable();
+     * Ein Konsistenzfehler wird als fataler Boot-Status 1 gelatcht,
+     * bevor weitere globale Tabellen oder Prozesse benutzt werden. */
+    if (Q9K_BuildExcTable() != 0) {
+        Q9K_BootFail(1); /* corrupt/inconsistent exception source table */
+        return;
+    }
 
     /* Schritt 6a: Init-Modul per Namenssuche finden (2026-08-18,
      * verdrahtet nach einer Session-Pause -- Q9K_FindModuleByName/
@@ -448,10 +458,13 @@ void Q9K_CInit(void)
                  * (alle < 0x7C, durch denselben Bounds-Check oben
                  * abgedeckt), SYSDIS/USRDIS/Modulverzeichnis + Prozess-/
                  * Pfad-Pools ueber den Arena-Allokator aufsetzen
-                 * (q9kernel_tables.c). Rueckgabewert (Allokationsfehler)
-                 * noch nicht ausgewertet -- gleiche Begruendung wie bei
-                 * Q9K_BuildExcTable (kein Panic-Mechanismus vorhanden). */
-                Q9K_SetupTables(initMod);
+                 * (q9kernel_tables.c). Ein Allokationsfehler wird als
+                 * fataler Boot-Status 4 gelatcht, bevor der Scheduler
+                 * gestartet wird. */
+                if (Q9K_SetupTables(initMod) != 0) {
+                    Q9K_BootFail(4); /* arena too small for tables/pools */
+                    return;
+                }
 
                 /* NACHTRAG 2026-08-21 (Abschnitt "F$Link/F$UnLink"):
                  * Modulverzeichnis JETZT befuellen (braucht den von
@@ -721,17 +734,14 @@ void Q9K_CInit(void)
                     }
                 }
             }
-            /* TODO: initAvailableLen < 0x7C waere ein sehr kleines/
-             * unplausibles Init-Modul -- bewusst KEIN Zugriff auf die
-             * Konfigurationsfelder in diesem Fall, aber auch keine
-             * explizite Fehlerbehandlung dafuer (noch offen). */
+            else {
+                Q9K_BootFail(3); /* init module lacks required config fields */
+                return;
+            }
+        } else {
+            Q9K_BootFail(2); /* init module missing from boot list */
+            return;
         }
-        /* TODO: kein Init-Modul gefunden -- der echte Kernel gibt eine
-         * feste Meldung aus ("kernel: can't find Init module", Thema 01)
-         * und bricht vermutlich ab. Fuer uns noch nicht entschieden --
-         * aktuell faellt die Funktion einfach durch bis zum return
-         * unten, Q9K_HaltLoop faengt das ab (kein Fortschritt, aber
-         * auch kein Absturz). */
     }
 
     /* Abschnitt "Scheduler" (2026-08-21, im Anschluss an F$Link/
