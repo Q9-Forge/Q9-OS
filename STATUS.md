@@ -1266,7 +1266,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified on both wait paths, the blocking one with a forked second process doing the signalling |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
-| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul, A$AtDate and A$Reset are implemented; A$Set is emulator-verified, while the complete alarm matrix remains host-tested |
+| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul, A$AtDate and A$Reset are implemented; cycle intervals now retain full 32-bit ABI values, timer delivery and host regression coverage pass, while complete alarm matrix/live validation remains open |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Flat-address-space handler rejects 32-bit range wraparound; MMU/permission validation remains open |
 | ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |
