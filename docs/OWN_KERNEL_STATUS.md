@@ -23,6 +23,14 @@ und die hochbit-terminierte F$PrsNam-Form ab. Der offene Punkt bleibt daher
 nicht mehr die Rückgabekonvention, sondern nur die breitere Langzeit- und
 Anwendungsabdeckung.
 
+**Trap-Kontext-Nachprüfung 2026-09-21:** Beim Prozesswechsel aus blockierenden
+oder ersetzenden Systemaufrufen (`F$Wait`, `F$Sleep`, `F$Exit`, `F$Sema`,
+`Ev$Wait`, `F$NProc`, `F$Chain`, `F$RTE`, `F$DExec`) wird der globale
+`Q9K_InTrapPath`-Marker vor dem Wiederherstellen des Zielrahmens gelöscht.
+Damit kann ein neu aufgenommener Prozess keinen fremden TRAP-Kontext erben.
+Die verbleibende offene Arbeit ist gezieltes Stressen beliebiger verschachtelter
+Treiber-/IOMan-Aufrufe; der normale Microware-Boot bleibt verifiziert.
+
 **Diese Datei war 134 Commits lang nicht fortgeschrieben.** Die Übergabe
 darunter endet am 13.09. bei Fortsetzung 61; seitdem ist sehr viel
 passiert, dokumentiert wurde es aber in **`STATUS.md`** im Wurzelverzeichnis.

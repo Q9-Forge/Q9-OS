@@ -1351,13 +1351,25 @@ high-bit-terminated forms.  The previously documented F$PrsNam/RBF return
 regression and its verification gap are therefore closed; the remaining I/O
 work is limited to broader application and long-run coverage.
 
+**Trap-context lifetime hardening (2026-09-21).** The shared
+`Q9K_InTrapPath` marker is now cleared on every process/context hand-off
+before the restored register frame is returned: `F$Wait`, `F$Exit`, `F$Sleep`,
+`F$Sema`, `Ev$Wait`, `F$NProc`, `F$Chain`, `F$RTE`, and `F$DExec`. This closes
+the flag-leak path where a process resumed after a blocking or chaining call
+could be mistaken for an active TRAP #0 frame by a later direct IOMan
+trampoline call. A fresh development boot with real Microware IOMan/RBF/CF
+modules still reaches the echo/date loader markers and reports no exception
+vector. Further stress coverage for arbitrary nested driver calls remains
+listed below.
+
 ## Remaining kernel work outside the SysCalls
 
 The SysCall tables above are not the complete kernel roadmap. The following
 areas remain open independently of individual call-code implementations:
 
-1. **Trap and context lifetime** — harden nested external traps, register-frame
-   ownership, and all return paths through IOMan, file managers, and drivers.
+1. **Trap and context lifetime** — the process-handoff flag leak is fixed;
+   stress-test arbitrary nested external traps, register-frame ownership, and
+   all return paths through IOMan, file managers, and drivers.
 2. **Scheduler** — cover remaining edge cases involving preemption, process
    switching, and simultaneous IRQs; F$DExec trace stops are implemented.
 3. **Native Q9 I/O** — extend the minimal native path layer toward full device,
