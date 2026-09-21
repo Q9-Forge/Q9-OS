@@ -1250,7 +1250,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x30` | F$AllPD | DBT allocation and descriptor clearing, host tests, and the direct `iattachsvc` emulator regression are verified; the marker sequence reaches the allocation before the later Microware attach/detach checks |
 | ✅ | `0x31` | F$RetPD | DBT return with descriptor-number validation, host tests, and the direct `iattachsvc` emulator regression are verified; the allocated descriptor is returned before the later Microware attach/detach checks |
 | ✅ | `0x32` | F$SSvc | Service-table registration, SysTrap routing, per-service data pointers, kernel-slot protection, and empty-table handling are host-tested; the direct `iattachsvc` emulator regression registers service `0x7F` and reaches it through a real TRAP, including the A3 data pointer |
-| 🟡 | `0x33` | F$IODel | Microware path exists; current Q9 compatibility is not fully verified |
+| 🔷 | `0x33` | F$IODel | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x37` | F$GProcP | PID-to-process-descriptor lookup implemented and host-tested; broader process-property APIs are tracked separately |
 | ✅ | `0x38` | F$Move | Memory move path implemented |
 | ⛔ | `0x39` | F$AllRAM | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, daher keine nachbildbare ABI |
