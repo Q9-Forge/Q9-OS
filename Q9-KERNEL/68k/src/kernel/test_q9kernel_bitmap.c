@@ -159,6 +159,12 @@ int main(void)
           (Q9_u32)Q9K_BitmapSearch(MAPBASE, MAPEND, 64, 1, &start, &count), 0);
     check("eine leere Bitmap scheitert",
           (Q9_u32)Q9K_BitmapSearch(MAPBASE, MAPBASE, 0, 1, &start, &count), 0);
+    check("ein Nullzeiger wird vor dem Bitmapzugriff abgewiesen",
+          (Q9_u32)Q9K_BitmapSearch(0, MAPEND, 0, 1, &start, &count), 0);
+    check("der Nullzeiger liefert keinen freien Bereich",
+          count, 0);
+    check("ein rueckwaerts laufender Bereich scheitert",
+          (Q9_u32)Q9K_BitmapSearch(MAPEND, MAPBASE, 0, 1, &start, &count), 0);
 
     /* --- Der Zyklus, fuer den die drei gedacht sind --- */
     reset();
