@@ -1238,7 +1238,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟢 | `0x24` | F$DExit | Validates debugger ownership and releases the suspended child and all owned resources |
 | ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
-| 🟡 | `0x27` | F$SetSys | Known csl memory-increment variable `$7C` is now persistent and host-tested; the broader system-variable catalogue remains open |
+| 🟡 | `0x27` | F$SetSys | Persistent, host-tested support for `$7C` (csl malloc increment), `$28` (`D_TckSec`) and `$76` (`D_TSlice`); unknown variables return `E$UnkSvc`, while the remaining Microware system-global catalogue remains open |
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking and emulator test complete |
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |
 | 🟡 | `0x2A` | F$IRQ | Kernel path exists; complete interrupt-device coverage remains open |

@@ -87,21 +87,41 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 
 #define Q9K_SETSYS_GETFLAG 0x80000000UL
 
-/* Bislang die EINZIGE bekannte, live gebrauchte Variable -- s.
- * Kopfkommentar. Name/Nummer NICHT aus dem Handbuch, sondern aus dem
- * Aufrufer (csl.mod $44a1a: "moveq #$7c,d0") uebernommen. */
+/* System-global values with a Q9-owned implementation.  $7c is the value
+ * used by csl; $28 and $76 are the kernel's tick-rate and scheduler quantum
+ * and therefore have stable Q9 semantics as well. */
 #define Q9K_SETSYS_VAR_CSL_MALLOC_INCR 0x7CUL
+#define Q9K_SETSYS_VAR_TCKSEC          0x28UL
+#define Q9K_SETSYS_VAR_TSLICE          0x76UL
 #define Q9K_SETSYS_DEFAULT_MALLOC_INCR 4096UL
+#define Q9K_SETSYS_DEFAULT_TCKSEC      100UL
+#define Q9K_SETSYS_DEFAULT_TSLICE      2UL
 
 /* Persistent value for the one system variable currently used by csl. */
 /* BSS-only storage: initialized data is not permitted in this OS-9 module. */
 static Q9_u32 Q9K_SetSysMallocIncrement;
+static Q9_u32 Q9K_SetSysTickSeconds;
+static Q9_u32 Q9K_SetSysTimeSlice;
 
 static Q9_u32 Q9K_GetSetSysMallocIncrement(void)
 {
     if (Q9K_SetSysMallocIncrement == 0UL)
         Q9K_SetSysMallocIncrement = Q9K_SETSYS_DEFAULT_MALLOC_INCR;
     return Q9K_SetSysMallocIncrement;
+}
+
+static Q9_u32 Q9K_GetSetSysTickSeconds(void)
+{
+    if (Q9K_SetSysTickSeconds == 0UL)
+        Q9K_SetSysTickSeconds = Q9K_SETSYS_DEFAULT_TCKSEC;
+    return Q9K_SetSysTickSeconds;
+}
+
+static Q9_u32 Q9K_GetSetSysTimeSlice(void)
+{
+    if (Q9K_SetSysTimeSlice == 0UL)
+        Q9K_SetSysTimeSlice = Q9K_SETSYS_DEFAULT_TSLICE;
+    return Q9K_SetSysTimeSlice;
 }
 
 /* E$UnkSvc -- s. Kopfkommentar. */
@@ -116,21 +136,43 @@ int Q9K_ProcSetSys(Q9_u32 varCode, Q9_u32 flags, Q9_u32 valueIn, Q9_u32 *outValu
     if ((flags & Q9K_SETSYS_GETFLAG) != 0) {
         if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
             *outValue = Q9K_GetSetSysMallocIncrement();
-            return 1;
+        } else if (varCode == Q9K_SETSYS_VAR_TCKSEC) {
+            *outValue = Q9K_GetSetSysTickSeconds();
+        } else if (varCode == Q9K_SETSYS_VAR_TSLICE) {
+            *outValue = Q9K_GetSetSysTimeSlice();
+        } else {
+            *outValue = 0UL;
+            *outError = Q9K_ERR_UNKSVC;
+            return 0;
         }
-        *outValue = 0UL;
-        *outError = Q9K_ERR_UNKSVC;
-        return 0;
-    }
-
-    if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
+        return 1;
+    } else if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
         if (valueIn == 0UL) {
             *outValue = 0UL;
             *outError = Q9K_ERR_UNKSVC;
             return 0;
         }
         Q9K_SetSysMallocIncrement = valueIn;
+    } else if (varCode == Q9K_SETSYS_VAR_TCKSEC) {
+        if (valueIn == 0UL) {
+            *outValue = 0UL;
+            *outError = Q9K_ERR_UNKSVC;
+            return 0;
+        }
+        Q9K_SetSysTickSeconds = valueIn;
+    } else if (varCode == Q9K_SETSYS_VAR_TSLICE) {
+        if (valueIn == 0UL) {
+            *outValue = 0UL;
+            *outError = Q9K_ERR_UNKSVC;
+            return 0;
+        }
+        Q9K_SetSysTimeSlice = valueIn;
+    } else {
+        *outValue = 0UL;
+        *outError = Q9K_ERR_UNKSVC;
+        return 0;
     }
+
     *outValue = valueIn;
     return 1;
 }

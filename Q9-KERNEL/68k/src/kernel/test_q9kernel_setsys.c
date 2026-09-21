@@ -65,6 +65,20 @@ int main(void)
     ok = Q9K_ProcSetSys(0x7CUL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
     checkU32("F3: nachfolgendes Lesen liefert den gespeicherten Wert", value, 12345UL);
 
+    value = 0; error = 0xDEADUL;
+    ok = Q9K_ProcSetSys(0x28UL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
+    checkU32("F3a: D_TckSec meldet Erfolg", (unsigned long)ok, 1UL);
+    checkU32("F3a: D_TckSec startet mit 100", value, 100UL);
+    ok = Q9K_ProcSetSys(0x28UL, 0UL, 200UL, &value, &error);
+    checkU32("F3a: D_TckSec laesst sich setzen", (unsigned long)ok, 1UL);
+    ok = Q9K_ProcSetSys(0x28UL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
+    checkU32("F3a: D_TckSec bleibt persistent", value, 200UL);
+
+    value = 0; error = 0xDEADUL;
+    ok = Q9K_ProcSetSys(0x76UL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
+    checkU32("F3b: D_TSlice meldet Erfolg", (unsigned long)ok, 1UL);
+    checkU32("F3b: D_TSlice startet mit 2", value, 2UL);
+
     /* Fall 4: Scratch-Bruecke Q9K_SysSetSysImpl liest/schreibt die
      * richtigen Zellen -- Erfolgsfall. */
     *(unsigned long *)Q9K_SetSysScratch_VarCode = 0x7CUL;
