@@ -35,6 +35,18 @@ Kernel latched Bootfehler nun in `0x1224` (1 Exception-Tabelle, 2 fehlendes
 `init`, 3 zu kurzes `init`, 4 zu kleine Arena). Die vier absichtlich
 fehlerhaften Bootimages sind noch nicht als negative Emulatorfälle ausgeführt.
 
+Die Build-Pipeline besitzt jetzt ein zentrales CPU-Profil:
+`Q9K_CPU_TYPE=68000|68010|68020|68030|68040|68060|CPU32`. `build.sh` reicht
+den passenden `r68 -m<n>`-Wert an die Hand-Assemblerdateien und das passende
+`xcc -tp`-Ziel an die C-Dateien weiter. Daraus werden
+`Q9K_CPU_*`, `Q9K_HAS_MMU` und `Q9K_HAS_FPU` abgeleitet; mit
+`Q9K_ENABLE_MMU`/`Q9K_ENABLE_FPU` sind explizite Overrides möglich. Der
+Default bleibt 68000 ohne MMU/FPU. Nachweis: Development-Builds für 68000
+und 68030 enden mit `Errors: 00000` und zeigen im Log `r68 -m0`/
+`be68k -p68000` beziehungsweise `r68 -m3`/`be68k -p68020`; die Tabellen- und
+Init-Extension-Hosttests bestehen in beiden Profilen. Das aktiviert noch keine
+echte PMMU-/FPU-Ausführung im Emulator.
+
 ---
 
 ## ÜBERGABE (2026-09-20, zwölfte Arbeitssitzung — HIER ZUERST LESEN,

@@ -111,6 +111,21 @@ The emulator is Q9-Flux 68k with the development ROM; the recorded run used
 the complete module paths from the 2026-09-21 session and was stopped after
 approximately 75 seconds.
 
+### CPU feature-profile selection (2026-09-21)
+
+`Q9-KERNEL/68k/src/kernel/build.sh` now accepts `Q9K_CPU_TYPE` (`68000`,
+`68010`, `68020`, `68030`, `68040`, `68060`, or `CPU32`). It passes the exact
+`-m<n>` value to every hand-written `r68` module and the matching `-tp` target
+to the C toolchain. The derived `Q9K_CPU_*`, `Q9K_HAS_MMU`, and
+`Q9K_HAS_FPU` defines are visible to C code; `Q9K_ENABLE_MMU` and
+`Q9K_ENABLE_FPU` can explicitly override the hardware-profile defaults. The
+safe default remains `68000` with both features off. The default and
+`Q9K_CPU_TYPE=68030` builds both finish with `Errors: 00000`; their logs show
+`r68 -m0`/`be68k -p68000` and `r68 -m3`/`be68k -p68020` respectively. The
+table and init-extension host regressions pass under the default and explicit
+68030/MMU defines. This selects feature flags only; real PMMU/FPU execution
+remains subject to the target emulator/hardware model.
+
 Boot/integration hardening was extended and exercised from a fresh development
 kernel build. `Q9K_CInit` now gates the exception-table build, `init` module
 configuration, and the module-directory/process/path table allocation before
