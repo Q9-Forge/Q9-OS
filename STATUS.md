@@ -137,6 +137,14 @@ setup; hardware mode currently fails closed with boot status `5`, because the
 PMMU backend and context-switch roots do not yet exist. Thus an MMU-labelled
 kernel can no longer boot accidentally with flat, uninitialized protection.
 
+The first MMU backend layer is now present as a tested page-region ledger in
+`q9kernel_mmu.c`: 4-KiB rounding, per-process ownership, read/write/execute
+rights, overlap detection, exact unmap, and 32-bit wrap rejection are covered
+by `test_q9kernel_mmu.c` (`ALLE TESTS BESTANDEN`). A fresh 68030 flat build
+also compiles and links this layer with `Errors: 00000`. The syscall rows stay
+yellow for now because the ledger is not yet connected to PMMU tables,
+process-descriptor roots, or the `0x3A–0x40` register bridges.
+
 Boot/integration hardening was extended and exercised from a fresh development
 kernel build. `Q9K_CInit` now gates the exception-table build, `init` module
 configuration, and the module-directory/process/path table allocation before
