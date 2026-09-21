@@ -42,6 +42,27 @@ A few calls have no page in the Technical Manual at all (`F$AllRAM`, `F$GBlkMp`,
 purpose: this kernel implements verified ABIs, and guessing one would break that
 rule.
 
+### MMU/SSM audit (2026-09-21)
+
+The current Q9-OS target is still a flat physical address space. The kernel
+contains no 68030 PMMU operations (`PMOVE`, `PTEST`, `PLOAD`, `PFLUSH`) and no
+per-process CRP/SRP/URP or page-table state. Process descriptors carry the
+flat allocation base/size used by `F$Mem`, but not an address-space root or a
+task image. Accordingly, `F$Permit`, `F$Protect`, `F$AllTsk`, `F$DelTsk`, and
+`F$GSPUMp` are compatibility entry points, while `F$ChkMem` only rejects
+32-bit range wraparound. The Q9-Flux 68k backend also reports `PFLUSH` as
+“unhandled … kein TLB”, so enabling PMMU instructions in this kernel would
+not be verifiable on the current machine model.
+
+The original SSM binary is preserved at
+`Q9-KERNEL/.os9-original/ssm/vendor/ssm851`, but it is an external
+Microware module rather than a usable page-table implementation for the Q9
+kernel. Completing this roadmap item therefore requires a target/emulator
+with a functioning 68030 PMMU model (or a software page-table layer first),
+an address-space structure in the process descriptor, and a defined fault-
+and-context-switch path before the four SSM compatibility calls can be
+converted safely.
+
 ## Latest kernel verification (2026-09-17)
 
 The external `F$SSvc` trap return path was corrected: the 72-byte service
