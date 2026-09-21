@@ -108,7 +108,7 @@ ein interner Weiterreiche-Mechanismus, kein Widerspruch.
 
 ### 2e. Im Referenz-Build nicht registriert (4 Codes)
 
-`F$SSpd`, `F$AllRAM`, `F$POSK`, `F$Panic` — Callcode ist definiert, aber
+`F$SSpd`, `F$AllRAM`, `F$POSK`/`F$P0SK`, `F$Panic` — Callcode ist definiert, aber
 im geprüften Kernel-Build zeigt er auf den Fehler-Stub. Für den eigenen
 Kernel frei entscheidbar: nachbauen (falls für Kompatibilität mit anderen
 68K-Programmen relevant, die diese Codes tatsächlich aufrufen) oder
