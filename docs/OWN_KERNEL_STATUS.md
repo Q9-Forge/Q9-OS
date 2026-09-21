@@ -59,6 +59,14 @@ So kann ein als MMU gebauter Kernel nicht mit uninitialisiertem Schutzpfad in
 den Scheduler gelangen; der eigentliche PMMU-/Kontextwechsel-Backend bleibt
 der nächste Implementierungsschritt.
 
+Als erster Backend-Baustein existiert nun ein host-getestetes
+4-KiB-Seiten-Regionenbuch in `q9kernel_mmu.c`: pro Prozess getrennte Regionen,
+Read/Write/Execute-Rechte, Überlappungs- und Wraparound-Prüfung sowie exaktes
+Protect/Unmap. `test_q9kernel_mmu.c` meldet `ALLE TESTS BESTANDEN`; ein frischer
+68030-Flat-Build linkt die Schicht mit `Errors: 00000`. Die Calls `0x3A–0x40`
+bleiben gelb, bis dieses Buch an echte PMMU-Tabellen, Prozesswurzeln und ihre
+Registerbrücken angeschlossen ist.
+
 ---
 
 ## ÜBERGABE (2026-09-20, zwölfte Arbeitssitzung — HIER ZUERST LESEN,
