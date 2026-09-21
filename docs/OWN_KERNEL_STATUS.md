@@ -13,6 +13,16 @@ Q9-Flux-Emulator, nicht bloß implementiert.
 ## ÜBERGABE (2026-09-20, zwölfte Arbeitssitzung — HIER ZUERST LESEN,
 ersetzt die Übergabe darunter; die von 2026-09-13 ist ab hier historisch)
 
+**Nachprüfung 2026-09-21:** Die damals als offen beschriebene
+F$PrsNam/RBF-Rückgabestrecke ist inzwischen geschlossen. Ein frischer
+Entwicklungs-Boot mit den unveränderten Microware-Modulen `rbf`, `cfide`,
+`dd` und `c0` lädt sowohl `/dd/CMDS/echo` als auch `/dd/CMDS/date` über den
+echten IOMan/RBF/CF-Pfad und führt beide Programme aus; Fehler- und
+Vektor-Marker bleiben aus. Die Hosttests decken zusätzlich die verkettete
+und die hochbit-terminierte F$PrsNam-Form ab. Der offene Punkt bleibt daher
+nicht mehr die Rückgabekonvention, sondern nur die breitere Langzeit- und
+Anwendungsabdeckung.
+
 **Diese Datei war 134 Commits lang nicht fortgeschrieben.** Die Übergabe
 darunter endet am 13.09. bei Fortsetzung 61; seitdem ist sehr viel
 passiert, dokumentiert wurde es aber in **`STATUS.md`** im Wurzelverzeichnis.
@@ -47,21 +57,24 @@ zu „arbeitsfähiges System" gemacht:
 * **`F$Load` ist emulatorverifiziert** (`✅`) — der RBF-/Verzeichnis-
   Hänger, der am 17.09. noch als Hauptengpass galt, ist weg.
 
-### DER OFFENE PUNKT: eine laufende Regressionsrücknahme
+### HISTORISCHER OFFENER PUNKT: F$PrsNam-Rücknahme (inzwischen geschlossen)
 
-**Das ist das Erste, was zu klären ist.** Die drei Commits `cdcd010`
+Die folgende damalige Messung ist als Verlauf erhalten. Die drei Commits `cdcd010`
 („Accept OS-9 high-bit terminated path components"), `8ece62c` („Read F
 input from external register frame") und `04acb91` („Write external F
 results back to register frames") haben den `F$PrsNam`-Eingabepfad auf
 den `R$`-Registerrahmen umgestellt. Das ist eine **Regression gegenüber
 dem verifizierten `F$Load`-Weg**.
 
-Die Rücknahme war beim Schreiben dieser Übergabe **in Arbeit und nicht
-abgeschlossen**: in `q9kernel_entry.a` wird der Vorspann
+Beim Schreiben dieser Übergabe war die Rücknahme **in Arbeit und nicht
+abgeschlossen**: in `q9kernel_entry.a` wurde der Vorspann
 `tst.w Q9K_InTrapPath` / `movea.l $20(a5),a0` aus `Q9K_SysFPrsNam`
 wieder entfernt, in `q9kernel_iopath.c` die Hochbit-Behandlung in
 `Q9K_ProcPrsNam`, dazu ein zusätzlicher Hex-Marker für den
-`F$Load`-Fehlercode. Beides muss noch durch Bau und Emulator.
+`F$Load`-Fehlercode ergänzt. Der anschließende Fix im externen F$-Pfad und
+die Nachprüfung vom 2026-09-21 (siehe oben) haben diesen Punkt inzwischen
+geschlossen; die folgenden Notizen dokumentieren nur noch die historische
+Fehlersuche.
 
 Wer hier weitermacht: **zuerst `git status` prüfen.** Stehen `entry.a`
 und `iopath.c` noch als geändert da, ist diese Rücknahme unfertig und
