@@ -65,18 +65,16 @@ case "$KERNEL_VARIANT" in
 esac
 
 # Keep the CPU selection in one place for both the C compiler and every
-# hand-written assembler module.  The compiler's 68k target names are broader
-# than r68's exact -m values: xcc's `68k` is the 68000/010 family and `020`
-# covers 68020/030.  The per-CPU Q9K_* define still lets C code select the
-# exact feature set without pretending that xcc can generate 030-only code.
+# hand-written assembler module.  xcc accepts the exact Motorola target name;
+# the per-CPU Q9K_* define additionally lets C code select feature paths.
 CPU_TYPE="${Q9K_CPU_TYPE:-68000}"
 case "$CPU_TYPE" in
     68000) CPU_CODE=0; XCC_TARGET=68k; CPU_DEF=-dQ9K_CPU_68000; CPU_MMU=0; CPU_FPU=0 ;;
-    68010) CPU_CODE=1; XCC_TARGET=68k; CPU_DEF=-dQ9K_CPU_68010; CPU_MMU=0; CPU_FPU=0 ;;
+    68010) CPU_CODE=1; XCC_TARGET=010; CPU_DEF=-dQ9K_CPU_68010; CPU_MMU=0; CPU_FPU=0 ;;
     68020) CPU_CODE=2; XCC_TARGET=020; CPU_DEF=-dQ9K_CPU_68020; CPU_MMU=0; CPU_FPU=0 ;;
-    68030) CPU_CODE=3; XCC_TARGET=020; CPU_DEF=-dQ9K_CPU_68030; CPU_MMU=1; CPU_FPU=0 ;;
-    68040) CPU_CODE=4; XCC_TARGET=020; CPU_DEF=-dQ9K_CPU_68040; CPU_MMU=1; CPU_FPU=1 ;;
-    68060) CPU_CODE=6; XCC_TARGET=020; CPU_DEF=-dQ9K_CPU_68060; CPU_MMU=1; CPU_FPU=1 ;;
+    68030) CPU_CODE=3; XCC_TARGET=030; CPU_DEF=-dQ9K_CPU_68030; CPU_MMU=1; CPU_FPU=0 ;;
+    68040) CPU_CODE=4; XCC_TARGET=040; CPU_DEF=-dQ9K_CPU_68040; CPU_MMU=1; CPU_FPU=1 ;;
+    68060) CPU_CODE=6; XCC_TARGET=060; CPU_DEF=-dQ9K_CPU_68060; CPU_MMU=1; CPU_FPU=1 ;;
     CPU32) CPU_CODE=2; XCC_TARGET=cpu32; CPU_DEF=-dQ9K_CPU_CPU32; CPU_MMU=0; CPU_FPU=0 ;;
     *)
         echo "FEHLER: Q9K_CPU_TYPE muss 68000, 68010, 68020, 68030, 68040, 68060 oder CPU32 sein" >&2

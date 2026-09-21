@@ -115,13 +115,17 @@ approximately 75 seconds.
 
 `Q9-KERNEL/68k/src/kernel/build.sh` now accepts `Q9K_CPU_TYPE` (`68000`,
 `68010`, `68020`, `68030`, `68040`, `68060`, or `CPU32`). It passes the exact
-`-m<n>` value to every hand-written `r68` module and the matching `-tp` target
-to the C toolchain. The derived `Q9K_CPU_*`, `Q9K_HAS_MMU`, and
+`-m<n>` value to every hand-written `r68` module and the matching exact `-tp`
+target to the C toolchain. The derived `Q9K_CPU_*`, `Q9K_HAS_MMU`, and
 `Q9K_HAS_FPU` defines are visible to C code; `Q9K_ENABLE_MMU` and
 `Q9K_ENABLE_FPU` can explicitly override the hardware-profile defaults. The
 safe default remains `68000` with both features off. The default and
 `Q9K_CPU_TYPE=68030` builds both finish with `Errors: 00000`; their logs show
-`r68 -m0`/`be68k -p68000` and `r68 -m3`/`be68k -p68020` respectively. The
+`r68 -m0`/`be68k -p68000` and `r68 -m3`/`xcc -tp=030` respectively. The
+installed `be68k` backend still emits `-p68020` for the 030 frontend target;
+that toolchain limitation is recorded rather than hidden. A 68040 build with
+`Q9K_ENABLE_FPU=1` also finishes with `Errors: 00000` and shows
+`xcc -tp=040`, `be68k -p68040`, `Q9K_HAS_MMU`, and `Q9K_HAS_FPU`. The
 table and init-extension host regressions pass under the default and explicit
 68030/MMU defines. This selects feature flags only; real PMMU/FPU execution
 remains subject to the target emulator/hardware model.
