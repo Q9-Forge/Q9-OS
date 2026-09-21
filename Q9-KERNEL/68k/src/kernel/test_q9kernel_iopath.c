@@ -82,6 +82,7 @@ int main(void)
     Q9_u32 num1, num2, num3, num4, num5;
     Q9_u32 nameStart;
     Q9_u16 nameLen, nameDelim, nameErr;
+    Q9_u16 openErr;
     static unsigned char processDesc[0x200];
     static unsigned char processDesc2[0x200];
 
@@ -107,7 +108,7 @@ int main(void)
 
     /* Fall 1: "/term" oeffnen -- erwartete erste Pfadnummer = 3
      * (Slot 0, s. Kopfkommentar "Offset 3"). */
-    num1 = Q9K_ProcIOpen(0, name1Addr, &past);
+    num1 = Q9K_ProcIOpen(0, name1Addr, &past, &openErr);
     checkU32("F1: erste Pfadnummer == 3", num1, 3);
     checkU32("F1: past-Zeiger zeigt hinter das NUL-Byte",
              past, name1Addr + (Q9_u32)sizeof(name1));
@@ -119,21 +120,34 @@ int main(void)
              (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_REF_OFF), 1);
 
     /* Fall 2: zweiter, unabhaengiger Pfad -- naechste Pfadnummer = 4. */
-    num2 = Q9K_ProcIOpen(1, name2Addr, &past);
+    num2 = Q9K_ProcIOpen(1, name2Addr, &past, &openErr);
     checkU32("F2: zweite Pfadnummer == 4", num2, 4);
     checkU32("F2: past-Zeiger fuer den LAENGEREN Namen korrekt",
              past, name2Addr + (Q9_u32)sizeof(name2));
 
     /* Fall 3+4: Pool hat noch 2 freie Slots -- beide erfolgreich. */
-    num3 = Q9K_ProcIOpen(0, name1Addr, &past);
-    num4 = Q9K_ProcIOpen(0, name1Addr, &past);
+    num3 = Q9K_ProcIOpen(0, name1Addr, &past, &openErr);
+    num4 = Q9K_ProcIOpen(0, name1Addr, &past, &openErr);
     checkU32("F3: dritte Pfadnummer == 5", num3, 5);
     checkU32("F4: vierte Pfadnummer == 6", num4, 6);
 
     /* Fall 5: Pool erschoepft (alle 4 Slots vergeben) -- muss sauber
      * mit 0 fehlschlagen, kein Absturz. */
-    num5 = Q9K_ProcIOpen(0, name1Addr, &past);
+    num5 = Q9K_ProcIOpen(0, name1Addr, &past, &openErr);
     checkU32("F5: Pool erschoepft -- Rueckgabe 0", num5, 0);
+
+    /* Native open validates the path grammar and access flags before taking
+     * a descriptor from the pool. */
+    {
+        static const char badPath[] = "/dd//broken";
+        buildFreeList(poolBase, Q9K_PATHDESC_SIZE, 4, Q9K_PATHPOOL_FREE_ADDR);
+        num5 = Q9K_ProcIOpen(0, (Q9_u32)(unsigned long)badPath, &past, &openErr);
+        checkU32("F5a: malformed path is rejected", num5, 0);
+        checkU32("F5a: malformed path reports E$BPNAM", openErr, 0x00D7);
+        num5 = Q9K_ProcIOpen(0x20, name1Addr, &past, &openErr);
+        checkU32("F5b: unsupported access bits are rejected", num5, 0);
+        checkU32("F5b: unsupported access bits report E$BMODE", openErr, 0x00CB);
+    }
 
     /* The native open path must also publish the process-local path
      * number.  This is the table consumed by IOMan and by native I/O. */
@@ -141,12 +155,12 @@ int main(void)
     Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)processDesc);
     memset(processDesc, 0, sizeof(processDesc));
     buildFreeList(poolBase, Q9K_PATHDESC_SIZE, 4, Q9K_PATHPOOL_FREE_ADDR);
-    num1 = Q9K_ProcIOpen(0, name1Addr, &past);
+    num1 = Q9K_ProcIOpen(0, name1Addr, &past, &openErr);
     checkU32("F6: process-local open starts at path 3", num1, 3);
     checkU32("F6: P$Path[3] contains the published path number",
              (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc
                                    + Q9K_PROCDESC_PATH_OFF + 3UL * 2UL), 3);
-    num2 = Q9K_ProcIOpen(1, name2Addr, &past);
+    num2 = Q9K_ProcIOpen(1, name2Addr, &past, &openErr);
     checkU32("F7: second process-local open uses path 4", num2, 4);
     checkU32("F7: P$Path[4] contains the published path number",
              (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc
@@ -155,7 +169,7 @@ int main(void)
     /* A second process gets its own local path 3, but the global descriptor
      * number must still identify the third pool slot. */
     Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)processDesc2);
-    num3 = Q9K_ProcIOpen(0, name1Addr, &past);
+    num3 = Q9K_ProcIOpen(0, name1Addr, &past, &openErr);
     checkU32("F8: second process also starts at local path 3", num3, 3);
     checkU32("F8: second process P$Path[3] stores global descriptor 5",
              (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc2
