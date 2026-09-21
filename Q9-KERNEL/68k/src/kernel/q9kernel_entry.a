@@ -4539,7 +4539,6 @@ Q9K_SysFSRqMem_NoFrameOut:
 
 Q9K_SysFSRqMem_Fail:
         move.w  Q9K_SRqMemScratch_Error,d1
-        movem.l (sp)+,d1/a0-a1                 * auch im Fehlerfall D1/A0/A1 wiederherstellen
         ori     #1,ccr                              * Carry im CCR setzen -- Fehlschlag
         rts
 
@@ -4569,11 +4568,19 @@ Q9K_SysFSRqCMem_NoFrame:
         clr.l   Q9K_SRqCMemFrameScratch
 Q9K_SysFSRqCMem_FrameDone:
         movem.l (sp)+,d0/a0
+* F$SRqCMem hat wie F$SRqMem nur D0/A2 als Ausgaben. Der Farbwert in D1
+* wird im Ein-Farbbereich-Kernel nicht ausgewertet, muss aber fuer den
+* Aufrufer unveraendert bleiben; die C-Bruecke darf ausserdem keine
+* Arbeitsregister des externen Trampolins zerstoeren.
+        movem.l d2-d7/a3-a5,-(sp)
+        movem.l d1/a0-a1,-(sp)
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_SRqMemScratch_SizeIn
         bsr     Q9K_SysSRqMemImpl
         movea.l (sp)+,a6
+        movem.l (sp)+,d1/a0-a1
+        movem.l (sp)+,d2-d7/a3-a5
 
         tst.w   Q9K_SRqMemScratch_Success
         beq     Q9K_SysFSRqCMem_Fail

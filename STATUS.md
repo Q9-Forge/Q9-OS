@@ -1289,7 +1289,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x59` | F$UAcct | Optional OS9P2 extension callback, not a standalone kernel implementation; Q9 natively performs alarm cleanup on Chain/Exit/reap, while accounting-hook installation still requires the `M$Extens` cold-start scan |
 | ✅ | `0x5A` | F$CCtl | Default cache-control handler is wired and live dispatch-verified; on the cacheless Q9 target every control request is intentionally a successful no-op, matching the OS-9 kernel behavior when no SysCache customization module is installed |
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired and now returns the documented no-SSM result (`d0=0`, `d2=0`, buffer untouched); real per-process MMU/task-map reporting remains SSM-specific and open |
-| 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
+| 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path, preserves the color/input register across the external C bridge, and uses the single-area fallback for all colors; colored-memory selection remains limited |
 | ⛔ | `0x5D` | F$POSK | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, daher keine nachbildbare ABI |
 | 🟡 | `0x5E` | F$Panic | Default panic path is implemented: emits the panic code and halts; optional OS9P2-installed service hook remains open |
 | ❌ | `0x5F` | F$MBuf | Not implemented |

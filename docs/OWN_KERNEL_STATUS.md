@@ -2203,6 +2203,10 @@ reentranter Trap-Epilog (`5f00f74`).
   Kompatibilitätspfad setzt `d0=0` (keine MMU-Blockgröße) und `d2=0` (kein
   belegter Puffer) und schreibt den Benutzerpuffer nicht an. Die eigentliche
   Prozess-/MMU-Abbildung bleibt Aufgabe eines späteren SSM.
+- **`F$SRqCMem` nutzt im Q9-Ein-Arena-Modell den dokumentierten Farb-Fallback.**
+  Die Anfrage läuft durch denselben Allokator wie `F$SRqMem`; der Farbwert
+  wird nicht zur Auswahl einer nicht vorhandenen Arena benutzt, bleibt aber
+  über den externen C-/Trampolinpfad registertreu erhalten.
 - **Keine User-/Supervisor-Trennung.** `Q9K_TrapDispatch` benutzt für jeden
   `TRAP #0` immer `D_UsrDis`, nie `D_SysDis`.
 - **Pfadnummern aus einem globalen Zähler**, nicht pro Prozess.
