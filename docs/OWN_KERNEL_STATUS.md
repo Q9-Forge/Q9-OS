@@ -32,7 +32,7 @@ erschöpften Arena-Falls, und ein frisches Q9-Flux-Image mit `init`,
 `Hallo aus einem echten Programm!`; der vollständige Log enthält keinen
 Illegal-Instruction-, Address-/Stack-, Panic- oder Failure-Marker. Der
 Kernel latched Bootfehler nun in `0x1224` (1 Exception-Tabelle, 2 fehlendes
-`init`, 3 zu kurzes `init`, 4 zu kleine Arena). Die vier absichtlich
+`init`, 3 zu kurzes `init`, 4 zu kleine Arena, 5 MMU nicht initialisiert). Die vier absichtlich
 fehlerhaften Bootimages sind noch nicht als negative Emulatorfälle ausgeführt.
 
 Die Build-Pipeline besitzt jetzt ein zentrales CPU-Profil:
@@ -51,6 +51,13 @@ Init-Extension-Hosttests bestehen in beiden Profilen. Ein 68040-Build mit
 `Q9K_ENABLE_FPU=1` endet ebenfalls mit `Errors: 00000` und zeigt
 `xcc -tp=040`, `be68k -p68040`, `Q9K_HAS_MMU` und `Q9K_HAS_FPU`. Das aktiviert noch keine
 echte PMMU-/FPU-Ausführung im Emulator.
+
+Zusätzlich ist der MMU-Modus im Build explizit: `Q9K_MMU_MODE=flat` erzeugt
+das aktuell lauffähige Image, `Q9K_MMU_MODE=hardware` ist nur für eine
+MMU-fähige CPU zulässig und bricht derzeit absichtlich mit Bootstatus `5` ab.
+So kann ein als MMU gebauter Kernel nicht mit uninitialisiertem Schutzpfad in
+den Scheduler gelangen; der eigentliche PMMU-/Kontextwechsel-Backend bleibt
+der nächste Implementierungsschritt.
 
 ---
 

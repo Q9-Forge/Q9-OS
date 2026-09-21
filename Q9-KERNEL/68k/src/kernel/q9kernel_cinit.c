@@ -71,6 +71,7 @@ extern const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *ta
 extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
 extern void Q9K_ArenaInit(Q9_u32 freeBase, Q9_u32 freeSize);
 extern Q9_u32 Q9K_BuildExcTable(void);
+extern int Q9K_MmuInit(void); /* q9kernel_mmu.c -- explicit flat/MMU gate */
 extern Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod);
 extern Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority);  /* q9kernel_firstproc.c */
 extern Q9_u32 Q9K_SchedFirstPick(void);    /* q9kernel_sched.c -- waehlt+setzt Q9_D_PROC, 0 = keiner angelegt */
@@ -418,6 +419,14 @@ void Q9K_CInit(void)
      * bevor weitere globale Tabellen oder Prozesse benutzt werden. */
     if (Q9K_BuildExcTable() != 0) {
         Q9K_BootFail(1); /* corrupt/inconsistent exception source table */
+        return;
+    }
+
+    /* A hardware-MMU image must never proceed with an uninitialized address
+     * space.  The current backend intentionally returns failure until CRP/
+     * SRP, page tables, and the context-switch hooks exist. */
+    if (Q9K_MmuInit() != 0) {
+        Q9K_BootFail(5); /* MMU requested but initialization unavailable */
         return;
     }
 
