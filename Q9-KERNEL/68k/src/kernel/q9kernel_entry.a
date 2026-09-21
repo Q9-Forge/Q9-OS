@@ -3236,14 +3236,14 @@ Q9K_TrapUnknown:
 *   IN  d0.l = Groesse in Byte, d1.w = Zugriffsart, (a2) = Startadresse
 *   OUT Carry gesetzt bei unzulaessigem Bereich
 *
-* BEWUSSTE VEREINFACHUNG, klar benannt: dieser Kernel hat noch KEINEN
-* Speicherschutz -- keine MMU-Nutzung, keine Prozess-Adressraeume, jeder
-* Prozess sieht denselben physischen Speicher (s. die TODOs zur
-* User-/Supervisor-Trennung bei Q9K_TrapDispatch). Eine ehrliche Pruefung
-* haette hier gar keine Datenbasis. Der Dienst meldet deshalb IMMER Erfolg.
-* Das ist fuer den aktuellen Ein-Adressraum-Betrieb korrekt, muss aber
-* mitwandern, sobald es echte Adressraeume gibt -- sonst wird aus einer
-* Schutzpruefung stillschweigend eine Zusicherung ohne Deckung.
+* BEWUSSTE VEREINFACHUNG, klar benannt: dieser Kernel hat noch keinen
+* installierten SSM/MMU-Schutz und keine getrennten Prozess-Adressraeume;
+* jeder Prozess sieht denselben physischen Speicher. Wie beim OS-9-
+* Default-Handler ohne SSM werden d1.w (Read/Write/Execute-Rechte) deshalb
+* nicht bewertet und ein nicht ueberlaufender Bereich akzeptiert. Die
+* zusaetzliche Wraparound-Pruefung verhindert jedoch, dass eine 32-Bit-
+* Bereichsanfrage am Adressende still in Adresse 0 weiterlaeuft. Sobald
+* echte Adressraeume existieren, muss genau hier die SSM-Pruefung hinzukommen.
 Q9K_SysFChkMem:
         move.l  d2,-(sp)
         move.l  a2,d2

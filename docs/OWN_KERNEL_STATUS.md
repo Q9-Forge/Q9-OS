@@ -2189,9 +2189,12 @@ dem ISR-Aufruf (`4740cce`), Rettung des Schleifenzustands (`0957b87`),
 reentranter Trap-Epilog (`5f00f74`).
 
 ### Bekannte Vereinfachungen
-- **`F$ChkMem` meldet immer Erfolg.** Der Kernel hat keinen Speicherschutz
-  (keine MMU-Nutzung, keine getrennten Adressräume) — eine ehrliche Prüfung
-  hätte keine Datenbasis. Muss mitwachsen, sobald es Adressräume gibt.
+- **`F$ChkMem` akzeptiert im Flat-Address-Space jeden nicht überlaufenden
+  Bereich.** Ohne installierten SSM/MMU gibt es keine Rechte- oder
+  Prozessadressraumprüfung; `d1.w` bleibt daher unbewertet, wie beim OS-9-
+  Default-Handler ohne SSM. Der native Handler weist aber einen 32-Bit-
+  Bereichsüberlauf zurück. Eine echte SSM/MMU-Prüfung muss mitwachsen, sobald
+  getrennte Adressräume eingeführt werden.
 - **Keine User-/Supervisor-Trennung.** `Q9K_TrapDispatch` benutzt für jeden
   `TRAP #0` immer `D_UsrDis`, nie `D_SysDis`.
 - **Pfadnummern aus einem globalen Zähler**, nicht pro Prozess.
