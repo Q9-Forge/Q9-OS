@@ -99,7 +99,10 @@ static Q9_u16 Q9K_ReadHdrU16BE(Q9_u32 addr)
 
 /* Return non-zero for services owned by the Q9 kernel itself.  A resident
  * system module may submit a broad F$SSvc table, but it must not replace
- * these kernel primitives with an external handler. */
+ * these kernel primitives with an external handler.  F$Panic (0x5E) is
+ * deliberately absent: OS-9 permits an OS9P2 startup module to install a
+ * panic service, while the native Q9 handler remains the default until
+ * such a service is registered. */
 static int Q9K_IsKernelService(Q9_u32 code)
 {
     switch (code) {
@@ -109,7 +112,7 @@ static int Q9K_IsKernelService(Q9_u32 code)
     case 0x28UL: case 0x29UL: case 0x2AUL: case 0x2EUL:
     case 0x30UL: case 0x31UL: case 0x32UL: case 0x37UL:
     case 0x38UL: case 0x58UL: case 0x5AUL: case 0x5CUL:
-    case 0x5EUL: case 0x82UL: case 0x84UL: case 0x88UL: case 0x89UL: case 0x8AUL: case 0x8BUL: case 0x8CUL: case 0x8DUL: case 0x8EUL: case 0x8FUL: case 0x92UL:
+    case 0x82UL: case 0x84UL: case 0x88UL: case 0x89UL: case 0x8AUL: case 0x8BUL: case 0x8CUL: case 0x8DUL: case 0x8EUL: case 0x8FUL: case 0x92UL:
         return 1;
     default:
         return 0;

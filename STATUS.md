@@ -1291,7 +1291,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired and now returns the documented no-SSM result (`d0=0`, `d2=0`, buffer untouched); real per-process MMU/task-map reporting remains SSM-specific and open |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path, preserves the color/input register across the external C bridge, and uses the single-area fallback for all colors; colored-memory selection remains limited |
 | ⛔ | `0x5D` | F$POSK (`F$P0SK`) | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, und es gibt keine belastbare 68k-ABI oder C-Bindung für eine nachbildbare Implementierung |
-| 🟡 | `0x5E` | F$Panic | Default panic path is implemented: emits the panic code and halts; optional OS9P2-installed service hook remains open |
+| 🟡 | `0x5E` | F$Panic | Native default emits the panic code and halts; explicit F$Panic calls can now be overridden through F$SSvc like OS9P2, while direct no-process kernel panic remains the non-returning fallback |
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | 🟡 | `0x61` | F$FIRQ | Registration, removal, duplicate-update handling, and the shared IRQ dispatcher are implemented and host-tested; complete device/level coverage remains hardware-specific and open |

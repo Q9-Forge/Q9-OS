@@ -1443,13 +1443,13 @@ Q9K_NoRomDebugger:
 * return" -- "Ordinarily, F$Panic is undefined and the system dies."
 * "The system administrator may install a service routine for F$Panic
 * as part of an OS9P2 startup module" -- EIGENE ENTSCHEIDUNG, bewusste
-* Grenze: dieser Kernel hat KEINE OS9P2-Startup-Modul-Installations-
-* Mechanik (braucht echtes Modul-Laden/F$Load, bisher zurueckgestellt,
-* s. "erst alles fertig ohne I/Os") -- F$Panic implementiert deshalb NUR
-* den dokumentierten DEFAULT-Fall ("undefined... system dies"), niemals
-* den optionalen Handler-Pfad. Kehrt deshalb bei uns IMMER zurueck in
-* Q9K_HaltLoop, nie zum Aufrufer -- konsistent mit "generally does not
-* return" (bei uns: *nie*, mangels Handler-Mechanismus).
+* Grenze: dieser Kernel hat noch KEINE vollstaendige OS9P2-Startup-Modul-
+* Installations-Mechanik (braucht echtes Modul-Laden/F$Load). Der native
+* Handler ist aber ueber F$SSvc fuer einen expliziten F$Panic-Aufruf
+* ersetzbar; solange kein Dienst installiert ist, gilt der dokumentierte
+* DEFAULT-Fall ("undefined... system dies") und Q9K_SysFPanic kehrt nie
+* zum Aufrufer zurueck. Die internen No-Process-Pfade springen direkt zu
+* Q9K_KernelPanic und umgehen bewusst jede externe Dispatch-Tabelle.
 *
 * Der reale Panic-Code (D0) wird zur Diagnose ausgegeben ('P' + 8 Hex-
 * Ziffern per Q9K_DiagPrintU32, das D0 als Eingabe erwartet -- passt
