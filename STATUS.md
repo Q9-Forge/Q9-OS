@@ -838,7 +838,7 @@ Checked one by one rather than assumed — the library covers `F$Chain`,
 `F$NProc`, `F$Panic`, `F$Event`, `F$FIRQ`, `F$GSPUMp`, `F$SysDbg`, `F$STrap`,
 `F$RTE`, `F$SigReset` and `F$DFork`. The binding settles register usage where
 it exists; the remaining F$FIRQ work is the hardware table/dispatch layer.
-`F$FModul`, `F$AllRAM`, `F$POSK` and `F$MBuf` have neither a manual entry nor a
+`F$FModul`, `F$AllRAM`, `F$POSK`/`F$P0SK` and `F$MBuf` have neither a manual entry nor a
 binding, and for them the only remaining source is the original kernel itself.
 
 Where a manual entry does exist it stays the primary source; the library
@@ -1290,7 +1290,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x5A` | F$CCtl | Default cache-control handler is wired and live dispatch-verified; on the cacheless Q9 target every control request is intentionally a successful no-op, matching the OS-9 kernel behavior when no SysCache customization module is installed |
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired and now returns the documented no-SSM result (`d0=0`, `d2=0`, buffer untouched); real per-process MMU/task-map reporting remains SSM-specific and open |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path, preserves the color/input register across the external C bridge, and uses the single-area fallback for all colors; colored-memory selection remains limited |
-| ⛔ | `0x5D` | F$POSK | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, daher keine nachbildbare ABI |
+| ⛔ | `0x5D` | F$POSK (`F$P0SK`) | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, und es gibt keine belastbare 68k-ABI oder C-Bindung für eine nachbildbare Implementierung |
 | 🟡 | `0x5E` | F$Panic | Default panic path is implemented: emits the panic code and halts; optional OS9P2-installed service hook remains open |
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
