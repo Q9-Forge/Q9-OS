@@ -192,8 +192,11 @@ static const Q9_u16 Q9K_ExcGroupCounts[] = {
 #define Q9K_IRQ_OFF_STATIC  12UL
 #define Q9K_IRQ_OFF_PORT    16UL
 
-static Q9_u32 Q9K_IRQGet(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
-static void   Q9K_IRQSet(Q9_u32 addr, Q9_u32 v) { *(volatile Q9_u32 *)addr = v; }
+/* Die Tabelle ist ein 32-Bit-OS-9-ABI-Objekt.  Auf 64-Bit-Hosttests ist
+ * unsigned long breiter; deshalb hier explizit vier Byte lesen/schreiben,
+ * sonst wuerden benachbarte Felder ueberlappt. */
+static Q9_u32 Q9K_IRQGet(Q9_u32 addr) { return (Q9_u32)*(volatile unsigned int *)addr; }
+static void   Q9K_IRQSet(Q9_u32 addr, Q9_u32 v) { *(volatile unsigned int *)addr = (unsigned int)v; }
 
 /* Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
 int Q9K_ProcIRQ(Q9_u32 vector, Q9_u32 prio, Q9_u32 isr,
@@ -214,6 +217,49 @@ int Q9K_ProcIRQ(Q9_u32 vector, Q9_u32 prio, Q9_u32 isr,
                 Q9K_IRQGet(slot + Q9K_IRQ_OFF_STATIC) == statics) {
                 Q9K_IRQSet(slot + Q9K_IRQ_OFF_VECTOR, 0);
                 Q9K_IRQSet(slot + Q9K_IRQ_OFF_ISR, 0);
+                Q9K_IRQSet(slot + Q9K_IRQ_OFF_PRIO, 0);
+                Q9K_IRQSet(slot + Q9K_IRQ_OFF_STATIC, 0);
+                Q9K_IRQSet(slot + Q9K_IRQ_OFF_PORT, 0);
+
+                /* Do not leave a stale dispatcher installed after the last
+                 * device on a vector has gone away.  This matters for
+                 * spurious interrupts: the normal exception handler should
+                 * regain control instead of entering an empty IRQ scan. */
+                {
+                    Q9_u32 j;
+                    int sameVector = 0;
+                    Q9_u32 tableBase = *(volatile Q9_u32 *)Q9_D_EXCJMP;
+                    for (j = 0; j < Q9K_IRQTAB_SLOTS; j++) {
+                        Q9_u32 other = Q9K_IRQTAB_BASE + j * Q9K_IRQTAB_ENTSZ;
+                        if (Q9K_IRQGet(other + Q9K_IRQ_OFF_VECTOR) == vector) {
+                            sameVector = 1;
+                            break;
+                        }
+                    }
+                    if (!sameVector && tableBase != 0 && vector < Q9K_EXCTABLE_TOTAL)
+                        *(Q9K_ExcHandler *)(tableBase + vector * sizeof(Q9K_ExcHandler)) = Q9K_ExcTrap;
+
+                    /* Autovectors are shared by all polled devices.  Restore
+                     * their defaults only when the complete polling table is
+                     * empty; vector 30 remains the board timer. */
+                    if (!sameVector && vector >= 25 && vector <= 31) {
+                        int anyEntry = 0;
+                        for (j = 0; j < Q9K_IRQTAB_SLOTS; j++) {
+                            Q9_u32 other = Q9K_IRQTAB_BASE + j * Q9K_IRQTAB_ENTSZ;
+                            if (Q9K_IRQGet(other + Q9K_IRQ_OFF_VECTOR) != 0) {
+                                anyEntry = 1;
+                                break;
+                            }
+                        }
+                        if (!anyEntry && tableBase != 0) {
+                            Q9_u32 av;
+                            for (av = 25; av <= 31; av++) {
+                                if (av != 30)
+                                    *(Q9K_ExcHandler *)(tableBase + av * sizeof(Q9K_ExcHandler)) = Q9K_ExcTrap;
+                            }
+                        }
+                    }
+                }
                 return 1;
             }
         }
@@ -221,8 +267,8 @@ int Q9K_ProcIRQ(Q9_u32 vector, Q9_u32 prio, Q9_u32 isr,
         return 0;
     }
 
-    if (vector == 0) {
-        *outError = 0x00E1U;            /* E_PARAM, Vektor 0 ist unzulaessig */
+    if (vector < Q9K_EXCTABLE_RESERVED || vector >= Q9K_EXCTABLE_TOTAL || vector == 30) {
+        *outError = 0x00E1U;            /* E_PARAM, reservierter/ungueltiger Vektor */
         return 0;
     }
 

@@ -1241,7 +1241,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x27` | F$SetSys | Katalog erweitert: schreibbare Q9-Werte `$7C` (csl malloc increment), `$28` (`D_TckSec`) und `$76` (`D_TSlice`) sowie verifizierte schreibgeschützte Globals (`D_Init`, `D_Compat`, `D_SysConf`, `D_ModDir`, `D_Proc`, `D_SysPrc`, `D_FProc`, `D_SysROM`, `D_ExcJmp`, `D_TotRAM`, `D_Ticks`, `D_SysDis`, `D_UsrDis`, `D_Compat2`); unbekannte und schreibgeschützte Schreibzugriffe liefern sauber `E$UnkSvc`, hardware-/Microware-spezifische Variablen bleiben klassifiziert offen |
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking and emulator test complete |
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |
-| 🟡 | `0x2A` | F$IRQ | Kernel path exists; complete interrupt-device coverage remains open |
+| 🟡 | `0x2A` | F$IRQ | Native registration/removal now validates reserved vectors, clears stale metadata, restores default handlers after the last removal, and is host-tested; complete hardware-/treiber-spezifische Interruptabdeckung remains open |
 | 🔷 | `0x2B` | F$IOQu | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; immediate preemption still open |
 | ✅ | `0x2D` | F$NProc | Takes the next process off the ready list and switches into it. The caller is deliberately not re-queued — that is the manual's own semantics. Emulator-verified with a forked process that calls it and correctly never comes back |
