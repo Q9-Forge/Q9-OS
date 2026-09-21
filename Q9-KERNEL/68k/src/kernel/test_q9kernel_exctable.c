@@ -60,6 +60,7 @@ void Q9K_TrapDispatch(void) { }
 void Q9K_TCallDispatch(void) { }    /* seit 2026-09-11: F$TLink/TRAP #1-15 traegt ihn in die Vektortabelle ein */
 void Q9K_TimerIRQHandler(void) { }
 void Q9K_IRQDispatch(void) { }      /* seit 2026-09-03: F$IRQ traegt ihn in die Vektortabelle ein */
+void Q9K_TraceHandler(void) { }
 
 static int failures = 0;
 
@@ -121,7 +122,26 @@ int main(void)
         checkU32("Vektor 255 zeigt auf Q9K_ExcTrap", (Q9_u32)(*slot255 == (Q9K_ExcHandler)Q9K_ExcTrap), 1);
     }
 
-    /* Fall 6: kaputte Quelltabelle (zu viele Eintraege) muss sauber
+    /* Fall 6: F$IRQ validiert reservierte/ungueltige Vektoren und verdrahtet
+     * einen gueltigen Vektor mit dem Dispatcher. */
+    {
+        Q9_u16 error = 0;
+        Q9K_ExcHandler *slot64 = (Q9K_ExcHandler *)((Q9_u32)(unsigned long)g_fakeVectorTable + 64 * sizeof(Q9K_ExcHandler));
+        int ok = Q9K_ProcIRQ(1, 5, (Q9_u32)(unsigned long)Q9K_IRQDispatch, 0x1000, 0x2000, &error);
+        checkU32("F$IRQ weist reservierten Vektor 1 ab", (Q9_u32)ok, 0);
+        checkU32("F$IRQ Vektorfehler == E$Param", error, 0x00E1);
+        error = 0;
+        ok = Q9K_ProcIRQ(64, 5, (Q9_u32)(unsigned long)Q9K_IRQDispatch, 0x1000, 0x2000, &error);
+        checkU32("F$IRQ registriert gueltigen Vektor", (Q9_u32)ok, 1);
+        checkU32("F$IRQ installiert Dispatcher", (Q9_u32)(*slot64 == (Q9K_ExcHandler)Q9K_IRQDispatch), 1);
+        checkU32("F$IRQ speichert statischen Treiberspeicher", *(unsigned int *)(g_irqTable + 12), 0x1000);
+        error = 0;
+        ok = Q9K_ProcIRQ(64, 5, 0, 0x1000, 0, &error);
+        checkU32("F$IRQ entfernt Eintrag", (Q9_u32)ok, 1);
+        checkU32("F$IRQ stellt Default nach Entfernung wieder her", (Q9_u32)(*slot64 == (Q9K_ExcHandler)Q9K_ExcTrap), 1);
+    }
+
+    /* Fall 7: kaputte Quelltabelle (zu viele Eintraege) muss sauber
      * Fehlercode 1 liefern, nicht abstuerzen -- Q9K_ExcGroupCounts selbst
      * ist const/echt, deshalb hier eine lokale, absichtlich zu lange
      * Kopie simulieren statt die echte Tabelle zu veraendern. */

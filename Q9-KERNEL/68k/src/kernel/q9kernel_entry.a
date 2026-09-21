@@ -4302,9 +4302,9 @@ Q9K_IRQDispatchDone:
 * Konvention aus dem realen Treiber sc68681 abgelesen (Modul-Offset $00ec
 * ff.): d0.b = Vektornummer, d1.b = Prioritaet, a0 = Service-Routine
 * (0 = Eintrag entfernen); dazu die OS-9-ueblichen a2 = statischer
-* Treiberspeicher und a3 = Portadresse. Fuehrt bisher nur die Tabelle,
-* stellt noch keine Interrupts zu -- s. Kopfkommentar in
-* q9kernel_exctable.c.
+* Treiberspeicher und a3 = Portadresse. Die Tabelle wird beim Eintreffen
+* eines IRQ durch Q9K_IRQDispatch abgefragt; hardware-/treiberspezifische
+* Vollabdeckung bleibt offen.
 Q9K_SysFIRQ:
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
