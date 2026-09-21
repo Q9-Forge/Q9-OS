@@ -63,6 +63,24 @@ an address-space structure in the process descriptor, and a defined fault-
 and-context-switch path before the four SSM compatibility calls can be
 converted safely.
 
+### Hardware-facing audit (2026-09-21)
+
+The ordinary hardware IRQ path is present: the timer uses its dedicated
+level-6 handler, `F$IRQ` installs validated shared/autovector entries, and
+`Q9K_IRQDispatch` masks interrupts while preserving ISR carry and loop state.
+`F$FIRQ` has a separate one-handler-per-vector table and restores the shared
+dispatcher when removed. The registration/exception-table host suite passes,
+and fresh emulator boots exercise the timer and DUART IRQ paths. What is not
+yet possible to claim is board-wide device coverage or the target's true
+minimal-latency FIRQ prologue; those require each device's interrupt source
+and a live hardware model.
+
+`F$CCtl` is intentionally a successful no-op on the current Q9-Flux target:
+the backend has no usable cache/TLB model and reports `PFLUSH` as unhandled.
+The task/SPU calls (`F$AllTsk`, `F$DelTsk`, `F$GSPUMp`) remain coupled to the
+missing SSM/MMU task images documented above, so implementing them safely is
+blocked by that same platform boundary rather than by an unregistered syscall.
+
 ## Latest kernel verification (2026-09-17)
 
 The external `F$SSvc` trap return path was corrected: the 72-byte service

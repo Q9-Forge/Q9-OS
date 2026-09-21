@@ -120,7 +120,7 @@ static const Q9_u16 Q9K_ExcGroupCounts[] = {
     1,    /* 15:     Uninitialized Interrupt */
     8,    /* 16-23:  reserviert */
     1,    /* 24:     Spurious Interrupt */
-    7,    /* 25-31:  Autovektor-Interrupts Level 1-7 -- TODO: eigener IRQ-Dispatcher */
+    7,    /* 25-31:  Autovektor-Interrupts Level 1-7 -- Q9K_IRQDispatch wird zur Laufzeit eingesetzt */
     1,    /* 32:     TRAP #0 -- TODO: eigener Syscall-Dispatcher, jetzt Platzhalter */
     15,   /* 33-47:  TRAP #1-15 */
     7,    /* 48-54:  FPU-Exceptions */
