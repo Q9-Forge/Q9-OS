@@ -2189,6 +2189,10 @@ dem ISR-Aufruf (`4740cce`), Rettung des Schleifenzustands (`0957b87`),
 reentranter Trap-Epilog (`5f00f74`).
 
 ### Bekannte Vereinfachungen
+- **`F$UAcct` ist ein optionaler OS9P2-/SysExt-Erweiterungspunkt.** Q9 führt
+  die Ressourcensäuberung (insbesondere Alarme) beim Chain/Exit/Reap nativ
+  anhand des Prozessdeskriptors aus. Ein externes Accounting-Callback und der
+  Kaltstart-Scan der Init-Erweiterungsliste (`M$Extens`) sind noch offen.
 - **`F$ChkMem` akzeptiert im Flat-Address-Space jeden nicht überlaufenden
   Bereich.** Ohne installierten SSM/MMU gibt es keine Rechte- oder
   Prozessadressraumprüfung; `d1.w` bleibt daher unbewertet, wie beim OS-9-

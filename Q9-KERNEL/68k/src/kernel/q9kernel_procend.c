@@ -90,6 +90,7 @@ extern void   Q9K_WaitQRemove(Q9_u32 desc);         /* q9kernel_sched.c */
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr); /* q9kernel_moddir.c */
 extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size); /* q9kernel_arena.c */
 extern void   Q9K_ProcMemReleaseAll(Q9_u32 owner);   /* q9kernel_sysmem.c */
+extern void   Q9K_AlarmCleanupProcess(Q9_u32 desc);  /* q9kernel_alarm.c: F$UAcct lifecycle */
 #if defined(Q9K_MEMTRACE_ARENA)
 extern void   Q9K_MemTraceSetModule(Q9_u32 header); /* q9kernel_debug.c */
 extern void   Q9K_MemTraceClearModule(void);        /* q9kernel_debug.c */
@@ -305,6 +306,9 @@ static void Q9K_ProcReleaseMemory(Q9_u32 desc)
  * ParentDesc==0"), auf der der Pool-Scan unten beruht. */
 static void Q9K_ProcPoolFree(Q9_u32 desc)
 {
+    /* Native equivalent of the optional F$UAcct cleanup callback: alarms
+     * belong to the process, not to the descriptor slot after it is freed. */
+    Q9K_AlarmCleanupProcess(desc);
     Q9K_ProcReleaseTrapLinks(desc);
     Q9K_ProcReleasePaths(desc);
     Q9K_ProcReleaseMemory(desc);
