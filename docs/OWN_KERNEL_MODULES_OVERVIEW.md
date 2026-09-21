@@ -75,7 +75,7 @@ Nachbau ist "was gehört zusammen" hilfreicher als die reine Nummer.
 | Namen/Muster | `F$PrsNam`, `F$CmpNam` |
 | Zeit | `F$Time`, `F$STime`, `F$Julian`, `F$Gregor` |
 | System/Diagnose/Sonstiges | `F$CRC`, `F$SetCRC`, `F$SetSys`, `F$SysID`, `F$SysDbg`, `F$CpyMem`, `F$GBlkMp`, `F$Move`, `F$RTE`, `F$Trans` |
-| Interrupts | `F$IRQ`, `F$FIRQ` |
+| Interrupts | `F$IRQ` (normal IRQ polling table), `F$FIRQ` (separate fast-IRQ table, supervisor-only) |
 
 Trägt die zentrale Infrastruktur aus Abschnitt 3 (Bootstrap, Exception-
 Dispatch, Scheduler, Allokator) — **muss zuerst stehen**, bevor irgendein
