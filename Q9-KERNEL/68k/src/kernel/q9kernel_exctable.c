@@ -198,6 +198,26 @@ static const Q9_u16 Q9K_ExcGroupCounts[] = {
 static Q9_u32 Q9K_IRQGet(Q9_u32 addr) { return (Q9_u32)*(volatile unsigned int *)addr; }
 static void   Q9K_IRQSet(Q9_u32 addr, Q9_u32 v) { *(volatile unsigned int *)addr = (unsigned int)v; }
 
+/* F$FIRQ (0x61) is not the normal F$IRQ polling table.  It permits one
+ * latency-sensitive handler per vector and supplies only D0 (vector) and A2
+ * (the registered static pointer) as working inputs to that handler.  The
+ * arrays are deliberately exported: Q9K_IRQDispatch checks them before the
+ * ordinary polling path, so both mechanisms share the already-safe exception
+ * frame and vector installation code. */
+Q9_u32 Q9K_FIRQHandlers[Q9K_EXCTABLE_TOTAL];
+Q9_u32 Q9K_FIRQStatics[Q9K_EXCTABLE_TOTAL];
+
+static int Q9K_IRQHasVector(Q9_u32 vector)
+{
+    Q9_u32 i;
+    for (i = 0; i < Q9K_IRQTAB_SLOTS; i++) {
+        Q9_u32 slot = Q9K_IRQTAB_BASE + i * Q9K_IRQTAB_ENTSZ;
+        if (Q9K_IRQGet(slot + Q9K_IRQ_OFF_VECTOR) == vector)
+            return 1;
+    }
+    return 0;
+}
+
 /* Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
 int Q9K_ProcIRQ(Q9_u32 vector, Q9_u32 prio, Q9_u32 isr,
                 Q9_u32 statics, Q9_u32 port, Q9_u16 *outError)
@@ -361,6 +381,70 @@ void Q9K_SysIRQImpl(void)
                          Q9K_IRQGet(Q9K_IRQ_SCRATCH_PORT), &err);
     Q9K_IRQSet(Q9K_IRQ_SCRATCH_ERROR, (Q9_u32)err);
     Q9K_IRQSet(Q9K_IRQ_SCRATCH_SUCCESS, ok ? 1UL : 0UL);
+}
+
+/* Recovered F$FIRQ ABI (reference kernel 0x2718): D0 is the vector, D1.b
+ * is reserved and must be zero, A0 is the fast service routine, and A2 is
+ * its static data pointer.  Valid vectors are the autovectors 25..31 or
+ * external vectors 64..255.  Q9 keeps vector 30 for its board timer. */
+int Q9K_ProcFIRQ(Q9_u32 vector, Q9_u32 reservedD1, Q9_u32 isr,
+                 Q9_u32 statics, Q9_u16 *outError)
+{
+    Q9_u32 tableBase;
+
+    *outError = 0;
+    if ((reservedD1 & 0xFFUL) != 0 ||
+        ((vector < 25UL || vector > 31UL) && vector < 64UL) ||
+        vector >= Q9K_EXCTABLE_TOTAL || vector == 30UL) {
+        *outError = 0x00E1U;            /* E_PARAM */
+        return 0;
+    }
+
+    tableBase = *(volatile Q9_u32 *)Q9_D_EXCJMP;
+    if (isr == 0) {
+        if (Q9K_FIRQHandlers[vector] == 0 ||
+            Q9K_FIRQStatics[vector] != statics) {
+            *outError = 0x00E1U;
+            return 0;
+        }
+        Q9K_FIRQHandlers[vector] = 0;
+        Q9K_FIRQStatics[vector] = 0;
+        if (tableBase != 0)
+            *(Q9K_ExcHandler *)(tableBase + vector * sizeof(Q9K_ExcHandler)) =
+                Q9K_IRQHasVector(vector) ? Q9K_IRQDispatch : Q9K_ExcTrap;
+        return 1;
+    }
+
+    if (Q9K_FIRQHandlers[vector] != 0) {
+        *outError = 0x00D4U;            /* vector already owns a FIRQ */
+        return 0;
+    }
+    Q9K_FIRQHandlers[vector] = isr;
+    Q9K_FIRQStatics[vector] = statics;
+    if (tableBase != 0)
+        *(Q9K_ExcHandler *)(tableBase + vector * sizeof(Q9K_ExcHandler)) =
+            Q9K_IRQDispatch;
+    return 1;
+}
+
+#ifndef Q9K_FIRQ_SCRATCH_VECTOR
+#define Q9K_FIRQ_SCRATCH_VECTOR   0x1F20UL
+#define Q9K_FIRQ_SCRATCH_RESERVED 0x1F24UL
+#define Q9K_FIRQ_SCRATCH_ISR      0x1F28UL
+#define Q9K_FIRQ_SCRATCH_STATIC   0x1F2CUL
+#define Q9K_FIRQ_SCRATCH_ERROR    0x1F30UL
+#define Q9K_FIRQ_SCRATCH_SUCCESS  0x1F34UL
+#endif
+
+void Q9K_SysFFIRQImpl(void)
+{
+    Q9_u16 err = 0;
+    int ok = Q9K_ProcFIRQ(Q9K_IRQGet(Q9K_FIRQ_SCRATCH_VECTOR),
+                          Q9K_IRQGet(Q9K_FIRQ_SCRATCH_RESERVED),
+                          Q9K_IRQGet(Q9K_FIRQ_SCRATCH_ISR),
+                          Q9K_IRQGet(Q9K_FIRQ_SCRATCH_STATIC), &err);
+    Q9K_IRQSet(Q9K_FIRQ_SCRATCH_ERROR, (Q9_u32)err);
+    Q9K_IRQSet(Q9K_FIRQ_SCRATCH_SUCCESS, ok ? 1UL : 0UL);
 }
 
 Q9_u32 Q9K_BuildExcTable(void)

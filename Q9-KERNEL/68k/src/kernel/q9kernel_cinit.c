@@ -110,6 +110,7 @@ extern void   Q9K_SysFIClose(void); /* q9kernel_entry.a, I$Close (Callcode 0x8f)
 extern void   Q9K_SysFIChgDir(void); /* q9kernel_entry.a, I$ChgDir (Callcode 0x86) */
 extern void   Q9K_SysFAllPD(void);   /* q9kernel_entry.a, F$AllPD (Callcode 0x30) */
 extern void   Q9K_SysFIRQ(void);     /* q9kernel_entry.a, F$IRQ  (Callcode 0x2a) */
+extern void   Q9K_SysFFIRQ(void);    /* q9kernel_entry.a, F$FIRQ (Callcode 0x61, supervisor-only) */
 extern void   Q9K_SysFChkMem(void);  /* q9kernel_entry.a, F$ChkMem (Callcode 0x58) */
 extern void   Q9K_SysFSysDbg(void);  /* q9kernel_entry.a, F$SysDbg (Callcode 0x52) */
 extern void   Q9K_SysFPermit(void);  /* q9kernel_entry.a, F$Permit (Callcode 0x3a) */
@@ -647,6 +648,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x2eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFVModul);
                     Q9K_PutU32(sysdisBase + 0x5cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqCMem);
                     Q9K_PutU32(sysdisBase + 0x2aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFIRQ);
+                    Q9K_PutU32(sysdisBase + 0x61UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFIRQ);
                     Q9K_PutU32(sysdisBase + 0x10UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPrsNam);
                     Q9K_PutU32(sysdisBase + 0x11UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFCmpNam);
                     Q9K_PutU32(sysdisBase + 0x1bUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFCpyMem);

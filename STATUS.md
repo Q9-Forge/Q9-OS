@@ -840,6 +840,9 @@ Checked one by one rather than assumed — the library covers `F$Chain`,
 it exists; the remaining F$FIRQ work is the hardware table/dispatch layer.
 `F$FModul`, `F$AllRAM`, `F$POSK`/`F$P0SK` and `F$MBuf` have neither a manual entry nor a
 binding, and for them the only remaining source is the original kernel itself.
+F$FIRQ is the exception in this group: its ABI and vector constraints were
+recovered from the reference-kernel disassembly and its registration path is
+now implemented, while the hardware delivery path remains target-specific.
 
 Where a manual entry does exist it stays the primary source; the library
 settles what the manual leaves open, the way the original kernel settled the
@@ -1294,7 +1297,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x5E` | F$Panic | Native default emits the panic code and halts; explicit F$Panic calls can now be overridden through F$SSvc like OS9P2, while direct no-process kernel panic remains the non-returning fallback |
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
-| ❌ | `0x61` | F$FIRQ | Not registered. The existing implementation is F$IRQ (`0x2A`) and uses the normal IRQ polling table; F$FIRQ is a separate supervisor-only fast-IRQ table with a distinct ABI and vector-range rules recovered from the reference kernel, but not yet implemented in Q9 |
+| 🟡 | `0x61` | F$FIRQ | Supervisor-only fast-IRQ registration/removal is implemented with one handler per vector, D1.b reservation, Static-Zeiger-Prüfung and shared exception dispatch; the target's true minimal-latency prologue and hardware/live FIRQ delivery remain open |
 | 🟡 | `0x62` | F$Sema | P and V implemented against an ABI recovered by disassembly; V and the refusals are emulator-verified, P is host-tested only (it blocks by design) |
 | ✅ | `0x63` | F$SigReset | Discards the saved intercept context, for a routine left via `longjmp()`; emulator-verified |
 
