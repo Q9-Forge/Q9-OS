@@ -363,6 +363,12 @@ Q9K_IRQScratch_Static     equ $13D4      * Q9_u32, (a2) EIN  = statischer Treibe
 Q9K_IRQScratch_Port       equ $13D8      * Q9_u32, (a3) EIN  = Geraete-Portadresse
 Q9K_IRQScratch_Error      equ $13DC      * Q9_u32, d1.w AUS bei Fehler
 Q9K_IRQScratch_Success    equ $13E0      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
+Q9K_FIRQScratch_Vector    equ $1F20      * Q9_u32, d0.l EIN = FIRQ-Vektor
+Q9K_FIRQScratch_Reserved  equ $1F24      * Q9_u32, d1.b EIN (muss 0 sein)
+Q9K_FIRQScratch_Isr       equ $1F28      * Q9_u32, a0 EIN = Fast-ISR
+Q9K_FIRQScratch_Static    equ $1F2C      * Q9_u32, a2 EIN = statische Daten
+Q9K_FIRQScratch_Error     equ $1F30      * Q9_u32, d1.w AUS bei Fehler
+Q9K_FIRQScratch_Success   equ $1F34      * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 * F$Send-Scratch (2026-09-04). Adressen frei gewaehlt hinter dem bisher
 * letzten belegten Block -- s. q9kernel_procsleep.c, dort dieselben Werte.
 Q9K_SendScratch_Pid       equ $1608      * Q9_u32, d0.w EIN
@@ -4250,6 +4256,23 @@ Q9K_IRQDispatch:
         move.l  d0,(a0)
         move.l  d1,4(a0)
         addq.l  #1,Q9K_RaceRingIdx
+* F$FIRQ-Sonderpfad: ein registrierter Fast-IRQ besitzt genau einen Handler
+* pro Vektor. Der gemeinsame Exception-Prolog ist absichtlich derselbe wie
+* bei F$IRQ; dadurch bleiben Exception-Frame und RTE sicher, waehrend der
+* Handlervertrag (D0=Vektor, A2=statischer Zeiger, sonst Register unveraendert)
+* eingehalten wird. Q9K_ProcFIRQ traegt die beiden Tabellen ein.
+        move.l  d0,d4
+        lsl.l   #2,d0
+        lea     Q9K_FIRQHandlers(pc),a0
+        movea.l (a0,d0.l),a1
+        beq     Q9K_IRQDispatchNoFast
+        lea     Q9K_FIRQStatics(pc),a0
+        movea.l (a0,d0.l),a2
+        move.l  d4,d0
+        jsr     (a1)
+        bra     Q9K_IRQDispatchDone
+Q9K_IRQDispatchNoFast:
+        move.l  d4,d0
 * AUTOVEKTOR-SONDERFALL (2026-09-03): bei den Vektoren 25-31 (Autovektor
 * Level 1-7) sagt die Vektornummer NICHTS ueber die Quelle -- sie nennt nur
 * den Interruptpegel. Genau dafuer fuehrt OS-9 ueberhaupt eine Polling-
@@ -4372,6 +4395,27 @@ Q9K_SysFIRQ:
 Q9K_SysFIRQ_Fail:
         move.w  Q9K_IRQScratch_Error+2,d1
         ori     #1,ccr                              * Carry setzen -- Fehlschlag
+        rts
+
+* Q9K_SysFFIRQ -- F$FIRQ (Callcode $61, supervisor-only). D0 = vector,
+* D1.b = reserved (must be zero), A0 = fast ISR (zero removes), A2 = static
+* data. The C bridge performs registration and installs the shared dispatcher.
+Q9K_SysFFIRQ:
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_FIRQScratch_Vector
+        move.l  d1,Q9K_FIRQScratch_Reserved
+        move.l  a0,Q9K_FIRQScratch_Isr
+        move.l  a2,Q9K_FIRQScratch_Static
+        bsr     Q9K_SysFFIRQImpl
+        movea.l (sp)+,a6
+        tst.w   Q9K_FIRQScratch_Success+2
+        beq     Q9K_SysFFIRQ_Fail
+        andi    #$fe,ccr
+        rts
+Q9K_SysFFIRQ_Fail:
+        move.w  Q9K_FIRQScratch_Error+2,d1
+        ori     #1,ccr
         rts
 
 

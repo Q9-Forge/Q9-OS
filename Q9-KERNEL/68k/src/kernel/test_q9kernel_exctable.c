@@ -141,7 +141,45 @@ int main(void)
         checkU32("F$IRQ stellt Default nach Entfernung wieder her", (Q9_u32)(*slot64 == (Q9K_ExcHandler)Q9K_ExcTrap), 1);
     }
 
-    /* Fall 7: kaputte Quelltabelle (zu viele Eintraege) muss sauber
+    /* Fall 7: F$FIRQ (0x61) is a separate, supervisor-only fast table:
+     * one handler per vector, D1 reserved, and the normal F$IRQ table is
+     * not reused for its registration metadata. */
+    {
+        Q9_u16 error = 0;
+        Q9K_ExcHandler *slot64 = (Q9K_ExcHandler *)((Q9_u32)(unsigned long)g_fakeVectorTable + 64 * sizeof(Q9K_ExcHandler));
+        int ok = Q9K_ProcFIRQ(64, 0, 0x12345678UL, 0x2000UL, &error);
+        checkU32("F$FIRQ registriert einen Handler", (Q9_u32)ok, 1);
+        checkU32("F$FIRQ speichert ISR", Q9K_FIRQHandlers[64], 0x12345678UL);
+        checkU32("F$FIRQ speichert statische Daten", Q9K_FIRQStatics[64], 0x2000UL);
+        checkU32("F$FIRQ installiert gemeinsamen Dispatcher", (Q9_u32)(*slot64 == (Q9K_ExcHandler)Q9K_IRQDispatch), 1);
+
+        error = 0;
+        ok = Q9K_ProcFIRQ(64, 0, 0x87654321UL, 0x3000UL, &error);
+        checkU32("F$FIRQ weist zweiten Handler am selben Vektor ab", (Q9_u32)ok, 0);
+        checkU32("F$FIRQ Doppelregistrierung == E$FIRQ", error, 0x00D4U);
+
+        error = 0;
+        ok = Q9K_ProcFIRQ(65, 1, 0x87654321UL, 0x3000UL, &error);
+        checkU32("F$FIRQ weist reserviertes D1.b ab", (Q9_u32)ok, 0);
+        checkU32("F$FIRQ D1-Fehler == E$Param", error, 0x00E1U);
+
+        error = 0;
+        ok = Q9K_ProcFIRQ(64, 0, 0, 0x9999UL, &error);
+        checkU32("F$FIRQ weist Entfernen mit falschem Static-Zeiger ab", (Q9_u32)ok, 0);
+        checkU32("F$FIRQ falsches Entfernen == E$Param", error, 0x00E1U);
+
+        error = 0;
+        ok = Q9K_ProcFIRQ(64, 0, 0, 0x2000UL, &error);
+        checkU32("F$FIRQ entfernt Handler", (Q9_u32)ok, 1);
+        checkU32("F$FIRQ stellt Default nach Entfernung wieder her", (Q9_u32)(*slot64 == (Q9K_ExcHandler)Q9K_ExcTrap), 1);
+
+        error = 0;
+        ok = Q9K_ProcFIRQ(30, 0, 0x12345678UL, 0, &error);
+        checkU32("F$FIRQ laesst Q9-Timervektor 30 geschuetzt", (Q9_u32)ok, 0);
+        checkU32("F$FIRQ Timervektorfehler == E$Param", error, 0x00E1U);
+    }
+
+    /* Fall 8: kaputte Quelltabelle (zu viele Eintraege) muss sauber
      * Fehlercode 1 liefern, nicht abstuerzen -- Q9K_ExcGroupCounts selbst
      * ist const/echt, deshalb hier eine lokale, absichtlich zu lange
      * Kopie simulieren statt die echte Tabelle zu veraendern. */
