@@ -74,6 +74,7 @@ extern void   Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block);
 extern Q9_u32 Q9K_ReadHdrU32BE(Q9_u32 addr);
 extern void   Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 index, Q9_u32 value);
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);
+extern void   Q9K_AlarmCleanupProcess(Q9_u32 desc); /* native F$UAcct lifecycle */
 
 #ifndef Q9K_E_MNF
 #define Q9K_E_MNF    0xDDU
@@ -328,6 +329,10 @@ void Q9K_SysChainReleaseImpl(void)
     Q9_u32 oldBlock = Q9K_GetU32(Q9K_CHAIN_SCRATCH_OLDBLOCK);
     Q9_u32 oldSize  = Q9K_GetU32(Q9K_CHAIN_SCRATCH_OLDSIZE);
     Q9_u32 oldMod   = Q9K_GetU32(Q9K_CHAIN_SCRATCH_OLDMOD);
+
+    /* F$UAcct is an optional OS9P2 callback on Chain.  Q9 owns alarms
+     * directly, so perform the same process-lifecycle cleanup natively. */
+    Q9K_AlarmCleanupProcess(Q9K_GetU32(Q9_D_PROC));
 
     if (oldMod != 0UL)
         Q9K_ModDirUnlinkByHeader(oldMod);

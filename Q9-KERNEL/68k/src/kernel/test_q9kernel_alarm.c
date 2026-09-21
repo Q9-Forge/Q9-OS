@@ -182,6 +182,19 @@ int main(void)
     check("der fremde Alarm bleibt erhalten", Q9K_GetU32(Q9K_ALARM_ID(0)), id);
     check("der eigene ist weg", Q9K_GetU32(Q9K_ALARM_ID(1)), 0);
 
+    /* F$UAcct-Lebenszyklus: beim Reap/Chain wird anhand des Deskriptors
+     * aufgeräumt, nicht anhand des gerade laufenden Prozesses. */
+    reset();
+    g_idForDesc = 2;
+    Q9K_AlarmSet(3, 5, 5, &id, &err);
+    g_idForDesc = 3;
+    Q9K_AlarmSet(4, 5, 0, &id2, &err);
+    Q9K_AlarmCleanupProcess(1UL);           /* Stub map: descriptor 1 -> PID 3 */
+    check("F$UAcct cleanup entfernt alle Alarme des Zielprozesses",
+          Q9K_GetU32(Q9K_ALARM_ID(1)), 0);
+    check("F$UAcct cleanup lässt fremde Prozessalarme bestehen",
+          Q9K_GetU32(Q9K_ALARM_ID(0)), id);
+
     /* Fehlerfaelle. */
     reset();
     err = 0;

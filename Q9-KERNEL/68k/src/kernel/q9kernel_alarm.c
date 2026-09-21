@@ -376,6 +376,40 @@ int Q9K_AlarmDelete(Q9_u32 id, Q9_u16 *outError)
     return 1;
 }
 
+/* Q9K_AlarmCleanupProcess -- lifecycle hook for F$UAcct semantics.
+ *
+ * F$UAcct is an optional extension callback in OS-9, invoked by the kernel
+ * when a process is forked, chained, or exits.  The Q9 kernel does not load
+ * an OS9P2/SysExt accounting module, but it still owns this resource: an
+ * alarm must never survive the process that created it.  This descriptor-
+ * based variant is deliberately independent of D_Proc so zombie reaping can
+ * clean the dead child rather than whichever process is currently running.
+ */
+void Q9K_AlarmCleanupProcess(Q9_u32 desc)
+{
+    Q9_u16 pid;
+    Q9_u32 i;
+
+    if (desc == 0UL)
+        return;
+    pid = Q9K_ProcIdForDesc(desc);
+    if (pid == 0U)
+        return;
+
+    for (i = 0; i < Q9K_ALARM_SLOTS; ++i) {
+        if (Q9K_GetU32(Q9K_ALARM_ID(i)) == 0UL ||
+            Q9K_GetU32(Q9K_ALARM_PID(i)) != (Q9_u32)pid)
+            continue;
+        Q9K_SetU32(Q9K_ALARM_ID(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_PID(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_SIGNAL(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_TICKS(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_DAY(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_SEC(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_CYCLE(i), 0UL);
+    }
+}
+
 /* Q9K_AlarmTick -- EINMAL PRO TICK aus dem Scheduler aufgerufen (dort,
  * wo auch die Schlafliste heruntergezaehlt wird, s.
  * Q9K_SchedReschedule). Zaehlt jeden belegten Alarm herunter und stellt

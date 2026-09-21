@@ -100,6 +100,14 @@ void Q9K_ProcMemReleaseAll(unsigned long owner)
     g_memReleaseAllLastOwner = owner;
 }
 
+/* F$UAcct lifecycle equivalent lives in q9kernel_alarm.c in the real
+ * kernel. This focused procend test supplies a no-op stub; alarm cleanup is
+ * covered by test_q9kernel_alarm.c itself. */
+void Q9K_AlarmCleanupProcess(unsigned long desc)
+{
+    (void)desc;
+}
+
 #include "q9kernel_procend.c"
 
 static int failures = 0;

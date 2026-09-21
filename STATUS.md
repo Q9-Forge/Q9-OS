@@ -30,7 +30,8 @@ now been done. What remains falls into three groups, and the table marks which:
   The remaining open calls are therefore hardware-specific, extension-owned,
   or lack a recoverable ABI rather than being blocked by this mechanism.
 * **Extension-owned or hardware-dependent**: `F$UAcct` is an extension point an
-  OS9P2 module provides, and the SSM-owned calls need a memory management
+  OS9P2 module may provide; Q9 now performs its alarm-lifecycle cleanup
+  natively, while the optional accounting callback remains open. The SSM-owned calls need a memory management
   module. `F$SysDbg` is kept open because the boot ROM contains RomBug, but its
   register-image trampoline and the preceding `F$PwrMan` call are not yet
   reproduced safely. `F$Mem` and `F$SSpd` were withdrawn in real OS-9/68K
@@ -1285,7 +1286,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul, A$AtDate and A$Reset are implemented; cycle intervals now retain full 32-bit ABI values, timer delivery and host regression coverage pass, while complete alarm matrix/live validation remains open |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Native flat-address-space handler follows the OS-9 no-SSM semantics: accepts every non-wrapping range and ignores d1.w permissions, while rejecting 32-bit range wraparound; SSM/MMU permission validation remains open |
-| ⛔ | `0x59` | F$UAcct | A user-defined call an OS9P2 module claims through F$SSvc, not a kernel service; what is missing is the cold-start scan of `M$Extens`, not this call |
+| 🟡 | `0x59` | F$UAcct | Optional OS9P2 extension callback, not a standalone kernel implementation; Q9 natively performs alarm cleanup on Chain/Exit/reap, while accounting-hook installation still requires the `M$Extens` cold-start scan |
 | 🟡 | `0x5A` | F$CCtl | Handler is wired and live dispatch-verified; on the cacheless Q9 target every control request is a successful no-op, while real CACR/cache maintenance remains hardware-specific |
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired; processor/task-map reporting remains hardware-specific and open |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
