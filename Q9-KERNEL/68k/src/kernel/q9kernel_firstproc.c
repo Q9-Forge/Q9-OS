@@ -124,6 +124,7 @@ extern Q9_u32 Q9K_ProcLookup(Q9_u16 pid);                                     /*
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);                                 /* q9kernel_procapi.c */
 extern void   Q9K_SchedRemove(Q9_u32 desc);                                   /* q9kernel_sched.c */
 extern void   Q9K_WaitQInsert(Q9_u32 desc);                                   /* q9kernel_sched.c */
+extern void   Q9K_WaitQRemove(Q9_u32 desc);                                   /* q9kernel_sched.c */
 extern Q9_u32 Q9K_SchedFirstPick(void);                                       /* q9kernel_sched.c */
 
 #ifndef Q9K_PROCPOOL_FREE_ADDR
@@ -1113,12 +1114,50 @@ Q9_u32 Q9K_ProcDebugExec(Q9_u16 childPid, Q9_u32 instructionCount,
         Q9K_SetU8(frame + i, Q9K_GetU8(regbuf + i));
     for (i = 0; i < 8UL; ++i)
         Q9K_SetU8(frame + 60UL + i, Q9K_GetU8(regbuf + 64UL + i));
+    {
+        Q9_u16 sr = Q9K_GetU16(frame + 60UL);
+        sr = instructionCount != 0UL
+           ? (Q9_u16)(sr | 0x8000U)
+           : (Q9_u16)(sr & (Q9_u16)~0x8000U);
+        Q9K_SetU16(frame + 60UL, sr);
+    }
     Q9K_SetU32(desc + Q9K_PROCDESC_DBGINSTR_OFF, instructionCount);
     Q9K_SetU8(parent + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
     Q9K_WaitQInsert(parent);
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
     Q9K_SchedInsert(desc);
     return Q9K_SchedFirstPick();
+}
+
+/* Consume one 68000 trace event for the currently running debug child. */
+Q9_u32 Q9K_ProcDebugTrace(Q9_u32 frameSP)
+{
+    Q9_u32 child = Q9K_GetU32(Q9_D_PROC);
+    Q9_u32 parent;
+    Q9_u32 remaining;
+
+    if (child == 0 ||
+        Q9K_GetU8(child + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_ACTIVE)
+        return 0;
+    remaining = Q9K_GetU32(child + Q9K_PROCDESC_DBGINSTR_OFF);
+    if (remaining > 1UL) {
+        Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, remaining - 1UL);
+        return 0;
+    }
+
+    Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, 0UL);
+    Q9K_SetU16(frameSP + 60UL,
+               (Q9_u16)(Q9K_GetU16(frameSP + 60UL) & (Q9_u16)~0x8000U));
+    parent = Q9K_GetU32(child + Q9K_PROCDESC_DBGPAR_OFF);
+    if (parent == 0 ||
+        Q9K_GetU8(parent + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_WAITING)
+        return 0;
+
+    Q9K_SetU8(child + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
+    Q9K_WaitQRemove(parent);
+    Q9K_SetU8(parent + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    Q9K_SetU32(Q9_D_PROC, parent);
+    return parent;
 }
 
 void Q9K_SysDExecImpl(void)

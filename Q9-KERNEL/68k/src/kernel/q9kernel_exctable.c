@@ -106,6 +106,7 @@ extern void Q9K_SetVBR(Q9_u32 tableBase);
  * Registerkonvention). */
 extern void Q9K_TimerIRQHandler(void);
 extern void Q9K_IRQDispatch(void);      /* q9kernel_entry.a -- Zustellung fuer F$IRQ-Eintraege */
+extern void Q9K_TraceHandler(void);      /* q9kernel_entry.a -- F$DExec single-step */
 
 /* NUR Integer-Zaehler, KEINE Zeiger -- s. Kopfkommentar (echter l68-
  * Linker-Fund: Zeiger als const-Daten sind in Systm-Modulen verboten).
@@ -354,6 +355,13 @@ Q9_u32 Q9K_BuildExcTable(void)
     {
         Q9K_ExcHandler *trapSlot = (Q9K_ExcHandler *)(tableBase + 32 * sizeof(Q9K_ExcHandler));
         *trapSlot = Q9K_TrapDispatch;
+    }
+
+    /* Vector 9 is the 68000 trace exception used by F$DExec. */
+    {
+        Q9K_ExcHandler *traceSlot =
+            (Q9K_ExcHandler *)(tableBase + 9 * sizeof(Q9K_ExcHandler));
+        *traceSlot = Q9K_TraceHandler;
     }
 
     /* NACHTRAG 2026-09-11 (Abschnitt "F$TLink/User Trap Handlers"):
