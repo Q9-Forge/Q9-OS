@@ -163,6 +163,27 @@ int main(void)
                  g_ssvcExternal[0], 0);
     }
 
+    /* Fall 2c: F$Panic is intentionally replaceable by an OS9P2-style
+     * startup service.  The native Q9 handler stays installed until this
+     * registration, then both dispatch tables and the external marker must
+     * point at the supplied routine. */
+    {
+        static unsigned char panicTable[8];
+        Q9_u32 panicTableBase = (Q9_u32)(unsigned long)panicTable;
+        Q9_u32 panicRoutine = panicTableBase + 100UL + 4UL;
+
+        putEntry(panicTableBase, 0x5E, 100);
+        putEnd(panicTableBase + 4UL);
+        memset(g_ssvcExternal, 0, sizeof(g_ssvcExternal));
+        Q9K_ProcSSvc(panicTableBase, dataPtr);
+        checkU32("F2c: F$Panic-Override wird im SysDis registriert",
+                 Q9K_GetU32(sysdisBase + 0x5EUL * 4UL), panicRoutine);
+        checkU32("F2c: F$Panic-Override wird im UsrDis registriert",
+                 Q9K_GetU32(usrdisBase + 0x5EUL * 4UL), panicRoutine);
+        checkU32("F2c: F$Panic wird als externer Dienst markiert",
+                 g_ssvcExternal[0x5E], 1);
+    }
+
     /* Fall 3: leere Tabelle (sofortiges Ende) -- darf nichts veraendern,
      * kein Absturz. Vergleich gegen eine VORHER gelesene Kopie statt
      * eines hartkodierten Hex-Literals -- vermeidet dieselbe

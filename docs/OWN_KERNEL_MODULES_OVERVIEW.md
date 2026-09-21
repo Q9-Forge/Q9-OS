@@ -106,13 +106,19 @@ ein interner Weiterreiche-Mechanismus, kein Widerspruch.
 
 `F$CCtl` — Zielmodul nur über Adressbereich bekannt, nie analysiert.
 
-### 2e. Im Referenz-Build nicht registriert (4 Codes)
+### 2e. Im Referenz-Build nicht registriert (3 Codes)
 
-`F$SSpd`, `F$AllRAM`, `F$POSK`/`F$P0SK`, `F$Panic` — Callcode ist definiert, aber
+`F$SSpd`, `F$AllRAM`, `F$POSK`/`F$P0SK` — Callcode ist definiert, aber
 im geprüften Kernel-Build zeigt er auf den Fehler-Stub. Für den eigenen
 Kernel frei entscheidbar: nachbauen (falls für Kompatibilität mit anderen
 68K-Programmen relevant, die diese Codes tatsächlich aufrufen) oder
 auslassen.
+
+`F$Panic` ist ein Sonderfall: Der Referenz-Build stellt standardmäßig keinen
+eigenen Handler bereit, erlaubt aber einem OS9P2-Startmodul die Installation
+eines Panic-Dienstes. Q9 installiert deshalb einen nativen Default-Handler
+und lässt ihn für explizite Aufrufe über `F$SSvc` überschreiben; die internen
+No-Process-Pfade bleiben ein direkter, nicht zurückkehrender Kernel-Panic.
 
 ### 2f. Sonderfall
 
