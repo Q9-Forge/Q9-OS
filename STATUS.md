@@ -1217,7 +1217,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🔷 | `0x0F` | F$PErr | Original Microware IOMan path is the supported implementation; the call is available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
 | ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
-| 🟡 | `0x12` | F$SchBit | Kernel-native implementation, host-tested, including the unusual carry case; the loaded Microware IOMan claims the call via F$SSvc, so it is not reachable in the emulator — see the note |
+| 🟡 | `0x12` | F$SchBit | Kernel-native implementation is complete and host-tested, including the unusual carry case and invalid-range protection; the loaded Microware IOMan claims the call via F$SSvc, so the native path is not reachable in the emulator — see the note |
 | 🟡 | `0x13` | F$AllBit | Kernel-native implementation, host-tested; same IOMan claim as `0x12` |
 | 🟡 | `0x14` | F$DelBit | Kernel-native implementation, host-tested; same IOMan claim as `0x12` |
 | ✅ | `0x15` | F$Time | Reads the kernel's software clock, which takes its starting value from the RTC72421 at `$FFFFD000` |

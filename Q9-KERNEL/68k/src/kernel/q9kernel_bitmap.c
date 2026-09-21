@@ -171,7 +171,11 @@ int Q9K_BitmapSearch(Q9_u32 base, Q9_u32 endExclusive, Q9_u32 firstBit,
     *outStart = 0UL;
     *outCount = 0UL;
 
-    if (endExclusive <= base)
+    /* The ABI supplies raw pointers.  A null start must be rejected before
+     * the first bitmap byte is read; an inverted/equal range is likewise an
+     * empty bitmap.  F$SchBit reports both cases through its documented
+     * carry-only failure result (zero largest run), not an error number. */
+    if (base == 0UL || endExclusive <= base)
         return 0;
     totalBits = (endExclusive - base) * 8UL;
     if (firstBit >= totalBits)
