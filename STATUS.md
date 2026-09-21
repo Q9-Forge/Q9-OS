@@ -1234,7 +1234,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | ✅ | `0x21` | F$TLink | Links trap modules, initializes their state, supports `namePtr=0` removal, and releases references/owned memory on process exit |
 | 🟢 | `0x22` | F$DFork | Suspended child, 72-byte register image and debugger ownership are implemented; host-tested |
-| 🟡 | `0x23` | F$DExec | Suspended-child resume, 72-byte register restore and parent parking are implemented and host-tested; trace/breakpoint stop handling remains |
+| 🟢 | `0x23` | F$DExec | Suspended-child resume, 72-byte register restore, 68000 trace-bit single-step budget, final trace stop, and debugger-parent wake-up are implemented and host-tested |
 | 🟢 | `0x24` | F$DExit | Validates debugger ownership and releases the suspended child and all owned resources |
 | ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
@@ -1327,8 +1327,8 @@ areas remain open independently of individual call-code implementations:
    a documented regression and verification gap.
 2. **Trap and context lifetime** — harden nested external traps, register-frame
    ownership, and all return paths through IOMan, file managers, and drivers.
-3. **Scheduler** — finish real `F$DExec` trace/breakpoint stops and cover edge
-   cases involving preemption, process switching, and simultaneous IRQs.
+3. **Scheduler** — cover remaining edge cases involving preemption, process
+   switching, and simultaneous IRQs; F$DExec trace stops are implemented.
 4. **Native Q9 I/O** — extend the minimal native path layer toward full device,
    file, directory, status, and pathname semantics instead of relying on IOMan.
 5. **Memory protection/MMU** — replace flat-address compatibility behavior with

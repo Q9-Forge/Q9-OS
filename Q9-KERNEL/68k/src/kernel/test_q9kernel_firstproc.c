@@ -141,6 +141,7 @@ void Q9K_SchedRemove(unsigned long desc)
     g_schedRemoveCalls++;
 }
 void Q9K_WaitQInsert(unsigned long desc) { (void)desc; }
+void Q9K_WaitQRemove(unsigned long desc) { (void)desc; }
 unsigned long Q9K_SchedFirstPick(void) { return g_lastSchedInsert; }
 
 /* Minimale Stubs fuer die echten q9kernel_moddir.c-Funktionen (dort
@@ -674,6 +675,28 @@ int main(void)
                  (Q9_u32)*(Q9_u8 *)(debugBase + Q9K_PROCDESC_STATE_OFF), 'a');
         checkU32("F$DExec uebernimmt D0 aus dem Registerpuffer",
                  getBE32(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF)), 0x11223344UL);
+
+        /* The trace budget is armed in the restored SR and is consumed by
+         * the vector-9 continuation one instruction at a time. */
+        checkU32("F$DExec setzt das Trace-Bit bei begrenzter Ausfuehrung",
+                 (Q9_u32)(Q9K_GetU16(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF) + 60UL) & 0x8000U),
+                 0x8000UL);
+        Q9K_SetU32(Q9_D_PROC, debugBase);
+        Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 2);
+        checkU32("Trace-Ereignis vor dem Budgetende laesst das Kind laufen",
+                 Q9K_ProcDebugTrace(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF)), 0);
+        checkU32("Trace-Ereignis zaehlt das Restbudget herunter",
+                 Q9K_GetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF), 1);
+        checkU32("letztes Trace-Ereignis waehlt den Debugger-Elternprozess",
+                 Q9K_ProcDebugTrace(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF)),
+                 (Q9_u32)(unsigned long)debugParent);
+        checkU32("Trace stoppt das Kind",
+                 (Q9_u32)*(Q9_u8 *)(debugBase + Q9K_PROCDESC_STATE_OFF), 'w');
+        checkU32("Trace weckt den Debugger-Elternprozess",
+                 (Q9_u32)*(Q9_u8 *)(debugParent + Q9K_PROCDESC_STATE_OFF), 'a');
+        checkU32("Trace stop loescht das Trace-Bit",
+                 (Q9_u32)(Q9K_GetU16(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF) + 60UL) & 0x8000U),
+                 0);
     }
 
 
