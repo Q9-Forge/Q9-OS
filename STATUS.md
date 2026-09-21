@@ -1245,7 +1245,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | 🔷 | `0x2B` | F$IOQu | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; immediate preemption still open |
 | ✅ | `0x2D` | F$NProc | Takes the next process off the ready list and switches into it. The caller is deliberately not re-queued — that is the manual's own semantics. Emulator-verified with a forked process that calls it and correctly never comes back |
-| 🟡 | `0x2E` | F$VModul | Native header-parity/CRC validation, size bounds, return-buffer ABI, and host tests are complete; the Microware F$Load→F$VModul transition still fails for `/dd/CMDS/date` with `E$MNF` although `echo` loads successfully |
+| 🟡 | `0x2E` | F$VModul | Native header-parity/CRC validation, size bounds, return-buffer ABI, host tests, and the live F$VModul step for both `echo` and `date` succeed; the later Microware F$Load name/link handoff still returns `E$MNF` for `/dd/CMDS/date` |
 | ✅ | `0x2F` | F$FindPD | Path/process number to descriptor address, same DBT structure as F$AllPD/F$RetPD |
 | ✅ | `0x30` | F$AllPD | DBT allocation and descriptor clearing, host tests, and the direct `iattachsvc` emulator regression are verified; the marker sequence reaches the allocation before the later Microware attach/detach checks |
 | ✅ | `0x31` | F$RetPD | DBT return with descriptor-number validation, host tests, and the direct `iattachsvc` emulator regression are verified; the allocated descriptor is returned before the later Microware attach/detach checks |
