@@ -6,7 +6,11 @@
  * Allocator-Varianten, analog zur echten Microware-Namenskonvention
  * (intern dokumentiert: "[a|d]ker<CPU-Suffix>[s|b]").
  *
- * Zwei unabhaengige Achsen, BEIDE muessen beim Bauen explizit per -D
+ * Kernel-Variante und Ziel-CPU sind unabhaengige Achsen. Die CPU wird vom
+ * build.sh per Q9K_CPU_TYPE gesetzt; fuer Hosttests gilt 68000 als sicherer
+ * Default. MMU/FPU werden nur als Q9K_HAS_MMU/Q9K_HAS_FPU definiert, wenn
+ * das CPU-Profil oder ein explizites Build-Override sie freischaltet.
+ * Zwei unabhaengige Kernel-Achsen, BEIDE muessen beim Bauen explizit per -D
  * gesetzt werden -- kein stiller Default, um nicht aus Versehen die
  * falsche Variante zu bauen (z.B. versehentlich Atomic ohne Schutz-
  * mechanismen fuer ein Multi-User-Ziel):
@@ -31,8 +35,9 @@
  * Jede Datei, die variantenabhaengigen Code bekommt, bindet diesen Header
  * ein und verwendet Q9K_MEMTRACE_COMPILETIME fuer reine Diagnoseausgaben.
  *
- * Alle vier Kombinationen (Atomic/Development x Standard/Buddy) UND der
- * Fehlerfall ohne Flags real gegen die echte xcc-Pipeline getestet
+ * Alle vier Kombinationen (Atomic/Development x Standard/Buddy), die CPU-
+ * Profile 68000/68030 sowie der Fehlerfall ohne Flags sind real gegen die
+ * echte xcc-Pipeline getestet
  * (2026-08-18, ueber q9kernel_modcheck.c als Traeger) -- alle vier
  * Kombinationen exit status = 0 durch, der Fehlerfall bricht mit genau
  * der erwarteten #error-Meldung ab ("catastrophic error: #error
@@ -42,6 +47,35 @@
 
 #ifndef Q9KERNEL_CONFIG_H
 #define Q9KERNEL_CONFIG_H
+
+/* Standalone host tests do not run build.sh; keep them on the conservative
+ * instruction subset unless a test explicitly selects another CPU. */
+#if !defined(Q9K_CPU_68000) && !defined(Q9K_CPU_68010) && \
+    !defined(Q9K_CPU_68020) && !defined(Q9K_CPU_68030) && \
+    !defined(Q9K_CPU_68040) && !defined(Q9K_CPU_68060) && \
+    !defined(Q9K_CPU_CPU32)
+#define Q9K_CPU_68000 1
+#endif
+
+#if ((defined(Q9K_CPU_68000) ? 1 : 0) + \
+     (defined(Q9K_CPU_68010) ? 1 : 0) + \
+     (defined(Q9K_CPU_68020) ? 1 : 0) + \
+     (defined(Q9K_CPU_68030) ? 1 : 0) + \
+     (defined(Q9K_CPU_68040) ? 1 : 0) + \
+     (defined(Q9K_CPU_68060) ? 1 : 0) + \
+     (defined(Q9K_CPU_CPU32) ? 1 : 0)) != 1
+#error "Genau ein Q9K_CPU_* Ziel muss gewaehlt werden"
+#endif
+
+#if defined(Q9K_HAS_MMU) && defined(Q9K_CPU_68000)
+#error "Q9K_HAS_MMU ist auf einem 68000-Ziel nicht zulaessig"
+#endif
+#if defined(Q9K_HAS_MMU) && defined(Q9K_CPU_68010)
+#error "Q9K_HAS_MMU ist auf einem 68010-Ziel nicht zulaessig"
+#endif
+#if defined(Q9K_HAS_FPU) && (defined(Q9K_CPU_68000) || defined(Q9K_CPU_68010))
+#error "Q9K_HAS_FPU braucht ein CPU-Profil mit FPU-Unterstuetzung oder einen externen FPU-Build"
+#endif
 
 #if !defined(Q9K_KERNEL_ATOMIC) && !defined(Q9K_KERNEL_DEVELOPMENT)
 #error "Kernel-Variante nicht gewaehlt -- -DQ9K_KERNEL_ATOMIC oder -DQ9K_KERNEL_DEVELOPMENT beim Bauen setzen"
