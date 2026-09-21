@@ -3285,15 +3285,21 @@ Q9K_SysFSysDbg_Missing:
 * has one physical address space and no MMU tables, so every address is
 * already accessible and there is no task image to allocate, release, or
 * query.  These are therefore deliberately real successful entry points,
-* rather than the old E$UnkSvc stub: they preserve all registers and clear
-* Carry, which is the correct observable result for the flat model.  Once
-* address spaces are introduced, this single compatibility path is the
-* narrow place where the MMU-backed bookkeeping must be replaced.
+* rather than the old E$UnkSvc stub.  F$GSPUMp follows the documented
+* no-SSM result specifically: d0=0 (no MMU block size) and d2=0 (no map
+* bytes written), leaving the caller's buffer untouched.  Once address
+* spaces are introduced, this single compatibility path is the narrow place
+* where the MMU-backed bookkeeping must be replaced.
 Q9K_SysFPermit:
 Q9K_SysFProtect:
 Q9K_SysFAllTsk:
 Q9K_SysFDelTsk:
+        andi    #$fe,ccr
+        rts
+
 Q9K_SysFGSPUMp:
+        moveq   #0,d0                          * no SSM: no minimum block size
+        moveq   #0,d2                          * no map bytes were produced
         andi    #$fe,ccr
         rts
 

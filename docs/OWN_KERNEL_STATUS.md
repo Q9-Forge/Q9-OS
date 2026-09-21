@@ -2199,6 +2199,10 @@ reentranter Trap-Epilog (`5f00f74`).
   Default-Handler ohne SSM. Der native Handler weist aber einen 32-Bit-
   Bereichsüberlauf zurück. Eine echte SSM/MMU-Prüfung muss mitwachsen, sobald
   getrennte Adressräume eingeführt werden.
+- **`F$GSPUMp` liefert ohne SSM bewusst keine Map-Daten.** Der native
+  Kompatibilitätspfad setzt `d0=0` (keine MMU-Blockgröße) und `d2=0` (kein
+  belegter Puffer) und schreibt den Benutzerpuffer nicht an. Die eigentliche
+  Prozess-/MMU-Abbildung bleibt Aufgabe eines späteren SSM.
 - **Keine User-/Supervisor-Trennung.** `Q9K_TrapDispatch` benutzt für jeden
   `TRAP #0` immer `D_UsrDis`, nie `D_SysDis`.
 - **Pfadnummern aus einem globalen Zähler**, nicht pro Prozess.
