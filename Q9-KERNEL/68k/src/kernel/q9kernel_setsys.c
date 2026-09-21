@@ -97,11 +97,65 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 #define Q9K_SETSYS_DEFAULT_TCKSEC      100UL
 #define Q9K_SETSYS_DEFAULT_TSLICE      2UL
 
+/* Verifizierte System-Globals, die F$SetSys schreibgeschuetzt lesen darf.
+ * Q9K_SETSYS_ADDR ist fuer Host-Tests auf einen Fake-Globalbereich
+ * umlenkbar; auf dem 68k-Ziel entspricht die Adresse dem A6-relativen
+ * System-Global-Offset.  Die Tickzahl wird aus dem Q9-eigenen Zaehler im
+ * Kernelmodul gelesen, weil D_Ticks im Globalbereich nicht separat gepflegt
+ * wird. */
+#ifndef Q9K_SETSYS_ADDR
+#define Q9K_SETSYS_ADDR(offset) ((Q9_u32)(offset))
+#endif
+#define Q9K_SETSYS_VAR_INIT       0x20UL
+#define Q9K_SETSYS_VAR_COMPAT     0x2EUL
+#define Q9K_SETSYS_VAR_SYSCONF    0x38UL
+#define Q9K_SETSYS_VAR_MODDIR     0x3CUL
+#define Q9K_SETSYS_VAR_PROC       0x4CUL
+#define Q9K_SETSYS_VAR_SYSPRC     0x50UL
+#define Q9K_SETSYS_VAR_FPROC      0x58UL
+#define Q9K_SETSYS_VAR_SYSROM     0x64UL
+#define Q9K_SETSYS_VAR_EXCJMP     0x68UL
+#define Q9K_SETSYS_VAR_TOTRAM     0x6CUL
+#define Q9K_SETSYS_VAR_SYSDIS     0x3A4UL
+#define Q9K_SETSYS_VAR_USRDIS     0x3A8UL
+#define Q9K_SETSYS_VAR_COMPAT2    0x3E0UL
+#define Q9K_SETSYS_VAR_TICKS      0x54UL
+#define Q9K_SETSYS_TICKCOUNT_ADDR 0x1BE0UL
+
 /* Persistent value for the one system variable currently used by csl. */
 /* BSS-only storage: initialized data is not permitted in this OS-9 module. */
 static Q9_u32 Q9K_SetSysMallocIncrement;
 static Q9_u32 Q9K_SetSysTickSeconds;
 static Q9_u32 Q9K_SetSysTimeSlice;
+
+static int Q9K_ReadSetSysReadonly(Q9_u32 varCode, Q9_u32 *outValue)
+{
+    Q9_u32 address;
+
+    switch (varCode) {
+    case Q9K_SETSYS_VAR_INIT:    address = Q9K_SETSYS_VAR_INIT; break;
+    case Q9K_SETSYS_VAR_COMPAT:  address = Q9K_SETSYS_VAR_COMPAT; break;
+    case Q9K_SETSYS_VAR_SYSCONF: address = Q9K_SETSYS_VAR_SYSCONF; break;
+    case Q9K_SETSYS_VAR_MODDIR:  address = Q9K_SETSYS_VAR_MODDIR; break;
+    case Q9K_SETSYS_VAR_PROC:    address = Q9K_SETSYS_VAR_PROC; break;
+    case Q9K_SETSYS_VAR_SYSPRC:  address = Q9K_SETSYS_VAR_SYSPRC; break;
+    case Q9K_SETSYS_VAR_FPROC:   address = Q9K_SETSYS_VAR_FPROC; break;
+    case Q9K_SETSYS_VAR_SYSROM:  address = Q9K_SETSYS_VAR_SYSROM; break;
+    case Q9K_SETSYS_VAR_EXCJMP:  address = Q9K_SETSYS_VAR_EXCJMP; break;
+    case Q9K_SETSYS_VAR_TOTRAM:  address = Q9K_SETSYS_VAR_TOTRAM; break;
+    case Q9K_SETSYS_VAR_SYSDIS:  address = Q9K_SETSYS_VAR_SYSDIS; break;
+    case Q9K_SETSYS_VAR_USRDIS:  address = Q9K_SETSYS_VAR_USRDIS; break;
+    case Q9K_SETSYS_VAR_COMPAT2: address = Q9K_SETSYS_VAR_COMPAT2; break;
+    case Q9K_SETSYS_VAR_TICKS:
+        *outValue = Q9K_GetU32(Q9K_SETSYS_ADDR(Q9K_SETSYS_TICKCOUNT_ADDR));
+        return 1;
+    default:
+        return 0;
+    }
+
+    *outValue = Q9K_GetU32(Q9K_SETSYS_ADDR(address));
+    return 1;
+}
 
 static Q9_u32 Q9K_GetSetSysMallocIncrement(void)
 {
@@ -140,6 +194,9 @@ int Q9K_ProcSetSys(Q9_u32 varCode, Q9_u32 flags, Q9_u32 valueIn, Q9_u32 *outValu
             *outValue = Q9K_GetSetSysTickSeconds();
         } else if (varCode == Q9K_SETSYS_VAR_TSLICE) {
             *outValue = Q9K_GetSetSysTimeSlice();
+        } else if (Q9K_ReadSetSysReadonly(varCode, outValue)) {
+            /* Verifizierte System-Globals sind lesbar, aber nicht ueber
+             * diesen Pfad veraenderbar. */
         } else {
             *outValue = 0UL;
             *outError = Q9K_ERR_UNKSVC;
