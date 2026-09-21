@@ -639,6 +639,22 @@ inner node format of those is known only from disassembling the original kernel
 and is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
+**F$Alarm matrix (current implementation and verification scope):**
+
+| A$ function | Inputs / result | Q9 implementation | Host regression | Remaining live/open point |
+|---|---|---|---|---|
+| A$Delete (0) | `d0.l` ID, `0` = all own alarms | Own-process filtering, ID/all deletion, slot cleanup | ID, all, foreign-process protection | Emulator path with a caller-owned alarm set |
+| A$Set (1) | `d2.w` signal, `d3.l` relative ticks; returns ID | One-shot relative alarm, full 32-bit tick value | Delivery, invalid interval/process, full pool | Confirm signal delivery timing on target |
+| A$Cycle (2) | `d2.w` signal, `d3.l` interval; returns ID | Repeating relative alarm; separate full 32-bit cycle field | Repeat cadence and `70000`-tick regression | Confirm tick-vs-1/256-second unit convention |
+| A$AtDate (3) | packed `YYYY:MM:DD`, packed `HH:MM:SS`; returns ID | Calendar conversion, RTC/software-clock comparison | Exact time, missed time, invalid date/time | Emulator/live RTC marker |
+| A$AtJul (4) | Julian day, seconds after midnight; returns ID | Absolute alarm with `>=` due-time semantics | Exact time, missed time, day boundary, range errors | Emulator/live RTC marker |
+| A$Reset (5) | ID, new signal, new relative ticks | Keeps ID, restarts relative deadline, preserves cycle mode | ID preservation, signal/interval replacement | Confirm original Microware edge cases live |
+
+The matrix is complete for the six documented A$ operations. “Remaining” is
+verification scope, not an unimplemented dispatch case; the row stays 🟡 until
+the native path is observed independently of a loaded foreign alarm/clock
+module and the interval unit convention is settled.
+
 The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+TiyzYe` followed
 by `C` from the chained-to module — the four digits being the kernel's own tick
 counter.
