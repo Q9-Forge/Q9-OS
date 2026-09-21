@@ -40,6 +40,7 @@ cp "$SRCDIR"/q9kernel_entry.a "$SRCDIR"/q9kernel_cinit.c "$SRCDIR"/q9kernel_modc
    "$SRCDIR"/q9kernel_ssvc.c "$SRCDIR"/q9kernel_iopath.c "$SRCDIR"/q9kernel_procapi.c "$SRCDIR"/q9kernel_traplink.c \
    "$SRCDIR"/q9kernel_setsys.c "$SRCDIR"/q9kernel_date.c "$SRCDIR"/q9kernel_alarm.c \
    "$SRCDIR"/q9kernel_clock.c "$SRCDIR"/q9kernel_bitmap.c "$SRCDIR"/q9kernel_blkmap.c "$SRCDIR"/q9kernel_sema.c "$SRCDIR"/q9kernel_chain.c "$SRCDIR"/q9kernel_icpt.c "$SRCDIR"/q9kernel_strap.c "$SRCDIR"/q9kernel_event.c "$SRCDIR"/q9kernel_nproc.c "$SRCDIR"/q9kernel_mem.c \
+   "$SRCDIR"/q9kernel_mmu.c \
    "$SRCDIR"/q9kernel_config.h .
 # NACHTRAG (2026-09-13): Pfad an die Repo-Reorganisation angepasst --
 # q9sysglob.h liegt jetzt unter Q9-KERNEL/common/src/ (fuer den
@@ -94,14 +95,32 @@ case "${Q9K_ENABLE_FPU:-auto}" in
     0|no|off) FPU_DEF= ;;
     *) echo "FEHLER: Q9K_ENABLE_FPU muss auto, 0 oder 1 sein" >&2; exit 2 ;;
 esac
+
+MMU_MODE="${Q9K_MMU_MODE:-flat}"
+case "$MMU_MODE" in
+    flat)
+        MMU_MODE_DEF=-dQ9K_MMU_FLAT
+        ;;
+    hardware)
+        [ "$CPU_MMU" -eq 1 ] || {
+            echo "FEHLER: Q9K_MMU_MODE=hardware braucht eine MMU-faehige CPU" >&2
+            exit 2
+        }
+        MMU_MODE_DEF=-dQ9K_MMU_HARDWARE
+        ;;
+    *)
+        echo "FEHLER: Q9K_MMU_MODE muss flat oder hardware sein" >&2
+        exit 2
+        ;;
+esac
 R68_CPU_OPT="-m${CPU_CODE}"
-CDEFS="$CDEFS -dQ9K_ALLOC_STANDARD -dQ9K_BOOT_STARTUP $CPU_DEF $MMU_DEF $FPU_DEF -tp=$XCC_TARGET"
+CDEFS="$CDEFS -dQ9K_ALLOC_STANDARD -dQ9K_BOOT_STARTUP $CPU_DEF $MMU_DEF $FPU_DEF $MMU_MODE_DEF -tp=$XCC_TARGET"
 MMU_STATE=off; [ -n "$MMU_DEF" ] && MMU_STATE=on
 FPU_STATE=off; [ -n "$FPU_DEF" ] && FPU_STATE=on
-echo "== Ziel-CPU: $CPU_TYPE (r68 $R68_CPU_OPT, xcc -tp=$XCC_TARGET, MMU=$MMU_STATE, FPU=$FPU_STATE) =="
+echo "== Ziel-CPU: $CPU_TYPE (r68 $R68_CPU_OPT, xcc -tp=$XCC_TARGET, MMU=$MMU_STATE/$MMU_MODE, FPU=$FPU_STATE) =="
 cat > makefile <<EOF
 CFLAGS = -b -O7 -cq -cw $CDEFS
-all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r q9kernel_date.r q9kernel_alarm.r q9kernel_clock.r q9kernel_bitmap.r q9kernel_blkmap.r q9kernel_sema.r q9kernel_chain.r q9kernel_icpt.r q9kernel_strap.r q9kernel_event.r q9kernel_nproc.r q9kernel_mem.r
+all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_mmu.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r q9kernel_date.r q9kernel_alarm.r q9kernel_clock.r q9kernel_bitmap.r q9kernel_blkmap.r q9kernel_sema.r q9kernel_chain.r q9kernel_icpt.r q9kernel_strap.r q9kernel_event.r q9kernel_nproc.r q9kernel_mem.r
 q9kernel_cinit.r: q9kernel_cinit.c
 q9kernel_modcheck.r: q9kernel_modcheck.c
 q9kernel_initext.r: q9kernel_initext.c
@@ -115,6 +134,7 @@ q9kernel_sched.r: q9kernel_sched.c
 q9kernel_procend.r: q9kernel_procend.c
 q9kernel_procsleep.r: q9kernel_procsleep.c
 q9kernel_sysmem.r: q9kernel_sysmem.c
+q9kernel_mmu.r: q9kernel_mmu.c
 
 q9kernel_debug.r: q9kernel_debug.c
 q9kernel_ssvc.r: q9kernel_ssvc.c
@@ -141,7 +161,7 @@ echo "== C-Dateien kompilieren ($KERNEL_VARIANT/Standard-Variante, s. q9kernel_c
 # Programm "all" zu linken) -- das ist erwartet, die acht echten .r-
 # Ziele sind zu diesem Zeitpunkt schon fertig. Deshalb || true.
 mwos-build . all < /dev/null || true
-for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r q9kernel_date.r q9kernel_alarm.r q9kernel_clock.r q9kernel_bitmap.r q9kernel_blkmap.r q9kernel_sema.r q9kernel_chain.r q9kernel_icpt.r q9kernel_strap.r q9kernel_event.r q9kernel_nproc.r q9kernel_mem.r; do
+for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_mmu.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r q9kernel_date.r q9kernel_alarm.r q9kernel_clock.r q9kernel_bitmap.r q9kernel_blkmap.r q9kernel_sema.r q9kernel_chain.r q9kernel_icpt.r q9kernel_strap.r q9kernel_event.r q9kernel_nproc.r q9kernel_mem.r; do
     [ -f "$f" ] || { echo "FEHLER: $f wurde nicht erzeugt"; exit 1; }
 done
 
@@ -156,7 +176,7 @@ echo "== Verlinken (kein csl.l/acstart.r -- eigener Assembler-Einstieg) =="
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
     -o=q9kernel -f=orowoe \
     q9kernel_entry.r q9kernel_cinit.r q9kernel_modcheck.r q9kernel_modsearch.r q9kernel_initext.r \
-    q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r \
+    q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_mmu.r \
     q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r \
     q9kernel_setsys.r q9kernel_date.r q9kernel_alarm.r q9kernel_clock.r q9kernel_bitmap.r q9kernel_blkmap.r q9kernel_sema.r q9kernel_chain.r q9kernel_icpt.r q9kernel_strap.r q9kernel_event.r q9kernel_nproc.r q9kernel_mem.r \
     < /dev/null

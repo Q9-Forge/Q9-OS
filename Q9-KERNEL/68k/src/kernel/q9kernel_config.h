@@ -77,6 +77,16 @@
 #error "Q9K_HAS_FPU braucht ein CPU-Profil mit FPU-Unterstuetzung oder einen externen FPU-Build"
 #endif
 
+#if !defined(Q9K_MMU_FLAT) && !defined(Q9K_MMU_HARDWARE)
+#define Q9K_MMU_FLAT 1
+#endif
+#if defined(Q9K_MMU_FLAT) && defined(Q9K_MMU_HARDWARE)
+#error "Q9K_MMU_FLAT und Q9K_MMU_HARDWARE schliessen sich gegenseitig aus"
+#endif
+#if defined(Q9K_MMU_HARDWARE) && !defined(Q9K_HAS_MMU)
+#error "Q9K_MMU_HARDWARE braucht Q9K_HAS_MMU"
+#endif
+
 #if !defined(Q9K_KERNEL_ATOMIC) && !defined(Q9K_KERNEL_DEVELOPMENT)
 #error "Kernel-Variante nicht gewaehlt -- -DQ9K_KERNEL_ATOMIC oder -DQ9K_KERNEL_DEVELOPMENT beim Bauen setzen"
 #endif

@@ -130,12 +130,20 @@ table and init-extension host regressions pass under the default and explicit
 68030/MMU defines. This selects feature flags only; real PMMU/FPU execution
 remains subject to the target emulator/hardware model.
 
+The build now also requires an explicit MMU mode: `Q9K_MMU_MODE=flat` (the
+default runnable image) or `Q9K_MMU_MODE=hardware` (only accepted for a
+MMU-capable CPU). `Q9K_CInit` calls the mode initializer before module-table
+setup; hardware mode currently fails closed with boot status `5`, because the
+PMMU backend and context-switch roots do not yet exist. Thus an MMU-labelled
+kernel can no longer boot accidentally with flat, uninitialized protection.
+
 Boot/integration hardening was extended and exercised from a fresh development
 kernel build. `Q9K_CInit` now gates the exception-table build, `init` module
 configuration, and the module-directory/process/path table allocation before
 starting the scheduler. Fatal stages are latched in the reserved RAM word
 `0x1224`: `1` = invalid exception source table, `2` = missing `init`, `3` =
-truncated `init` configuration, and `4` = insufficient kernel arena. The
+truncated `init` configuration, `4` = insufficient kernel arena, and `5` =
+MMU requested but not initialized. The
 normal boot value remains `0`; returning from a fatal stage enters the existing
 entry halt loop instead of continuing with partially initialized globals.
 
