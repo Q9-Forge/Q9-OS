@@ -3829,6 +3829,7 @@ Q9K_SysDExec:
         movem.l d0-d7/a0-a6,-(sp)
         movea.l Q9K_DExecScratch_Next,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath              * selected debug context owns its flag
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysDExec_Fail:
@@ -3940,6 +3941,7 @@ Q9K_SysFWait:
 Q9K_SysFWait_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath              * do not leak the waiting process's flag
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
@@ -4004,6 +4006,7 @@ Q9K_SysFExit:
 Q9K_SysFExit_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath              * the next process starts outside a trap
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
@@ -4117,6 +4120,7 @@ Q9K_SysFSleep_Block:
 Q9K_SysFSleep_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath              * trap-path state is process-local
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
@@ -5146,6 +5150,7 @@ Q9K_SysFSema_Wait:
         beq     Q9K_SysFSema_Idle
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath              * wake the next process cleanly
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysFSema_Idle:
@@ -5275,6 +5280,7 @@ Q9K_SysFChain_Success:
         lea     Q9K_CRuntimeData(pc),a6
         movea.l Q9K_ChainReleaseImplPtr,a1
         jsr     (a1)          * jetzt gefahrlos -- neuer Stack
+        clr.w   Q9K_InTrapPath              * chained program starts outside a trap
         movem.l (sp)+,d0-d7/a0-a6
         rte                                      * Sprung ins neue Programm
 
@@ -5315,6 +5321,7 @@ Q9K_SysFRTE:
 
         movea.l Q9_D_Proc,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath              * resumed intercept owns its context
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
@@ -5390,6 +5397,7 @@ Q9K_SysFEvent_Wait:
         beq     Q9K_SysFEvent_Idle
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath              * event waiter resumes with clean state
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysFEvent_Idle:
@@ -5443,6 +5451,7 @@ Q9K_SysFNProc:
         beq     Q9K_SysFNProc_Idle
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath              * selected process owns its trap state
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysFNProc_Idle:
