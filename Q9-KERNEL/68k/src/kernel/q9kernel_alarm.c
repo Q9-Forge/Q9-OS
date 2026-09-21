@@ -75,17 +75,20 @@ extern void   Q9K_ClockRead(Q9_u32 *outDay, Q9_u32 *outSeconds);      /* q9kerne
 #define Q9K_ALARM_BASE   0x1A00UL
 #endif
 #define Q9K_ALARM_SLOTS  8UL
-/* Eintragsgroesse und Feldabstaende: real 16 Byte mit 4-Byte-Feldern.
+/* Eintragsgroesse und Feldabstaende: 28 Byte mit 4-Byte-Feldern. Das eigene
+ * Zyklusfeld ist bewusst ein volles Langwort; die erste Fassung packte es
+ * in das obere Signalwort und kuerzte dadurch gueltige 32-Bit-Intervalle.
  * Per #ifndef ueberschreibbar, gleicher Grund wie bei jeder anderen
  * Tabelle dieses Kernels -- auf einem 64-Bit-Testhost ist Q9_u32 8 Byte
  * breit, ein Schreibzugriff auf ID reichte dort bis in PID hinein. */
 #ifndef Q9K_ALARM_STRIDE
-#define Q9K_ALARM_STRIDE     24UL
+#define Q9K_ALARM_STRIDE     28UL
 #define Q9K_ALARM_OFF_PID     4UL
 #define Q9K_ALARM_OFF_SIGNAL  8UL
 #define Q9K_ALARM_OFF_TICKS  12UL
 #define Q9K_ALARM_OFF_DAY    16UL   /* absoluter Alarm: julianische Tageszahl, 0 = relativ */
 #define Q9K_ALARM_OFF_SEC    20UL   /* absoluter Alarm: Sekunden nach Mitternacht          */
+#define Q9K_ALARM_OFF_CYCLE  24UL   /* zyklischer Alarm: volles 32-Bit-Intervall           */
 #endif
 #define Q9K_ALARM_ID(i)       (Q9K_ALARM_BASE + (i) * Q9K_ALARM_STRIDE)       /* Q9_u32, 0 = frei */
 #define Q9K_ALARM_PID(i)      (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_PID)            /* Q9_u32, Empfaenger */
@@ -93,10 +96,7 @@ extern void   Q9K_ClockRead(Q9_u32 *outDay, Q9_u32 *outSeconds);      /* q9kerne
 #define Q9K_ALARM_TICKS(i)    (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_TICKS)          /* Q9_u32, Restticks  */
 #define Q9K_ALARM_DAY(i)      (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_DAY)            /* Q9_u32, Zieltag    */
 #define Q9K_ALARM_SEC(i)      (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_SEC)            /* Q9_u32, Zielsekunde */
-/* Das Intervall eines zyklischen Alarms teilt sich die Zelle mit der
- * Signalnummer nicht -- es steht im oberen Wort von SIGNAL, damit der
- * Eintrag bei 16 Byte bleibt. 0 = einmaliger Alarm. */
-#define Q9K_ALARM_CYCLE_SHIFT 16
+#define Q9K_ALARM_CYCLE(i)    (Q9K_ALARM_ID(i) + Q9K_ALARM_OFF_CYCLE)          /* Q9_u32, Zyklus     */
 
 /* Fortlaufender Zaehler fuer Alarm-IDs, direkt hinter der Tabelle. */
 #ifndef Q9K_ALARM_NEXTID
@@ -164,9 +164,9 @@ int Q9K_AlarmSet(Q9_u16 signal, Q9_u32 ticks, Q9_u32 cycleTicks,
 
     Q9K_SetU32(Q9K_ALARM_ID(i), id);
     Q9K_SetU32(Q9K_ALARM_PID(i), (Q9_u32)pid);
-    Q9K_SetU32(Q9K_ALARM_SIGNAL(i),
-               ((cycleTicks & 0xFFFFUL) << Q9K_ALARM_CYCLE_SHIFT) | (Q9_u32)signal);
+    Q9K_SetU32(Q9K_ALARM_SIGNAL(i), (Q9_u32)signal);
     Q9K_SetU32(Q9K_ALARM_TICKS(i), ticks);
+    Q9K_SetU32(Q9K_ALARM_CYCLE(i), cycleTicks);
 
     *outId = id;
     return 1;
@@ -202,9 +202,7 @@ int Q9K_AlarmReset(Q9_u32 id, Q9_u16 signal, Q9_u32 ticks,
         Q9_u32 slotId = Q9K_GetU32(Q9K_ALARM_ID(i));
         if (slotId != id || Q9K_GetU32(Q9K_ALARM_PID(i)) != (Q9_u32)pid)
             continue;
-        Q9K_SetU32(Q9K_ALARM_SIGNAL(i),
-                   (Q9K_GetU32(Q9K_ALARM_SIGNAL(i)) & 0xFFFF0000UL) |
-                   (Q9_u32)signal);
+        Q9K_SetU32(Q9K_ALARM_SIGNAL(i), (Q9_u32)signal);
         Q9K_SetU32(Q9K_ALARM_TICKS(i), ticks);
         Q9K_SetU32(Q9K_ALARM_DAY(i), 0UL);
         Q9K_SetU32(Q9K_ALARM_SEC(i), 0UL);
@@ -332,6 +330,7 @@ int Q9K_AlarmSetAbsolute(Q9_u16 signal, Q9_u32 julianDay, Q9_u32 seconds,
     Q9K_SetU32(Q9K_ALARM_TICKS(i), 0UL);      /* 0 = kein Tickzaehler, absolut */
     Q9K_SetU32(Q9K_ALARM_DAY(i), julianDay);
     Q9K_SetU32(Q9K_ALARM_SEC(i), seconds);
+    Q9K_SetU32(Q9K_ALARM_CYCLE(i), 0UL);
 
     *outId = id;
     return 1;
@@ -372,6 +371,7 @@ int Q9K_AlarmDelete(Q9_u32 id, Q9_u16 *outError)
         Q9K_SetU32(Q9K_ALARM_TICKS(i), 0UL);
         Q9K_SetU32(Q9K_ALARM_DAY(i), 0UL);
         Q9K_SetU32(Q9K_ALARM_SEC(i), 0UL);
+        Q9K_SetU32(Q9K_ALARM_CYCLE(i), 0UL);
     }
     return 1;
 }
@@ -435,7 +435,7 @@ Q9_u32 Q9K_AlarmTick(void)
         {
             Q9_u32 packed = Q9K_GetU32(Q9K_ALARM_SIGNAL(i));
             Q9_u16 signal = (Q9_u16)(packed & 0xFFFFUL);
-            Q9_u32 cycle  = (packed >> Q9K_ALARM_CYCLE_SHIFT) & 0xFFFFUL;
+            Q9_u32 cycle  = Q9K_GetU32(Q9K_ALARM_CYCLE(i));
             Q9_u16 err = 0;
 
             Q9K_ProcSend((Q9_u16)Q9K_GetU32(Q9K_ALARM_PID(i)), signal, &err);
@@ -450,6 +450,7 @@ Q9_u32 Q9K_AlarmTick(void)
                 Q9K_SetU32(Q9K_ALARM_TICKS(i), 0UL);
                 Q9K_SetU32(Q9K_ALARM_DAY(i), 0UL);
                 Q9K_SetU32(Q9K_ALARM_SEC(i), 0UL);
+                Q9K_SetU32(Q9K_ALARM_CYCLE(i), 0UL);
             }
         }
     }

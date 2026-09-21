@@ -21,15 +21,16 @@ static unsigned char g_alarmTable[0x200];
 
 #define Q9_D_PROC                 ((unsigned long)(g_fakeGlobals + 0x000))
 #define Q9K_ALARM_BASE            ((unsigned long)(g_alarmTable + 0x000))
-/* Real 16 Byte je Eintrag mit 4-Byte-Feldern -- auf diesem Host ist
- * Q9_u32 8 Byte breit, deshalb grosszuegig auf 32-Byte-Eintraege
- * gelegt. Betrifft NUR diesen Test. */
-#define Q9K_ALARM_STRIDE          48UL
+/* 28 Byte je Eintrag mit 4-Byte-Feldern -- auf diesem Host ist
+ * Q9_u32 8 Byte breit, deshalb mit getrennten Feldern und ausreichend
+ * Abstand gelegt. Betrifft NUR diesen Test. */
+#define Q9K_ALARM_STRIDE          56UL
 #define Q9K_ALARM_OFF_PID          8UL
 #define Q9K_ALARM_OFF_SIGNAL      16UL
 #define Q9K_ALARM_OFF_TICKS       24UL
 #define Q9K_ALARM_OFF_DAY         32UL
 #define Q9K_ALARM_OFF_SEC         40UL
+#define Q9K_ALARM_OFF_CYCLE       48UL
 #define Q9K_ALARM_NEXTID          ((unsigned long)(g_alarmTable + 0x100))
 #define Q9K_ALARM_SCRATCH_FUNC    ((unsigned long)(g_fakeGlobals + 0x020))
 #define Q9K_ALARM_SCRATCH_IDIN    ((unsigned long)(g_fakeGlobals + 0x040))
@@ -143,6 +144,15 @@ int main(void)
     check("A$Cycle belegt seinen Platz weiter",
           (Q9_u32)(Q9K_GetU32(Q9K_ALARM_ID(0)) != 0), 1);
     check("insgesamt zweimal zugestellt", (Q9_u32)g_sendCalls, 2);
+
+    /* Regression: das Zyklusintervall ist ein volles 32-Bit-Feld und darf
+     * nicht wie in der ersten Fassung auf 16 Bit gekürzt werden. */
+    reset();
+    Q9K_AlarmSet(8, 2, 70000UL, &id, &err);
+    check("A$Cycle akzeptiert ein 32-Bit-Intervall", Q9K_GetU32(Q9K_ALARM_CYCLE(0)), 70000UL);
+    check("langes Intervall loest zuerst korrekt aus", Q9K_AlarmTick(), 0);
+    check("langes Intervall bleibt nach dem Ausloesen erhalten", Q9K_AlarmTick(), 1);
+    check("langes Intervall wird nicht auf 16 Bit gekuerzt", Q9K_GetU32(Q9K_ALARM_CYCLE(0)), 70000UL);
 
     /* A$Delete mit ID: genau dieser Alarm verschwindet. */
     reset();

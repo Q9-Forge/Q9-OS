@@ -644,12 +644,11 @@ Q9K_DatModScratch_Error    equ $19D4      * Q9_u32, d1.w AUS bei Fehler
 Q9K_DatModScratch_Success  equ $19D8      * Q9_u32, 0/1
 
 * F$Alarm-Scratch (2026-09-18, s. q9kernel_alarm.c). Die Alarmtabelle
-* selbst liegt bei $1A00 (8 Eintraege a 16 Byte, Ende $1A80), der
-* ID-Zaehler bei $1A80 -- die Scratchzellen deshalb erst ab $1A90.
-* Der Block lag bis 2026-09-18 ab $1A90 und damit ab der Erweiterung auf
-* 24-Byte-Eintraege MITTEN in der Alarmtabelle ($1A00-$1ABF): Slot 6 auf
-* _Func, Slot 7 auf _Date. Ausfuehrliche Begruendung im Kopf des
-* Scratch-Blocks in q9kernel_alarm.c; beide Seiten muessen uebereinstimmen.
+* selbst liegt bei $1A00 (8 Eintraege a 28 Byte, Ende $1AE0), der
+* ID-Zaehler bei $1AE0. Der Scratchblock beginnt deshalb erst ab $1B00.
+* Der fruehere Block bei $1A90 lag nach der Erweiterung der Eintraege
+* mitten in der Tabelle und wurde bewusst verlegt; beide Seiten muessen
+* bei einer Layoutaenderung gemeinsam angepasst werden.
 Q9K_AlarmScratch_Func      equ $1B00      * Q9_u32, d1.w EIN = Funktionscode
 Q9K_AlarmScratch_IdIn      equ $1B04      * Q9_u32, d0.l EIN / d0.l AUS = Alarm-ID
 Q9K_AlarmScratch_Signal    equ $1B08      * Q9_u32, d2.w EIN
