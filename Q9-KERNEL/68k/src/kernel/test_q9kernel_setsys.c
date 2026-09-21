@@ -10,7 +10,9 @@
 
 #include <stdio.h>
 
-static unsigned char g_fakeGlobals[0x80];
+static unsigned char g_fakeGlobals[0x2000];
+
+#define Q9K_SETSYS_ADDR(offset) ((unsigned long)(g_fakeGlobals + (offset)))
 
 #define Q9K_SetSysScratch_VarCode ((unsigned long)(g_fakeGlobals + 0x00))
 #define Q9K_SetSysScratch_Flags   ((unsigned long)(g_fakeGlobals + 0x10))
@@ -78,6 +80,31 @@ int main(void)
     ok = Q9K_ProcSetSys(0x76UL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
     checkU32("F3b: D_TSlice meldet Erfolg", (unsigned long)ok, 1UL);
     checkU32("F3b: D_TSlice startet mit 2", value, 2UL);
+
+    /* Fall 3c: verifizierte System-Globals sind lesbar. */
+    *(unsigned long *)(g_fakeGlobals + 0x6CUL) = 0x00800000UL;
+    value = 0; error = 0xDEADUL;
+    ok = Q9K_ProcSetSys(0x6CUL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
+    checkU32("F3c: D_TotRAM ist lesbar", (unsigned long)ok, 1UL);
+    checkU32("F3c: D_TotRAM liefert Globalwert", value, 0x00800000UL);
+
+    *(unsigned long *)(g_fakeGlobals + 0x4CUL) = 0x00123456UL;
+    value = 0;
+    ok = Q9K_ProcSetSys(0x4CUL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
+    checkU32("F3d: D_Proc ist lesbar", (unsigned long)ok, 1UL);
+    checkU32("F3d: D_Proc liefert Zeigerwert", value, 0x00123456UL);
+
+    *(unsigned long *)(g_fakeGlobals + 0x1BE0UL) = 9876UL;
+    value = 0;
+    ok = Q9K_ProcSetSys(0x54UL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
+    checkU32("F3e: D_Ticks ist lesbar", (unsigned long)ok, 1UL);
+    checkU32("F3e: D_Ticks liefert Q9-Zaehler", value, 9876UL);
+
+    /* Schreibzugriffe auf schreibgeschuetzte Globals bleiben unbekannt. */
+    value = 0xDEADUL; error = 0;
+    ok = Q9K_ProcSetSys(0x6CUL, 0UL, 1UL, &value, &error);
+    checkU32("F3f: D_TotRAM bleibt schreibgeschuetzt", (unsigned long)ok, 0UL);
+    checkU32("F3f: D_TotRAM Schreibfehler E$UnkSvc", error, 0xD0UL);
 
     /* Fall 4: Scratch-Bruecke Q9K_SysSetSysImpl liest/schreibt die
      * richtigen Zellen -- Erfolgsfall. */
