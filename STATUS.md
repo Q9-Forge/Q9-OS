@@ -1287,7 +1287,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Native flat-address-space handler follows the OS-9 no-SSM semantics: accepts every non-wrapping range and ignores d1.w permissions, while rejecting 32-bit range wraparound; SSM/MMU permission validation remains open |
 | 🟡 | `0x59` | F$UAcct | Optional OS9P2 extension callback, not a standalone kernel implementation; Q9 natively performs alarm cleanup on Chain/Exit/reap, while accounting-hook installation still requires the `M$Extens` cold-start scan |
-| 🟡 | `0x5A` | F$CCtl | Handler is wired and live dispatch-verified; on the cacheless Q9 target every control request is a successful no-op, while real CACR/cache maintenance remains hardware-specific |
+| ✅ | `0x5A` | F$CCtl | Default cache-control handler is wired and live dispatch-verified; on the cacheless Q9 target every control request is intentionally a successful no-op, matching the OS-9 kernel behavior when no SysCache customization module is installed |
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired; processor/task-map reporting remains hardware-specific and open |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path; color semantics remain limited |
 | ⛔ | `0x5D` | F$POSK | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, daher keine nachbildbare ABI |
