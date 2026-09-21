@@ -522,6 +522,7 @@ Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte re
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
 Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
 Q9K_IOpenScratch_PathNum  equ $136C      * Q9_u32, d0.w AUS (0 = Fehlschlag)
+Q9K_IOpenScratch_Error    equ $1370      * Q9_u32, d1.w AUS bei Fehler
 
 * Eigene Kernel-Global-Erweiterungen fuer F$GProcP/F$ID (Abschnitt
 * "Prozess-API", 2026-09-01). Direkt hinter I$Open; $1370/$1374 bleiben
@@ -6282,7 +6283,10 @@ Q9K_SysFIOpen:
 * internem Referenzmaterial) -- einziger bisher moeglicher Fehlerfall.
 Q9K_SysFIOpen_Fail:
         movea.l Q9K_IOpenScratch_PastName,a0
-        move.w  #$00c8,d1                        * d1.w = E_PTHFUL
+        move.w  Q9K_IOpenScratch_Error+2,d1     * native validation/pool error
+        bne.s    Q9K_SysFIOpen_FailHaveError
+        move.w  #$00c8,d1                        * defensive default: E_PTHFUL
+Q9K_SysFIOpen_FailHaveError:
         ori     #1,ccr                           * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
 

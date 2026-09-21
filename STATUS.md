@@ -125,6 +125,14 @@ accessing the native path descriptor. The emulator regression extended to
 path 31 is rejected for both calls, and the previous I/O lifecycle remains
 green.
 
+Native `I$Open` now validates the pathname before allocating a descriptor:
+absolute and relative component syntax is checked, empty/doubled components
+are rejected with `E$BPNAM`, and unsupported access bits return `E$BMODE`.
+Pool exhaustion and per-process path-table exhaustion now report `E$PTHFUL`
+through the real `d1.w` error path instead of being indistinguishable from
+other failures. Host tests cover the new errors; a fresh 68k boot still
+reaches the normal Q9 and child-program markers without an exception vector.
+
 `F$SPrior` (call code `0x0D`) is the first writing process-API call. It
 resolves the process ID through the existing descriptor lookup and stores the
 new priority, rejecting an unknown or free process ID with `E$IPrcID`. The
@@ -1323,7 +1331,7 @@ paths; broader application and long-run coverage remains separate work.
 | 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; broader lifetime semantics remain open |
 | 🔷 | `0x82` | I$Dup | Microware IOMan dispatch is present; Q9-native path-table duplication is implemented and emulator-verified, while native file-manager parity remains open |
 | 🔷 | `0x83` | I$Create | Microware IOMan/RBF/CF path is present and covered by the create/write round-trip; Q9-native implementation remains open |
-| 🔷 | `0x84` | I$Open | Microware IOMan/RBF/CF path is present and live-traced; Q9-native console/path handling remains minimal |
+| 🔷 | `0x84` | I$Open | Microware IOMan/RBF/CF path is present and live-traced; Q9-native pathname validation, process-local allocation, and error reporting are implemented, while device/file resolution remains open |
 | 🔷 | `0x85` | I$MakDir | Microware IOMan/RBF/CF path is present and covered by the FAT16 mkdir regression; Q9-native implementation remains open |
 | 🔷 | `0x86` | I$ChgDir | Microware IOMan path is present; Q9-native data/execution directory storage is emulator-tested, while device resolution remains open |
 | 🔷 | `0x87` | I$Delete | Microware IOMan/RBF/CF path is present and covered by the FAT16 delete regression; Q9-native implementation remains open |

@@ -18,26 +18,18 @@
  *   OUT (Fehlschlag): Carry gesetzt, d1.w = Fehlercode.
  *   "I$Open always uses the lowest path number available for the
  *   process." -- also eigentlich PRO PROZESS eine eigene, dichte
- *   Nummerierung. Diese erste Implementierung hat noch KEINE
- *   pro-Prozess-Pfadtabelle (der Prozessdeskriptor hat dafuer noch
- *   kein reserviertes Feld, s. q9kernel_tables.c Kopfkommentar
- *   "Q9K_PROCDESC_SIZE PLATZHALTER") -- Pfadnummern kommen deshalb
- *   vorerst aus einem einzigen GLOBALEN Zaehler/Pool, was bei mehreren
- *   gleichzeitig laufenden Prozessen mit eigenen offenen Pfaden falsch
- *   waere, fuer den aktuellen Ein-Prozess-Testkontext (IOMan oeffnet
- *   genau einen Pfad) aber funktional aequivalent ist. Echtes TODO,
- *   sobald mehrere Prozesse gleichzeitig I/O machen.
+ *   Nummerierung. Die native Schicht pflegt diese lokale P$Path-Tabelle
+ *   inzwischen und trennt sie von der globalen Descriptor-Nummer; der
+ *   Descriptor-Pool bleibt aus Platz-/Lifetime-Gruenden global.
  *
- * ECHTE Pfadaufloesung (Pathname -> Geraet) existiert in diesem Kernel
- * noch NICHT -- kein Dateisystem, keine Geraetetabelle mit benannten
- * Eintraegen. Diese erste Implementierung akzeptiert JEDEN Pathname
- * (ueberspringt ihn nur bis zum NUL-Byte, wie vom Manual verlangt: "(a0)
- * = Updated past pathname") und verbindet JEDEN geoeffneten Pfad
- * pauschal mit der einzigen echten Ausgabe, die dieser Kernel kennt --
- * dem DUART (Q9K_DiagWriteD7-Mechanismus). Fuer den konkreten Anlass
- * (IOMan versucht laut Analyse + Live-Diagnose von D_Init
- * "/term" zu oeffnen, s. Session-Notizen 2026-08-31) ist das inhaltlich
- * korrekt -- "/term" IST die Konsole.
+ * ECHTE Pfadaufloesung (Pathname -> Geraet/Dateisystem) existiert in diesem
+ * Kernel noch NICHT -- die Microware-File-Manager bleiben dafuer zustaendig.
+ * Der native Pfad erzwingt aber bereits die OS-9-Komponentensyntax und
+ * liefert korrekte Fehlercodes, statt beliebige Speicherfolgen als Namen zu
+ * akzeptieren. Gültige native Pfade werden vorerst mit der einzigen echten
+ * Ausgabe verbunden, die dieser Kernel kennt -- dem DUART
+ * (Q9K_DiagWriteD7-Mechanismus); die Geraet-/Datei-Aufloesung bleibt der
+ * naechste Ausbau.
  */
 
 #include "q9kernel_config.h"
@@ -102,6 +94,10 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PATHDESC_MODE_OFF 0x02UL
 #define Q9K_PATHDESC_REF_OFF  0x04UL       /* Q9-native open-reference count */
 #define Q9K_PATHDESC_POS_OFF  0x08UL       /* Q9-native logical file position */
+
+#define Q9K_E_BPNAM  0x00D7U
+#define Q9K_E_BMODE  0x00CBU
+#define Q9K_E_PTHFUL 0x00C8U
 
 /* The current process owns the P$Path table.  Keep the offsets here in one
  * place so native I/O uses the same process layout as IOMan. */
@@ -204,6 +200,8 @@ static void Q9K_WriteU32BE_At(Q9_u32 addr, Q9_u32 value)
     p[2] = (unsigned char)((value >> 8)  & 0xFFU);
     p[3] = (unsigned char)(value & 0xFFU);
 }
+
+static int Q9K_PrsNamIsNameChar(unsigned char c);
 
 /* Q9K_ProcAllPD -- echte F$AllPD-Kernlogik (Callcode $30, "Allocate
  * Process/Path Descriptor"; in OS-9/6809 hiess derselbe Dienst F$All64,
@@ -465,23 +463,66 @@ int Q9K_ProcPrsNam(Q9_u32 pathPtr, Q9_u32 *outNameStart, Q9_u32 *outPastName,
  *     korrekt aktualisierter Zeiger schadet im Fehlerfall nicht und
  *     spart eine Sonderfall-Unterscheidung im Assembler-Trampolin).
  */
-Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
+static Q9_u16 Q9K_NativeValidatePathname(Q9_u32 pathnamePtr, Q9_u32 *outPastName)
 {
-    Q9_u32 p = pathnamePtr;
+    const volatile Q9_u8 *p;
+    Q9_u32 i = 0;
+    Q9_u32 sawName = 0;
+    Q9_u32 componentLen = 0;
+
+    if (pathnamePtr == 0)
+        return Q9K_E_BPNAM;
+    p = (const volatile Q9_u8 *)pathnamePtr;
+    while (i < 256UL) {
+        Q9_u8 c = p[i++];
+        if (c == 0) {
+            if (componentLen == 0 || sawName == 0)
+                return Q9K_E_BPNAM;
+            if (outPastName)
+                *outPastName = pathnamePtr + i;
+            return 0;
+        }
+        if (c == '/') {
+            if (componentLen == 0) {
+                if (i == 1 && sawName == 0)
+                    continue; /* absolute path root */
+                return Q9K_E_BPNAM;
+            }
+            componentLen = 0;
+            continue;
+        }
+        if (!Q9K_PrsNamIsNameChar((unsigned char)(c & 0x7fU)))
+            return Q9K_E_BPNAM;
+        componentLen++;
+        sawName = 1;
+    }
+    return Q9K_E_BPNAM; /* unterminated/overlong path */
+}
+
+Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName,
+                     Q9_u16 *outError)
+{
     Q9_u32 slot;
     Q9_u32 pathNum;
     Q9_u32 descriptorNum;
     Q9_u32 procDesc;
     Q9_u32 pathIndex;
 
-    while (*(volatile Q9_u8 *)p != 0)
-        p++;
-    p++; /* hinter das NUL-Byte selbst, "past pathname" */
-    *outPastName = p;
+    *outError = 0;
+    *outPastName = pathnamePtr;
 
-    slot = Q9K_PathPoolAlloc();
-    if (slot == 0)
+    if ((mode & ~0xD7UL) != 0) {
+        *outError = Q9K_E_BMODE;
         return 0;
+    }
+    *outError = Q9K_NativeValidatePathname(pathnamePtr, outPastName);
+    if (*outError != 0)
+        return 0;
+    slot = Q9K_PathPoolAlloc();
+    if (slot == 0) {
+        *outError = Q9K_E_PTHFUL;
+        return 0;
+    }
 
     /* The pool index is global, while the number returned to the caller is
      * a process-local P$Path index.  Keep both values separate: this is
@@ -499,6 +540,7 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
         }
         if (pathNum == 0) {
             Q9K_PathPoolFree(slot);
+            *outError = Q9K_E_PTHFUL;
             return 0;
         }
     }
@@ -565,6 +607,9 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName)
 #endif
 #ifndef Q9K_IOpenScratch_PathNum
 #define Q9K_IOpenScratch_PathNum  0x136CUL   /* Q9_u32, d0.w AUS (0 = Fehlschlag) */
+#endif
+#ifndef Q9K_IOpenScratch_Error
+#define Q9K_IOpenScratch_Error    0x1370UL   /* Q9_u32, d1.w AUS bei Fehler */
 #endif
 
 /* Q9K_SysIOpenImpl -- duenne, PARAMETERLOSE Bruecke zwischen dem
@@ -640,11 +685,13 @@ void Q9K_SysIOpenImpl(void)
     Q9_u32 namePtr  = Q9K_GetU32(Q9K_IOpenScratch_NamePtr);
     Q9_u32 pastName = 0;
     Q9_u32 pathNum;
+    Q9_u16 err = 0;
 
-    pathNum = Q9K_ProcIOpen(mode, namePtr, &pastName);
+    pathNum = Q9K_ProcIOpen(mode, namePtr, &pastName, &err);
 
     Q9K_SetU32(Q9K_IOpenScratch_PastName, pastName);
     Q9K_SetU32(Q9K_IOpenScratch_PathNum, pathNum);
+    Q9K_SetU32(Q9K_IOpenScratch_Error, (Q9_u32)err);
 }
 
 /*
