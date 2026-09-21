@@ -1242,7 +1242,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking and emulator test complete |
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |
 | 🟡 | `0x2A` | F$IRQ | Kernel path exists; complete interrupt-device coverage remains open |
-| 🟡 | `0x2B` | F$IOQu | Microware path exists; current Q9 compatibility is not fully verified |
+| 🔷 | `0x2B` | F$IOQu | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; immediate preemption still open |
 | ✅ | `0x2D` | F$NProc | Takes the next process off the ready list and switches into it. The caller is deliberately not re-queued — that is the manual's own semantics. Emulator-verified with a forked process that calls it and correctly never comes back |
 | 🟡 | `0x2E` | F$VModul | Header parity/CRC validation, size-bound handling, return-buffer ABI, and host tests are complete; full external loader integration remains open |
