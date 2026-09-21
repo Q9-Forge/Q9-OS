@@ -111,6 +111,7 @@ extern void   Q9K_SysFIChgDir(void); /* q9kernel_entry.a, I$ChgDir (Callcode 0x8
 extern void   Q9K_SysFAllPD(void);   /* q9kernel_entry.a, F$AllPD (Callcode 0x30) */
 extern void   Q9K_SysFIRQ(void);     /* q9kernel_entry.a, F$IRQ  (Callcode 0x2a) */
 extern void   Q9K_SysFChkMem(void);  /* q9kernel_entry.a, F$ChkMem (Callcode 0x58) */
+extern void   Q9K_SysFSysDbg(void);  /* q9kernel_entry.a, F$SysDbg (Callcode 0x52) */
 extern void   Q9K_SysFPermit(void);  /* q9kernel_entry.a, F$Permit (Callcode 0x3a) */
 extern void   Q9K_SysFProtect(void); /* q9kernel_entry.a, F$Protect (Callcode 0x3b) */
 extern void   Q9K_SysFAllTsk(void);  /* q9kernel_entry.a, F$AllTsk (Callcode 0x3f) */
@@ -601,6 +602,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
+                    Q9K_PutU32(usrdisBase + 0x52UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSysDbg);
                     Q9K_PutU32(usrdisBase + 0x4eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFModul);
                     Q9K_PutU32(usrdisBase + 0x07UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMem);
                     Q9K_PutU32(usrdisBase + 0x3aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPermit);
@@ -682,6 +684,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(sysdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(sysdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
+                    Q9K_PutU32(sysdisBase + 0x52UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSysDbg);
                     Q9K_PutU32(sysdisBase + 0x4eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFFModul);
                     Q9K_PutU32(sysdisBase + 0x07UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMem);
                     Q9K_PutU32(sysdisBase + 0x3aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPermit);

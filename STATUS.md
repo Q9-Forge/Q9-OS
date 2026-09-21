@@ -495,10 +495,11 @@ it. And the mechanism is simple — real OS-9 keeps the debugger's entry point i
 the system global `D_SysDbg` and F$SysDbg just jumps there. Our kernel even has
 a placeholder for it, though on an invented address and filled by nobody.
 
-What is missing is only the entry point: text location is not an entry point,
-and finding the monitor's real one means disassembling the boot ROM. That is its
-own task, not a side note — which is why this is now marked open rather than
-withdrawn. Once the address is known, F$SysDbg is a handful of instructions.
+The entry-point derivation is now recovered from the original boot glue:
+`a1` is the ROM service-table base and `B_Debug` is its fifth longword at
+offset `$10`, so `D_SysDbg = *(D_SysRom+$10)`. Q9 now captures that pointer
+at boot and exposes a guarded `F$SysDbg` trampoline. The remaining work is
+the live RomBug register/return ABI and the surrounding `F$PwrMan` preamble.
 
 The reference-kernel startup code narrows this down substantially: it stores
 the debugger pointer as `D_SysRom + $10`, not as the address of the visible
@@ -1261,7 +1262,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x4B` | F$AllPrc | Allocates and clears a process descriptor; without an MMU this is the documented direct F$AllPD case |
 | ✅ | `0x4C` | F$DelPrc | Returns a descriptor to the pool only, as documented; other resources stay the caller's duty |
 | ✅ | `0x4E` | F$FModul | Side-effect-free module-directory lookup is implemented with type/language filtering, result registers, and name-pointer advancement; the direct `iattachsvc` emulator regression finds its own `0x0101` program module without changing its link count. Multiple matches now follow the Microware first-entry semantics; `F$Link`/`F$UnLoad` retain their highest-revision selection independently |
-| ❌ | `0x52` | F$SysDbg | RomBug **is** present in the boot ROM; what is missing is the entry point for `D_SysDbg` — see the note below |
+| 🟡 | `0x52` | F$SysDbg | Original-ROM-Service-Tabelle ausgewertet: Bootcode übernimmt `B_Debug` aus `*(D_SysRom+$10)` nach `D_SysDbg`; guarded native trampoline und beide Dispatch-Einträge sind verdrahtet, aber die vollständige RomBug-Rückkehr-/`F$PwrMan`-Konvention bleibt noch live zu verifizieren |
 | ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified on both wait paths, the blocking one with a forked second process doing the signalling |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |

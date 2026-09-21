@@ -94,7 +94,7 @@
 #define Q9_D_PROFMEM        0x0578  /* Speicherzeiger des Profilers [PLATZHALTER] */
 #define Q9_D_FIRQVCT        0x0594  /* Zeiger auf die schnelle IRQ-Routinen-/Datentabelle [PLATZHALTER] */
 #define Q9_D_VCTJMP         0x0598  /* Sicherungstabelle fuer schnelle IRQ-Vektoren/Sprungziele [PLATZHALTER] */
-#define Q9_D_SYSDBG         0x059C  /* Einsprungadresse des Systemdebuggers [PLATZHALTER] */
+#define Q9_D_SYSDBG         0x059C  /* Einsprungadresse des Systemdebuggers [ROM-Servicefeld B_Debug ueber D_SysRom+$10] */
 #define Q9_D_DBGMEM         0x05A0  /* Speicherzeiger des Systemdebuggers [PLATZHALTER] */
 #define Q9_D_DBGFLG         0x05A4  /* Aktiv-Flag des Systemdebuggers [PLATZHALTER] */
 #define Q9_D_ALLOCTYPE      0x05A5  /* Typ des verwendeten Speicherallokators [VERIFIZIERT] */
