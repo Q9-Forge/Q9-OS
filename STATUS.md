@@ -1214,7 +1214,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x0C` | F$ID | Process identity path implemented |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
 | ✅ | `0x0E` | F$STrap | Registers per-process handlers in P$Except and really dispatches into them; emulator-verified end to end on a deliberate Illegal Instruction |
-| 🟡 | `0x0F` | F$PErr | Microware path exists; current Q9 compatibility is not fully verified |
+| 🔷 | `0x0F` | F$PErr | Original Microware IOMan path is the supported implementation; the call is available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
 | ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
 | 🟡 | `0x12` | F$SchBit | Kernel-native implementation, host-tested, including the unusual carry case; the loaded Microware IOMan claims the call via F$SSvc, so it is not reachable in the emulator — see the note |
