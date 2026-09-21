@@ -165,6 +165,20 @@ int main(void)
     memset(g_fakeGlobals, 0xCC, sizeof(g_fakeGlobals));
     memset(bootList, 0, sizeof(bootList));
 
+    /* F$VModul darf untrusted Eingaben nicht an den Headerpruefer
+     * durchreichen: Nullzeiger und zu kurze Puffer werden frueh mit
+     * E$BMID abgewiesen. */
+    {
+        Q9_u16 error = 0;
+        checkU32("F$VModul weist Nullzeiger ab",
+                 Q9K_ModDirValidateAndAdd((const Q9_u8 *)0, 0, &error), 0);
+        checkU32("F$VModul Nullzeigerfehler == E$BMID", error, 0x00CD);
+        error = 0;
+        checkU32("F$VModul weist zu kurzen Puffer ab",
+                 Q9K_ModDirValidateAndAdd((const Q9_u8 *)g_fakeGlobals, 2, &error), 0);
+        checkU32("F$VModul Laengenfehler == E$BMID", error, 0x00CD);
+    }
+
     /* Freiliste ueber 8 Slots (echt 16 Byte, hier testweise
      * Q9K_TEST_SLOT_SIZE, s. o.) manuell aufbauen -- gleiches Muster wie
      * Q9K_BuildFreeList (q9kernel_tables.c, hier bewusst nicht
