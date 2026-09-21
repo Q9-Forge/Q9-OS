@@ -340,11 +340,10 @@ implemented" in real OS-9/68K and points to lowering the priority instead.
 `F$AProc` hands a descriptor to the existing scheduler. What the manual
 describes — age the queue, set the new process' age to its priority, insert by
 relative age — is exactly what `Q9K_SchedInsert` already does, and the ageing of
-the others happens every tick anyway, so this call deliberately does not run a
-second ageing pass over the same fields. Not implemented is the last sentence of
-the description, immediate preemption when the new process outranks the running
-one; that needs the same context switch out of trap state that `F$NProc` still
-lacks.
+the others happens every tick anyway. A higher-priority process now requests an
+immediate trap-context handoff: the assembler saves the interrupted frame,
+commits the ready-queue change atomically, and resumes the new process via its
+saved frame. Equal/lower priorities remain tick-driven.
 
 `F$AllPrc` allocates and clears a descriptor. Without an MMU this is the direct
 `F$AllPD` case the manual names, so the MMU-image step falls away entirely. One
@@ -1264,7 +1263,7 @@ globals. All 26 current `test_q9kernel_*.c` suites build and pass again.
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |
 | 🟡 | `0x2A` | F$IRQ | Native registration/removal now validates reserved vectors, clears stale metadata, restores default handlers after the last removal, and is host-tested; complete hardware-/treiber-spezifische Interruptabdeckung remains open |
 | 🔷 | `0x2B` | F$IOQu | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
-| ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; immediate preemption still open |
+| ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; higher-priority descriptors now preempt immediately from the trap context |
 | ✅ | `0x2D` | F$NProc | Takes the next process off the ready list and switches into it. The caller is deliberately not re-queued — that is the manual's own semantics. Emulator-verified with a forked process that calls it and correctly never comes back |
 | 🟡 | `0x2E` | F$VModul | Native header-parity/CRC validation, null/short-buffer and declared-size bounds, directory-pool exhaustion handling, return-buffer ABI, host tests, and live validation of `echo`/`csl` succeed; `/dd/CMDS/date` still never reaches F$VModul because Microware F$Load fails earlier in the RBF/path-read step with `E$MNF` |
 | ✅ | `0x2F` | F$FindPD | Path/process number to descriptor address, same DBT structure as F$AllPD/F$RetPD |
@@ -1370,8 +1369,10 @@ areas remain open independently of individual call-code implementations:
 1. **Trap and context lifetime** — the process-handoff flag leak is fixed;
    stress-test arbitrary nested external traps, register-frame ownership, and
    all return paths through IOMan, file managers, and drivers.
-2. **Scheduler** — cover remaining edge cases involving preemption, process
-   switching, and simultaneous IRQs; F$DExec trace stops are implemented.
+2. **Scheduler** — stress simultaneous IRQ arrival during queue/context handoff
+   and complete hardware-specific IRQ coverage; priority preemption and the
+   ordinary process-switch paths are implemented. F$DExec trace stops are
+   implemented.
 3. **Native Q9 I/O** — extend the minimal native path layer toward full device,
    file, directory, status, and pathname semantics instead of relying on IOMan.
 4. **Memory protection/MMU** — replace flat-address compatibility behavior with

@@ -141,6 +141,9 @@ typedef char Q9K_ProcDescShiftMatchesSize[
 #define Q9K_APROC_SCRATCH_ERROR    0x1944UL /* Q9_u32, d1.w AUS bei Fehler */
 #define Q9K_APROC_SCRATCH_SUCCESS  0x1948UL /* Q9_u32, 0/1                 */
 #endif
+#ifndef Q9K_APROC_SCRATCH_PREEMPT
+#define Q9K_APROC_SCRATCH_PREEMPT  0x196CUL /* Q9_u32, 1 = sofort wechseln */
+#endif
 #ifndef Q9K_GPRDBT_SCRATCH_BUF
 #define Q9K_GPRDBT_SCRATCH_BUF     0x194CUL /* Q9_u32, (a0) EIN            */
 #define Q9K_GPRDBT_SCRATCH_COUNT   0x1950UL /* Q9_u32, d1.l EIN/AUS        */
@@ -531,12 +534,9 @@ void Q9K_SysGPrDscImpl(void)
  * Call fuehrt deshalb bewusst keine zweite, eigene Alterungsrunde aus:
  * das waere doppelte Buchfuehrung auf denselben Feldern.
  *
- * NICHT umgesetzt ist der letzte Satz der Beschreibung -- "hat der neue
- * Prozess eine hoehere Prioritaet als der laufende, gibt dieser den Rest
- * seiner Zeitscheibe ab und der neue laeuft sofort". Das braucht eine
- * Preemption aus dem Trap-Kontext heraus, dieselbe Umschaltung, die auch
- * F$NProc noch fehlt (s. STATUS.md). Der Prozess wird hier also lauffaehig
- * gemacht und kommt beim naechsten Tick dran, nicht sofort.
+ * Bei einer hoeheren Prioritaet markiert die Bridge den Deskriptor fuer die
+ * sofortige Trap-Kontext-Umschaltung; der Assembler sichert den laufenden
+ * Rahmen und commit-t den Wechsel nach der Rueckkehr aus C.
  *
  * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
 int Q9K_ProcAProc(Q9_u32 desc, Q9_u16 *outError)
@@ -577,8 +577,15 @@ int Q9K_ProcAProc(Q9_u32 desc, Q9_u16 *outError)
 void Q9K_SysAProcImpl(void)
 {
     Q9_u16 err = 0;
+    Q9_u32 desc = Q9K_GetU32(Q9K_APROC_SCRATCH_DESC);
 
-    if (Q9K_ProcAProc(Q9K_GetU32(Q9K_APROC_SCRATCH_DESC), &err)) {
+    Q9K_SetU32(Q9K_APROC_SCRATCH_PREEMPT, 0UL);
+    if (Q9K_ProcAProc(desc, &err)) {
+        Q9_u32 current = Q9K_GetU32(Q9_D_PROC);
+        if (current != 0 && current != desc &&
+            Q9K_GetU8(desc + Q9K_PROCDESC_PRIORITY_OFF) >
+            Q9K_GetU8(current + Q9K_PROCDESC_PRIORITY_OFF))
+            Q9K_SetU32(Q9K_APROC_SCRATCH_PREEMPT, 1UL);
         Q9K_SetU32(Q9K_APROC_SCRATCH_SUCCESS, 1UL);
     } else {
         Q9K_SetU32(Q9K_APROC_SCRATCH_ERROR, (Q9_u32)err);

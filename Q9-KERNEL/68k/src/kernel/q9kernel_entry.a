@@ -614,6 +614,7 @@ Q9K_DateScratch_Success    equ $193C      * Q9_u32, 0/1
 Q9K_AProcScratch_Desc      equ $1940      * Q9_u32, (a0) EIN
 Q9K_AProcScratch_Error     equ $1944      * Q9_u32, d1.w AUS bei Fehler
 Q9K_AProcScratch_Success   equ $1948      * Q9_u32, 0/1
+Q9K_AProcScratch_Preempt   equ $196C      * Q9_u32, 1 = sofortiger Wechsel
 Q9K_GPrDBTScratch_Buf      equ $194C      * Q9_u32, (a0) EIN
 Q9K_GPrDBTScratch_Count    equ $1950      * Q9_u32, d1.l EIN/AUS
 Q9K_AllPrcScratch_Desc     equ $1954      * Q9_u32, (a2) AUS
@@ -6661,8 +6662,8 @@ Q9K_SysFGregor_Fail:
 * Q9K_SysFAProc -- F$AProc (Callcode $2C, "Enter Process in Active
 * Process Queue"). Reale ABI, 68k_tech.pdf S.377: IN (a0) =
 * Prozessdeskriptor, keine Ausgabe; Carry + d1.w bei Fehler.
-* Systemzustand. Kernlogik und die bewusst NICHT umgesetzte sofortige
-* Verdraengung s. Q9K_ProcAProc in q9kernel_procapi.c.
+* Systemzustand. Bei hoeherer Prioritaet wird der Trap-Kontext nach dem
+* Rueckweg aus C gesichert und der neue Prozess sofort aktiviert.
 Q9K_SysFAProc:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
@@ -6671,12 +6672,36 @@ Q9K_SysFAProc:
         movea.l (sp)+,a6
         tst.w   Q9K_AProcScratch_Success+2
         beq     Q9K_SysFAProc_Fail
+        tst.w   Q9K_AProcScratch_Preempt+2
+        beq     Q9K_SysFAProc_Ok
+        addq.l  #4,sp
+        movem.l d0-d7/a0-a6,-(sp)
+        movea.l Q9_D_Proc,a0
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
+        move.l  Q9K_AProcScratch_Desc,d0
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SchedCommitPreempt
+        movea.l (sp)+,a6
+        tst.l   d0
+        beq     Q9K_SysFAProc_FailSaved
+        movea.l d0,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        clr.w   Q9K_InTrapPath
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
+Q9K_SysFAProc_Ok:
         andi    #$fe,ccr
         rts
 Q9K_SysFAProc_Fail:
         move.w  Q9K_AProcScratch_Error+2,d1
         ori     #1,ccr
         rts
+Q9K_SysFAProc_FailSaved:
+        movea.l Q9_D_Proc,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        rte
 
 *******************************************************************************
 * Q9K_SysFGPrDBT -- F$GPrDBT (Callcode $1F, "Get Copy of Process

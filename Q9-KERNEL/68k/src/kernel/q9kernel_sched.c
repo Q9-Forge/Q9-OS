@@ -19,13 +19,10 @@
  *   - Tick = 10 ms (Board-Timer, s. Q9-Flux/docs/BOARD.md), Timeslice =
  *     Q9K_SCHED_TSLICE Ticks (Manual-Default: 2).
  *
- * BEWUSST NUR Tick-getriebenes Round-Robin-mit-Aging -- KEIN echtes
- * Prioritaets-Preemption-beim-Aufwachen ("OS-9 provides ... by preempting
- * the currently executing process when a process with a higher priority
- * becomes active" -- das braucht F$Sleep/F$Wait/Signale, die es in
- * diesem Kernel noch nicht gibt). Gleiches "minimales Geruest"-Prinzip
- * wie schon bei Punkt 7 (q9kernel_firstproc.c) -- ehrlich nicht
- * vorgetaeuscht, TODO markiert.
+ * Der periodische Grundpfad bleibt Tick-getriebenes Round-Robin mit Aging.
+ * F$AProc kann ausserhalb dieses Tickpfads einen hoeher priorisierten Prozess
+ * ueber Q9K_SchedCommitPreempt sofort uebernehmen; Aufwach-Preemption aus
+ * F$Sleep/F$Wait/Signalen ist davon getrennt und bleibt eine eigene Aufgabe.
  *
  * Der eigentliche Registersatz-Sicherungs-/Wiederherstellungs-
  * Mechanismus (was bei einem Tick WIRKLICH auf dem Stack passiert)
@@ -254,6 +251,21 @@ void Q9K_SchedRemove(Q9_u32 desc)
 {
     if (desc != 0)
         Q9K_ListUnlink(desc);
+}
+
+/* Commit an F$AProc priority preemption after the assembler trap wrapper has
+ * saved the interrupted register frame and updated its SavedSP. */
+Q9_u32 Q9K_SchedCommitPreempt(Q9_u32 target)
+{
+    Q9_u32 current = Q9K_GetU32(Q9_D_PROC);
+
+    if (target == 0 || target == current)
+        return 0;
+    Q9K_SchedRemove(target);
+    if (current != 0)
+        Q9K_SchedInsert(current);
+    Q9K_SetU32(Q9_D_PROC, target);
+    return target;
 }
 
 /* Q9K_SchedSetPriority -- applies a changed priority to a descriptor and,
