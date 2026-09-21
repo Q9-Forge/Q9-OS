@@ -83,6 +83,34 @@ blocked by that same platform boundary rather than by an unregistered syscall.
 
 ## Latest kernel verification (2026-09-21)
 
+### Status-evidence rule
+
+Every change of a status marker in the syscall table or roadmap must name its
+exact evidence in the same change: the host command and result for a host-only
+claim, or the build/image recipe, emulator duration, marker sequence, and
+relevant negative checks for an emulator claim. A source-level implementation
+alone remains 🟡. If the evidence is historical or belongs to a foreign
+Microware module, the entry must say so explicitly rather than implying a
+native Q9 result. This section is the current evidence ledger; the matching
+snapshot in `docs/OWN_KERNEL_STATUS.md` is updated in the same commit.
+
+Reproduction commands for the current entry are:
+
+```sh
+gcc -Wall -Wextra -DQ9K_KERNEL_DEVELOPMENT -DQ9K_ALLOC_STANDARD \
+  -o /private/tmp/test_q9kernel_tables \
+  Q9-KERNEL/68k/src/kernel/test_q9kernel_tables.c
+/private/tmp/test_q9kernel_tables
+Q9K_KERNEL_VARIANT=development ./Q9-KERNEL/68k/src/kernel/build.sh "$BUILD_DIR"
+Q9K_BUILD_DIR="$BUILD_DIR" Q9_DISK_MODULES="rbf cfide dd c0" \
+  Q9_BOOT_MODULES="$BUILD_DIR/iattachsvc" \
+  ./tools/mkbootfile.sh --disk <reference-boot> <fresh-image>
+```
+
+The emulator is Q9-Flux 68k with the development ROM; the recorded run used
+the complete module paths from the 2026-09-21 session and was stopped after
+approximately 75 seconds.
+
 Boot/integration hardening was extended and exercised from a fresh development
 kernel build. `Q9K_CInit` now gates the exception-table build, `init` module
 configuration, and the module-directory/process/path table allocation before

@@ -6,7 +6,34 @@ neu geschriebenen, OS-9/68K-kompatiblen Kernels. Ergänzt
 einem intern dokumentierten Plan um das, was davon **real läuft** — nachgewiesen im
 Q9-Flux-Emulator, nicht bloß implementiert.
 
-**Stand: 2026-09-20**, Branch `main`, Commit `7cabb1b`.
+**Stand: 2026-09-21**, Branch `main`, Commit `1a07bba`.
+
+### Synchronisierter Evidence-Snapshot (2026-09-21)
+
+`STATUS.md` im Repository-Root ist die normative Tabelle; dieser historische
+Bericht spiegelt deren aktuellen Evidence-Stand und bewahrt darunter die
+chronologischen Sitzungsnotizen. Beide Dateien werden bei jeder Statusänderung
+im selben Commit aktualisiert. Ein Markerwechsel ist nur zulässig, wenn der
+gleiche Commit den konkreten Nachweis nennt:
+
+* Host-only: exakter `gcc`-/Testaufruf und ein reproduzierbares
+  `ALLE TESTS BESTANDEN` bzw. gleichwertiges Ergebnis.
+* Emulator: Build-/Bootimage-Rezept, verwendete Module, Laufzeit,
+  Markerfolge und die geprüften Negativmarker (z. B. `Vektor=0`, keine
+  Illegal Instruction/Format-/Stack-Fehler).
+* Fremdmodul-/Microware-Abhängigkeit: ausdrücklich als solche markieren;
+  Implementierung allein bleibt gelb.
+
+Aktueller konkreter Nachweis: Commit `1a07bba` baut den Development-Kernel
+ohne Fehler, `test_q9kernel_tables` besteht einschließlich des absichtlich
+erschöpften Arena-Falls, und ein frisches Q9-Flux-Image mit `init`,
+`forkchild`, `rbf`, `cfide`, `dd`, `c0` und `iattachsvc` läuft ungefähr
+75 Sekunden. Es erreicht `Hallo von Q9-OS!` und
+`Hallo aus einem echten Programm!`; der vollständige Log enthält keinen
+Illegal-Instruction-, Address-/Stack-, Panic- oder Failure-Marker. Der
+Kernel latched Bootfehler nun in `0x1224` (1 Exception-Tabelle, 2 fehlendes
+`init`, 3 zu kurzes `init`, 4 zu kleine Arena). Die vier absichtlich
+fehlerhaften Bootimages sind noch nicht als negative Emulatorfälle ausgeführt.
 
 ---
 
@@ -31,14 +58,12 @@ Damit kann ein neu aufgenommener Prozess keinen fremden TRAP-Kontext erben.
 Die verbleibende offene Arbeit ist gezieltes Stressen beliebiger verschachtelter
 Treiber-/IOMan-Aufrufe; der normale Microware-Boot bleibt verifiziert.
 
-**Diese Datei war 134 Commits lang nicht fortgeschrieben.** Die Übergabe
-darunter endet am 13.09. bei Fortsetzung 61; seitdem ist sehr viel
-passiert, dokumentiert wurde es aber in **`STATUS.md`** im Wurzelverzeichnis.
-Das ist seit dem 16.09. die laufende Statusquelle: eine Tabelle über alle
-~97 Callcodes plus ein fortlaufender Abschnitt „Latest kernel
-verification". **Für den Stand eines einzelnen Systemaufrufs dort
-nachsehen, nicht hier.** Diese Datei bleibt für das, was eine Tabelle
-nicht trägt: offene Fragen, Messfallen, zurückgezogene Befunde.
+Die Übergabe darunter endet am 13.09. bei Fortsetzung 61; die danach
+chronologisch ergänzten Abschnitte bleiben historische Arbeitsnotizen. Für den
+Stand eines einzelnen Systemaufrufs ist `STATUS.md` die laufende Tabelle; der
+Evidence-Snapshot hier oben muss bei jeder Änderung mitgeführt werden. Diese
+Datei trägt zusätzlich offene Fragen, Messfallen, zurückgezogene Befunde und
+die Begründung, warum ein Marker noch nicht grün ist.
 
 ### Was seitdem fertig wurde (Auswahl, Details in `STATUS.md`)
 
