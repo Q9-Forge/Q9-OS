@@ -828,6 +828,32 @@ no loadable clock module; its timer interrupt has been running since boot.
 There is nothing here to start, so the row stays 🟡 rather than claiming a
 completeness the machine does not have.
 
+**The month-field-0 reading is now confirmed against the original kernel, not
+just the manual.** Scanning every module under `MWOS/OS9/*/CMDS` for the byte
+pattern `4E40 0016` (`TRAP #0` followed by the `F$STime` call code) turns up 38
+files, and the interesting one is the reference kernel itself. In `dker030s` at
+offset `$6e0e` the sequence reads:
+
+```
+    moveq   #$0,d0
+    move.l  #$076c0000,d1
+    trap    #$0                 * F$STime
+```
+
+`d1 = $076C0000` is field-encoded: year `$076C` = 1900, month `$00`, day `$00`.
+So the real kernel calls `F$STime` **on itself** with a month field of zero and
+a bare year — exactly the battery-backed cold start this implementation built
+from the manual's wording. The reading was right, and it no longer rests on
+wording alone.
+
+The rest of the scan sketches who actually uses the call: `setime` (the command
+whose whole purpose it is), `cio` and `csl` as the library binding `_os_setime()`
+— present in the module, executed only if a program calls it — and, unexpectedly,
+`unzip` on the 68000 side, which assembles `d0`/`d1` byte by byte out of
+something it has read before issuing the trap. Why an archiver would set the
+system clock is not clear from the code alone and is not worth guessing at here;
+it is recorded because it is the one caller outside the obvious set.
+
 One tolerance is recorded rather than tightened: a day that does not exist in
 its month is not rejected but carried forward by the julian formula, so
 31 September becomes 1 October. `Q9K_JulianFromDate` only checks month 1-12
