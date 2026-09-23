@@ -550,6 +550,7 @@ Q9K_FLinkSavedD7          equ $1F58
 Q9K_FLinkSavedA6          equ $1F5C
 Q9K_FLinkSavedName        equ $1F60
 Q9K_FLinkSearchImplPtr    equ $1F70      * C-init-relocated Q9K_SysFLinkSearchImpl
+Q9K_IOpenManagerRoutine   equ $1F74      * IOMan I$Open handler shadow; native path remains installed
 
 * Eigene Kernel-Global-Erweiterungen fuer F$GProcP/F$ID (Abschnitt
 * "Prozess-API", 2026-09-01). Direkt hinter I$Open; $1370/$1374 bleiben
@@ -2965,6 +2966,32 @@ Q9K_TrapDispatch:
         tst.b   (a4)
         movea.l Q9K_TrapA4Save,a4                       * A4 unveraendert zurueck
         bne     Q9K_TrapCallExternal
+* I$Open bleibt ein Kernel-Slot, damit die native /term-Konsole den
+* bewiesenen stabilen Pfad behaelt. Fuer nicht-native Pfade delegieren wir
+* selektiv an IOMans per F$SSvc registrierten I$Open-Handler; von dort geht
+* die normale IOMan->RBF->Treiber-Aufloesung weiter. Ein globales Freigeben
+* des Slots brach IOMans fruehen /term-Open (Fehlercode 0), daher nur hier
+* und nur fuer Namen ausserhalb des nativen Konsolenobjekts weiterreichen.
+        cmpi.w  #$84,($1370).w
+        bne     Q9K_TrapOwnHandler
+        tst.l   Q9K_IOpenManagerRoutine
+        beq     Q9K_TrapOwnHandler
+        cmpi.b  #'/',(a0)
+        bne     Q9K_TrapIOpenManager
+        cmpi.b  #'t',1(a0)
+        bne     Q9K_TrapIOpenManager
+        cmpi.b  #'e',2(a0)
+        bne     Q9K_TrapIOpenManager
+        cmpi.b  #'r',3(a0)
+        bne     Q9K_TrapIOpenManager
+        cmpi.b  #'m',4(a0)
+        bne     Q9K_TrapIOpenManager
+        tst.b   5(a0)
+        beq     Q9K_TrapOwnHandler
+Q9K_TrapIOpenManager:
+        move.l  Q9K_IOpenManagerRoutine,Q9K_TrapHandlerScratch
+        bra     Q9K_TrapCallExternal
+Q9K_TrapOwnHandler:
 * HERKUNFTSPRUEFUNG (sechster A4-Anlauf, 2026-09-07): der Rueckweg
 * fuer eigene Handler ueberschreibt A4 bisher IMMER mit der Handler-
 * Adresse (reale Konvention: Aufrufer erwartet dort seinen
