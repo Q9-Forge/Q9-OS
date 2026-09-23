@@ -8512,3 +8512,276 @@ noch nicht zuverlässig. `F$Fork` und der Prozessstart sind für den separaten
 der RBF-Rückgabecode und der Übergang von `F$Load` zu `F$VModul` für `date`
 direkt verglichen werden, am besten gegen den bereits erfolgreichen
 `echo`-Ladevorgang.
+
+## Fortsetzung 77: Native-Pfadklassifikation als erster I/O-Ausbau (2026-09-22)
+
+Die native `I$Open`-Schicht speichert jetzt neben Pfadnummer, Zugriffsmodus,
+Referenzzähler und Position auch eine explizite Objektklasse im lokalen
+Pfaddeskriptor. Die Klassifikation unterscheidet aktuell:
+
+* `/term` als native Konsole,
+* `/dd[/...]` als Filesystem-Namespace,
+* `/dd/...` mit Directory-Bit als Verzeichnis,
+* syntaktisch gültige, aber noch nicht aufgelöste Namen als `unresolved`.
+
+Damit ist die spätere Geräte-, Datei-, Verzeichnis- und Statusweiterleitung
+nicht mehr auf den impliziten Rückgabewert von IOMan angewiesen. Der Schritt
+ändert bewusst noch nicht das tatsächliche Read/Write-Dispatch: Bis der native
+Backend-/Managervertrag festgelegt ist, bleibt die bisherige DUART-/IOMan-
+Kompatibilität erhalten.
+
+Der Hosttest `test_q9kernel_iopath` bestätigt die Klassifikation für Konsole,
+Filesystempfad und Verzeichnis. Die 68k-Toolchain übersetzt
+`q9kernel_iopath.c` und die Assemblerteile ohne Fehler. Der bestehende
+Kernel-Linkschritt meldet weiterhin die bekannte Relocation-Grenze für
+`Q9K_FIRQHandlers` und `Q9K_FIRQStatics`; sie ist nicht durch diese Änderung
+verursacht. Nächster sinnvoller Schritt ist ein zentraler nativer Backend-
+Vertrag für `read`, `write`, `getstat`, `setstat`, `seek` und `close`, der die
+Descriptor-Klasse tatsächlich für das Dispatch verwendet.
+
+## Fortsetzung 78: Zentrale Auflösung lokaler Pfade (2026-09-22)
+
+Als nächster Baustein wurde `Q9K_ProcPathDesc` ergänzt. Die Funktion löst eine
+prozesslokale Pfadnummer über `P$Path` auf den globalen nativen Descriptor auf
+und prüft dabei:
+
+* gültigen Pfadnummernbereich ab 3,
+* vorhandenen aktuellen Prozess,
+* vorhandene globale Descriptornummer,
+* konsistente wiederholte Descriptornummer im Pool.
+
+Bei ungültigen, freien oder inkonsistenten Einträgen wird einheitlich
+`E$BPNUM` geliefert. Damit haben kommende native `read`, `write`, `getstat`,
+`setstat`, `seek` und `close`-Handler einen gemeinsamen, geprüften Einstieg
+und müssen die lokalen/globalen Pfadtabellen nicht separat interpretieren.
+Der Host-Regressionstest deckt erfolgreiche Auflösung und ungültige lokale
+Pfadnummer ab; die 68k-Übersetzung bleibt fehlerfrei bis zur bekannten,
+unveränderten FIRQ-Relocation-Grenze im finalen Linkschritt.
+## Fortsetzung 79: Descriptorauflösung im echten I$Open-Brückenpfad (2026-09-22)
+
+`Q9K_SysIOpenImpl` verwendet jetzt nach einem erfolgreichen nativen Open
+unmittelbar `Q9K_ProcPathDesc`. Ein Open wird dadurch nur dann als erfolgreich
+an den Trap-Aufrufer zurückgegeben, wenn die veröffentlichte lokale
+Pfadnummer tatsächlich wieder auf den globalen Descriptor aufgelöst werden
+kann. Die Auflösung ist damit nicht mehr nur eine isolierte Hosttest-Funktion,
+sondern Bestandteil des produktiven nativen I$Open-Pfades.
+
+Der Hosttest bleibt vollständig grün; die 68k-Datei `q9kernel_iopath.c` wird
+weiterhin ohne Compiler-/Assemblerfehler übersetzt. Ein Live-Emulatorlauf
+konnte in dieser Arbeitsumgebung nicht gestartet werden, weil das Q9-Flux-
+Binary und das benötigte Testimage hier nicht vorhanden sind. Der bestehende
+FIRQ-Relocation-Fehler im finalen Kernel-Link bleibt unverändert.
+
+## Fortsetzung 80: Zentraler nativer Descriptorzustand (2026-09-22)
+
+`Q9K_ProcPathState` liest den geprüften nativen Pfaddescriptor jetzt über
+einen gemeinsamen Zugriff aus. Bereitgestellt werden Objektklasse,
+Zugriffsmodus, Referenzzähler und logische Position. Damit müssen kommende
+`read`-, `write`-, `getstat`- und `setstat`-Operationen weder die lokale
+P$Path-Tabelle noch die Descriptor-Offsets selbst interpretieren.
+
+Der Hosttest prüft alle vier Zustandswerte sowie den Fehlerstatus. Die
+Funktion ist zunächst bewusst lesend; Änderungen an Position, Status oder
+Referenzen bleiben den jeweiligen Operationen vorbehalten.
+
+## Fortsetzung 81: Gemeinsame Read-/Write-Zugriffsprüfung (2026-09-22)
+
+`Q9K_ProcPathCheckAccess` prüft jetzt die Read-/Write-Bits eines nativen
+Pfades gegen den beim Open gespeicherten `PD_MOD`. Ein fehlender Zugriff wird
+als `E$BMODE` gemeldet; reine Pfadauflösung und Zugriffsentscheidung bleiben
+damit getrennt. Execute-, Append-, Non-sharable-, Directory- und Statusregeln
+sind absichtlich noch nicht in diese kleine Prüfung eingemischt.
+
+Der Hosttest deckt erlaubtes Lesen und abgewiesenes Schreiben auf einem
+read-only geöffneten Pfad ab. Der nächste Schritt ist, dieses Gate in die
+konkreten nativen Datenoperationen einzusetzen.
+
+## Fortsetzung 82: Native Read/Write-Dispatch gegen Objektklasse absichern (2026-09-22)
+
+Die bestehenden nativen `I$Read`, `I$Write`, `I$ReadLn` und `I$WritLn`-
+Assemblerpfade verwenden jetzt nicht nur Pfadnummer und `PD_MOD`, sondern
+prüfen auch die gespeicherte Objektklasse. Der direkte Zeichen-Backendpfad
+ist ausschließlich für die native Konsole freigegeben. Filesystem- und
+Directory-Descriptoren werden nicht mehr versehentlich als DUART-Pfade
+behandelt, sondern liefern explizit `E$UNKSVC`, solange ihr Backend noch fehlt.
+
+Damit ist die Read/Write-Rechteprüfung tatsächlich in den laufenden nativen
+Operationspfad eingesetzt. Der nächste Ausbau ist der echte Console-Backend-
+Vertrag sowie anschließend ein RBF-/Datei-Backend; die Trennung verhindert,
+dass ein gültiger Open automatisch einen falschen Geräte-Dispatch impliziert.
+
+## Fortsetzung 83: Seek an die native Backendgrenze gekoppelt (2026-09-22)
+
+`I$Seek` prüft jetzt ebenfalls die gespeicherte Objektklasse. Für native
+Konsolen bleibt die logische Positionsbuchhaltung möglich; Filesystem- und
+Directory-Descriptoren werden bis zur Implementierung ihres Backends mit
+`E$UNKSVC` abgewiesen. Damit behandeln Read, Write, ReadLn, WriteLn, Status
+und Seek nicht mehr nur den gemeinsamen Pool, sondern auch die gleiche
+Backendentscheidung.
+
+## Fortsetzung 84: Expliziter nativer Backend-Operationsvertrag (2026-09-22)
+
+Die native Schicht besitzt jetzt feste Operations-IDs für Read, Write,
+ReadLn, WriteLn, GetStat, SetStat, Seek und Close sowie
+`Q9K_ProcPathSupports` als zentrale Backendentscheidung. Aktuell unterstützt
+die Console-Klasse die Daten-/Status-/Seek-Operationen und Close; Close ist
+für alle gültigen nativen Descriptoren möglich. Filesystem- und Directory-
+Klassen liefern für die noch fehlenden Operationen explizit `E$UNKSVC`.
+
+Das ist bewusst ein Vertrag und noch kein Dateisystem. Die späteren Backends
+können dadurch an einer gemeinsamen Grenze angeschlossen werden, ohne die
+Console-Implementierung oder die Pfadauflösung erneut zu verzweigen.
+
+## Fortsetzung 85: Erster echter read-only Datei-Backendpfad (2026-09-22)
+
+Der native Namespace löst jetzt `/dd` und `/dd/SYS` als Verzeichnisse sowie
+`/dd/SYS/motd` als konkrete read-only Datei auf. Der neue
+`Q9K_ProcNativeRead`-Kern liest die eingebaute Datei positionsabhängig,
+begrenzt die Rückgabemenge auf die Dateigröße und schreibt die neue Position
+in den Descriptor. Unbekannte Pfade liefern `E$MNF`; Schreibzugriffe bleiben
+wegen des read-only Modus bei `E$BMODE`.
+
+Der Hosttest liest den vollständigen Dateiinhalt und prüft die
+Positionsfortschreibung. Die Anbindung dieses C-Backends an den laufenden
+68k-`I$Read`-Trap sowie ein veränderliches RBF-/CF-Dateisystem bleiben die
+nächsten Integrationsschritte.
+
+## Fortsetzung 86: Read-Trap an den ersten Datei-Backendpfad angeschlossen (2026-09-22)
+
+Der laufende native 68k-`I$Read`-Handler unterscheidet nun anhand des
+aufgelösten Backend-Objekts zwischen Terminal und Datei. Für das konkrete
+Objekt `/dd/SYS/motd` wird die neue parameterlose C-Brücke aufgerufen; sie
+übernimmt Descriptorauflösung, Rechteprüfung, positionsabhängiges Kopieren
+und die Rückgabe von Bytezahl oder OS-9-Fehlercode. Der Terminalpfad behält
+seine blockierende DUART-Leseoperation und seine bisherige Positionslogik.
+
+`Q9K_ProcPathSupports` weist den `READ`-Dienst für dieses Dateiobjekt jetzt
+ebenfalls explizit als vorhanden aus. Host-Regressionstest und 68k-C-/ASM-
+Übersetzung sind erfolgreich; der abschließende Kernel-Link bleibt wegen des
+bereits bekannten FIRQ-Relocation-Problems unvollständig. Ein Live-Emulator-
+oder Kerneltest ist weiterhin nicht möglich, da in dieser Umgebung das
+passende Q9-Flux-Binary/Testimage fehlt. Ein echtes veränderliches RBF-/CF-
+Dateisystem sowie `ReadLn`/Status/Seek für Dateien sind noch offen.
+
+## Fortsetzung 87: F$Link-Rückkehr stabilisiert, Modulsuche noch offen (2026-09-23)
+
+Der native Kernelpfad wurde im Q9-Flux-Emulator mit dem Testimage
+`/private/tmp/q9kernel-nativeio-test.hda` erneut ausgeführt. Ein fehlerhaft
+assemblierter `DBRA`-Vorwärtsverweis im F$Link-Namensscan wurde durch eine
+explizite `SUBQ`/`BPL`-Schleife ersetzt. Zusätzlich verwendet der Handler für
+seinen C-Suchaufruf den etablierten F$Modul-Scratchpfad und stellt den
+ursprünglichen SP-, A6- und D7-Zustand vor der Rückkehr explizit wieder her.
+
+Das Ergebnis ist reproduzierbar: Der Emulator läuft nach dem fehlgeschlagenen
+F$Link stabil weiter (`qAAAA...`), ohne Exception oder beschädigten
+Exception-Frame. Der Eingangsname ist nachweislich `ioman`; das aktive
+Moduldirectory enthält `ioman` mit TyLang `$0C01`. Auch ein Kontrolllauf mit
+Filter `0` liefert weiterhin `E$MNF`. Der verbleibende Fehler liegt daher in
+der tatsächlichen F$Modul-Scratch-/Suchübergabe und nicht mehr im Namen,
+TyLang-Filter oder Trap-Rücksprung. Die Suche muss als nächstes unmittelbar
+am C-Einstieg anhand der Scratchwerte und des erzeugten 68k-Codes weiter
+aufgelöst werden; ein erfolgreicher F$Link/I$Open-Test ist noch nicht erreicht.
+## Fortsetzung 88: F$Link-Verzeichnissuche erreicht ioman, Restfehler im IOMan-Einsprung (2026-09-23)
+
+Der native F$Link-Pfad wurde weiter isoliert. Die C-Bridge bekommt beim
+ersten relevanten Aufruf jetzt die echten Werte `TyLang=00000c01` und
+`Name=00007a0e` und findet damit reproduzierbar den aktiven
+Moduldirectory-Slot `00019040` (`ioman`, Header `00013f4a`). Die vorherige
+Fehldiagnose mit `Name=00000c01` war ein überschriebenes Diagnose-Scratch-
+Feld, nicht ein Fehler in der Directory-Suche.
+
+Der End-to-End-Test läuft danach bis zum IOMan-Modulaufruf an, erreicht aber
+noch nicht zuverlässig den Marker nach dem IOMan-Einsprung bzw. den
+anschließenden I$Open-Test. Der aktuelle Trace zeigt den Aufruf von `ioman`
+und weitere Modul-Instruktionen; der verbleibende Fehler liegt somit hinter
+der F$Link-Suche, wahrscheinlich in der Übergabe/Rückkehr des IOMan-
+Modulrahmens oder in dessen Initialisierungskontext. Der temporäre Halt im
+F$Link-Fehlerpfad wurde wieder entfernt.
+
+Zusätzliche Diagnose: Die Bridge schreibt den unmittelbar verwendeten A0-
+Wert separat nach `$15417c`; für den isolierten ersten Aufruf war der
+Suchname korrekt und der Slot erfolgreich. Kernel und Emulator wurden
+danach jeweils erfolgreich neu gebaut und das HDA-Testimage wurde neu
+injiziert.
+
+## Fortsetzung 89: F$Link-Register und C-Bridge repariert (2026-09-23)
+
+Zwei voneinander unabhängige Fehler im F$Link-Übergang sind nun durch einen
+vollständigen Q9-Flux-Emulatorlauf nachgewiesen und korrigiert:
+
+* Der nur für die Prüfung des externen Rahmenpfads vorhandene
+  `movem.l d0/a0,-(sp)`/Restore-Block beschädigte `d0` auf dem eigenen
+  Prozessstack. Die Eingabe kam mit `$0C01` korrekt durch den
+  `Q9K_TrapDispatch`, erreichte den F$Link-Handler jedoch nach dem Restore
+  als Müllwert. Die Prüfung verändert weder `d0` noch `a0`; die Sicherung
+  wurde deshalb ersatzlos entfernt.
+* Der ursprüngliche Cross-PSECT-`bsr` traf nicht den C-Einstieg. Der zuvor
+  behauptete `$38`-Byte-Versatz und Zieloffset beruhten auf einer falsch
+  interpretierten, separat erzeugten Link-Map; maßgeblich sind hier die
+  gelinkten Instruktionsbytes und der Exception-PC.
+
+Korrektur nach erneutem Abgleich des Exception-Dumps: Der Treffer im Slot
+`$3CFD0` stammt aus einem separaten Diagnose-Lauf und belegt nicht den
+vollständigen Emulatorlauf. Der vollständige Dump zeigt weiter Vektor 4 bei
+`PC=$CBDC`; die dort geladenen Bytes stimmen mit dem erzeugten Kernel überein.
+
+Der Byte-Abgleich zeigte den vorigen Illegal-Instruction-PC mitten in einem
+absoluten Operanden im C-Prolog. Ein zunächst adresskorrigierter `BSR`
+erwies sich ebenfalls als instabil: schon eine kleine Änderung der
+Assemblerlänge verschob das gelinkte C-PSECT relativ zur erwarteten Stelle.
+Der Aufruf läuft deshalb jetzt über eine C-Init-gefüllte Funktionszeigerzelle
+(`$1F64`), analog zu anderen späten C-Modulen. Der Build endet mit
+`Errors: 00000`.
+
+Der Emulator-Test mit echtem Bootimage (Diskmodule `rbf/cfide/dd/c0`) bestätigt
+den F$Link-Eingang `TyLang=$0C01`, `Name=$7A0E` (`ioman`). In einem
+Diagnose-Lauf blieb der C-Bridge-Ergebnis-Scratch auf seinem Sentinel; der
+eindeutige `6E`-Marker wurde in diesem Lauf nicht erreicht, und der
+vollständige Timeout-Dump meldet Vektor 14 bei `PC=$7AB8`. Damit ist der
+C-Funktionszeiger-Aufruf noch nicht verifiziert,
+und F$Link/IOMan/`I$Open` bleiben offen. Nächster Schritt: den zur Laufzeit
+geladenen Wert aus `$1F64` direkt protokollieren und mit den bereits
+funktionierenden C-Init-Funktionszeigern vergleichen; zugleich muss der
+Bridge-Resultat-Scratch vor dem Aufruf auf 0 bleiben, damit ein nicht
+ausgeführter C-Aufruf nicht wie ein gültiger Slot behandelt wird.
+
+## Fortsetzung 90: MOVEQ-Zählerfehler im F$Link-Namensscan behoben (2026-09-23)
+
+Die unmittelbare Ursache für `E$MNF` nach erfolgreicher Verzeichnis-Suche lag
+nicht im Namenzeiger: Link-Map und Live-PC zeigen, dass `$87F6` exakt auf
+`Q9K_TestIOManName` (`"ioman",0`) zeigt. Der Scan sprang beim ersten
+positiven ASCII-Zeichen in den Fehlerpfad, weil `moveq #255,d7` auf dem 68000
+das 8-Bit-Immediate vorzeichenerweitert und daher `D7=$FFFFFFFF` lädt.
+Das folgende `subq.w #1,d7` macht den Zähler sofort negativ; `bpl` beendet
+damit den Scan nach einem einzigen Zeichen.
+
+FLink initialisiert den Zähler jetzt explizit mit `moveq #0,d7` und
+`move.w #255,d7`, was der gewünschten 256-Byte-Grenze entspricht. Derselbe
+Vorzeichenfehler wurde auch in der DBRA-basierten FUnLoad-Namensschleife
+korrigiert (dort hätte `DBRA` mit dem Low-Word `$FFFF` bis zu 65536 Zeichen
+gescannt). Kernel-Build erfolgreich; `os9 ident` bestätigt gültige CRC und
+Modulgröße `$D9B4`.
+
+End-to-End-Test mit neuem Kernel plus `init` und `ioman` im Q9-Flux-Emulator:
+der Diagnosemarker wechselt von `6q` auf `6Q` — FLink auf `ioman` gelingt nun.
+IOMan startet anschließend, meldet aber beim Wechsel auf das Systemgerät
+weiterhin `E$MNF` (`can't chgdir to system device`). Der FLink-Namensscan ist
+damit behoben; der nachgelagerte IOMan-/I$Open-Pfad bleibt separat offen.
+
+Gegenprobe mit dem vollständigen Bootmodulset (`rbf`, `cfide`, `dd`, `c0`,
+`scf`, `sc68681`, `term`) bestätigt den Fortschritt: nach `6Q` kehrt auch
+IOMan zurück (`R`), der CompactFlash-Treiber startet, und FLink/Modul-Init
+laufen ohne Exception weiter. Der spätere Test-`I$Open("/dd/startup")` endet
+mit `E$MNF` (`o...00DD`). Das ist nun der nächste Integrationsfehler; der
+aktuelle native Datei-Backendpfad unterstützt nur `/dd/SYS/motd`, nicht die
+allgemeine RBF-Datei-/Verzeichnisauflösung für `/dd/startup`.
+
+Root Cause präzisiert: `Q9K_SysFIOpen -> Q9K_SysIOpenImpl ->
+Q9K_ProcIOpen -> Q9K_NativeClassifyPathname` erreicht den Pool-/Prozesspfad
+erst nach der Klassifizierung. `Q9K_NativeClassifyPathname` akzeptiert
+Dateien derzeit ausschließlich bei exakt `/dd/SYS/motd`; jeder andere
+syntaktisch gültige Dateipfad endet dort absichtlich mit `E$MNF`. Somit wird
+`/dd/startup` nicht auf dem CF/RBF-Medium gesucht — der Dateiname ist im
+Image vorhanden, aber die Kernel-Namespace-Auflösung ist noch eine
+fest codierte Allowlist und kein Dateisystemzugriff. Kein Fehler in FLink,
+IOMan-Modulstart oder dem Image.

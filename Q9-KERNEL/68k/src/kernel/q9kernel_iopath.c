@@ -28,8 +28,10 @@
  * liefert korrekte Fehlercodes, statt beliebige Speicherfolgen als Namen zu
  * akzeptieren. Gültige native Pfade werden vorerst mit der einzigen echten
  * Ausgabe verbunden, die dieser Kernel kennt -- dem DUART
- * (Q9K_DiagWriteD7-Mechanismus); die Geraet-/Datei-Aufloesung bleibt der
- * naechste Ausbau.
+ * (Q9K_DiagWriteD7-Mechanismus). Die neue Objektklassifikation wird bereits
+ * im Descriptor festgehalten; die eigentliche Geraet-/Datei-Aufloesung und
+ * das darauf aufbauende Read/Write/Status-Dispatch bleiben der naechste
+ * Ausbau.
  */
 
 #include "q9kernel_config.h"
@@ -70,6 +72,8 @@ typedef unsigned char  Q9_u8;
  *              prueft sie gegen den Tabellenindex).
  *   +0x00..+0x7F: Bereich der File-Manager (scf/rbf), von IOMan und dem
  *              jeweiligen Manager belegt -- u.a. +$0e Zielpuffer.
+ *   +0x06 (2)  Q9-native Objektklasse (aus dem Pfad abgeleitet)
+ *   +0x08 (4)  Q9-native logische Dateiposition
  *   +0x80..+0xFF: Optionen (PD_OPT), beim Open aus dem Geraetedeskriptor
  *              gefuellt -- u.a. +$81 Grossschreibung, ab +$89 die
  *              Sonderzeichen.
@@ -93,10 +97,43 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PATHDESC_NUM_OFF  0x00UL
 #define Q9K_PATHDESC_MODE_OFF 0x02UL
 #define Q9K_PATHDESC_REF_OFF  0x04UL       /* Q9-native open-reference count */
+#define Q9K_PATHDESC_KIND_OFF 0x06UL       /* Q9-native resolved object kind */
 #define Q9K_PATHDESC_POS_OFF  0x08UL       /* Q9-native logical file position */
+#define Q9K_PATHDESC_OBJECT_OFF 0x0CUL     /* Q9-native backend object ID */
+
+/* Native object kinds.  The first implementation deliberately keeps
+ * UNRESOLVED as a valid state: accepting a pathname and dispatching it to a
+ * real device/file manager are separate steps.  This lets the path layer
+ * carry an explicit result instead of using "IOMan returned OK" as an
+ * accidental type system. */
+#define Q9K_PATH_KIND_UNRESOLVED 0U
+#define Q9K_PATH_KIND_CONSOLE    1U
+#define Q9K_PATH_KIND_FILESYSTEM 2U
+#define Q9K_PATH_KIND_DIRECTORY  3U
+
+#define Q9K_NATIVE_OBJECT_NONE   0U
+#define Q9K_NATIVE_OBJECT_TERM   1U
+#define Q9K_NATIVE_OBJECT_DD     2U
+#define Q9K_NATIVE_OBJECT_SYS    3U
+#define Q9K_NATIVE_OBJECT_MOTD   4U
+
+/* Stable operation IDs for the native backend boundary.  The mask is kept
+ * beside the descriptor logic so adding a file or directory backend cannot
+ * silently broaden the console path. */
+#define Q9K_NATIVE_OP_READ    1U
+#define Q9K_NATIVE_OP_WRITE   2U
+#define Q9K_NATIVE_OP_READLN  3U
+#define Q9K_NATIVE_OP_WRITELN 4U
+#define Q9K_NATIVE_OP_GETSTAT 5U
+#define Q9K_NATIVE_OP_SETSTAT 6U
+#define Q9K_NATIVE_OP_SEEK    7U
+#define Q9K_NATIVE_OP_CLOSE   8U
 
 #define Q9K_E_BPNAM  0x00D7U
 #define Q9K_E_BMODE  0x00CBU
+#define Q9K_E_BPNUM  0x00C9U
+#define Q9K_E_UNKSVC 0x00D0U
+#define Q9K_E_MNF    0x00DDU
 #define Q9K_E_PTHFUL 0x00C8U
 
 /* The current process owns the P$Path table.  Keep the offsets here in one
@@ -202,6 +239,103 @@ static void Q9K_WriteU32BE_At(Q9_u32 addr, Q9_u32 value)
 }
 
 static int Q9K_PrsNamIsNameChar(unsigned char c);
+static Q9_u16 Q9K_NativeValidatePathname(Q9_u32 pathnamePtr,
+                                         Q9_u32 *outPastName);
+Q9_u32 Q9K_ProcPathDesc(Q9_u16 pathNum, Q9_u16 *outError);
+
+static unsigned char Q9K_PathNameFold(unsigned char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (unsigned char)(c - 'A' + 'a') : c;
+}
+
+static int Q9K_NativePathEquals(Q9_u32 pathnamePtr, const char *expected)
+{
+    const volatile Q9_u8 *p = (const volatile Q9_u8 *)pathnamePtr;
+    Q9_u32 i = 0;
+
+    if (pathnamePtr == 0 || expected == 0)
+        return 0;
+    while (expected[i] != 0) {
+        if (p[i] != (Q9_u8)expected[i])
+            return 0;
+        i++;
+    }
+    return p[i] == 0;
+}
+
+/* Classify the first OS-9 pathname component after validating the complete
+ * path.  This is intentionally a small native namespace, not a promise that
+ * a file manager already exists behind every name:
+ *
+ *   term              -> native console device
+ *   dd[/...]          -> native filesystem namespace
+ *   any other name    -> unresolved (future device/file-manager lookup)
+ *
+ * A directory request is represented by the OS-9 directory access bit and is
+ * kept distinct from an ordinary filesystem object.  The caller receives the
+ * same updated past-name pointer as I$Open. */
+static Q9_u16 Q9K_NativeClassifyPathname(Q9_u32 pathnamePtr, Q9_u32 mode,
+                                         Q9_u32 *outPastName,
+                                         Q9_u16 *outKind,
+                                         Q9_u16 *outObject)
+{
+    const volatile Q9_u8 *p;
+    Q9_u32 i = 0;
+    Q9_u32 firstLen = 0;
+    Q9_u8 first[8];
+    Q9_u16 err;
+
+    if (outPastName)
+        *outPastName = pathnamePtr;
+    if (outKind)
+        *outKind = Q9K_PATH_KIND_UNRESOLVED;
+    if (outObject)
+        *outObject = Q9K_NATIVE_OBJECT_NONE;
+    if (pathnamePtr == 0)
+        return Q9K_E_BPNAM;
+
+    p = (const volatile Q9_u8 *)pathnamePtr;
+    while (p[i] == '/')
+        i++;
+    while (firstLen < sizeof(first) &&
+           Q9K_PrsNamIsNameChar((unsigned char)(p[i] & 0x7fU))) {
+        first[firstLen++] = Q9K_PathNameFold((unsigned char)(p[i] & 0x7fU));
+        i++;
+        if (p[i - 1] & 0x80U)
+            break;
+    }
+
+    /* Reuse the canonical full-path validator so classification and open
+     * cannot disagree about doubled components, empty names or termination. */
+    err = Q9K_NativeValidatePathname(pathnamePtr, outPastName);
+    if (err != 0)
+        return err;
+
+    if ((mode & 0x80UL) != 0) {
+        if (Q9K_NativePathEquals(pathnamePtr, "/dd")) {
+            *outKind = Q9K_PATH_KIND_DIRECTORY;
+            *outObject = Q9K_NATIVE_OBJECT_DD;
+            return 0;
+        }
+        if (Q9K_NativePathEquals(pathnamePtr, "/dd/SYS")) {
+            *outKind = Q9K_PATH_KIND_DIRECTORY;
+            *outObject = Q9K_NATIVE_OBJECT_SYS;
+            return 0;
+        }
+        return Q9K_E_MNF;
+    }
+    if (Q9K_NativePathEquals(pathnamePtr, "/term")) {
+        *outKind = Q9K_PATH_KIND_CONSOLE;
+        *outObject = Q9K_NATIVE_OBJECT_TERM;
+        return 0;
+    }
+    if (Q9K_NativePathEquals(pathnamePtr, "/dd/SYS/motd")) {
+        *outKind = Q9K_PATH_KIND_FILESYSTEM;
+        *outObject = Q9K_NATIVE_OBJECT_MOTD;
+        return 0;
+    }
+    return Q9K_E_MNF;
+}
 
 /* Q9K_ProcAllPD -- echte F$AllPD-Kernlogik (Callcode $30, "Allocate
  * Process/Path Descriptor"; in OS-9/6809 hiess derselbe Dienst F$All64,
@@ -453,8 +587,8 @@ int Q9K_ProcPrsNam(Q9_u32 pathPtr, Q9_u32 *outNameStart, Q9_u32 *outPastName,
 }
 
 /* Q9K_ProcIOpen -- echte I$Open-Kernlogik (s. Kopfkommentar).
- * IN: mode (nur fuer eine spaetere, echte Zugriffspruefung reserviert,
- *     bisher ungenutzt), pathnamePtr (Zeiger auf den NUL-terminierten
+ * IN: mode (Zugriffsbits plus Directory-Bit fuer Klassifikation und spaetere
+ *     Dispatch-Pruefung), pathnamePtr (Zeiger auf den NUL-terminierten
  *     Pfadnamen).
  * OUT: Q9_u32 -- 0 = Fehlschlag (Pool erschoepft, einziger bisher
  *     moeglicher Fehlerfall), sonst die Pfadnummer (immer >= 3, s. u.).
@@ -507,6 +641,8 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName,
     Q9_u32 descriptorNum;
     Q9_u32 procDesc;
     Q9_u32 pathIndex;
+    Q9_u16 pathKind;
+    Q9_u16 pathObject;
 
     *outError = 0;
     *outPastName = pathnamePtr;
@@ -515,7 +651,8 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName,
         *outError = Q9K_E_BMODE;
         return 0;
     }
-    *outError = Q9K_NativeValidatePathname(pathnamePtr, outPastName);
+    *outError = Q9K_NativeClassifyPathname(pathnamePtr, mode, outPastName,
+                                           &pathKind, &pathObject);
     if (*outError != 0)
         return 0;
     slot = Q9K_PathPoolAlloc();
@@ -546,6 +683,8 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName,
     }
 
     Q9K_WriteU16BE(slot + Q9K_PATHDESC_NUM_OFF, (Q9_u16)descriptorNum);
+    Q9K_WriteU16BE(slot + Q9K_PATHDESC_KIND_OFF, pathKind);
+    Q9K_WriteU16BE(slot + Q9K_PATHDESC_OBJECT_OFF, pathObject);
     Q9K_WriteU16BE(slot + Q9K_PATHDESC_REF_OFF, 1);
     Q9K_WriteU32BE_At(slot + Q9K_PATHDESC_POS_OFF, 0);
 
@@ -568,6 +707,248 @@ Q9_u32 Q9K_ProcIOpen(Q9_u32 mode, Q9_u32 pathnamePtr, Q9_u32 *outPastName,
     }
 
     return pathNum;
+}
+
+/* Resolve a process-local P$Path number to the native descriptor.  All
+ * native I/O operations must use this gate: the process table contains the
+ * caller-visible path number, while the pool slot is global and can differ
+ * between processes.  Returning the descriptor also validates the repeated
+ * descriptor number, so stale or corrupted P$Path entries cannot silently
+ * target another native object. */
+Q9_u32 Q9K_ProcPathDesc(Q9_u16 pathNum, Q9_u16 *outError)
+{
+    Q9_u32 procDesc;
+    Q9_u16 descriptorNum;
+    Q9_u32 pathDesc;
+    Q9_u32 poolBase;
+
+    if (outError)
+        *outError = 0;
+    if (pathNum < 3 || pathNum >= Q9K_PROCDESC_PATH_COUNT) {
+        if (outError)
+            *outError = Q9K_E_BPNUM;
+        return 0;
+    }
+
+    procDesc = Q9K_GetU32(Q9_D_PROC);
+    if (procDesc == 0) {
+        if (outError)
+            *outError = Q9K_E_BPNUM;
+        return 0;
+    }
+    descriptorNum = Q9K_ReadU16BE(procDesc + Q9K_PROCDESC_PATH_OFF +
+                                   (Q9_u32)pathNum * 2UL);
+    if (descriptorNum < 3) {
+        if (outError)
+            *outError = Q9K_E_BPNUM;
+        return 0;
+    }
+
+    poolBase = Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR);
+    if (poolBase == 0) {
+        if (outError)
+            *outError = Q9K_E_BPNUM;
+        return 0;
+    }
+    pathDesc = poolBase + ((Q9_u32)descriptorNum - 3UL) * Q9K_PATHDESC_SIZE;
+    if (Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_NUM_OFF) != descriptorNum) {
+        if (outError)
+            *outError = Q9K_E_BPNUM;
+        return 0;
+    }
+    return pathDesc;
+}
+
+/* Read the native state needed by future data and status operations.  Keep
+ * this as the single descriptor-layout reader so the later handlers do not
+ * grow independent interpretations of kind, mode, references and position. */
+int Q9K_ProcPathState(Q9_u16 pathNum, Q9_u16 *outKind, Q9_u8 *outMode,
+                      Q9_u16 *outRefs, Q9_u32 *outPosition,
+                      Q9_u16 *outError)
+{
+    Q9_u32 pathDesc;
+    Q9_u16 err = 0;
+
+    pathDesc = Q9K_ProcPathDesc(pathNum, &err);
+    if (pathDesc == 0) {
+        if (outError)
+            *outError = err;
+        return 0;
+    }
+    if (outKind)
+        *outKind = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_KIND_OFF);
+    if (outMode)
+        *outMode = *(volatile Q9_u8 *)(pathDesc + Q9K_PATHDESC_MODE_OFF);
+    if (outRefs)
+        *outRefs = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_REF_OFF);
+    if (outPosition)
+        *outPosition = Q9K_ReadU32BE_At(pathDesc + Q9K_PATHDESC_POS_OFF);
+    if (outError)
+        *outError = 0;
+    return 1;
+}
+
+/* Check only the data-access bits shared by native read/write operations.
+ * Other I$Open mode bits (execute, append, non-sharable, directory) remain
+ * available to their respective operation-specific rules. */
+int Q9K_ProcPathCheckAccess(Q9_u16 pathNum, Q9_u8 requestedMode,
+                            Q9_u16 *outError)
+{
+    Q9_u32 pathDesc;
+    Q9_u8 grantedMode;
+    Q9_u16 err = 0;
+
+    pathDesc = Q9K_ProcPathDesc(pathNum, &err);
+    if (pathDesc == 0) {
+        if (outError)
+            *outError = err;
+        return 0;
+    }
+    grantedMode = *(volatile Q9_u8 *)(pathDesc + Q9K_PATHDESC_MODE_OFF);
+    if ((requestedMode & 0x03U) != 0 &&
+        (grantedMode & (requestedMode & 0x03U)) !=
+            (requestedMode & 0x03U)) {
+        if (outError)
+            *outError = Q9K_E_BMODE;
+        return 0;
+    }
+    if (outError)
+        *outError = 0;
+    return 1;
+}
+
+/* Decide whether an operation has a native backend for this object class.
+ * Close is always available for an allocated native descriptor; the other
+ * operations are currently implemented only for the console backend. */
+int Q9K_ProcPathSupports(Q9_u16 pathNum, Q9_u8 operation,
+                         Q9_u16 *outError)
+{
+    Q9_u16 kind = Q9K_PATH_KIND_UNRESOLVED;
+    Q9_u16 object = Q9K_NATIVE_OBJECT_NONE;
+    Q9_u32 pathDesc;
+    Q9_u16 err = 0;
+
+    pathDesc = Q9K_ProcPathDesc(pathNum, &err);
+    if (pathDesc == 0) {
+        if (outError)
+            *outError = err;
+        return 0;
+    }
+    kind = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_KIND_OFF);
+    object = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_OBJECT_OFF);
+    if (operation == Q9K_NATIVE_OP_CLOSE ||
+        (kind == Q9K_PATH_KIND_CONSOLE && operation >= Q9K_NATIVE_OP_READ &&
+         operation <= Q9K_NATIVE_OP_SEEK) ||
+        (kind == Q9K_PATH_KIND_FILESYSTEM &&
+         object == Q9K_NATIVE_OBJECT_MOTD &&
+         operation == Q9K_NATIVE_OP_READ)) {
+        if (outError)
+            *outError = 0;
+        return 1;
+    }
+    if (outError)
+        *outError = Q9K_E_UNKSVC;
+    return 0;
+}
+
+/* Parameterless bridge used by the 68k I$Read trap.  Keeping the register
+ * ABI at the assembly boundary makes the backend testable on the host and
+ * leaves the native descriptor/position logic in one place. */
+int Q9K_ProcNativeRead(Q9_u16 pathNum, Q9_u32 bufferPtr, Q9_u32 count,
+                       Q9_u32 *outCount, Q9_u16 *outError);
+
+#ifndef Q9K_NATIVE_READ_SCRATCH_PATH
+#define Q9K_NATIVE_READ_SCRATCH_PATH  0x1F38UL
+#define Q9K_NATIVE_READ_SCRATCH_BUF   0x1F3CUL
+#define Q9K_NATIVE_READ_SCRATCH_COUNT 0x1F40UL
+#define Q9K_NATIVE_READ_SCRATCH_DONE  0x1F44UL
+#define Q9K_NATIVE_READ_SCRATCH_ERROR 0x1F48UL
+#define Q9K_NATIVE_READ_SCRATCH_OK    0x1F4CUL
+#endif
+
+void Q9K_SysNativeReadImpl(void)
+{
+    Q9_u32 done = 0;
+    Q9_u16 err = 0;
+
+    if (Q9K_ProcNativeRead(
+            (Q9_u16)Q9K_GetU32(Q9K_NATIVE_READ_SCRATCH_PATH),
+            Q9K_GetU32(Q9K_NATIVE_READ_SCRATCH_BUF),
+            Q9K_GetU32(Q9K_NATIVE_READ_SCRATCH_COUNT),
+            &done, &err)) {
+        Q9K_SetU32(Q9K_NATIVE_READ_SCRATCH_DONE, done);
+        Q9K_SetU32(Q9K_NATIVE_READ_SCRATCH_ERROR, 0UL);
+        Q9K_SetU32(Q9K_NATIVE_READ_SCRATCH_OK, 1UL);
+    } else {
+        Q9K_SetU32(Q9K_NATIVE_READ_SCRATCH_DONE, 0UL);
+        Q9K_SetU32(Q9K_NATIVE_READ_SCRATCH_ERROR, (Q9_u32)err);
+        Q9K_SetU32(Q9K_NATIVE_READ_SCRATCH_OK, 0UL);
+    }
+}
+
+/* Minimal read-only file backend.  The namespace is deliberately tiny and
+ * deterministic for now; it proves the file-manager boundary with real
+ * position-aware reads without pretending that the CF/RBF layer is native. */
+int Q9K_ProcNativeRead(Q9_u16 pathNum, Q9_u32 bufferPtr, Q9_u32 count,
+                       Q9_u32 *outCount, Q9_u16 *outError)
+{
+    static const Q9_u8 motd[] = "Q9 native I/O\r\n";
+    Q9_u32 pathDesc;
+    Q9_u32 position;
+    Q9_u32 available;
+    Q9_u32 amount;
+    Q9_u16 kind;
+    Q9_u16 object;
+    Q9_u8 mode;
+    Q9_u16 refs;
+    Q9_u16 err = 0;
+    Q9_u32 i;
+
+    if (outCount)
+        *outCount = 0;
+    pathDesc = Q9K_ProcPathDesc(pathNum, &err);
+    if (pathDesc == 0) {
+        if (outError)
+            *outError = err;
+        return 0;
+    }
+    kind = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_KIND_OFF);
+    object = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_OBJECT_OFF);
+    mode = *(volatile Q9_u8 *)(pathDesc + Q9K_PATHDESC_MODE_OFF);
+    refs = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_REF_OFF);
+    position = Q9K_ReadU32BE_At(pathDesc + Q9K_PATHDESC_POS_OFF);
+    (void)refs;
+    if ((mode & 0x01U) == 0) {
+        if (outError)
+            *outError = Q9K_E_BMODE;
+        return 0;
+    }
+    if (kind != Q9K_PATH_KIND_FILESYSTEM ||
+        object != Q9K_NATIVE_OBJECT_MOTD) {
+        if (outError)
+            *outError = Q9K_E_UNKSVC;
+        return 0;
+    }
+    if (bufferPtr == 0 && count != 0) {
+        if (outError)
+            *outError = 0x00D2U;
+        return 0;
+    }
+    if (position >= (Q9_u32)(sizeof(motd) - 1U)) {
+        if (outError)
+            *outError = 0;
+        return 1;
+    }
+    available = (Q9_u32)(sizeof(motd) - 1U) - position;
+    amount = count < available ? count : available;
+    for (i = 0; i < amount; i++)
+        *(volatile Q9_u8 *)(bufferPtr + i) = motd[position + i];
+    Q9K_WriteU32BE_At(pathDesc + Q9K_PATHDESC_POS_OFF, position + amount);
+    if (outCount)
+        *outCount = amount;
+    if (outError)
+        *outError = 0;
+    return 1;
 }
 
 /* Eigene Kernel-Global-Erweiterungen fuer die ASM<->C-Uebergabe von
@@ -685,9 +1066,21 @@ void Q9K_SysIOpenImpl(void)
     Q9_u32 namePtr  = Q9K_GetU32(Q9K_IOpenScratch_NamePtr);
     Q9_u32 pastName = 0;
     Q9_u32 pathNum;
+    Q9_u32 pathDesc;
     Q9_u16 err = 0;
+    Q9_u16 resolveErr = 0;
 
     pathNum = Q9K_ProcIOpen(mode, namePtr, &pastName, &err);
+    if (pathNum != 0) {
+        /* Exercise the same local-to-global lookup that future native I/O
+         * handlers will use.  I$Open must never report a usable path whose
+         * published P$Path entry cannot be resolved by that common gate. */
+        pathDesc = Q9K_ProcPathDesc((Q9_u16)pathNum, &resolveErr);
+        if (pathDesc == 0) {
+            pathNum = 0;
+            err = resolveErr;
+        }
+    }
 
     Q9K_SetU32(Q9K_IOpenScratch_PastName, pastName);
     Q9K_SetU32(Q9K_IOpenScratch_PathNum, pathNum);

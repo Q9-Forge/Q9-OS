@@ -116,6 +116,9 @@ int main(void)
              (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_NUM_OFF), 3);
     checkU32("I$Open traegt den Zugriffsmodus in PD_MOD ein -- ohne ihn verweigert IOMan jeden Zugriff",
              (Q9_u32)*(volatile unsigned char *)(unsigned long)(poolBase + Q9K_PATHDESC_MODE_OFF), 3);
+    checkU32("I$Open klassifiziert /term als native Konsole",
+             (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_KIND_OFF),
+             Q9K_PATH_KIND_CONSOLE);
     checkU32("I$Open startet die native Referenzzaehlung bei 1",
              (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_REF_OFF), 1);
 
@@ -124,6 +127,10 @@ int main(void)
     checkU32("F2: zweite Pfadnummer == 4", num2, 4);
     checkU32("F2: past-Zeiger fuer den LAENGEREN Namen korrekt",
              past, name2Addr + (Q9_u32)sizeof(name2));
+    checkU32("I$Open klassifiziert /dd/... als Filesystempfad",
+             (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_SIZE
+                                   + Q9K_PATHDESC_KIND_OFF),
+             Q9K_PATH_KIND_FILESYSTEM);
 
     /* Fall 3+4: Pool hat noch 2 freie Slots -- beide erfolgreich. */
     num3 = Q9K_ProcIOpen(0, name1Addr, &past, &openErr);
@@ -147,6 +154,17 @@ int main(void)
         num5 = Q9K_ProcIOpen(0x20, name1Addr, &past, &openErr);
         checkU32("F5b: unsupported access bits are rejected", num5, 0);
         checkU32("F5b: unsupported access bits report E$BMODE", openErr, 0x00CB);
+
+        {
+            static const char directoryPath[] = "/dd/SYS";
+            buildFreeList(poolBase, Q9K_PATHDESC_SIZE, 4, Q9K_PATHPOOL_FREE_ADDR);
+            num5 = Q9K_ProcIOpen(0x80, (Q9_u32)(unsigned long)directoryPath,
+                                 &past, &openErr);
+            checkU32("F5c: directory path kann geoeffnet werden", num5, 3);
+            checkU32("F5c: directory path wird als Verzeichnis klassifiziert",
+                     (Q9_u32)Q9K_ReadU16BE(poolBase + Q9K_PATHDESC_KIND_OFF),
+                     Q9K_PATH_KIND_DIRECTORY);
+        }
     }
 
     /* The native open path must also publish the process-local path
@@ -160,11 +178,59 @@ int main(void)
     checkU32("F6: P$Path[3] contains the published path number",
              (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc
                                    + Q9K_PROCDESC_PATH_OFF + 3UL * 2UL), 3);
+    checkU32("F6: native lookup resolves local path 3",
+             Q9K_ProcPathDesc(3, &openErr), poolBase);
+    checkU32("F6: native lookup reports console kind",
+             (Q9_u32)Q9K_ReadU16BE(Q9K_ProcPathDesc(3, &openErr) +
+                                   Q9K_PATHDESC_KIND_OFF),
+             Q9K_PATH_KIND_CONSOLE);
+    {
+        Q9_u16 stateKind = 0, stateRefs = 0, stateErr = 0;
+        Q9_u8 stateMode = 0;
+        Q9_u32 statePosition = 99;
+        checkU32("F6: native state lookup succeeds",
+                 (Q9_u32)Q9K_ProcPathState(3, &stateKind, &stateMode,
+                                           &stateRefs, &statePosition,
+                                           &stateErr), 1);
+        checkU32("F6: native state exposes kind", stateKind,
+                 Q9K_PATH_KIND_CONSOLE);
+        checkU32("F6: native state exposes mode", stateMode, 3);
+        checkU32("F6: native state exposes references", stateRefs, 1);
+        checkU32("F6: native state starts at position zero", statePosition, 0);
+        checkU32("F6: native state has no error", stateErr, 0);
+    }
+    checkU32("F6: console backend supports write",
+             (Q9_u32)Q9K_ProcPathSupports(3, Q9K_NATIVE_OP_WRITE, &openErr), 1);
+    checkU32("F6: console backend supports close",
+             (Q9_u32)Q9K_ProcPathSupports(3, Q9K_NATIVE_OP_CLOSE, &openErr), 1);
     num2 = Q9K_ProcIOpen(1, name2Addr, &past, &openErr);
     checkU32("F7: second process-local open uses path 4", num2, 4);
     checkU32("F7: P$Path[4] contains the published path number",
              (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc
                                    + Q9K_PROCDESC_PATH_OFF + 4UL * 2UL), 4);
+    checkU32("F7: read access on read-only path is allowed",
+             (Q9_u32)Q9K_ProcPathCheckAccess(4, 1, &openErr), 1);
+    checkU32("F7: write access on read-only path is rejected",
+             (Q9_u32)Q9K_ProcPathCheckAccess(4, 2, &openErr), 0);
+    checkU32("F7: rejected write reports E$BMODE", openErr, 0x00CB);
+    checkU32("F7: filesystem backend is not mistaken for console",
+             (Q9_u32)Q9K_ProcPathSupports(4, Q9K_NATIVE_OP_WRITE, &openErr), 0);
+    checkU32("F7: missing filesystem backend reports E$UNKSVC", openErr, 0x00D0);
+    {
+        static unsigned char motdBuffer[32];
+        Q9_u32 motdCount = 0;
+        memset(motdBuffer, 0, sizeof(motdBuffer));
+        checkU32("F7: native read-only motd backend succeeds",
+                 (Q9_u32)Q9K_ProcNativeRead(4,
+                     (Q9_u32)(unsigned long)motdBuffer, 32,
+                     &motdCount, &openErr), 1);
+        checkU32("F7: native motd backend returns its complete content",
+                 motdCount, 15);
+        checkU32("F7: native motd backend advances position",
+                 Q9K_ReadU32BE_At(poolBase + Q9K_PATHDESC_SIZE
+                                  + Q9K_PATHDESC_POS_OFF), 15);
+        checkU32("F7: native motd backend has no error", openErr, 0);
+    }
 
     /* A second process gets its own local path 3, but the global descriptor
      * number must still identify the third pool slot. */
@@ -177,6 +243,9 @@ int main(void)
     checkU32("F8: global descriptor keeps pool number 5",
              (Q9_u32)Q9K_ReadU16BE(poolBase + 2UL * Q9K_PATHDESC_SIZE
                                     + Q9K_PATHDESC_NUM_OFF), 5);
+    checkU32("F8: invalid local path is rejected",
+             Q9K_ProcPathDesc(2, &openErr), 0);
+    checkU32("F8: invalid local path reports E$BPNUM", openErr, 0x00C9);
 
     /* --- F$AllPD (Callcode $30), 2026-09-02 -------------------------
      * Konvention und DBT-Aufbau sind aus IOMans Analyse
