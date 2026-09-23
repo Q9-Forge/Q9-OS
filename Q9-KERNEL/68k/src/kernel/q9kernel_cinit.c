@@ -353,6 +353,7 @@ void Q9K_CInit(void)
     Q9K_MemTraceInit();
     Q9K_ProcMemTrackInit();
     Q9K_Diag4(); /* TEMPORAERE DIAGNOSE, s. o. */
+    Q9K_PutU32(0x1F74UL, 0UL); /* optional IOMan I$Open manager shadow */
 
     /* Sechs leere Ringlisten -- exakte Offsets aus q9sysglob.h bzw. dem
      * verifizierten Fund in Thema 01 (Kopf-/Schwanz-Unteroffsets je

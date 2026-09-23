@@ -8785,3 +8785,27 @@ syntaktisch gültige Dateipfad endet dort absichtlich mit `E$MNF`. Somit wird
 Image vorhanden, aber die Kernel-Namespace-Auflösung ist noch eine
 fest codierte Allowlist und kein Dateisystemzugriff. Kein Fehler in FLink,
 IOMan-Modulstart oder dem Image.
+
+## Fortsetzung 91: Selektive I$Open-Übergabe an IOMan (2026-09-23)
+
+Der in Fortsetzung 90 dokumentierte `/dd/startup`-Fehler ist für den
+Microware-IOMan/RBF-Pfad inzwischen behoben: Der Kernel hält seinen nativen
+`I$Open`-Slot weiter für `/term`, speichert aber IOMan-Routine und
+Service-Datenzeiger bei dessen `F$SSvc`-Registrierung separat. Bei einem
+`I$Open` auf jeden anderen Pfad übergibt `Q9K_TrapDispatch` denselben
+Trap-Rahmen selektiv an IOMan. Ein globales Freigeben des Slots war
+ungeeignet, weil dadurch bereits IOMans früher Konsolen-Open `/term` mit
+Fehlercode 0 scheiterte.
+
+Verifikation: Kernel-Build mit `Errors: 00000`; vollständiges Q9-Flux-
+Bootimage mit `rbf`, `cfide`, `dd`, `c0`, `scf`, `sc68681` und `term` bootet.
+Die Ausgabe enthält `6Q`, `R`, `O`, `P0123`, `Hallo von Q9-OS!` und
+`Hallo aus einem echten Programm!`. Der `/dd/startup`-Open erhält Carry-clear
+und belegt einen P$Path-Slot; der native `/term`-Open bleibt funktionsfähig.
+Damit ist die Integration in IOMan→RBF→CF für `I$Open` nachgewiesen.
+
+Das ist bewusst noch keine vollständige native Dateisystemimplementierung:
+Allgemeine native Namespace-/Metadatenauflösung und der anschließende
+`I$Read`/`I$Close`-Lebenszyklus für diese an IOMan delegierten Pfade sind
+separat zu integrieren und zu testen. Die Implementierung liegt derzeit
+uncommitted auf `main`.

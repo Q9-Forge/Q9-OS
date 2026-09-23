@@ -1478,7 +1478,7 @@ paths; broader application and long-run coverage remains separate work.
 | 🔷 | `0x81` | I$Detach | Verified through Microware IOMan/RBF/CF with `iattachsvc`; broader lifetime semantics remain open |
 | 🔷 | `0x82` | I$Dup | Microware IOMan dispatch is present; Q9-native path-table duplication is implemented and emulator-verified, while native file-manager parity remains open |
 | 🔷 | `0x83` | I$Create | Microware IOMan/RBF/CF path is present and covered by the create/write round-trip; Q9-native implementation remains open |
-| 🔷 | `0x84` | I$Open | Microware IOMan/RBF/CF path is present and live-traced; Q9-native pathname validation, process-local allocation, and error reporting are implemented, while device/file resolution remains open |
+| 🔷 | `0x84` | I$Open | Non-`/term` paths selectively hand off to IOMan's saved `I$Open` service; full-image `/dd/startup` open succeeds through RBF/CF and native `/term` remains working. General native namespace and follow-on native file operations remain open |
 | 🔷 | `0x85` | I$MakDir | Microware IOMan/RBF/CF path is present and covered by the FAT16 mkdir regression; Q9-native implementation remains open |
 | 🔷 | `0x86` | I$ChgDir | Microware IOMan path is present; Q9-native data/execution directory storage is emulator-tested, while device resolution remains open |
 | 🔷 | `0x87` | I$Delete | Microware IOMan/RBF/CF path is present and covered by the FAT16 delete regression; Q9-native implementation remains open |

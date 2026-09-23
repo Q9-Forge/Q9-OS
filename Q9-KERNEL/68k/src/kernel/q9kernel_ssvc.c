@@ -174,6 +174,13 @@ void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
         if (Q9K_IsKernelService(realCode)) {
             /* Kernel-owned slots are installed during C initialization.
              * Keep both dispatch entries and their internal calling ABI. */
+            if (realCode == 0x84UL) {
+                /* Keep native I$Open as the default (notably for /term), but
+                 * retain IOMan's manager entry and per-service A3 data for
+                 * the kernel's selective filesystem-path fallback. */
+                Q9K_SetU32(0x1F74UL, routineAddr);
+                Q9K_SetU32(usrdisBase + 0x400UL + realCode * 4UL, dataPtr);
+            }
             entryAddr += 4UL;
             continue;
         }
