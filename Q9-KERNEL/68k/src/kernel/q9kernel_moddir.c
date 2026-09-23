@@ -519,12 +519,20 @@ Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name)
 void Q9K_SysFModulImpl(void)
 {
     Q9_u16 desired = (Q9_u16)Q9K_GetU32(Q9K_FMODUL_SCRATCH_TYLANG);
-    const char *name = (const char *)(unsigned long)Q9K_GetU32(Q9K_FMODUL_SCRATCH_NAME);
+    Q9_u32 nameAddr = Q9K_GetU32(Q9K_FMODUL_SCRATCH_NAME);
+    const char *name = (const char *)(unsigned long)nameAddr;
     Q9_u32 slot = Q9K_ModDirFindSlotByName(desired, name, 0);
+
+    /* Temporary live-emulator evidence for the F$Link integration boundary. */
+    Q9K_SetU32(0x15415CUL, (Q9_u32)desired);
+    Q9K_SetU32(0x154160UL, nameAddr);
+    Q9K_SetU32(0x154164UL, slot);
 
     Q9K_SetU32(Q9K_FMODUL_SCRATCH_OK, 0);
     if (slot == 0) {
         Q9K_SetU32(Q9K_FMODUL_SCRATCH_ERROR, Q9K_E_MNF);
+        Q9K_SetU32(0x154168UL, Q9K_E_MNF);
+        Q9K_SetU32(0x15416CUL, 0);
         return;
     }
 
@@ -534,6 +542,25 @@ void Q9K_SysFModulImpl(void)
                (Q9_u32)Q9K_ModDirGetU16(slot + Q9K_MODDIR_ATTREV_OFF));
     Q9K_SetU32(Q9K_FMODUL_SCRATCH_ENTRY, slot);
     Q9K_SetU32(Q9K_FMODUL_SCRATCH_OK, 1);
+    Q9K_SetU32(0x154168UL, 0);
+    Q9K_SetU32(0x15416CUL, 1);
+}
+
+/* F$Link-only bridge.  The old F$Modul scratch name cell at $1A04 is
+ * reused by another early-kernel path before the C reader observes it.
+ * Keep this bridge in the dedicated trace extension area instead. */
+Q9_u32 Q9K_SysFLinkSearchImpl(void)
+{
+    Q9_u16 desired;
+    Q9_u32 nameAddr;
+    Q9_u32 slot;
+
+    desired = (Q9_u16)Q9K_GetU32(0x154170UL);
+    nameAddr = Q9K_GetU32(0x154174UL);
+    slot = Q9K_ModDirFindSlotByName(
+        desired, (const char *)(unsigned long)nameAddr, 1);
+    Q9K_SetU32(0x154178UL, slot);
+    return slot;
 }
 
 

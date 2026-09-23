@@ -200,7 +200,22 @@ Q9_D_SysDbg     equ     $59c                    * Einsprungadresse des Systemdeb
 
 * Q9-native path-pool globals (q9kernel_tables.c, shared with I$Open/I$Close).
 Q9K_PATHPOOL_BASE_ADDR equ $1214
+Q9K_PATHDESC_KIND_OFF  equ $06
+Q9K_PATHDESC_OBJECT_OFF equ $0C
+Q9K_PATH_KIND_CONSOLE  equ 1
+Q9K_PATH_KIND_FILESYSTEM equ 2
+Q9K_NATIVE_OBJECT_TERM equ 1
+Q9K_NATIVE_OBJECT_MOTD equ 4
+Q9K_E_UNKSVC           equ $00d0
 Q9K_PATHPOOL_FREE_ADDR equ $121c
+
+* I$Read -> native read-only file backend bridge (q9kernel_iopath.c).
+Q9K_NATIVE_READ_SCRATCH_PATH  equ $1F38
+Q9K_NATIVE_READ_SCRATCH_BUF   equ $1F3C
+Q9K_NATIVE_READ_SCRATCH_COUNT equ $1F40
+Q9K_NATIVE_READ_SCRATCH_DONE  equ $1F44
+Q9K_NATIVE_READ_SCRATCH_ERROR equ $1F48
+Q9K_NATIVE_READ_SCRATCH_OK    equ $1F4C
 
 * Eigene Kernel-Global-Erweiterung (Abschnitt "Scheduler", 2026-08-21) --
 * Offset des gesicherten Stack-Zeigers im Prozessdeskriptor, gleicher Wert
@@ -236,6 +251,7 @@ Q9_D_USRDIS     equ     $3a8
 * fehleranfaellige Stack-Offset-Rechnerei). Nicht reentrant-sicher
 * (kein SMP/verschachtelte Traps vorgesehen).
 Q9K_TrapHandlerScratch equ $1230
+Q9K_TrapForeignFlag   equ $1F50      * freier Scratch hinter dem nativen I$Read-Block
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-08-31, per Root-Cause-Suche eines
 * False-Positive-F$Link-Befunds, s. Session-Notizen): jede MOVE-
 * Instruktion (ausser MOVEA) loescht laut 68k-ISA IMMER die C/V-Flags
@@ -517,12 +533,23 @@ Q9K_FLinkTrace_D1        equ $154148
 Q9K_FLinkTrace_A0        equ $15414C
 Q9K_FLinkTrace_A1        equ $154150
 Q9K_FLinkTrace_A2        equ $154154
+Q9K_FLinkTrace_InputA0   equ $154158
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
 Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
 Q9K_IOpenScratch_PathNum  equ $136C      * Q9_u32, d0.w AUS (0 = Fehlschlag)
 Q9K_IOpenScratch_Error    equ $1370      * Q9_u32, d1.w AUS bei Fehler
+Q9K_FLinkCall_TyLang      equ $1A00
+Q9K_FLinkCall_Name        equ $1A04
+Q9K_FLinkSearch_TyLang    equ $154170
+Q9K_FLinkSearch_Name      equ $154174
+Q9K_FLinkSearch_Slot      equ $154178
+Q9K_FLinkSavedSP          equ $1F54
+Q9K_FLinkSavedD7          equ $1F58
+Q9K_FLinkSavedA6          equ $1F5C
+Q9K_FLinkSavedName        equ $1F60
+Q9K_FLinkSearchImplPtr    equ $1F70      * C-init-relocated Q9K_SysFLinkSearchImpl
 
 * Eigene Kernel-Global-Erweiterungen fuer F$GProcP/F$ID (Abschnitt
 * "Prozess-API", 2026-09-01). Direkt hinter I$Open; $1370/$1374 bleiben
@@ -1520,21 +1547,53 @@ _stklimit:
 * haelt einfach an (kein Recovery-Mechanismus vorhanden), sicher
 * unabhaengig davon, ob der Aufrufer einen Ruecksprung erwartet.
 *
-* Q9K_CRuntimeData -- ECHTER, beschreibbarer Laufzeitpuffer fuer den
-* vsect-Bereich oben (kein F$Fork vorhanden, das diesen normalerweise
-* automatisch zuteilt -- wir tun es selbst). Bewusst grosszuegig (64
-* Byte) statt exakt auf die vsect-Groesse abgestimmt: der tatsaechliche
-* Offset, den der Linker fuer _stklimit innerhalb des vsect vergibt,
-* ist von hier aus nicht direkt einsehbar -- ein Puffer, der deutlich
-* groesser als die einzige vsect-Variable ist, deckt jede plausible
-* Offset-Zuweisung sicher ab. NICHT Teil des vsect selbst (das haette
-* wieder keine echte Lade-Adresse); ein normales Datum in unserem
-* eigenen psect, per PC-relativem lea adressiert (s. o.).
-* "ds.l" ist hier NICHT erlaubt (nur innerhalb vsect, per r68-Fehler
-* "bad mnemonic" real getestet) -- ein psect enthaelt nur INITIALISIERTEN
-* Inhalt, deshalb hier 16 explizite Nullen statt einer Reservierung.
+* Q9K_CRuntimeData -- A6-Basis fuer den vom Linker zusammengelegten
+* C-Datenbereich UND _stklimit. Nicht nur _stklimit liegt relativ zu A6:
+* alle statischen C-Objekte aller Kernel-Psects tun das ebenfalls. Der
+* Link-Map-Hochwasserstand ist derzeit $E10 Byte fuer die C-Daten, mit
+* _stklimit bei Offset $E10; deshalb muss der beschreibbare Bereich $E14
+* Byte umfassen. Ein 64-Byte-Puffer liess groessere C-Objekte in den
+* nachfolgenden Kernel-Code schreiben (live reproduziert durch
+* Q9K_MmuReset: Store nach $7F01, Illegal Instruction ab $7F00).
+*
+* Der Bereich ist NICHT Teil des vsect selbst (das haette wieder keine
+* echte Lade-Adresse), sondern initialisierter Inhalt im eigenen psect,
+* per PC-relativem lea adressiert (s. o.). "ds.l" ist hier NICHT erlaubt
+* (nur innerhalb vsect, per r68-Fehler "bad mnemonic" real getestet);
+* REPT/DC.L erzeugt deshalb exakt $E14 Bytes initialisierten Speicher.
+        align
 Q9K_CRuntimeData:
-        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        dc.l    0
 
 *******************************************************************************
 * Q9K_TCallDispatch -- gemeinsamer Handler fuer TRAP #1 bis #15 (Vektoren
@@ -1777,6 +1836,9 @@ Q9K_ExcTrapNestedSpin:
         bra     Q9K_ExcTrapNestedSpin
 
 _stkhandler:
+        move.l  a6,($154140).l              * diagnose active C runtime context
+        move.l  (a6),($154144).l            * current _stklimit value
+        move.l  sp,($154148).l
         moveq   #'S',d7                      * DIAGNOSE: Stack-Ueberlauf-Handler wurde aufgerufen
         bsr     Q9K_DiagWriteD7
 Q9K_StkHandlerSpin:
@@ -2042,6 +2104,21 @@ Q9K_BootStartupCloseFail:
 * Routine bei Modul-Offset $1316, und der Slot war nach dem Init
 * nachweislich gefuellt.
 *
+* I$Open muss VOR dem P$Path-Scan stehen: ein frisch gestarteter Prozess
+* hat noch keinen belegten Pfad. Der Open-Test erzeugt den Pfad, dessen
+* Nummer der anschliessende Scan sichtbar macht.
+        move.l  a6,-(sp)
+        movea.l #0,a6                              * Systemglobals fuer IOMan
+        movea.l Q9_D_Proc,a4                       * eigener Prozessdeskriptor
+        move.w  #1,d0                              * Lesen
+        lea     Q9K_TestNativeOpenName(pc),a0
+        trap    #0
+        dc.w    $0084                              * I$Open
+        movea.l (sp)+,a6
+        bcs     Q9K_TestNativeOpenFail
+        moveq   #'O',d7
+        bsr     Q9K_DiagWriteD7
+
 * Zwei Schritte, die Diagnose bewusst ZUERST -- so ist ihr Ergebnis auch
 * dann sichtbar, wenn der Schreibversuch selbst haengt:
 *
@@ -2346,6 +2423,13 @@ Q9K_TestWriteNoPath:
         bsr     Q9K_DiagWriteD7
         bra     Q9K_TestProcA_Loop
 
+Q9K_TestNativeOpenFail:
+        moveq   #'o',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+        bra     Q9K_TestProcA_Loop
+
 Q9K_TestWriteFail:
         moveq   #'o',d7                     * DIAGNOSE: I$Write fehlgeschlagen, Code folgt
         bsr     Q9K_DiagWriteD7
@@ -2357,6 +2441,7 @@ Q9K_TestWriteFail:
 Q9K_TestIOManLinkFail:
         moveq   #'q',d7                     * DIAGNOSE: F$Link("ioman") fehlgeschlagen
         bsr     Q9K_DiagWriteD7
+Q9K_TestIOManLinkFail_Halt:
         bra     Q9K_TestProcA_Loop
 
 Q9K_TestProcA_Loop:
@@ -2473,6 +2558,9 @@ Q9K_TestProcDelay equ $4000
 
 Q9K_TestIOManName:
         dc.b    "ioman",0
+
+Q9K_TestNativeOpenName:
+        dc.b    "/dd/startup",0
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-09-03) -- Nutzlast des
 * I$Write-Versuchs. 16 Zeichen + CR ($0d, OS-9-Zeilenende) = 17 Byte,
@@ -2932,10 +3020,13 @@ Q9K_TrapDispatch:
         cmp.l   4(a4),d7                                * gegen echtes M$Size aus dem Modulkopf
         bcc     Q9K_TrapCallForeignCaller               * >= eigene Groesse: Aufrufer AUSSERHALB
         movea.l Q9K_TrapHandlerScratch,a4                 * Aufrufer ist WIR SELBST
+        clr.w   Q9K_TrapForeignFlag
+        move.l  a4,Q9K_FLinkTrace_A2
         jsr     (a4)
         movea.l (sp)+,a4                                  * restore caller A4
         bra     Q9K_TrapAfterCall
 Q9K_TrapCallForeignCaller:
+        move.w  #1,Q9K_TrapForeignFlag
 * Aufrufer liegt ausserhalb unseres Moduls (IOMan/File-Manager/Treiber) --
 * A4 must remain the caller's own process/device context.  The origin
 * check above temporarily used A4 for the kernel module base; restore the
@@ -2946,6 +3037,7 @@ Q9K_TrapCallForeignCaller:
 * deshalb speicherindirekt ueber Opcode-Bytes (r68 kennt "jsr ([...])"
 * nicht, der 68030 die Adressierungsart aber sehr wohl).
         movea.l (sp)+,a4                                  * restore foreign caller A4
+        move.l  Q9K_TrapHandlerScratch,Q9K_FLinkTrace_A2
         dc.w    $4ebb,$01f1                               * jsr ([Q9K_TrapHandlerScratch])
         dc.l    Q9K_TrapHandlerScratch
         bra     Q9K_TrapAfterCall
@@ -3475,6 +3567,13 @@ Q9K_SysUnimplemented:
 * wiederhergestellt, bevor der Carry/d1-Fehlerpfad die Rueckkehr
 * vorbereitet.
 Q9K_SysFLink:
+        move.l  sp,Q9K_FLinkSavedSP
+        move.l  d7,Q9K_FLinkSavedD7
+        move.l  a6,Q9K_FLinkSavedA6
+        move.l  a0,Q9K_FLinkSavedName
+        move.l  d0,Q9K_FLinkTrace_D0              * rohe Eingabe sichern
+        move.l  a0,Q9K_FLinkTrace_A0
+        move.l  a0,($154158).l                    * unveraenderte Eingabe fuer Diagnose
 * NACHTRAG 2026-08-21: das Manual garantiert fuer d0 nur das untere Wort
 * (d0.w) -- oberes Wort defensiv maskieren, bevor es als C-Parameter
 * dient (empirisch verifiziert per opt68k-Probe: der Compiler liest
@@ -3521,57 +3620,51 @@ Q9K_SysFLink:
 * normal process register and may point into RAM (the shell uses it for
 * its parameter boundary). Only the direct PEA+RTS path may supply the
 * external return frame.
-        movem.l d0/a0,-(sp)
         tst.w   Q9K_InTrapPath
         bne     Q9K_SysFLink_NoFrame
-        move.l  a5,d0
+        tst.w   Q9K_TrapForeignFlag
         beq     Q9K_SysFLink_NoFrame
-        btst    #0,d0                   * ungerade Adresse -> kein Rahmen
-        bne     Q9K_SysFLink_NoFrame
-        cmpi.l  #$400,d0
-        bcs     Q9K_SysFLink_NoFrame
-        cmpi.l  #$1000000,d0
-        bcc     Q9K_SysFLink_NoFrame
-* The external register frame stores the F$Link call code at $3c.
-* A process stack can look like a valid address but has unrelated data
-* there; reject such false positives before writing output fields.
-        tst.w   $3c(a5)
-        bne     Q9K_SysFLink_NoFrame
-* A normal process may also have a plausible A5. Use the return address
-* of this JSR, which is at 8(sp) after the saved d0/a0 pair: a return into
-* this kernel means a normal dispatch, while a return into another module
-* identifies the direct external trampoline path.
-        move.l  8(sp),d1
-        lea     Q9K_ModuleStart(pc),a1
-        suba.l  #Q9K_ModuleHeaderSize,a1
-        move.l  a1,d0
-        add.l   4(a1),d0
-        cmp.l   a1,d1
-        bcs     Q9K_SysFLink_FrameCandidate
-        cmp.l   d0,d1
-        bcs     Q9K_SysFLink_NoFrame
-Q9K_SysFLink_FrameCandidate:
         move.l  a5,Q9K_LinkFrameScratch
         bra     Q9K_SysFLink_FrameDone
 Q9K_SysFLink_NoFrame:
         clr.l   Q9K_LinkFrameScratch
 Q9K_SysFLink_FrameDone:
-        movem.l (sp)+,d0/a0
         move.l  #2,Q9K_FLinkTrace_Status       * call entered; 0=fail, 1=success, 2=in progress
         move.l  d0,Q9K_FLinkTrace_D0
         move.l  a0,Q9K_FLinkTrace_A0
-        and.l   #$0000ffff,d0
-        move.l  d7,-(sp)              * eigenes Scratch sichern
-        move.l  a0,-(sp)              * urspruenglichen Namenszeiger separat merken (C-Aufruf braucht a0->d1)
-        move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
+        move.l  8(sp),Q9K_FLinkTrace_A1       * JSR-Ruecksprung direkt nach dem Handler
+        tst.w   Q9K_InTrapPath
+        bne.s   Q9K_SysFLink_InputsReady
+        tst.l   Q9K_LinkFrameScratch
+        beq.s   Q9K_SysFLink_InputsReady
+        movea.l Q9K_LinkFrameScratch,a1       * externer Registerrahmen ist auch Eingabequelle
+        move.l  (a1),d0                       * Typ/Sprache
+        movea.l $20(a1),a0                    * Namenszeiger
+Q9K_SysFLink_InputsReady:
+        moveq   #0,d1
+        move.w  d0,d1
+        move.l  d1,d0
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
 
-* d1 = Namenszeiger (2. C-Parameter, s. q9kernel_moddir.c) -- d0
-* (Typ/Sprache-Filter) ist bereits der 1. C-Parameter, unveraendert
-* aus dem Aufrufer.
-        move.l  a0,d1
-        bsr     Q9K_ModDirLinkByName     * -> d0 = Headerzeiger oder 0 (Ein-Ausgabe-Konvention wie __multiply)
-        movea.l (sp)+,a6              * eingehendes a6 SOFORT wiederherstellen (auf beiden Pfaden gebraucht)
+* Die Suche laeuft ueber den bereits etablierten scratch-basierten
+* F$Modul-C-Einstieg; damit gibt es hier keine eigene C-Argument-ABI-
+* Annahme.
+        move.l  d0,($154170).l
+        move.l  a0,($15417c).l
+        move.l  a0,($154174).l
+        clr.l   ($154178).l                * stale bridge result must never look like a valid slot
+* This C function lives in a later PSECT.  Call through its C-init-filled
+* pointer cell: l68's cross-PSECT BSR relocation is not reliable here.
+        movea.l Q9K_FLinkSearchImplPtr,a1
+        move.l  a1,($15417c).l              * diagnostic: resolved C entry address
+        jsr     (a1)
+        movea.l Q9K_FLinkSavedA6,a6
+        move.l  ($154178).l,d7
+        tst.l   d7
+        beq     Q9K_SysFLink_Fail
+        movea.l d7,a1
+        move.l  4(a1),d0
+        lea     Q9K_CRuntimeData(pc),a6 * danach wieder auf den Kernel-C-Kontext zeigen
 
         move.l  d0,d7                     * d7 = Headerzeiger (0 = kein Treffer), zwischengesichert
         tst.l   d7
@@ -3589,15 +3682,23 @@ Q9K_SysFLink_FrameDone:
         move.l  $30(a2),a1                    * a1 = M$Exec (modul-relativer Offset)
         adda.l  a2,a1                          * a1 = echte, absolute Einsprungadresse
 
-        movea.l (sp)+,a0                        * a0 = urspruenglicher Namenszeiger zurueck
-        moveq   #255,d7                          * bound malformed names to 256 bytes
+        movea.l Q9K_FLinkSavedName,a0             * a0 = urspruenglicher Namenszeiger
+        moveq   #0,d7                            * MOVEQ sign-extends its 8-bit immediate
+        move.w  #255,d7                          * positive 256-byte scan budget
 Q9K_SysFLink_SkipName:
 * OS-9 marks the final module-name character with bit 7. Accept a NUL
 * terminator as well because kernel-internal callers may use C strings.
         tst.b   (a0)+
-        beq     Q9K_SysFLink_NameDone
-        bmi     Q9K_SysFLink_NameDone
-        dbra    d7,Q9K_SysFLink_SkipName
+        beq.s   Q9K_SysFLink_NameDone
+        bpl.s   Q9K_SysFLink_NameContinue
+        bra.s   Q9K_SysFLink_NameDone
+Q9K_SysFLink_NameContinue:
+* DBRA is deliberately spelled out here: the legacy assembler has emitted
+* a malformed 5100/offset sequence for this particular forward reference.
+* A signed decrement/branch has the same 256-byte bound and produces plain
+* 68000 instructions.
+        subq.w  #1,d7
+        bpl.s   Q9K_SysFLink_SkipName
         bra     Q9K_SysFLink_Fail
 Q9K_SysFLink_NameDone:
         move.l  Q9K_FLinkTrace_A2,d7             * restore the found module pointer
@@ -3617,13 +3718,16 @@ Q9K_SysFLink_NameDone:
 Q9K_SysFLink_NoFrameOut:
         move.l  (sp)+,d7
 
-        move.l  (sp)+,d7                            * eigenes Scratch wiederherstellen
+        move.l  Q9K_FLinkSavedD7,d7
+        movea.l Q9K_FLinkSavedA6,a6
+        movea.l Q9K_FLinkSavedSP,sp
         move.l  #1,Q9K_FLinkTrace_Status
         move.l  d0,Q9K_FLinkTrace_D0
         move.l  d1,Q9K_FLinkTrace_D1
         move.l  a0,Q9K_FLinkTrace_A0
         move.l  a1,Q9K_FLinkTrace_A1
         move.l  a2,Q9K_FLinkTrace_A2
+Q9K_SysFLink_ReturnReady:
         andi    #$fe,ccr                          * Carry im CCR loeschen -- Erfolg
         rts
 
@@ -3635,11 +3739,16 @@ Q9K_SysFLink_Fail:
 * IMMER Erfolg, selbst im eigentlich fehlgeschlagenen Fall. Fix:
 * Fehlercode ZUERST setzen, "ori #1,ccr" als letzte Instruktion vor rts
 * (gleiche, bereits korrekte Reihenfolge wie bei F$Fork/F$Wait/F$SRqMem).
-        addq.l  #4,sp                    * gemerkten Namenszeiger verwerfen (auf Fehlerpfad nicht gebraucht)
-        move.l  (sp)+,d7                   * eigenes Scratch wiederherstellen
+        move.l  sp,Q9K_FLinkTrace_A2   * Stackdiagnose direkt nach dem C-Aufruf
+        move.l  (sp),Q9K_FLinkTrace_A0 * erstes Wort am aktuellen Stack
+        move.l  4(sp),Q9K_FLinkTrace_A1 * zweites Wort am aktuellen Stack
+        move.l  Q9K_FLinkSavedD7,d7
+        movea.l Q9K_FLinkSavedA6,a6
+        movea.l Q9K_FLinkSavedSP,sp
         move.w  #$00dd,d1                     * d1.w = E_MNF (Module Not Found)
         move.l  #0,Q9K_FLinkTrace_Status
         move.l  d1,Q9K_FLinkTrace_D1
+Q9K_SysFLink_FailReturnReady:
         ori     #1,ccr                     * Carry im CCR setzen -- Fehlschlag (ALS LETZTES, s.o.)
         rts
 
@@ -5663,7 +5772,10 @@ Q9K_SysFIWritLn_Fail:
         rts
 
 *******************************************************************************
-* Q9K_ValidateNativePath -- validate the current process path and access mode.
+* Q9K_ValidateNativePath -- validate the current process path, object kind
+* and access mode.  Only the native console backend is implemented by the
+* direct character path; filesystem and directory descriptors must not be
+* silently treated as console output/input.
 *
 * IN:  d0.w = process-local path number, d4.w = required mode bits
 * OUT: carry clear on success; carry set with d1.w = OS-9 error code
@@ -5692,6 +5804,13 @@ Q9K_ValidateNativePath:
         adda.l  d2,a1
         tst.w   4(a1)
         beq     Q9K_ValidateNativePath_BadPath
+        cmpi.w  #Q9K_PATH_KIND_CONSOLE,Q9K_PATHDESC_KIND_OFF(a1)
+        beq     Q9K_ValidateNativePath_CheckMode
+        cmpi.w  #Q9K_PATH_KIND_FILESYSTEM,Q9K_PATHDESC_KIND_OFF(a1)
+        bne     Q9K_ValidateNativePath_NoBackend
+        cmpi.w  #1,d4
+        bne     Q9K_ValidateNativePath_NoBackend
+Q9K_ValidateNativePath_CheckMode:
         moveq   #0,d2
         move.b  2(a1),d2                       * PD_MOD access flags
         and.w   d4,d2
@@ -5706,9 +5825,58 @@ Q9K_ValidateNativePath_BadMode:
         move.w  #$00cb,d1                     * E$BMODE: wrong access mode
         ori     #1,ccr
         rts
+Q9K_ValidateNativePath_NoBackend:
+        movem.l (sp)+,d2-d3/a1
+        move.w  #Q9K_E_UNKSVC,d1                * no native file/dir backend yet
+        ori     #1,ccr
+        rts
 Q9K_ValidateNativePath_BadPath:
         movem.l (sp)+,d2-d3/a1
         move.w  #$00c9,d1                     * E$BPNUM: bad path number
+        ori     #1,ccr
+        rts
+
+*******************************************************************************
+* Q9K_NativePathObject -- return the resolved native object for a process path.
+* Standard paths are the native terminal object; pooled paths carry the object
+* ID in the descriptor.  d0 is preserved, d1 is the object or E$BPNUM.
+*******************************************************************************
+Q9K_NativePathObject:
+        movem.l d2-d3/a1,-(sp)
+        moveq   #0,d2
+        move.w  d0,d2
+        cmpi.l  #32,d2
+        bcc     Q9K_NativePathObject_Bad
+        movea.l Q9_D_Proc,a1
+        move.l  a1,d3
+        beq     Q9K_NativePathObject_Bad
+        adda.l  #$168,a1
+        add.w   d2,d2
+        move.w  (a1,d2.w),d3
+        beq     Q9K_NativePathObject_Bad
+        cmpi.w  #3,d3
+        bcs     Q9K_NativePathObject_Term
+        moveq   #0,d2
+        move.w  d3,d2
+        subq.l  #3,d2
+        lsl.l   #8,d2
+        movea.l Q9K_PATHPOOL_BASE_ADDR,a1
+        adda.l  d2,a1
+        tst.w   4(a1)
+        beq     Q9K_NativePathObject_Bad
+        moveq   #0,d1
+        move.w  Q9K_PATHDESC_OBJECT_OFF(a1),d1
+        movem.l (sp)+,d2-d3/a1
+        andi    #$fe,ccr
+        rts
+Q9K_NativePathObject_Term:
+        moveq   #Q9K_NATIVE_OBJECT_TERM,d1
+        movem.l (sp)+,d2-d3/a1
+        andi    #$fe,ccr
+        rts
+Q9K_NativePathObject_Bad:
+        movem.l (sp)+,d2-d3/a1
+        move.w  #$00c9,d1
         ori     #1,ccr
         rts
 
@@ -5750,11 +5918,18 @@ Q9K_SysFIWrite_Fail:
 * work.
 *******************************************************************************
 Q9K_SysFIRead:
-        movem.l d0-d2/d4/a0/a1,-(sp)
+        movem.l d0-d4/a0/a1,-(sp)
         moveq   #1,d4                           * read access
         bsr     Q9K_ValidateNativePath
         bcs     Q9K_SysFIRead_Fail
-        move.l  d1,d2
+        move.l  d1,d3                           * preserve requested count
+        bsr     Q9K_NativePathObject
+        bcs     Q9K_SysFIRead_Fail
+        cmpi.w  #Q9K_NATIVE_OBJECT_MOTD,d1
+        beq     Q9K_SysFIRead_NativeFile
+        cmpi.w  #Q9K_NATIVE_OBJECT_TERM,d1
+        bne     Q9K_SysFIRead_NoBackend
+        move.l  d3,d2
         movea.l #Q9_IO_DUART_SRA,a1
 Q9K_SysFIRead_Loop:
         tst.l   d2
@@ -5768,13 +5943,32 @@ Q9K_SysFIRead_Wait:
         subq.l  #1,d2
         bra.s   Q9K_SysFIRead_Loop
 Q9K_SysFIRead_Ok:
-        move.l  (sp),d0
+        move.l  d3,d1
         bsr     Q9K_NativePathAdvance
-        movem.l (sp)+,d0-d2/d4/a0/a1
+        movem.l (sp)+,d0-d4/a0/a1
         andi    #$fe,ccr
         rts
+Q9K_SysFIRead_NativeFile:
+        move.l  d0,Q9K_NATIVE_READ_SCRATCH_PATH
+        move.l  a0,Q9K_NATIVE_READ_SCRATCH_BUF
+        move.l  d3,Q9K_NATIVE_READ_SCRATCH_COUNT
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        bsr     Q9K_SysNativeReadImpl
+        movea.l (sp)+,a6
+        tst.l   Q9K_NATIVE_READ_SCRATCH_OK
+        beq     Q9K_SysFIRead_NativeFile_Fail
+        move.l  Q9K_NATIVE_READ_SCRATCH_DONE,d1
+        movem.l (sp)+,d0-d4/a0/a1
+        andi    #$fe,ccr
+        rts
+Q9K_SysFIRead_NativeFile_Fail:
+        move.w  Q9K_NATIVE_READ_SCRATCH_ERROR+2,d1
+        bra     Q9K_SysFIRead_Fail
+Q9K_SysFIRead_NoBackend:
+        move.w  #Q9K_E_UNKSVC,d1
 Q9K_SysFIRead_Fail:
-        movem.l (sp)+,d0-d2/d4/a0/a1
+        movem.l (sp)+,d0-d4/a0/a1
         ori     #1,ccr
         rts
 
@@ -6079,6 +6273,8 @@ Q9K_SysFISeek:
         adda.l  d2,a1
         tst.w   4(a1)
         beq     Q9K_SysFISeek_BadPath
+        cmpi.w  #Q9K_PATH_KIND_CONSOLE,Q9K_PATHDESC_KIND_OFF(a1)
+        bne     Q9K_SysFISeek_NoBackend
         move.l  4(sp),8(a1)                    * saved d1.l = requested position
 Q9K_SysFISeek_Ok:
         movem.l (sp)+,d0-d1/d2/a1
@@ -6087,6 +6283,11 @@ Q9K_SysFISeek_Ok:
 Q9K_SysFISeek_BadPath:
         movem.l (sp)+,d0-d1/d2/a1
         move.w  #$00c9,d1                     * E$BPNUM
+        ori     #1,ccr
+        rts
+Q9K_SysFISeek_NoBackend:
+        movem.l (sp)+,d0-d1/d2/a1
+        move.w  #Q9K_E_UNKSVC,d1
         ori     #1,ccr
         rts
 
@@ -6433,7 +6634,8 @@ Q9K_SysFFModul:
         move.w  Q9K_FModulScratch_OutTy+2,d0
         move.w  Q9K_FModulScratch_OutAR+2,d1
         movea.l Q9K_FModulScratch_Entry,a2
-        moveq   #255,d7
+        moveq   #0,d7                            * MOVEQ #255 would become -1 (0xffffffff)
+        move.w  #255,d7                          * DBRA: 256 iterations, then timeout
 Q9K_SysFFModul_SkipName:
         tst.b   (a0)+
         beq     Q9K_SysFFModul_NameDone
