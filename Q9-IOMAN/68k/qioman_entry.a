@@ -18,9 +18,10 @@ Q9_R_A0         equ     $20
         psect   qioman,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,1,0,Q9IOMAN_Entry
 
 Q9IOMAN_Entry:
+        * Q9 invokes the system module's M$Exec entry after linking it.
         move.l  a4,-(sp)
         move.l  a6,-(sp)
-        jsr     tc_q9ioman_system_init
+        bsr     tc_q9ioman_system_init
         tst.l   d0
         bne     Q9IOMAN_InitFailed
 
@@ -66,7 +67,7 @@ Q9IOMAN_OpenEntry:
         movem.l d2-d7/a3-a5,-(sp)
         move.l  a5,-(sp)
         move.l  #$0084,-(sp)
-        jsr     tc_q9ioman_target_dispatch
+        bsr     tc_q9ioman_target_dispatch
         addq.l  #8,sp
         tst.l   d0
         bne     Q9IOMAN_OpenFailed
@@ -88,7 +89,7 @@ Q9IOMAN_ReadEntry:
         movem.l d2-d7/a3-a5,-(sp)
         move.l  a5,-(sp)
         move.l  #$0089,-(sp)
-        jsr     tc_q9ioman_target_dispatch
+        bsr     tc_q9ioman_target_dispatch
         addq.l  #8,sp
         tst.l   d0
         bne     Q9IOMAN_ReadFailed
@@ -110,7 +111,7 @@ Q9IOMAN_CloseEntry:
         movem.l d2-d7/a3-a5,-(sp)
         move.l  a5,-(sp)
         move.l  #$008f,-(sp)
-        jsr     tc_q9ioman_target_dispatch
+        bsr     tc_q9ioman_target_dispatch
         addq.l  #8,sp
         tst.l   d0
         bne     Q9IOMAN_CloseFailed
