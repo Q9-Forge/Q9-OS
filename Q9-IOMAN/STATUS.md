@@ -166,7 +166,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 |---|---|---|
 | Modulstart/Systemzustand | 🟢 | Q9-Systemmodul-Entry startet den idempotenten C-Zustand; Fehlerpfad, Image-Integration und exceptionfreier Emulatorstart geprüft; temporärer reentrant Open-Selbsttest kehrte zurück |
 | Kernel-Service-Registrierung | 🟢 | Watchpoint bestätigt `F$SSvc`-Schattenadressen für `I$Open/Read/Close`; kontrollierter nicht-nativer `I$Open` erreicht den externen Handler und kehrt zurück; `D1`-/Carry-Fehlerwert noch separat auszulesen |
-| Register-/Pfadadapter für I$-Handler | 🟡 | Open/Read/Close-Dispatcher und Assembly-Schatteneinträge sind Q9-toolchain-kompiliert/verlinkt; Hosttests prüfen Ergebnis-/Carry-Mapping einschließlich Open→`E$MNF`; Emulator belegt Open-Aufruf/Rückkehr, Read/Close-Runtime und Read-Buffer-Speicherschutz fehlen; Pfadresolver begrenzt Scan auf 256 Byte, kann ungültige Zeiger nicht abfangen |
+| Register-/Pfadadapter für I$-Handler | 🟡 | Open/Read/Close-Dispatcher und Assembly-Schatteneinträge sind Q9-toolchain-kompiliert/verlinkt; Hosttests prüfen Ergebnis-/Carry-Mapping einschließlich Open→`E$MNF` und nun auch den fehlenden-Manager-Fehlerpfad; Emulator belegt Open-Aufruf/Rückkehr, Read/Close-Runtime und Read-Buffer-Speicherschutz fehlen; Pfadresolver begrenzt Scan auf 256 Byte, kann ungültige Zeiger nicht abfangen |
 | Zielübersetzung und Modulbuild | 🟢 | Q9-eigene Kette erzeugt ein gültiges `qioman`-OS-9-Modul; CRC/Parität, Bootkettenaufnahme und exceptionfreier Emulatorlauf verifiziert |
 | Device-Descriptor lesen/parsen/validieren | 🔴 | Name, Typ, Treiber-/Managerreferenzen und Größen/Attribute sicher validiert |
 | Device-Descriptor finden, linken und validieren | 🔴 | Name, Typfilter, Edition, Größe und Datenfelder prüfen |

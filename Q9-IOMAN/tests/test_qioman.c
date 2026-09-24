@@ -256,6 +256,16 @@ int main(void)
         dispatch_mock.close_status = Q9IOMAN_OK;
         q9ioman_init(&dispatch_manager, dispatch_paths, 2);
         memset(frame, 0, sizeof(frame));
+        q9ioman_frame_write16(frame, Q9IOMAN_R_SR, 0x2700U);
+        check("missing manager reports a complete syscall error frame",
+              q9ioman_dispatch_kernel_request(0x0084, 0, frame,
+                  resolve_test_path, (void *)dispatch_name) ==
+                  Q9IOMAN_E_INVALID_ARGUMENT &&
+              q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
+                  Q9IOMAN_OS9_E_PARAM &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0);
+
+        memset(frame, 0, sizeof(frame));
         q9ioman_frame_write32(frame, Q9IOMAN_R_D0, 1);
         q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x2000UL);
         q9ioman_frame_write16(frame, Q9IOMAN_R_SR, 0x2700U);

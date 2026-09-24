@@ -129,8 +129,13 @@ Q9IOMAN_Status q9ioman_dispatch_kernel_request(
     Q9IOMAN_Status status;
     Q9IOMAN_u16 path;
 
-    if (frame == 0 || manager == 0)
+    if (frame == 0)
         return Q9IOMAN_E_INVALID_ARGUMENT;
+
+    if (manager == 0) {
+        status = Q9IOMAN_E_INVALID_ARGUMENT;
+        goto failed;
+    }
 
     status = q9ioman_decode_kernel_request(callcode, frame, &request);
     if (status != Q9IOMAN_OK)
