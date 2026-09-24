@@ -172,8 +172,10 @@ vor dem Codegen gegen Q9 verifiziert werden.
 |---|---|---|
 | Caller-owned Pfadtabelle initialisieren | 🟢 | Hosttest prüft Nullinitialisierung/Managerbindung im lokalen Scope |
 | Backendpräfixe registrieren und auflösen | 🟢 | Hosttest prüft Registrierung, Duplikat, längsten Treffer und `/dd` vs. `/ddx`; keine Modul-/Descriptorbindung |
+| Backendpräfix sicher lösen (Detach-Grundlage) | 🟢 | Hosttest prüft Busy bei aktivem Pfad, erfolgreiches Lösen nach Close und anschließendes Not-Found; noch keine Descriptor-/Modulreferenzfreigabe |
 | Kernel-Rahmen-Feldzugriffe | 🟢 | Hosttests prüfen D0/A0 big-endian 32-bit sowie SR/PC 16-bit; keine syscall-spezifische Adapterlogik |
 | Managerstatus → Q9-Kernel-Fehler | 🟡 | Grundzuordnung für Parameter, Pfadnummer, volle Tabelle, nicht gefunden und nicht unterstützt implementiert/getestet; pro I$-Aufruf und Backend noch semantisch zu bestätigen |
+| Manager-/Treiber-/Emulator-Kommunikationsspezifikation | 🟡 | Entwurf in `docs/IO_PROTOCOL_SPEC.md`; Kommando-Deskriptor, 13 Managerkommandos und Datenzeigerprinzip festgehalten; genaue Parameter, Register-/SetStat-Transport sowie Init-/Destroy-Eigentümer offen |
 | Residenten Systemzustand initialisieren | 🟢 | Hosttests prüfen Zugriff vor Start, Tabellenkapazität und wiederholten Start |
 | Backend-Open und lokale Slotvergabe | 🟡 | Hosttest erfolgreich; nur bei bereits ausgewähltem Backend, keine Deviceauflösung |
 | generische Operation an Backendpfad weiterleiten | 🟡 | Hosttest prüft READ und Argumente; kein Trap-/68K-Dispatch |

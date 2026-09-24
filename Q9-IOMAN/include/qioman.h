@@ -18,7 +18,8 @@ typedef enum {
     Q9IOMAN_E_NO_PATH_SLOTS = 3,
     Q9IOMAN_E_UNSUPPORTED_OPERATION = 4,
     Q9IOMAN_E_NOT_FOUND = 5,
-    Q9IOMAN_E_REGISTRY_FULL = 6
+    Q9IOMAN_E_REGISTRY_FULL = 6,
+    Q9IOMAN_E_BUSY = 7
 } Q9IOMAN_Status;
 
 #define Q9IOMAN_BACKEND_CAPACITY 8
@@ -63,6 +64,7 @@ typedef struct {
     Q9IOMAN_u16 backend_path;
     const Q9IOMAN_BackendOps *backend;
     void *backend_context;
+    const char *route_prefix;
 } Q9IOMAN_Path;
 
 typedef struct {
@@ -96,6 +98,8 @@ Q9IOMAN_Status q9ioman_register_backend(Q9IOMAN_Manager *manager,
                                         const char *prefix,
                                         const Q9IOMAN_BackendOps *backend,
                                         void *context);
+Q9IOMAN_Status q9ioman_unregister_backend(Q9IOMAN_Manager *manager,
+                                          const char *prefix);
 Q9IOMAN_Status q9ioman_open_resolved(Q9IOMAN_Manager *manager,
                                      const char *path,
                                      Q9IOMAN_u16 mode,

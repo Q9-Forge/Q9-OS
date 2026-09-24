@@ -27,6 +27,10 @@ noch nicht fertigen QCC-Syscall-Codegenerierung.
 
 ## MVP-Reihenfolge
 
+Der Kommunikationsvertrag wird separat und ausdrücklich als Entwurf in
+[IO_PROTOCOL_SPEC.md](IO_PROTOCOL_SPEC.md) geführt. Er hält bestätigte
+Leitlinien und offene ABI-/Lebenszyklusfragen getrennt fest.
+
 1. Kerneladapter und Status-/Fehlervertrag festlegen.
 2. Attach/Detach sowie Device-/Manager-Registrierung ergänzen.
 3. Open/Close und Pfadtabellen an Q9-Prozessdeskriptoren anbinden.

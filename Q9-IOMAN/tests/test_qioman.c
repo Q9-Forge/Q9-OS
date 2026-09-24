@@ -141,11 +141,21 @@ int main(void)
               Q9IOMAN_E_UNSUPPORTED_OPERATION &&
           q9ioman_operate(&manager, opened_path, Q9IOMAN_OP_READ,
                           0, 0, 0, &result) == Q9IOMAN_OK);
+    check("refuses to unregister a backend with an active path",
+          q9ioman_unregister_backend(&manager, "/dd/SYS") == Q9IOMAN_E_BUSY);
     check("releases path after successful close",
           (mock.close_status = Q9IOMAN_OK,
           q9ioman_close(&manager, opened_path)) == Q9IOMAN_OK &&
           q9ioman_operate(&manager, opened_path, Q9IOMAN_OP_READ,
                           0, 0, 0, &result) == Q9IOMAN_E_INVALID_PATH);
+    check("unregisters backend after its paths are closed",
+          q9ioman_unregister_backend(&manager, "/dd/SYS") == Q9IOMAN_OK &&
+          q9ioman_unregister_backend(&manager, "/dd") == Q9IOMAN_OK &&
+          q9ioman_unregister_backend(&manager, "/dd") == Q9IOMAN_E_NOT_FOUND);
+    check("open resolution fails after final backend detach",
+          q9ioman_open_resolved(&manager, "/dd/SYS/motd", 1,
+                                &local_path) == Q9IOMAN_E_NOT_FOUND &&
+          local_path == 0);
     check("backend was called only along valid routes",
           mock.open_calls == 2 && mock.operate_calls == 2 &&
           mock.close_calls == 2);
