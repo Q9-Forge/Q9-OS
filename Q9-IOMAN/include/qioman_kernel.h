@@ -39,6 +39,13 @@ typedef struct {
     Q9IOMAN_u32 length;
 } Q9IOMAN_KernelRequest;
 
+/* Platform bridge must validate and map a NUL-terminated Q9 path string. */
+typedef Q9IOMAN_Status (*Q9IOMAN_PathAddressFn)(
+    void *context,
+    Q9IOMAN_u32 address,
+    const char **path,
+    Q9IOMAN_u32 *bytes_including_nul);
+
 Q9IOMAN_u32 q9ioman_frame_read32(const unsigned char *frame,
                                  Q9IOMAN_u16 offset);
 void q9ioman_frame_write32(unsigned char *frame,
@@ -54,5 +61,11 @@ Q9IOMAN_Status q9ioman_decode_kernel_request(
     Q9IOMAN_u16 callcode,
     const unsigned char *frame,
     Q9IOMAN_KernelRequest *request);
+Q9IOMAN_Status q9ioman_dispatch_kernel_request(
+    Q9IOMAN_u16 callcode,
+    Q9IOMAN_Manager *manager,
+    unsigned char *frame,
+    Q9IOMAN_PathAddressFn resolve_path,
+    void *address_context);
 
 #endif
