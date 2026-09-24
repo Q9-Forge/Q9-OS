@@ -29,14 +29,15 @@ ist noch nicht end-to-end nachgewiesen (siehe „Laufzeittest“).
 | Erstlauf mit `JSR absolut` zu QCC-Funktionen | ❌ Illegal Instruction, Vektor 4, `PC=$7031` | Instruktionsspur zeigte den Sprung vom Modul bei `$18D20` auf `$290C` statt auf `Modulbasis+$290C`. Ursache: absoluter Aufruf war für das relocierbare Modul ungeeignet. |
 | Kontrollklon mit gleichem frisch gebautem Kernel und denselben Diskmodulen, aber originalem IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Bootstrap läuft weiter; CompactFlash-Treiber und normale Programmtestausgaben erscheinen; Exception-Mitschrift bleibt leer | Derselbe Kernel-/Emulatorlauf funktioniert mit dem originalen IOMan. Das grenzt den Fehler auf den neuen IOMan-Einstieg oder dessen Integration ein. |
 | Neuer Build mit PC-relativen `BSR`-Aufrufen zu QCC-Funktionen | 🟡 Einstieg und C-Initialisierung laufen ohne Exception; Watchpoint bestätigt `F$SSvc`-Einträge `Open=$18D64`, `Read=$18DA8`, `Close=$18DEC`; Instruktionsspur erreicht `Q9IOMAN_OpenEntry` bei `$18D64` | Relokationsfehler behoben und `I$Open`-Dispatch bis zum Handler-Eintritt live nachgewiesen. Handler-Rückgabe mit fehlendem Backend, `Read`/`Close`, Attach und Dateisystem-Backends sind noch offen. |
-| Zusätzlicher Bootlauf mit Trace-Freeze am erwarteten C-Dispatcher-Einsprung | 🟡 Kein Treffer am Dispatcher im Beobachtungsfenster; keine Exception | Dieser Bootlauf lieferte keinen reproduzierbaren `I$Open`-Aufruf bis in den C-Dispatcher. Er widerlegt den separaten Nachweis des Assembler-Eintritts nicht; eine kontrollierte, wiederholbare Open-Anforderung fehlt weiterhin. |
+| Kontrollierter, temporärer nicht-nativer `I$Open` aus `M$Exec` ohne registriertes Backend | 🟡 Kernel-Trace: `$84`-Trap → externer Handler (`X`) → Rückkehr (`A`); keine Exception | Der reentrante Aufruf läuft durch den registrierten Open-Einstieg und kehrt zum Aufrufer zurück. Der konkrete `D1`-Fehlerwert/Carry wurde nicht separat gesichert. Der Test-Hook ist aus dem Produktionsbuild entfernt. |
+| Zusätzlicher Bootlauf mit Trace-Freeze am C-Dispatcher-Einsprung | 🟡 Kein Treffer am Dispatcher während dieses Bootlaufs; keine Exception | Der normale Bootpfad löst den Testaufruf nicht zuverlässig aus. Deshalb wurde der oben genannte explizite, temporäre Open-Aufruf zum kontrollierten Nachweis verwendet. |
 
 Beide Läufe verwenden separate `cp -c`-Klone; das Master-Image wurde nicht
 verändert. Die Kontrollausgabe enthält lange `A`-Folgen aus der vorhandenen
 Kernel-/Emulatordiagnostik; sie sind kein IOMan-Erfolgskriterium. Nächster
-Schritt: den vollständigen Handlerpfad bis zum Rückgabewert bei nicht
-registriertem Backend prüfen; danach `Read`/`Close` nur über einen gültig
-geöffneten Managerpfad testen. Die Emulator-Dumpzähler für externe
+Schritt: den konkreten `D1`-/Carry-Rückgabewert des nicht erfolgreichen
+Open-Aufrufs festhalten; danach `Read`/`Close` über einen gültig geöffneten
+Managerpfad testen. Die Emulator-Dumpzähler für externe
 `F$SSvc`-Registrierungen belegen die Manager-Schattenhandler nicht:
 `I$Open`/`I$Read`/`I$Close` sind Kernel-eigene Dienste und werden separat
 gehalten. Die Testklone liegen unter `/private/tmp/q9ioman-bridge-test-full.hda` und
