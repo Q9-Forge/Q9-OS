@@ -11,48 +11,31 @@ Design-Grundsätze
 - Für SetStat/GetStat wird das Subcommand als Funktions-Selector genutzt.
 - Pfadnamen UTF-8, null-terminated im Payload, bei relativem Pfad vor Konfinezungsprüfung (absolut vs. relativ) durch Manager.
 
-Opcode Übersicht
-- 0x01: FM_CALL — allgemeiner FileManager-Aufruf (Open/Close/Read/Write/GetStat/SetStat/...) mit FuncID im Subcommand
-- 0x02: FM_CTRL — Steuerbefehle (Init, Terminate, Sync/Flush)
-- 0x03: FM_DESC — Descriptor/Config-Operationen (GetBasePath, SetBasePath)
-- 0xFF: FM_PING — Test/Ping
+Commands
+- Single flat command list (WORD values). No nested opcodes.
+- 0x0000: Idle
+- 0x0001 - 0x000D: Manager commands (Create, Open, Seek, Read, Write, ReadLn, WriteLn, GetStt, SetStt, Close, Delete, MkDir, ChDir)
+- 0x0020 - 0x002F: Control commands
+  - 0x0021: Descriptor Init
+  - 0x0022: Test / Ping
+- 0x0080 - 0x00FF: Return/Response codes
+  - 0x0080: OK (no error)
+  - 0x0081-0x00FF: command-specific error codes
 
-Beispiel: GetStat
-Request:
-- Opcode=0x01 (FM_CALL)
-- Subcommand=0x10 (FUNC_GETSTAT)
-- Flags=0x00
-- PayloadLength=2 + N
-- Payload: [PathLength(2)][Path UTF-8 bytes]
-
-Response:
-- Status(1)
-- DataLength(2)
-- Data: serialized stat structure (mode, uid, gid, size, atime, mtime, ctime) in defined order, big-endian
-
-SetStat
-- Subcommand=0x11 (FUNC_SETSTAT)
-- Payload: serialized target fields bitmap + corresponding values
-- Driver validates fields, applies changes, returns Status
-
-FuncID Mapping (erste Version)
-- 0x10: FUNC_GETSTAT
-- 0x11: FUNC_SETSTAT
-- 0x20: FUNC_OPEN
-- 0x21: FUNC_CLOSE
-- 0x22: FUNC_READ
-- 0x23: FUNC_WRITE
-- 0x30: FUNC_OPENDIR
-- 0x31: FUNC_READDIR
-- 0x40: FUNC_MKDIR
-- 0x41: FUNC_RMDIR
-- 0x42: FUNC_UNLINK
-- 0x43: FUNC_RENAME
-- 0x50: FUNC_CHDIR
-- 0x60: FUNC_STAT64 (extended)
+Parameter semantics
+- param[0..4] are 5 32-bit values with command-dependent meaning. Typical usages:
+  - For operations involving strings/buffers provided by the user program (in emulator memory):
+    - param[0] = pointer/address to null-terminated name/path in emulator memory
+    - param[1] = pointer/address to buffer in emulator memory (read/write data)
+    - param[2] = descriptor/handle (if applicable)
+    - param[3] = length / maxlen / seek-offset (signed)
+    - param[4] = attributes / flags
+  - Manager MUST populate these params with the *addresses* that point into emulator memory (not copy the data into the shared area). The hardware simulator reads the emulator memory at those addresses and performs host operations.
 
 Errors
-- Status bytes non-zero map to errno-like codes; reserve 0x80..0xFF for driver-specific codes.
+- result_code maps to host errno-like values; 0 = OK. Command-specific return codes are in 0x0081..0x00FF.
+
+
 
 Security / Confinement
 - Manager MUST normalize and resolve paths and enforce confinement: resolved_path must start with basepath.
