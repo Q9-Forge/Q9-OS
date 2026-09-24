@@ -15,9 +15,9 @@ Microware-ABI-Spezifikation.
 - Ein Manageraufruf hat je nach Kommando 1 bis 5 Parameter. Die genaue
   Belegung, Breite und Richtung ist noch pro Kommando festzulegen.
 - Für einen Aufruf wird ein kleiner, aufruflokaler Kommando-Deskriptor
-  verwendet. Kein global geteilter, während der Bearbeitung veränderlicher
-  Kommando-Puffer: parallele/reentrante Aufrufe dürfen sich nicht
-  überschreiben.
+  verwendet. Der Deskriptor liegt beim Aufrufer auf dessen Stack. Kein global
+  geteilter, während der Bearbeitung veränderlicher Kommando-Puffer:
+  parallele/reentrante Aufrufe dürfen sich nicht überschreiben.
 - Der Deskriptor enthält Kommando und skalare Parameter sowie bei Bedarf
   Zeiger und Längen. Datei-/Pfadnamen und Nutzdaten werden nicht in IOMan-
   Buffern dupliziert; ihre Buffer kommen vom Aufrufer (Manager/Treiber) und
@@ -38,26 +38,32 @@ Microware-ABI-Spezifikation.
 
 ## 2. Kommando-Deskriptor (Vorschlag, ABI offen)
 
-Als gemeinsame logische Form wird zunächst vorgeschlagen:
+Als logische, kommandoabhängig lange Form wird vorgeschlagen:
 
-```c
-struct Q9IO_Command {
-    LONG command;       /* Kommando-ID */
-    LONG param_count;   /* 1..5; genaue Regel pro Kommando */
-    LONG param[5];      /* Skalare oder 32-bit Adressen, kommandoabhängig */
-};
+```text
+LONG command;           /* Kommando-ID */
+LONG param1;            /* immer vorhanden */
+[LONG param2;]          /* nur falls dieses Kommando >= 2 Parameter hat */
+[LONG param3;]
+[LONG param4;]
+[LONG param5;]
 ```
 
-Dies ist ein Diskussionsmodell, **keine bereits beschlossene C-Struktur**.
-Noch zu entscheiden sind: 16-/32-bit Breiten, Vorzeichen, Alignment,
-Byteordnung, tatsächliche Übergabe (Register oder Zeiger auf den Block),
-Ergebnis-/Fehlerfelder und ob `param_count` überflüssig ist, wenn jede
-Kommando-ID ihre feste Form hat. Ein kleiner fester Maximalblock vereinfacht
-die ABI; unbenutzte Parameter müssen dann ignoriert werden. Alternativ kann
-ein kompakter kommandoabhängiger Block mit expliziter Größe verwendet werden.
+Es werden also nur die Parameter übertragen, die das konkrete Kommando
+benötigt; es gibt vorläufig kein separates `param_count`, weil die Kommando-ID
+die feste Parameterzahl bestimmen soll. Bei 32-bit LONGs wäre die logische
+Blocklänge `4 * (1 + Parameterzahl)` Byte, also 8 bis 24 Byte. Das ist ein
+Diskussionsmodell, **keine bereits beschlossene Speicher- oder C-Struktur**.
+Noch zu entscheiden sind: tatsächliche Breite und Vorzeichen von LONG,
+Alignment, Byteordnung, tatsächliche Übergabe (Register oder Zeiger auf den
+Block), Ergebnis-/Fehlerfelder sowie die bestätigte Parameterzahl und
+Reihenfolge jedes Kommandos. Falls variable Arity nicht eindeutig aus der
+Kommando-ID bestimmbar ist, muss ein Längen-/Anzahlfeld ergänzt werden.
 
 Ein Parameter, der auf einen Namen- oder Datenbuffer zeigt, ist nur eine
-Adresse; der IOMan kopiert den referenzierten Inhalt nicht. Pro Kommando muss
+Adresse; der IOMan kopiert den referenzierten Inhalt nicht. Der Buffer selbst
+und der Kommando-Deskriptor liegen im synchronen MVP auf dem Stack des
+aufrufenden Managers/Treibers. Pro Kommando muss
 die Spezifikation Richtung (IN/OUT/INOUT), Länge, Terminierung und Gültigkeit
 des Zeigers definieren. Bei 32-bit Adressen muss außerdem feststehen, dass
 der Empfänger dieselbe Adressdomäne/Abbildung sieht und wie ungültige oder
@@ -160,8 +166,8 @@ eigenen Kommando-Kanal klar von normalen Schreibdaten unterscheiden.
   Write zusätzlich die tatsächlich übertragene Länge.
 - Bei Fehler muss feststehen, ob teilweise bearbeitete Buffer/Objekte gültig
   bleiben und ob ein Retry erlaubt ist.
-- Kein globales veränderliches Requestobjekt. Aufruflokaler Deskriptor oder
-  äquivalenter reentranzsicherer Kontext.
+- Kein globales veränderliches Requestobjekt. Aufruflokaler Deskriptor auf
+  dem Stack des Aufrufers oder äquivalenter reentranzsicherer Kontext.
 - Solange Requests synchron sind, muss jeder Aufruferstack bis zur Rückkehr
   erhalten bleiben. Wird später asynchron gearbeitet, braucht es explizite
   Request-Lebensdauer, Completion, Abbruch sowie Schutz/Pinning der Buffer;
