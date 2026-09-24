@@ -16,28 +16,31 @@ Behauptung vollständiger Microware-Kompatibilität.
 | ⚪ | Bewusst nach dem ersten lauffähigen System zurückgestellt / optional |
 
 **Wichtig:** Der IOMan ist als OS-9-Modul baubar und die drei Schattenhandler
-sind an den Router gebunden; produktive Backends/Attach fehlen noch. Der
-Prozess-/Dup-Lebensdauerintegration ist offen. Ein isolierter Emulator-
-Integrationstest wurde begonnen; der aktuelle Einstiegstest schlägt fehl
-(siehe „Laufzeittest“ unten).
+sind an den Router gebunden; produktive Backends/Attach fehlen noch. Die
+Prozess-/Dup-Lebensdauerintegration ist offen. Der isolierte Emulatorlauf
+kommt inzwischen ohne Illegal Instruction über den IOMan-Einstieg hinaus;
+die tatsächliche Weiterleitung eines I/O-Aufrufs an einen Schattenhandler
+ist noch nicht end-to-end nachgewiesen (siehe „Laufzeittest“).
 
 ## Laufzeittest
 
 | Test | Ergebnis | Aussage |
 |---|---|---|
-| Neues `qioman` in isoliertem OS9SYS-Klon; Bootkette enthält nachweislich den Build (15.850 Byte, gültige CRC/Parität) | ❌ Frühe Illegal Instruction, Vektor 4, `PC=$7031`; `F$SSvc`-Registrierungen = 0, `D_DevTbl` leer | Modul wurde geladen und gelinkt. Der Fehler geschieht vor erfolgreicher Service-Registrierung; noch kein Test von `Open`/`Read`/`Close`. |
+| Erstlauf mit `JSR absolut` zu QCC-Funktionen | ❌ Illegal Instruction, Vektor 4, `PC=$7031` | Instruktionsspur zeigte den Sprung vom Modul bei `$18D20` auf `$290C` statt auf `Modulbasis+$290C`. Ursache: absoluter Aufruf war für das relocierbare Modul ungeeignet. |
 | Kontrollklon mit gleichem frisch gebautem Kernel und denselben Diskmodulen, aber originalem IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Bootstrap läuft weiter; CompactFlash-Treiber und normale Programmtestausgaben erscheinen; Exception-Mitschrift bleibt leer | Derselbe Kernel-/Emulatorlauf funktioniert mit dem originalen IOMan. Das grenzt den Fehler auf den neuen IOMan-Einstieg oder dessen Integration ein. |
+| Neuer Build mit PC-relativen `BSR`-Aufrufen zu QCC-Funktionen | 🟡 Einstieg und C-Initialisierung laufen ohne Exception; Watchpoint bestätigt `F$SSvc`-Einträge `Open=$18D64`, `Read=$18DA8`, `Close=$18DEC`; Instruktionsspur erreicht `Q9IOMAN_OpenEntry` bei `$18D64` | Relokationsfehler behoben und `I$Open`-Dispatch bis zum Handler-Eintritt live nachgewiesen. Handler-Rückgabe mit fehlendem Backend, `Read`/`Close`, Attach und Dateisystem-Backends sind noch offen. |
 
 Beide Läufe verwenden separate `cp -c`-Klone; das Master-Image wurde nicht
 verändert. Die Kontrollausgabe enthält lange `A`-Folgen aus der vorhandenen
 Kernel-/Emulatordiagnostik; sie sind kein IOMan-Erfolgskriterium. Nächster
-Schritt: Fehler-PC `$7031` und Rücksprung-/Fehlerpfad des Systemmodul-Aufrufs
-mit dem Einstieg in `68k/qioman_entry.a` korrelieren; anschließend den
-Instruktionspfad bis zum ersten `F$SSvc`-Trap instrumentieren. Die beiden
-Testklone liegen unter `/private/tmp/q9ioman-bridge-test-full.hda` und
+Schritt: den vollständigen Handlerpfad bis zum Rückgabewert bei nicht
+registriertem Backend prüfen; danach `Read`/`Close` nur über einen gültig
+geöffneten Managerpfad testen. Die Emulator-Dumpzähler für externe
+`F$SSvc`-Registrierungen belegen die Manager-Schattenhandler nicht:
+`I$Open`/`I$Read`/`I$Close` sind Kernel-eigene Dienste und werden separat
+gehalten. Die Testklone liegen unter `/private/tmp/q9ioman-bridge-test-full.hda` und
 `/private/tmp/q9ioman-control-original-full.hda`. Keine Aussage über
 produktive Dateisystemfunktionalität ableiten.
-
 ## 1. Kernel → IOMan: empfangene Systemaufrufe
 
 Die 68K-Referenzinventur führt 7 `F$`- und 17 `I$`-Aufrufe auf, insgesamt
