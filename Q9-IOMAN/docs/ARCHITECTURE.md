@@ -30,6 +30,9 @@ noch nicht fertigen QCC-Syscall-Codegenerierung.
 Der Kommunikationsvertrag wird separat und ausdrücklich als Entwurf in
 [IO_PROTOCOL_SPEC.md](IO_PROTOCOL_SPEC.md) geführt. Er hält bestätigte
 Leitlinien und offene ABI-/Lebenszyklusfragen getrennt fest.
+Die lokale Q9-Registerbelegung der eingehenden Kernel-I/O-Aufrufe steht in
+[KERNEL_IO_ABI.md](KERNEL_IO_ABI.md); sie ist nicht mit dem neuen
+Managerkommando-ABI gleichzusetzen.
 
 1. Kerneladapter und Status-/Fehlervertrag festlegen.
 2. Attach/Detach sowie Device-/Manager-Registrierung ergänzen.
