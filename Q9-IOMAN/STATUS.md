@@ -142,7 +142,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 |---|---|---|
 | Modulstart/Systemzustand | 🟡 | Q9-Systemmodul-Entry startet den idempotenten C-Zustand; Fehlerpfad vorhanden, Boot-/Image-Integration und Laufzeittest fehlen |
 | Kernel-Service-Registrierung | 🟡 | Systemmodul namens `ioman` initialisiert C-Zustand und registriert `I$Open/Read/Close` per F$SSvc; Q9-Kernel-Schattenpfad ist unit-getestet, Emulator-/Bootintegration fehlt |
-| Register-/Pfadadapter für I$-Handler | 🟡 | 72-Byte-Rahmenoffsets sowie big-endian 16/32-bit-Zugriffe host- und Q9-toolchain-kompiliert; syscall-spezifische Validierung, Pfadslotabbildung und Fehler-/Carry-Vertrag fehlen |
+| Register-/Pfadadapter für I$-Handler | 🟡 | 72-Byte-Rahmenoffsets sowie big-endian 16/32-bit-Zugriffe host- und Q9-toolchain-kompiliert; `Q9IOMAN_u32` ist nun auch LP64-hostsicher genau 32 Bit; syscall-spezifische Validierung, Pfadslotabbildung und Fehler-/Carry-Vertrag fehlen |
 | Zielübersetzung und Modulbuild | 🟢 | Q9-eigene Kette erzeugt aus C+68K-Glue das `qioman`-OS-9-Modul; noch kein Emulator-/Kernel-Integrationstest |
 | Device-Descriptor lesen/parsen/validieren | 🔴 | Name, Typ, Treiber-/Managerreferenzen und Größen/Attribute sicher validiert |
 | Device-Descriptor finden, linken und validieren | 🔴 | Name, Typfilter, Edition, Größe und Datenfelder prüfen |

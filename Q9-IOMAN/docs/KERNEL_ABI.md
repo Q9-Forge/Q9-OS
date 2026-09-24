@@ -28,6 +28,12 @@ Vor der Auswahl jedes Callcodes müssen Eingaberegister, Rückgaberegister,
 Carry-/Fehlerkonvention, Prozess-/Supervisor-Kontext und Seiteneffekte aus
 dem Q9-Kernelvertrag dokumentiert und durch Tests abgesichert sein.
 
+`Q9IOMAN_u32` ist als `unsigned int` festgelegt: auf dem 32-bit-Q9-Ziel und
+dem Host-Testsystem bildet der Typ damit einen Registerwert ab. `unsigned long`
+wäre auf LP64-Hosts 64 Bit breit und darf deshalb nicht als vermeintlich
+portabler 32-bit-ABI-Typ verwendet werden. Der Hosttest prüft die Größe
+explizit; der Q9-Build prüft die Typdeklaration im Zielcompiler.
+
 ## Aktueller 68K-Registrierungseinstieg
 
 `68k/qioman_entry.a` stellt `M$Exec` eines Q9-Systemmoduls namens `ioman`
