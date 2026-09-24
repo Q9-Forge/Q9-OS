@@ -164,10 +164,10 @@ vor dem Codegen gegen Q9 verifiziert werden.
 
 | Subsystem/Funktion | Status | Fertigstellungskriterien |
 |---|---|---|
-| Modulstart/Systemzustand | 🟡 | Q9-Systemmodul-Entry startet den idempotenten C-Zustand; Fehlerpfad vorhanden, Boot-/Image-Integration und Laufzeittest fehlen |
-| Kernel-Service-Registrierung | 🟡 | Systemmodul namens `ioman` initialisiert C-Zustand und registriert `I$Open/Read/Close` per F$SSvc; Q9-Kernel-Schattenpfad ist unit-getestet, Emulator-/Bootintegration fehlt |
-| Register-/Pfadadapter für I$-Handler | 🟡 | Open/Read/Close-Dispatcher und Assembly-Schatteneinträge sind Q9-toolchain-kompiliert/verlinkt; Hosttests prüfen Ergebnis-/Carry-Mapping; Pfadresolver scannt im flachen Q9-Adressraum max. 256 Byte, kann ungültige Zeiger nicht abfangen; Emulator-End-to-End und Read-Buffer-Speicherschutz fehlen |
-| Zielübersetzung und Modulbuild | 🟢 | Q9-eigene Kette erzeugt aus C+68K-Glue das `qioman`-OS-9-Modul; noch kein Emulator-/Kernel-Integrationstest |
+| Modulstart/Systemzustand | 🟢 | Q9-Systemmodul-Entry startet den idempotenten C-Zustand; Fehlerpfad, Image-Integration und exceptionfreier Emulatorstart geprüft; temporärer reentrant Open-Selbsttest kehrte zurück |
+| Kernel-Service-Registrierung | 🟢 | Watchpoint bestätigt `F$SSvc`-Schattenadressen für `I$Open/Read/Close`; kontrollierter nicht-nativer `I$Open` erreicht den externen Handler und kehrt zurück; `D1`-/Carry-Fehlerwert noch separat auszulesen |
+| Register-/Pfadadapter für I$-Handler | 🟡 | Open/Read/Close-Dispatcher und Assembly-Schatteneinträge sind Q9-toolchain-kompiliert/verlinkt; Hosttests prüfen Ergebnis-/Carry-Mapping einschließlich Open→`E$MNF`; Emulator belegt Open-Aufruf/Rückkehr, Read/Close-Runtime und Read-Buffer-Speicherschutz fehlen; Pfadresolver begrenzt Scan auf 256 Byte, kann ungültige Zeiger nicht abfangen |
+| Zielübersetzung und Modulbuild | 🟢 | Q9-eigene Kette erzeugt ein gültiges `qioman`-OS-9-Modul; CRC/Parität, Bootkettenaufnahme und exceptionfreier Emulatorlauf verifiziert |
 | Device-Descriptor lesen/parsen/validieren | 🔴 | Name, Typ, Treiber-/Managerreferenzen und Größen/Attribute sicher validiert |
 | Device-Descriptor finden, linken und validieren | 🔴 | Name, Typfilter, Edition, Größe und Datenfelder prüfen |
 | Im Descriptor referenzierten Treiber finden/linken | 🔴 | Modulname/Typ verifizieren, Linklebensdauer und Rollback testen |
