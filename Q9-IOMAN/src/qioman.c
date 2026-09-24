@@ -2,8 +2,18 @@
 
 #define Q9IOMAN_PATH_FREE 0
 #define Q9IOMAN_PATH_OPEN 1
+#define Q9IOMAN_PATH_OPENING 2
+#define Q9IOMAN_PATH_CLOSING 3
 #define Q9IOMAN_BACKEND_FREE 0
 #define Q9IOMAN_BACKEND_USED 1
+
+static Q9IOMAN_Status q9ioman_open_backend(Q9IOMAN_Manager *manager,
+                                           const Q9IOMAN_BackendOps *backend,
+                                           void *backend_context,
+                                           const char *path,
+                                           const char *route_prefix,
+                                           Q9IOMAN_u16 mode,
+                                           Q9IOMAN_u16 *local_path);
 
 static Q9IOMAN_Path *q9ioman_find_path(Q9IOMAN_Manager *manager,
                                        Q9IOMAN_u16 local_path)
@@ -43,6 +53,8 @@ Q9IOMAN_Status q9ioman_init(Q9IOMAN_Manager *manager,
     for (index = 0; index < capacity; ++index) {
         path->state = Q9IOMAN_PATH_FREE;
         path->backend_path = 0;
+        path->access_mode = 0;
+        path->active_operations = 0;
         path->backend = 0;
         path->backend_context = 0;
         path->route_prefix = 0;
@@ -154,7 +166,7 @@ Q9IOMAN_Status q9ioman_unregister_backend(Q9IOMAN_Manager *manager,
 
     path = manager->paths;
     for (path_index = 0; path_index < manager->capacity; ++path_index) {
-        if (path->state == Q9IOMAN_PATH_OPEN &&
+        if (path->state != Q9IOMAN_PATH_FREE &&
             q9ioman_text_equal(path->route_prefix, entry->prefix))
             return Q9IOMAN_E_BUSY;
         path = path + 1;
@@ -200,29 +212,18 @@ Q9IOMAN_Status q9ioman_open_resolved(Q9IOMAN_Manager *manager,
     }
     if (selected == 0)
         return Q9IOMAN_E_NOT_FOUND;
-    {
-        Q9IOMAN_Status status = q9ioman_open(manager, selected->backend,
-                                             selected->context, path, mode,
-                                             local_path);
-        if (status == Q9IOMAN_OK) {
-            Q9IOMAN_Path *slot = manager->paths;
-            Q9IOMAN_u16 slot_index = (Q9IOMAN_u16)(*local_path - 1);
-            while (slot_index != 0) {
-                slot = slot + 1;
-                --slot_index;
-            }
-            slot->route_prefix = selected->prefix;
-        }
-        return status;
-    }
+    return q9ioman_open_backend(manager, selected->backend,
+                                selected->context, path, selected->prefix,
+                                mode, local_path);
 }
 
-Q9IOMAN_Status q9ioman_open(Q9IOMAN_Manager *manager,
-                            const Q9IOMAN_BackendOps *backend,
-                            void *backend_context,
-                            const char *path,
-                            Q9IOMAN_u16 mode,
-                            Q9IOMAN_u16 *local_path)
+static Q9IOMAN_Status q9ioman_open_backend(Q9IOMAN_Manager *manager,
+                                           const Q9IOMAN_BackendOps *backend,
+                                           void *backend_context,
+                                           const char *path,
+                                           const char *route_prefix,
+                                           Q9IOMAN_u16 mode,
+                                           Q9IOMAN_u16 *local_path)
 {
     Q9IOMAN_u16 index;
     Q9IOMAN_u16 backend_path;
@@ -246,17 +247,44 @@ Q9IOMAN_Status q9ioman_open(Q9IOMAN_Manager *manager,
     if (index == manager->capacity)
         return Q9IOMAN_E_NO_PATH_SLOTS;
 
-    status = backend->open(backend_context, path, mode, &backend_path);
-    if (status != Q9IOMAN_OK)
-        return status;
-
-    path_slot->backend_path = backend_path;
+    /* Reserve before calling out: the backend may re-enter IOMan. */
+    path_slot->state = Q9IOMAN_PATH_OPENING;
     path_slot->backend = backend;
     path_slot->backend_context = backend_context;
-    path_slot->route_prefix = 0;
+    path_slot->route_prefix = route_prefix;
+    path_slot->active_operations = 0;
+    path_slot->access_mode = (Q9IOMAN_u16)(mode & Q9IOMAN_ACCESS_MASK);
+    if (mode == 0)
+        path_slot->access_mode = Q9IOMAN_ACCESS_READ | Q9IOMAN_ACCESS_WRITE;
+
+    backend_path = 0;
+    status = backend->open(backend_context, path, mode, &backend_path);
+    if (status != Q9IOMAN_OK) {
+        path_slot->backend_path = 0;
+        path_slot->access_mode = 0;
+        path_slot->active_operations = 0;
+        path_slot->backend = 0;
+        path_slot->backend_context = 0;
+        path_slot->route_prefix = 0;
+        path_slot->state = Q9IOMAN_PATH_FREE;
+        return status;
+    }
+
+    path_slot->backend_path = backend_path;
     path_slot->state = Q9IOMAN_PATH_OPEN;
     *local_path = (Q9IOMAN_u16)(index + 1);
     return Q9IOMAN_OK;
+}
+
+Q9IOMAN_Status q9ioman_open(Q9IOMAN_Manager *manager,
+                            const Q9IOMAN_BackendOps *backend,
+                            void *backend_context,
+                            const char *path,
+                            Q9IOMAN_u16 mode,
+                            Q9IOMAN_u16 *local_path)
+{
+    return q9ioman_open_backend(manager, backend, backend_context, path, 0,
+                                mode, local_path);
 }
 
 Q9IOMAN_Status q9ioman_operate(Q9IOMAN_Manager *manager,
@@ -271,6 +299,8 @@ Q9IOMAN_Status q9ioman_operate(Q9IOMAN_Manager *manager,
 
     if (result == 0)
         return Q9IOMAN_E_INVALID_ARGUMENT;
+    result->value = 0;
+    result->transferred = 0;
     if (operation < Q9IOMAN_OP_READ || operation > Q9IOMAN_OP_SET_STATUS)
         return Q9IOMAN_E_UNSUPPORTED_OPERATION;
 
@@ -279,14 +309,25 @@ Q9IOMAN_Status q9ioman_operate(Q9IOMAN_Manager *manager,
         return Q9IOMAN_E_INVALID_PATH;
     if (path->backend == 0 || path->backend->operate == 0)
         return Q9IOMAN_E_UNSUPPORTED_OPERATION;
+    if ((operation == Q9IOMAN_OP_READ ||
+         operation == Q9IOMAN_OP_READ_LINE) &&
+        (path->access_mode & Q9IOMAN_ACCESS_READ) == 0)
+        return Q9IOMAN_E_WRONG_MODE;
+    if ((operation == Q9IOMAN_OP_WRITE ||
+         operation == Q9IOMAN_OP_WRITE_LINE) &&
+        (path->access_mode & Q9IOMAN_ACCESS_WRITE) == 0)
+        return Q9IOMAN_E_WRONG_MODE;
 
-    return path->backend->operate(path->backend_context,
-                                  path->backend_path,
-                                  operation,
-                                  arg0,
-                                  arg1,
-                                  arg2,
-                                  result);
+    if (path->active_operations == 65535U)
+        return Q9IOMAN_E_BUSY;
+    ++path->active_operations;
+    {
+        Q9IOMAN_Status status = path->backend->operate(
+            path->backend_context, path->backend_path, operation,
+            arg0, arg1, arg2, result);
+        --path->active_operations;
+        return status;
+    }
 }
 
 Q9IOMAN_Status q9ioman_close(Q9IOMAN_Manager *manager,
@@ -299,13 +340,20 @@ Q9IOMAN_Status q9ioman_close(Q9IOMAN_Manager *manager,
         return Q9IOMAN_E_INVALID_PATH;
     if (path->backend == 0 || path->backend->close == 0)
         return Q9IOMAN_E_UNSUPPORTED_OPERATION;
+    if (path->active_operations != 0)
+        return Q9IOMAN_E_BUSY;
 
+    path->state = Q9IOMAN_PATH_CLOSING;
     status = path->backend->close(path->backend_context, path->backend_path);
-    if (status != Q9IOMAN_OK)
+    if (status != Q9IOMAN_OK) {
+        path->state = Q9IOMAN_PATH_OPEN;
         return status;
+    }
 
     path->state = Q9IOMAN_PATH_FREE;
     path->backend_path = 0;
+    path->access_mode = 0;
+    path->active_operations = 0;
     path->backend = 0;
     path->backend_context = 0;
     path->route_prefix = 0;

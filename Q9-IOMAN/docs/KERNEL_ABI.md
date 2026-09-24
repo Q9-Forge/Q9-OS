@@ -54,11 +54,13 @@ Rückgabe.
 
 `q9ioman_status_to_os9_error()` stellt eine erste gemeinsame Übersetzung
 dieser internen Statuswerte bereit: ungültiger Parameter→`E$Param`, ungültiger
-Pfadslot→`E$BPNum`, erschöpfte Pfad-/Registrierungsslots→`E$PthFul`, kein
+Pfadslot→`E$BPNum`, falscher Read-/Write-Modus→`E$BMODE`, erschöpfte
+Pfad-/Registrierungsslots→`E$PthFul`, kein
 Präfixtreffer→`E$MNF`, nicht unterstützte Operation→`E$UnkSvc`. Die Zuordnung
 ist host- und Q9-toolchain-getestet, aber noch kein Ersatz für die spätere
 syscall-spezifische Fehlersemantik; Backendfehler brauchen eine explizite
-Weitergabe/Übersetzung.
+Weitergabe/Übersetzung. Der interne Busy-Status besitzt noch kein bestätigtes
+Q9-Systemaufruf-Mapping.
 
 ## Backend-Auflösung und offene Lebensdauerfrage
 

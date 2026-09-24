@@ -16,7 +16,7 @@ es behauptet nicht, dass ein späterer externer Handler unmöglich wäre.
 | Callcode | Kernelaufruf | Im Q9-Kernel feststellbare Eingabe | Feststellbare Ausgabe / Verhalten | Aktueller Stand |
 |---:|---|---|---|---|
 | `$83` | I$Create | Nicht im aktuellen nativen Handlerbestand belegt | Nicht belegt | Kein nativer Handler in der untersuchten Initialisierung gefunden |
-| `$84` | I$Open | `D0.b` Zugriffsmodus, `A0` Pfadnamenzeiger | Erfolg: `D0.w` Pfadnummer, `A0` hinter den Namen; Fehler: Carry + `D1.w` Fehler | Nativ für Q9-Pfade; zusätzlich selektiver IOMan-Schattenpfad für nicht-native Pfade, momentan Stub |
+| `$84` | I$Open | `D0.b` Zugriffsmodus, `A0` Pfadnamenzeiger | Erfolg: `D0.w` Pfadnummer, `A0` hinter den Namen; Fehler: Carry + `D1.w` Fehler | Q9-Kernel akzeptiert Modusbits gemäß Maske `$D7`; Bit 0 Lesen, Bit 1 Schreiben, Modus 0 wird auf Lesen+Schreiben normalisiert. Nativ für Q9-Pfade; zusätzlich selektiver IOMan-Schattenpfad für nicht-native Pfade, momentan Stub |
 | `$85` | I$MakDir | Nicht belegt | Nicht belegt | Kein nativer Handler in der untersuchten Initialisierung gefunden |
 | `$86` | I$ChgDir | `D0.w` Selektor (`1` Execution-, `3` Data-Directory), `A0` NUL-terminierter Name | Speichert den Namen im Prozessdescriptor; Fehler über Carry/`D1.w` | Native, begrenzte Prozessverzeichnisfunktion; kein vollständiger Managerdispatch |
 | `$87` | I$Delete | Nicht belegt | Nicht belegt | Kein nativer Handler in der untersuchten Initialisierung gefunden |

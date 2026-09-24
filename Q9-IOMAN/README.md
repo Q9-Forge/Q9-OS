@@ -31,8 +31,10 @@ Systemmodul-Einstieg zunächst Speicher und Tabellen einrichten.
 Öffnen über ein vom Aufrufer ausgewähltes Backend, lokale Pfadnummern,
 Operationen weiterleiten, Präfixrouten registrieren/auflösen und nach dem
 Schließen sicher wieder lösen. Ein aktiver Pfad verhindert das Lösen seiner
-Route. Er kennt
-weder Hardware noch ein Dateisystem und ruft noch keine Kernel-Syscalls auf.
+Route. Der Kern speichert außerdem die Read-/Write-Rechte, reserviert Slots
+vor reentrant aufrufenden Backends und schützt aktive Operationen vor Close.
+Er kennt weder Hardware noch ein Dateisystem und ruft noch keine
+Kernel-Syscalls auf.
 Insbesondere sind Attach-/Descriptor-Auflösung, Pfadnamen-Suche,
 Nebenläufigkeit/Warteschlangen, SCF/RBF und die Trap-Integration noch offen.
 

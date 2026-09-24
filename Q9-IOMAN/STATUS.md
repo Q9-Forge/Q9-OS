@@ -154,11 +154,11 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Gerätename/Pfadprefix parsen und Manager auswählen | 🟡 | Backendregister und längster Präfixtreffer mit Trennergrenze hostgetestet; Descriptor-/Attach-Auflösung und Pfadrestübergabe fehlen |
 | lokale Pfadnummern und Backendpfade verwalten | 🟡 | caller-owned Tabelle und lokale→Backend-Pfadbindung vorhanden; Prozessdescriptor-/Kernelintegration und Konkurrenzschutz fehlen |
 | `Dup`-/Close-Referenzlebenszyklus | 🔴 | Duplikate und Backendfreigabe korrekt bis zum letzten Nutzer; Kernel-`I$Dup`-Benachrichtigung und Prozessende-Cleanup fehlen |
-| Read-/Write-Modus und Zugriffsrechte | 🔴 | beim Open speichern, je Operation prüfen, korrekte OS-Fehler liefern |
+| Read-/Write-Modus und Zugriffsrechte | 🟡 | Q9-I$Open-Datenbits werden beim Open gespeichert; READ/READLN und WRITE/WRITLN werden vor Backenddispatch geprüft; Status-/Seek-Rechte und endgültige syscall-Fehlersemantik offen |
 | Pfad-Lock, Wait/Wake und Wiederaufnahme | 🔴 | konkurrierende Zugriffe serialisieren, Prozessende/Signal/Fehler sicher behandeln |
 | I/O-Queue und asynchrone Anfragen | 🔴 | Einreihen, Abbrechen, Abschluss, Wake-up und Ressourcenbesitz spezifizieren |
-| I/O-Kontrollblöcke und temporäre Managerpuffer | 🔴 | Lebensdauer, Größe, Ausrichtung, Besitzer und Freigabe für synchrone/asynchrone Pfade definieren |
-| Pufferverwaltung und Nutzerdatenkopie | 🔴 | Speichergrenzen prüfen, Daten zwischen Nutzer-/Systemraum kopieren, Länge/Kurztransfer/EOF behandeln |
+| Aufruflokaler Kommando-Deskriptor | 🟡 | Kommando und nur die benötigten Parameter liegen auf dem Stack des Managers/Treibers; genaue Struktur und Kommando-Arity gemäß `docs/IO_PROTOCOL_SPEC.md` noch festzulegen; der IOMan besitzt keinen geteilten Kommando-Puffer |
+| Bufferzeiger- und Längenvertrag | 🟡 | Zero-copy-Grundsatz festgelegt: Namen-/Pfad- und Datenbuffer gehören dem Aufrufer und werden vom IOMan nur als Zeiger weitergereicht; Kommando-Längen, Adressraum-/Reichweitenprüfung und asynchrone Lebensdauer sind noch zu spezifizieren; keine IOMan-eigenen Datenbuffer/Kopien |
 | `ReadLn`/`WritLn`-Puffer und Zeilenregeln | 🔴 | Terminator, Pufferende, Blocking und Teilzeilen definieren |
 | Fehler-/Rückgabemapping | 🔴 | Carry, Fehlercode, Rückgaberegister und partielle Transfers vereinheitlichen |
 | Prozessende-/Fehler-Cleanup | 🔴 | offene Pfade, Locks, Queueelemente, Buffer und Modulreferenzen freigeben |
@@ -167,7 +167,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Bitmap-/IO-Queue-F$-Services | 🔴 | `F$SchBit/AllBit/DelBit/IOQu/IODel` als eigener Kernel-Dispatchvertrag |
 | SCF-Integration | 🔴 | Terminal-Open/Close/Read/Write/Status end-to-end |
 | RBF-Integration | 🔴 | CF-Open/Read/Seek/Close; danach Verzeichnis, Schreiben und Mutationen |
-| Reentranz-/Parallelitätstests | 🔴 | mehrere Prozesse/Pfade, Fehler und detach während Nutzung testen |
+| Reentranz-/Parallelitätstests | 🟡 | Hosttests decken verschachtelten Open-Callback, Close während aktivem Backendaufruf und rekursives Close ab; echte präemptive Parallelität/Kernel-Locks und Mehrprozesspfade fehlen |
 | Emulator- und Image-Tests | 🔴 | boot, Shell-I/O, reale Dateioperationen, Fehler-/Rollbackfälle reproduzierbar |
 
 ## 6. Bereits implementiert (eng abgegrenzt)
@@ -178,11 +178,13 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Backendpräfixe registrieren und auflösen | 🟢 | Hosttest prüft Registrierung, Duplikat, längsten Treffer und `/dd` vs. `/ddx`; keine Modul-/Descriptorbindung |
 | Backendpräfix sicher lösen (Detach-Grundlage) | 🟢 | Hosttest prüft Busy bei aktivem Pfad, erfolgreiches Lösen nach Close und anschließendes Not-Found; noch keine Descriptor-/Modulreferenzfreigabe |
 | Kernel-Rahmen-Feldzugriffe | 🟢 | Hosttests prüfen D0/A0 big-endian 32-bit sowie SR/PC 16-bit; keine syscall-spezifische Adapterlogik |
-| Managerstatus → Q9-Kernel-Fehler | 🟡 | Grundzuordnung für Parameter, Pfadnummer, volle Tabelle, nicht gefunden und nicht unterstützt implementiert/getestet; pro I$-Aufruf und Backend noch semantisch zu bestätigen |
+| Managerstatus → Q9-Kernel-Fehler | 🟡 | Grundzuordnung für Parameter, Pfadnummer, falschen Modus, volle Tabelle, nicht gefunden und nicht unterstützt implementiert/getestet; pro I$-Aufruf und Backend noch semantisch zu bestätigen |
 | Manager-/Treiber-/Emulator-Kommunikationsspezifikation | 🟡 | Entwurf in `docs/IO_PROTOCOL_SPEC.md`; 13 Managerkommandos ihren Kernel-Callcodes `$83`–`$8F` zugeordnet, aber getrennt von Entwurfs-IDs und Manager-Vektorslots; Vorschlag für aufruflokalen, kommandoabhängig langen Block ohne unnötige Parameter; genaue Arity, Register-/SetStat-Transport sowie Init-/Destroy-Eigentümer offen |
 | Kernel-I/O-Registerinventur | 🟡 | Eingabe-/Rückgaberegister und aktuelle Implementierungsabdeckung für alle 13 I$-Callcodes aus Q9-Kernelcode inventarisiert (`docs/KERNEL_IO_ABI.md`); nicht implementierte Calls und fehlende Voll-ABI bleiben offen |
 | Residenten Systemzustand initialisieren | 🟢 | Hosttests prüfen Zugriff vor Start, Tabellenkapazität und wiederholten Start |
 | Backend-Open und lokale Slotvergabe | 🟡 | Hosttest erfolgreich; nur bei bereits ausgewähltem Backend, keine Deviceauflösung |
+| Open-Rollback und synchrone Callback-Reentranz | 🟢 | Backendfehler gibt reservierten Slot frei; reentrant Open bekommt anderen Slot; Detach bleibt während OPENING gesperrt; parallele präemptive Aufrufe sind nicht abgedeckt |
+| Pfadzugriffsmodus prüfen | 🟡 | Q9-Open-Modus wird gespeichert; READ/READLN und WRITE/WRITLN geprüft, Modus 0 als Read+Write getestet; weitere Modusbits und OS-Fehlervertrag offen |
 | generische Operation an Backendpfad weiterleiten | 🟡 | Hosttest prüft READ und Argumente; kein Trap-/68K-Dispatch |
 | Backend-Close und lokales Freigeben | 🟡 | Hosttest prüft Erfolg sowie Erhalt des Pfads bei Backendfehler; OS-9-Semantik noch zu bestätigen |
 | Host-Regressionstest-Suite | 🟢 | `make test` besteht; deckt ausschließlich den aktuellen Q9-eigenen Routerkern ab |

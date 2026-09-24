@@ -19,10 +19,14 @@ typedef enum {
     Q9IOMAN_E_UNSUPPORTED_OPERATION = 4,
     Q9IOMAN_E_NOT_FOUND = 5,
     Q9IOMAN_E_REGISTRY_FULL = 6,
-    Q9IOMAN_E_BUSY = 7
+    Q9IOMAN_E_BUSY = 7,
+    Q9IOMAN_E_WRONG_MODE = 8
 } Q9IOMAN_Status;
 
 #define Q9IOMAN_BACKEND_CAPACITY 8
+#define Q9IOMAN_ACCESS_READ 0x01
+#define Q9IOMAN_ACCESS_WRITE 0x02
+#define Q9IOMAN_ACCESS_MASK 0x03
 
 typedef enum {
     Q9IOMAN_OP_READ = 0,
@@ -62,6 +66,8 @@ typedef struct Q9IOMAN_BackendOps {
 typedef struct {
     Q9IOMAN_u16 state;
     Q9IOMAN_u16 backend_path;
+    Q9IOMAN_u16 access_mode;
+    Q9IOMAN_u16 active_operations;
     const Q9IOMAN_BackendOps *backend;
     void *backend_context;
     const char *route_prefix;
