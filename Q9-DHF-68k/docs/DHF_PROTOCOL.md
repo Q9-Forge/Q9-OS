@@ -35,6 +35,19 @@ Parameter semantics
 Errors
 - result_code maps to host errno-like values; 0 = OK. Command-specific return codes are in 0x0081..0x00FF.
 
+Example: Write flow
+1) Manager (in emulated 68k) wants to write 100 bytes from buffer at emu address 0x2000 to file handle 5.
+2) Manager sets shared area:
+   - param[0] = 0 (no name)
+   - param[1] = 0x2000 (pointer in emulator memory to data)
+   - param[2] = 5      (file descriptor/handle)
+   - param[3] = 100    (length)
+   - param[4] = 0      (flags)
+   - seq incremented
+   - command = 0x0005  (WRITE)
+3) Hardware Simulator polls the shared area, sees command=0x0005 with new seq, reads param[1] (emu pointer 0x2000) via emulator memory API, copies 100 bytes from emulator memory to a host buffer, performs write(5, hostbuf, 100) on the host, sets result_code=0 or errno, result_len=bytes_written, and sets command=0x0080 (OK) or 0x0081..0x00FF on error.
+4) Manager polls the shared area, sees response (command >= 0x0080), reads result_code/result_len and continues.
+
 
 
 Security / Confinement
