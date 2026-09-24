@@ -25,15 +25,18 @@ Integrationstest wurde begonnen; der aktuelle Einstiegstest schlägt fehl
 
 | Test | Ergebnis | Aussage |
 |---|---|---|
-| Neues `qioman` in isoliertem OS9SYS-Klon; Bootkette enthält nachweislich den Build (15.850 Byte, gültige CRC/Parität) | ❌ Frühe Illegal Instruction, Vektor 4, `PC=$7031`; keine `F$SSvc`-Registrierung, `D_DevTbl` leer | Modul wurde geladen und gelinkt, aber sein Einstieg/Registrierungspfad ist noch nicht erfolgreich nachgewiesen. Noch kein Test von `Open`/`Read`/`Close`. |
-| Kontrollklon mit gleicher Kernel-/Diskmodul-Konfiguration und originalem IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Boot läuft über die Bootstrap-Phase hinaus; normale CompactFlash- und Programmtestausgaben; keine Exception-Mitschrift | Der Fehler ist spezifisch für den neuen IOMan-Einstieg bzw. dessen Integration, nicht ein reproduzierbarer allgemeiner Bootfehler derselben Kernel-Konfiguration. |
+| Neues `qioman` in isoliertem OS9SYS-Klon; Bootkette enthält nachweislich den Build (15.850 Byte, gültige CRC/Parität) | ❌ Frühe Illegal Instruction, Vektor 4, `PC=$7031`; `F$SSvc`-Registrierungen = 0, `D_DevTbl` leer | Modul wurde geladen und gelinkt. Der Fehler geschieht vor erfolgreicher Service-Registrierung; noch kein Test von `Open`/`Read`/`Close`. |
+| Kontrollklon mit gleichem frisch gebautem Kernel und denselben Diskmodulen, aber originalem IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Bootstrap läuft weiter; CompactFlash-Treiber und normale Programmtestausgaben erscheinen; Exception-Mitschrift bleibt leer | Derselbe Kernel-/Emulatorlauf funktioniert mit dem originalen IOMan. Das grenzt den Fehler auf den neuen IOMan-Einstieg oder dessen Integration ein. |
 
 Beide Läufe verwenden separate `cp -c`-Klone; das Master-Image wurde nicht
 verändert. Die Kontrollausgabe enthält lange `A`-Folgen aus der vorhandenen
 Kernel-/Emulatordiagnostik; sie sind kein IOMan-Erfolgskriterium. Nächster
-Schritt: Aufrufkonvention und Instruktionspfad von `Q9IOMAN_Entry` bis zum
-ersten `F$SSvc`-Trap instrumentiert prüfen. Keine Aussage über produktive
-Dateisystemfunktionalität ableiten.
+Schritt: Fehler-PC `$7031` und Rücksprung-/Fehlerpfad des Systemmodul-Aufrufs
+mit dem Einstieg in `68k/qioman_entry.a` korrelieren; anschließend den
+Instruktionspfad bis zum ersten `F$SSvc`-Trap instrumentieren. Die beiden
+Testklone liegen unter `/private/tmp/q9ioman-bridge-test-full.hda` und
+`/private/tmp/q9ioman-control-original-full.hda`. Keine Aussage über
+produktive Dateisystemfunktionalität ableiten.
 
 ## 1. Kernel → IOMan: empfangene Systemaufrufe
 
