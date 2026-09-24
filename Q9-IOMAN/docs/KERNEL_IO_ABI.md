@@ -51,6 +51,17 @@ es behauptet nicht, dass ein späterer externer Handler unmöglich wäre.
    IOManadapter muss daher vor Änderung eines Registers die syscall-spezifische
    Rückgabesemantik beachten.
 
+## Implementierter Decoder im Q9-IOMAN
+
+`q9ioman_decode_kernel_request()` liest derzeit ausschließlich die drei
+registrierten Schattenaufrufe `I$Open` (`$84`), `I$Read` (`$89`) und
+`I$Close` (`$8F`) aus dem 72-Byte-Registerframe. Er liefert Typ, Pfadnummer,
+Open-Modus, Bufferadresse und Länge in einer neutralen Anfrage zurück. Die
+Bufferadresse bleibt eine 32-bit-Zahl: der Decoder dereferenziert oder kopiert
+keinen Buffer und macht noch keine Aussage zur Host-/Q9-Adressübersetzung.
+Unbekannte Callcodes werden abgewiesen. Das ist noch kein Trap-Handler und
+setzt weder Carry noch Fehler-/Ergebnisregister.
+
 ## Lokale Q9-Quellen
 
 Diese Inventur basiert auf dem Q9-Repository, insbesondere:

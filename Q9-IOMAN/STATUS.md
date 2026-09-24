@@ -142,7 +142,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 |---|---|---|
 | Modulstart/Systemzustand | 🟡 | Q9-Systemmodul-Entry startet den idempotenten C-Zustand; Fehlerpfad vorhanden, Boot-/Image-Integration und Laufzeittest fehlen |
 | Kernel-Service-Registrierung | 🟡 | Systemmodul namens `ioman` initialisiert C-Zustand und registriert `I$Open/Read/Close` per F$SSvc; Q9-Kernel-Schattenpfad ist unit-getestet, Emulator-/Bootintegration fehlt |
-| Register-/Pfadadapter für I$-Handler | 🟡 | 72-Byte-Rahmenoffsets sowie big-endian 16/32-bit-Zugriffe host- und Q9-toolchain-kompiliert; `Q9IOMAN_u32` ist nun auch LP64-hostsicher genau 32 Bit; syscall-spezifische Validierung, Pfadslotabbildung und Fehler-/Carry-Vertrag fehlen |
+| Register-/Pfadadapter für I$-Handler | 🟡 | 72-Byte-Framezugriff und Decoder für die registrierten `I$Open/Read/Close`-Layouts hostgetestet und Q9-toolchain-kompiliert; Handlerdispatch, Pointer-Adressraum, Ergebnisregister, Fehler-/Carry-Vertrag und Pfadslotabbildung fehlen |
 | Zielübersetzung und Modulbuild | 🟢 | Q9-eigene Kette erzeugt aus C+68K-Glue das `qioman`-OS-9-Modul; noch kein Emulator-/Kernel-Integrationstest |
 | Device-Descriptor lesen/parsen/validieren | 🔴 | Name, Typ, Treiber-/Managerreferenzen und Größen/Attribute sicher validiert |
 | Device-Descriptor finden, linken und validieren | 🔴 | Name, Typfilter, Edition, Größe und Datenfelder prüfen |
@@ -178,6 +178,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Backendpräfixe registrieren und auflösen | 🟢 | Hosttest prüft Registrierung, Duplikat, längsten Treffer und `/dd` vs. `/ddx`; keine Modul-/Descriptorbindung |
 | Backendpräfix sicher lösen (Detach-Grundlage) | 🟢 | Hosttest prüft Busy bei aktivem Pfad, erfolgreiches Lösen nach Close und anschließendes Not-Found; noch keine Descriptor-/Modulreferenzfreigabe |
 | Kernel-Rahmen-Feldzugriffe | 🟢 | Hosttests prüfen D0/A0 big-endian 32-bit sowie SR/PC 16-bit; keine syscall-spezifische Adapterlogik |
+| Kernel-Request-Decoder für Schatten-I/O | 🟢 | Hosttests prüfen Open-Modus/Pathpointer, Read-Pfad/Länge/Buffer, Close-Pfad, Nullargumente und unbekannten Callcode; keine Dereferenzierung und kein Trap-Dispatch |
 | Managerstatus → Q9-Kernel-Fehler | 🟡 | Grundzuordnung für Parameter, Pfadnummer, falschen Modus, volle Tabelle, nicht gefunden und nicht unterstützt implementiert/getestet; pro I$-Aufruf und Backend noch semantisch zu bestätigen |
 | Manager-/Treiber-/Emulator-Kommunikationsspezifikation | 🟡 | Entwurf in `docs/IO_PROTOCOL_SPEC.md`; 13 Managerkommandos ihren Kernel-Callcodes `$83`–`$8F` zugeordnet, aber getrennt von Entwurfs-IDs und Manager-Vektorslots; Vorschlag für aufruflokalen, kommandoabhängig langen Block ohne unnötige Parameter; genaue Arity, Register-/SetStat-Transport sowie Init-/Destroy-Eigentümer offen |
 | Kernel-I/O-Registerinventur | 🟡 | Eingabe-/Rückgaberegister und aktuelle Implementierungsabdeckung für alle 13 I$-Callcodes aus Q9-Kernelcode inventarisiert (`docs/KERNEL_IO_ABI.md`); nicht implementierte Calls und fehlende Voll-ABI bleiben offen |

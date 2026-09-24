@@ -70,3 +70,39 @@ Q9IOMAN_u16 q9ioman_status_to_os9_error(Q9IOMAN_Status status)
         return Q9IOMAN_OS9_E_UNKSVC;
     }
 }
+
+Q9IOMAN_Status q9ioman_decode_kernel_request(
+    Q9IOMAN_u16 callcode,
+    const unsigned char *frame,
+    Q9IOMAN_KernelRequest *request)
+{
+    if (frame == 0 || request == 0)
+        return Q9IOMAN_E_INVALID_ARGUMENT;
+
+    request->type = Q9IOMAN_KERNEL_NONE;
+    request->path = 0;
+    request->mode = 0;
+    request->buffer = 0;
+    request->length = 0;
+
+    if (callcode == 0x0084) {
+        request->type = Q9IOMAN_KERNEL_OPEN;
+        request->mode = (Q9IOMAN_u16)(q9ioman_frame_read32(
+            frame, Q9IOMAN_R_D0) & 0xffUL);
+        request->buffer = q9ioman_frame_read32(frame, Q9IOMAN_R_A0);
+        return Q9IOMAN_OK;
+    } else if (callcode == 0x0089) {
+        request->type = Q9IOMAN_KERNEL_READ;
+        request->path = (Q9IOMAN_u16)q9ioman_frame_read32(
+            frame, Q9IOMAN_R_D0);
+        request->length = q9ioman_frame_read32(frame, Q9IOMAN_R_D1);
+        request->buffer = q9ioman_frame_read32(frame, Q9IOMAN_R_A0);
+        return Q9IOMAN_OK;
+    } else if (callcode == 0x008f) {
+        request->type = Q9IOMAN_KERNEL_CLOSE;
+        request->path = (Q9IOMAN_u16)q9ioman_frame_read32(
+            frame, Q9IOMAN_R_D0);
+        return Q9IOMAN_OK;
+    }
+    return Q9IOMAN_E_UNSUPPORTED_OPERATION;
+}
