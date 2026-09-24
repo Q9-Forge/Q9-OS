@@ -70,25 +70,28 @@ Die 13 Einträge entsprechen dem Q9-IOMAN-Aufgabeninventar. Die Anzahl
 Belegung je Kommando ist offen und wird nicht aus OS-9-Ähnlichkeiten
 abgeleitet.
 
-| ID | Manageraufruf | Parameterzahl | Buffer/Ergebnis (vorläufig) | Noch festzulegen |
-|---:|---|---:|---|---|
-| 0 | Create | 1–5 | Pfadname und ggf. Create-Attribute; Rückgabe/Handle | Namenformat, Modus, Attribute, Pfadslot und Ergebnis |
-| 1 | Open | 1–5 | Pfadname; ggf. Modus/Attribute; Rückgabe Managerpfad | Pfadauflösung, Rechte, lokaler Slot und Handle |
-| 2 | MakDir | 1–5 | Verzeichnisname und ggf. Attribute | Pfad-/Attributformat und Fehlerfälle |
-| 3 | ChgDir | 1–5 | Verzeichnisname; ggf. Prozess-/Pfadkontext | Arbeitsverzeichnisbesitz und Rückgabe |
-| 4 | Delete | 1–5 | Zielname; ggf. Typ/Flags | Datei vs. Verzeichnis, Rechte, Flags |
-| 5 | Seek | 1–5 | offener Pfad und Position/Modus | Positionsbreite, Ursprung, Ergebnis |
-| 6 | Read | 1–5 | Zielbuffer-Zeiger und angeforderte Länge | Register/Parameterzuordnung, EOF/Kurzread, gelesene Länge |
-| 7 | Write | 1–5 | Quellbuffer-Zeiger und angeforderte Länge | Register/Parameterzuordnung, Kurzwrite, geschriebene Länge |
-| 8 | ReadLn | 1–5 | Zielbuffer und Kapazität | Terminierung, Zeilenende, EOF und Rückgabelänge |
-| 9 | WritLn | 1–5 | Quellbuffer und Länge | Zeilenabschluss/CR-Regel und Rückgabelänge |
-| 10 | GetStt | 1–5 | Statuscode und ggf. Ausgabezeiger/-größe | Statuscode-Tabelle, Ausgabeformat und Länge |
-| 11 | SetStt | 1–5 | Statuscode und ggf. Eingabezeiger/-größe | Statuscode-Tabelle, Eingabeformat und Rechte |
-| 12 | Close | 1–5 | Managerpfad/Handle | Dup-/Referenzsemantik, Fehler und Freigabe |
+| Entwurfs-ID | Manageraufruf | Kernel-I$-Callcode | Parameterzahl | Buffer/Ergebnis (vorläufig) | Noch festzulegen |
+|---:|---|---:|---:|---|---|
+| 0 | Create | `$83` | 1–5 | Pfadname und ggf. Create-Attribute; Rückgabe/Handle | Namenformat, Modus, Attribute, Pfadslot und Ergebnis |
+| 1 | Open | `$84` | 1–5 | Pfadname; ggf. Modus/Attribute; Rückgabe Managerpfad | Pfadauflösung, Rechte, lokaler Slot und Handle |
+| 2 | MakDir | `$85` | 1–5 | Verzeichnisname und ggf. Attribute | Pfad-/Attributformat und Fehlerfälle |
+| 3 | ChgDir | `$86` | 1–5 | Verzeichnisname; ggf. Prozess-/Pfadkontext | Arbeitsverzeichnisbesitz und Rückgabe |
+| 4 | Delete | `$87` | 1–5 | Zielname; ggf. Typ/Flags | Datei vs. Verzeichnis, Rechte, Flags |
+| 5 | Seek | `$88` | 1–5 | offener Pfad und Position/Modus | Positionsbreite, Ursprung, Ergebnis |
+| 6 | Read | `$89` | 1–5 | Zielbuffer-Zeiger und angeforderte Länge | Register/Parameterzuordnung, EOF/Kurzread, gelesene Länge |
+| 7 | Write | `$8A` | 1–5 | Quellbuffer-Zeiger und angeforderte Länge | Register/Parameterzuordnung, Kurzwrite, geschriebene Länge |
+| 8 | ReadLn | `$8B` | 1–5 | Zielbuffer und Kapazität | Terminierung, Zeilenende, EOF und Rückgabelänge |
+| 9 | WritLn | `$8C` | 1–5 | Quellbuffer und Länge | Zeilenabschluss/CR-Regel und Rückgabelänge |
+| 10 | GetStt | `$8D` | 1–5 | Statuscode und ggf. Ausgabezeiger/-größe | Statuscode-Tabelle, Ausgabeformat und Länge |
+| 11 | SetStt | `$8E` | 1–5 | Statuscode und ggf. Eingabezeiger/-größe | Statuscode-Tabelle, Eingabeformat und Rechte |
+| 12 | Close | `$8F` | 1–5 | Managerpfad/Handle | Dup-/Referenzsemantik, Fehler und Freigabe |
 
-Die IDs 0–12 sind **Entwurfs-IDs**, nicht als bestehende Kernel-Callcodes
-oder Manager-Vektorslots zu verstehen. Die endgültige Nummerierung muss
-explizit beschlossen werden.
+Die IDs 0–12 sind **Entwurfs-IDs für den neuen Kommando-Deskriptor**. Die
+Spalte „Kernel-I$-Callcode“ ist nur eine Referenz zur Zuordnung des
+ursprünglichen Systemaufrufs. Weder diese Callcodes noch die Entwurfs-IDs
+legen bereits die Sprungtabellen-Slots des Managers fest. Der Protokollcode
+kann später absichtlich dem Managervektor-Slot entsprechen; das muss aber
+explizit beschlossen und darf nicht mit `$83`–`$8F` verwechselt werden.
 
 ## 4. Initialisierung aus Descriptor und Lebenszyklus
 
