@@ -14,23 +14,15 @@
 #pragma pack(push,1)
 struct dhf_shared {
     uint8_t version;      /* protocol version */
-    uint8_t command;      /* 0 idle, others commands, 255 = return */
     uint8_t status;       /* result code */
-    uint8_t flags;        /* reserved flags */
+    uint16_t command;     /* WORD command: 0 idle, 1..0x7FFF requests, 0x8000..0xFFFF responses */
     uint32_t seq;         /* incremented by manager for each request (BE) */
 
-    uint32_t a0;          /* filename/name offset/flag (BE) - 0 = unused, 1 = name in external area */
-    uint32_t a1;          /* buffer offset/flag (BE) - 0 = unused, 1 = buffer in external area */
-    uint32_t d0;          /* descriptor/pathnum (BE) */
-    uint32_t d1;          /* status/bytecount/maxlength (BE) */
-    uint32_t d2;          /* attributes/flags (BE) */
+    uint32_t param[5];    /* 5 x 32-bit parameters (A0/A1/D0..D2 semantics) */
 
-    /* NOTE: In the universal design Name and Buffer are not embedded
-       here to allow the manager to place them in an external data block
-       and simply set a0/a1 to signal presence. The header keeps sizes
-       for backward compatibility but drivers SHOULD use a0/a1 flags to
-       determine external data usage. */
-    /* backward-compat placeholders kept for on-disk/legacy compatibility */
+    /* NOTE: Name and Buffer are external by default; manager places them in an
+       external memory block in the emulator and sets param flags accordingly.
+       Legacy embedded placeholders kept for compatibility. */
     char name[DHF_SHARED_NAME_LEN];
     uint8_t buffer[DHF_SHARED_BUF_LEN];
 };

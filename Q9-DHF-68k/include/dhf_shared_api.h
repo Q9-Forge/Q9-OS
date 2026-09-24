@@ -28,12 +28,12 @@ static inline void dhf_shared_inc_seq(struct dhf_shared *s) {
     s->seq = htonl(v);
 }
 
-static inline void dhf_set_command(struct dhf_shared *s, uint8_t cmd) {
+static inline void dhf_set_command(struct dhf_shared *s, uint16_t cmd) {
     if (!s) return;
     /* increment seq to mark new request */
     dhf_shared_inc_seq(s);
     __sync_synchronize(); /* memory barrier */
-    s->command = cmd;
+    s->command = htons(cmd);
 }
 
 /* Wait until driver sets command back to 0 (idle) or timeout_ms elapses. */
@@ -42,9 +42,9 @@ static inline int dhf_wait_idle(struct dhf_shared *s, uint32_t start_seq, int ti
     const int interval_us = 1000; /* 1ms poll */
     int waited = 0;
     while (1) {
-        if (s->command == 0) return 0;
+        if (ntohs(s->command) == 0) return 0;
         /* if seq changed and command cleared, treat as completed */
-        if (dhf_shared_seq(s) != start_seq && s->command == 0) return 0;
+        if (dhf_shared_seq(s) != start_seq && ntohs(s->command) == 0) return 0;
         if (timeout_ms >= 0 && waited >= timeout_ms) return -2; /* timeout */
         usleep(interval_us);
         waited += interval_us/1000;
@@ -58,24 +58,28 @@ static inline uint32_t dhf_get_seq_and_inc(struct dhf_shared *s) {
     return seq;
 }
 
-static inline void dhf_set_name(struct dhf_shared *s, const char *name) {
-    if (!s || !name) return;
-    strncpy(s->name, name, sizeof(s->name)-1);
-    s->name[sizeof(s->name)-1] = '\0';
-    /* mark A0 to indicate name present: use 1 */
-    s->a0 = htonl(1);
+static inline void dhf_set_param(struct dhf_shared *s, int idx, uint32_t v) {
+    if (!s || idx<0 || idx>=5) return;
+    s->param[idx] = htonl(v);
 }
 
-static inline void dhf_set_buffer(struct dhf_shared *s, const void *buf, uint32_t len) {
-    if (!s || !buf) return;
-    if (len > sizeof(s->buffer)) len = sizeof(s->buffer);
-    memcpy(s->buffer, buf, len);
-    s->a1 = htonl(1);
-    s->d1 = htonl(len);
+static inline uint32_t dhf_get_param(const struct dhf_shared *s, int idx) {
+    if (!s || idx<0 || idx>=5) return 0;
+    return ntohl(s->param[idx]);
+}
+
+static inline void dhf_set_name_external_flag(struct dhf_shared *s) {
+    if (!s) return;
+    s->param[0] = htonl(1);
+}
+
+static inline void dhf_set_buffer_external_flag(struct dhf_shared *s) {
+    if (!s) return;
+    s->param[1] = htonl(1);
 }
 
 static inline uint32_t dhf_get_result_bytes(const struct dhf_shared *s) {
-    return ntohl(s->d1);
+    return ntohl(s->param[1]);
 }
 
 static inline uint8_t dhf_get_status(const struct dhf_shared *s) {
@@ -83,7 +87,7 @@ static inline uint8_t dhf_get_status(const struct dhf_shared *s) {
 }
 
 static inline int dhf_is_response(const struct dhf_shared *s) {
-    return (s->command & 0x80) != 0;
+    return (ntohs(s->command) & 0x8000) != 0;
 }
 
 #ifdef __cplusplus
