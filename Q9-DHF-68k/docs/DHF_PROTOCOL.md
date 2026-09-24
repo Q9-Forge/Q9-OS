@@ -72,32 +72,26 @@ Notes aus RBF-Analyse
 Für Operationen mit Pfadnamen oder großen Buffern wird ein einheitlicher Kommando-Bereich definiert, der vom Manager gefüllt und vom Treiber gelesen werden kann. Die Struktur ist "packed" (keine Einfüge-Padding-Bytes); alle LONG-Felder sind 32-bit big-endian.
 
 Layout (Offsets, bytes):
-- 0x00 (1): BYTE Command
+- 0x00 (1): uint8_t version
+- 0x01 (1): uint8_t status
+- 0x02 (2): uint16_t command (WORD, big-endian)
   - 0 = Idle
-  - 1 = Create
-  - 2 = Open
-  - 3 = Seek
-  - 4 = Read
-  - 5 = Write
-  - 6 = ReadLn
-  - 7 = WriteLn
-  - 8 = GetStt (GetStat)
-  - 9 = SetStt (SetStat)
-  - 10 = Close
-  - 11 = Delete
-  - 12 = MkDir
-  - 13 = ChDir
-  - 255 = Return/Response
+  - 0x0001..0x000D: Manager commands (1..13 = Create..ChDir)
+  - 0x0020..0x002F: Control commands
+    - 0x0021: Descriptor Init
+    - 0x0022: Test / Ping
+  - 0x0080..0x00FF: Return/Response codes (0x0080 = OK, 0x008x command-specific errors)
 
-- 0x01 (4): LONG A0 — Dateiname / Verzeichnisname (flag/offset semantics: 0 = unused, 1 = manager provides NAME in external block, else offset)
-- 0x05 (4): LONG A1 — Buffer (flag/offset semantics: 0 = unused, 1 = manager provides BUFFER in external block, else offset)
-- 0x09 (4): LONG D0 — Pfadnummer / Descriptor
-- 0x0D (4): LONG D1 — Statuscode / Byte-Anzahl / Max-Länge / Seek-Offset (semantisch je nach Command)
-- 0x11 (4): LONG D2 — Attribute / Flags
+- 0x04 (4): uint32_t seq (BE)
+- 0x08 (20): uint32_t param[5] - five 32-bit parameters (A0/A1/D0/D1/D2 semantics)
+- 0x1C (4): uint32_t result_code - errno-like (0 == OK)
+- 0x20 (4): uint32_t result_len  - valid bytes in external buffer or TLV area
+- 0x24 (4): uint32_t crc32       - CRC32 over header+payload (optional, 0 = disabled)
 
-- NAME and BUFFER are not embedded by default; manager should provide an external data block when A0/A1 indicate presence. Legacy embedded fields may still be present for backward compatibility in dhf_shared.h.
+- NAME and BUFFER are not embedded by default; manager should provide an external data block when param[0]/param[1] indicate presence.
+- Following: optional TLV extension area for complex payloads (SetStat, extended attributes)
 
-Gesamtgröße (empfohlen): 0x315 (789) Bytes
+Gesamtgröße (empfohlen): header + external areas (variable)
 
 Hinweise zur Nutzung
 - Manager füllt die Felder und setzt das COMMAND-Byte auf den gewünschten Wert; Treiber verarbeitet und schreibt Antwort in die gleichen Felder (z. B. COMMAND=255 für Return) und setzt D1/D2 bzw. Status-Felder.
