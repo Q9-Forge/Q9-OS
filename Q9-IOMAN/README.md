@@ -35,8 +35,11 @@ Route. Der Kern speichert außerdem die Read-/Write-Rechte, reserviert Slots
 vor reentrant aufrufenden Backends und schützt aktive Operationen vor Close.
 Er kennt weder Hardware noch ein Dateisystem und ruft noch keine
 Kernel-Syscalls auf.
-Insbesondere sind Attach-/Descriptor-Auflösung, Pfadnamen-Suche,
-Nebenläufigkeit/Warteschlangen, SCF/RBF und die Trap-Integration noch offen.
+Insbesondere sind Attach-/Descriptor-Auflösung und Backendregistrierung,
+prozessgebundene Pfadlebensdauer (`I$Dup`/Prozessende), Nebenläufigkeit/
+Warteschlangen sowie SCF/RBF noch offen. Der Registerframe-Dispatcher und
+seine drei 68K-Schatten-Einstiege sind integriert und gebaut; ein Lauf im
+Kernel/Emulator steht noch aus.
 
 Hosttests und Erstellung eines OS-9-Moduls mit Q9-eigener Toolchain:
 
@@ -47,11 +50,12 @@ make
 `make` führt Hosttests aus und erzeugt `build/qioman` (interner OS-9-Modulname
 `ioman`, wie vom Q9-Bootpfad gesucht) per
 `qcpp → qcir → qir68k → qr68k → ql68k`. Die F$SSvc-Tabelle verbindet die
-Q9-Kernel-Schatten für `I$Open`, `I$Read` und `I$Close`. Die registrierten
-Handler antworten derzeit absichtlich mit `E$UnkSvc`: der Kernelpfad ist damit
-angebunden, aber die Register-/Datenpfadadapter zu den C-Backends sind noch
-nicht implementiert. Bis Open tatsächlich einen verwalteten Pfad anlegt,
-werden Read/Close nicht an diese Stubs umgeleitet.
+Q9-Kernel-Schatten für `I$Open`, `I$Read` und `I$Close` mit dem C-Dispatcher.
+Open löst den begrenzten Pfadzeiger auf, Read reicht die numerische
+Bufferadresse ans Backend weiter und Close gibt den verwalteten Slot frei.
+Weil noch kein Backend aus einem Descriptor/Modul registriert wird, endet ein
+Open derzeit bei `E$MNF`. Der Resolver kann in Q9s flachem Adressraum keine
+ungültigen Speicherbereiche abfangen; `I$Dup`- und Prozessende-Cleanup fehlen.
 
 ## Kernel-Aufrufe und QCC
 

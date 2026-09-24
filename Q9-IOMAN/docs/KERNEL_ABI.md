@@ -49,14 +49,13 @@ Der Kernel behandelt diese drei Callcodes besonders: Er behält seine nativen
 Dispatch-Einträge und speichert die IOMan-Routinen als Manager-Schatten.
 `I$Open` wird für nicht-native Pfade an den Manager delegiert; `I$Read` und
 `I$Close` nur für Pfade, die ein erfolgreicher Manager-Open markiert hat.
-Bis die Registerrahmen-Adapter fertig sind, zeigen alle drei Einträge auf
-einen sicheren Stub, der `E$UnkSvc` (`$D0`) mit gesetztem Carry liefert.
-Damit kann der unfertige Manager keine Pfade übernehmen. Nächster Schritt:
-Die Registerrahmen-Offsets und Big-Endian-Zugriffe sind nun in
-`qioman_kernel.h`/`qioman_kernel.c` gekapselt und auf dem Host getestet.
-Das ist noch kein syscall-spezifischer Handler: insbesondere fehlen die
-validierte Prozess-Pfadslot-Abbildung, Zugriffsschutz und Carry-/Fehler-
-Rückgabe.
+Die drei Einträge rufen jetzt über 68K-Stubs `tc_q9ioman_target_dispatch`
+auf. `A5` wird als 72-Byte-Serviceframe übergeben; der jeweilige Callcode ist
+im Stub festgelegt. Nach dem C-Aufruf werden D0/D1/A0 aus dem Frame
+wiederhergestellt und Carry passend gesetzt. `I$Open` nutzt einen begrenzten
+Pfadresolver (max. 256 Byte); in Q9s flachem Adressraum kann er ungültige oder
+nicht gemappte Speicherbereiche nicht abfangen. Das erzeugte Modul linkt die
+Assembly- und C-Brücken, aber ein Kernel-/Emulatorlauf fehlt noch.
 
 `q9ioman_status_to_os9_error()` stellt eine erste gemeinsame Übersetzung
 dieser internen Statuswerte bereit: ungültiger Parameter→`E$Param`, ungültiger
@@ -76,7 +75,9 @@ auf `/dd/file`, nicht auf `/ddx/file`). Die Registrierung speichert geliehene
 Zeiger; Prefix und Ops-Tabelle müssen resident bleiben. Das ersetzt weder
 Descriptor-/Modullinking noch Attach.
 
-Noch keine Handler auf diese Routerlogik schalten: Kernel-`I$Dup` läuft
-aktuell nativ und benachrichtigt den Manager nicht; außerdem ist kein
-Prozessende-Cleanup eingebunden. Ohne diese Lebensdauerpfade kann der Manager
-Backendhandles zu früh oder gar nicht freigeben.
+Die Kernel-Schattenhandler verwenden inzwischen diese Routerlogik. Die
+residenten Pfadslots sind derzeit jedoch global statt pro Prozess; Kernel-
+`I$Dup` läuft nativ und benachrichtigt den Manager nicht, und Prozessende-
+Cleanup ist nicht eingebunden. Vor Mehrprozess-/Dup-Nutzung muss die
+Ownership-/Referenzabbildung geklärt werden, sonst könnten Handles falsch
+zugeordnet oder zu früh freigegeben werden.
