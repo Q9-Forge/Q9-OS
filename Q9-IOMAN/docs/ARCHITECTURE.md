@@ -2,17 +2,18 @@
 
 ## Grenze und Verantwortlichkeiten
 
-Q9-IOMAN soll Kernel-Systemaufrufe und geräte-/dateisystemspezifische Manager
-entkoppeln. Der Kerneladapter übersetzt später Trap-Register in eine
-Q9-IOMAN-Anfrage; Q9-IOMAN ordnet den lokalen Pfad einem Backend zu und
-delegiert; ein File-Manager wie ein künftiges Q9-RBF implementiert
-Dateisystemsemantik und ruft einen Treiber für Block-I/O auf. Q9-SCF wird ein
-separates zeichenorientiertes Backend.
+Q9-IOMAN entkoppelt Kernel-Systemaufrufe von geräte- und
+dateisystemspezifischen Managern. Ein Assembly-/C-Kerneladapter übersetzt den
+Registerframe für `I$Open`, `I$Read` und `I$Close` in Q9-IOMAN-Anfragen;
+Q9-IOMAN ordnet den lokalen Pfad einem Backend zu und delegiert. Ein
+File-Manager wie ein künftiges Q9-RBF implementiert Dateisystemsemantik und
+ruft einen Treiber für Block-I/O auf. Q9-SCF wird ein separates
+zeichenorientiertes Backend.
 
 ```text
 Prozess / Syscall
        |
-Kerneladapter (Register-ABI; noch offen)
+Kerneladapter (Open/Read/Close teilweise integriert)
        |
 Q9-IOMAN (Pfadzuordnung und Dispatch)
        |------------------|
@@ -23,7 +24,10 @@ Q9-Treiber
 
 Die Schnittstelle in `include/qioman.h` abstrahiert den Kernel-Trap-Frame
 absichtlich. Damit bleiben die Hosttests unabhängig von 68K-Registern und der
-noch nicht fertigen QCC-Syscall-Codegenerierung.
+noch nicht fertigen QCC-Syscall-Codegenerierung. Die Registerframe-Brücke
+liegt separat in `src/qioman_kernel.c` und `68k/qioman_entry.a`; sie ist für
+Open/Read/Close gebaut und hostgetestet. Der Emulator belegt bisher den
+Open-Einstieg und dessen Rückkehr, aber keinen vollständigen Backend-I/O-Pfad.
 
 ## MVP-Reihenfolge
 
@@ -34,7 +38,10 @@ Die lokale Q9-Registerbelegung der eingehenden Kernel-I/O-Aufrufe steht in
 [KERNEL_IO_ABI.md](KERNEL_IO_ABI.md); sie ist nicht mit dem neuen
 Managerkommando-ABI gleichzusetzen.
 
-1. Kerneladapter und Status-/Fehlervertrag festlegen.
+1. Den schmalen Open/Read/Close-Kerneladapter vervollständigen und mit
+   Emulator-I/O nachweisen. `I$Write`, `I$Seek`, Status- und Line-I/O sind
+   nicht als IOMan-Schattenhandler integriert; dafür ist eine Erweiterung der
+   Kernel-Schattenroute nötig.
 2. Attach/Detach sowie Device-/Manager-Registrierung ergänzen.
 3. Open/Close und Pfadtabellen an Q9-Prozessdeskriptoren anbinden.
 4. Dispatch für Read/Write/GetStat/SetStat/Seek integrieren.
