@@ -135,6 +135,15 @@ static int Q9K_IsKernelService(Q9_u32 code)
 #ifndef Q9K_SSVC_EXTERNAL_BASE
 #define Q9K_SSVC_EXTERNAL_BASE 0x1400UL
 #endif
+#ifndef Q9K_SSVC_IOPEN_ROUTINE_ADDR
+#define Q9K_SSVC_IOPEN_ROUTINE_ADDR 0x1F74UL
+#endif
+#ifndef Q9K_SSVC_IREAD_ROUTINE_ADDR
+#define Q9K_SSVC_IREAD_ROUTINE_ADDR 0x1F78UL
+#endif
+#ifndef Q9K_SSVC_ICLOSE_ROUTINE_ADDR
+#define Q9K_SSVC_ICLOSE_ROUTINE_ADDR 0x1F7CUL
+#endif
 
 void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
 {
@@ -178,7 +187,20 @@ void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
                 /* Keep native I$Open as the default (notably for /term), but
                  * retain IOMan's manager entry and per-service A3 data for
                  * the kernel's selective filesystem-path fallback. */
-                Q9K_SetU32(0x1F74UL, routineAddr);
+                Q9K_SetU32(Q9K_SSVC_IOPEN_ROUTINE_ADDR, routineAddr);
+                Q9K_SetU32(usrdisBase + 0x400UL + realCode * 4UL, dataPtr);
+            }
+            if (realCode == 0x89UL) {
+                /* Keep the manager's Read implementation alongside the
+                 * native kernel slot; only P$Path entries tagged by a
+                 * successful manager Open are routed to this routine. */
+                Q9K_SetU32(Q9K_SSVC_IREAD_ROUTINE_ADDR, routineAddr);
+                Q9K_SetU32(usrdisBase + 0x400UL + realCode * 4UL, dataPtr);
+            }
+            if (realCode == 0x8FUL) {
+                /* Close the same manager-owned path without weakening the
+                 * native close path used by Q9's own descriptors. */
+                Q9K_SetU32(Q9K_SSVC_ICLOSE_ROUTINE_ADDR, routineAddr);
                 Q9K_SetU32(usrdisBase + 0x400UL + realCode * 4UL, dataPtr);
             }
             entryAddr += 4UL;
