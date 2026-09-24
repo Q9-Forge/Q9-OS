@@ -64,6 +64,12 @@
 typedef unsigned long  Q9_u32;
 typedef unsigned char  Q9_u8;
 
+/* These arrays live in the C VSECT; the assembler exception path consumes
+ * relocated bases through fixed pointer cells rather than illegal cross-
+ * PSECT PC-relative references. */
+extern Q9_u32 Q9K_FIRQHandlers[];
+extern Q9_u32 Q9K_FIRQStatics[];
+
 /* Aus q9kernel_modsearch.c/q9kernel_initext.c -- externe Deklarationen
  * statt gemeinsamer Header, gleiche bewusst schlanke Konvention wie
  * ueberall in diesem Verzeichnis. */
@@ -354,6 +360,10 @@ void Q9K_CInit(void)
     Q9K_ProcMemTrackInit();
     Q9K_Diag4(); /* TEMPORAERE DIAGNOSE, s. o. */
     Q9K_PutU32(0x1F74UL, 0UL); /* optional IOMan I$Open manager shadow */
+    Q9K_PutU32(0x1F78UL, 0UL); /* optional IOMan I$Read manager shadow */
+    Q9K_PutU32(0x1F7CUL, 0UL); /* optional IOMan I$Close manager shadow */
+    Q9K_PutU32(0x1F84UL, (Q9_u32)(unsigned long)Q9K_FIRQHandlers);
+    Q9K_PutU32(0x1F88UL, (Q9_u32)(unsigned long)Q9K_FIRQStatics);
 
     /* Sechs leere Ringlisten -- exakte Offsets aus q9sysglob.h bzw. dem
      * verifizierten Fund in Thema 01 (Kopf-/Schwanz-Unteroffsets je
@@ -755,6 +765,12 @@ void Q9K_CInit(void)
             return;
         }
     }
+
+    /* The F$Link bridge is called from the first scheduled process.  Keep
+     * its C entry pointer valid after all table/moddir setup has completed;
+     * this is deliberately repeated here because the early registration
+     * block also initializes several scratch regions used by boot services. */
+    Q9K_PutU32(0x1F70UL, (Q9_u32)(unsigned long)Q9K_SysFLinkSearchImpl);
 
     /* Abschnitt "Scheduler" (2026-08-21, im Anschluss an F$Link/
      * F$UnLink): ersetzt das fruehere "minimale Geruest" (Abschnitt 2,

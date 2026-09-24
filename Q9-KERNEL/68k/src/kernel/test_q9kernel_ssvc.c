@@ -23,6 +23,9 @@ static unsigned char g_usrdis[0x800];
  * gleiches Umlenkungsmuster wie bei Q9_D_SYSDIS/Q9_D_USRDIS. */
 static unsigned char g_ssvcExternal[256];
 #define Q9K_SSVC_EXTERNAL_BASE ((unsigned long)g_ssvcExternal)
+#define Q9K_SSVC_IOPEN_ROUTINE_ADDR ((unsigned long)(g_fakeGlobals + 0x10))
+#define Q9K_SSVC_IREAD_ROUTINE_ADDR ((unsigned long)(g_fakeGlobals + 0x18))
+#define Q9K_SSVC_ICLOSE_ROUTINE_ADDR ((unsigned long)(g_fakeGlobals + 0x20))
 
 #define Q9_D_SYSDIS ((unsigned long)(g_fakeGlobals + 0x000))
 #define Q9_D_USRDIS ((unsigned long)(g_fakeGlobals + 0x008))
@@ -182,6 +185,37 @@ int main(void)
                  Q9K_GetU32(usrdisBase + 0x5EUL * 4UL), panicRoutine);
         checkU32("F2c: F$Panic wird als externer Dienst markiert",
                  g_ssvcExternal[0x5E], 1);
+    }
+
+    /* Kernel-owned I$Open/Read/Close remain native dispatch slots, but the
+     * manager's routine and service A3 value must be retained separately. */
+    {
+        static unsigned char ioTable[16];
+        Q9_u32 ioBase = (Q9_u32)(unsigned long)ioTable;
+        Q9_u32 openRoutine = ioBase + 100UL + 4UL;
+        Q9_u32 readRoutine = ioBase + 104UL + 8UL;
+        Q9_u32 closeRoutine = ioBase + 108UL + 12UL;
+        Q9_u32 kernelOpen = 0x10101010UL;
+        Q9_u32 kernelRead = 0x20202020UL;
+        Q9_u32 kernelClose = 0x30303030UL;
+
+        memset(ioTable, 0, sizeof(ioTable));
+        putEntry(ioBase, 0x84U, 100U);
+        putEntry(ioBase + 4UL, 0x89U, 104U);
+        putEntry(ioBase + 8UL, 0x8FU, 108U);
+        putEnd(ioBase + 12UL);
+        Q9K_SetU32(usrdisBase + 0x84UL * 4UL, kernelOpen);
+        Q9K_SetU32(usrdisBase + 0x89UL * 4UL, kernelRead);
+        Q9K_SetU32(usrdisBase + 0x8FUL * 4UL, kernelClose);
+        Q9K_ProcSSvc(ioBase, dataPtr);
+
+        checkU32("F2d: IOMan I$Open shadow routine", Q9K_GetU32(Q9K_SSVC_IOPEN_ROUTINE_ADDR), openRoutine);
+        checkU32("F2d: IOMan I$Read shadow routine", Q9K_GetU32(Q9K_SSVC_IREAD_ROUTINE_ADDR), readRoutine);
+        checkU32("F2d: IOMan I$Close shadow routine", Q9K_GetU32(Q9K_SSVC_ICLOSE_ROUTINE_ADDR), closeRoutine);
+        checkU32("F2d: native I$Read dispatch remains installed", Q9K_GetU32(usrdisBase + 0x89UL * 4UL), kernelRead);
+        checkU32("F2d: manager I$Read service data retained", Q9K_GetU32(usrdisBase + 0x400UL + 0x89UL * 4UL), dataPtr);
+        checkU32("F2d: native I$Close dispatch remains installed", Q9K_GetU32(usrdisBase + 0x8FUL * 4UL), kernelClose);
+        checkU32("F2d: manager I$Close service data retained", Q9K_GetU32(usrdisBase + 0x400UL + 0x8FUL * 4UL), dataPtr);
     }
 
     /* Fall 3: leere Tabelle (sofortiges Ende) -- darf nichts veraendern,

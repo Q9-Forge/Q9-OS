@@ -551,6 +551,10 @@ Q9K_FLinkSavedA6          equ $1F5C
 Q9K_FLinkSavedName        equ $1F60
 Q9K_FLinkSearchImplPtr    equ $1F70      * C-init-relocated Q9K_SysFLinkSearchImpl
 Q9K_IOpenManagerRoutine   equ $1F74      * IOMan I$Open handler shadow; native path remains installed
+Q9K_IReadManagerRoutine   equ $1F78      * IOMan I$Read shadow; paths carry manager tag
+Q9K_ICloseManagerRoutine  equ $1F7C      * IOMan I$Close shadow; paths carry manager tag
+Q9K_FIRQHandlersPtr       equ $1F84      * C-init-relocated Q9K_FIRQHandlers VSECT base
+Q9K_FIRQStaticsPtr        equ $1F88      * C-init-relocated Q9K_FIRQStatics VSECT base
 
 * Eigene Kernel-Global-Erweiterungen fuer F$GProcP/F$ID (Abschnitt
 * "Prozess-API", 2026-09-01). Direkt hinter I$Open; $1370/$1374 bleiben
@@ -2443,7 +2447,7 @@ Q9K_TestIOManLinkFail:
         moveq   #'q',d7                     * DIAGNOSE: F$Link("ioman") fehlgeschlagen
         bsr     Q9K_DiagWriteD7
 Q9K_TestIOManLinkFail_Halt:
-        bra     Q9K_TestProcA_Loop
+        bra     Q9K_TestIOManLinkFail_Halt
 
 Q9K_TestProcA_Loop:
         moveq   #'A',d7
@@ -2966,6 +2970,10 @@ Q9K_TrapDispatch:
         tst.b   (a4)
         movea.l Q9K_TrapA4Save,a4                       * A4 unveraendert zurueck
         bne     Q9K_TrapCallExternal
+        cmpi.w  #$89,($1370).w
+        beq     Q9K_TrapTryManagerPathIO
+        cmpi.w  #$8f,($1370).w
+        beq     Q9K_TrapTryManagerPathIO
 * I$Open bleibt ein Kernel-Slot, damit die native /term-Konsole den
 * bewiesenen stabilen Pfad behaelt. Fuer nicht-native Pfade delegieren wir
 * selektiv an IOMans per F$SSvc registrierten I$Open-Handler; von dort geht
@@ -2990,6 +2998,33 @@ Q9K_TrapDispatch:
         beq     Q9K_TrapOwnHandler
 Q9K_TrapIOpenManager:
         move.l  Q9K_IOpenManagerRoutine,Q9K_TrapHandlerScratch
+        bra     Q9K_TrapCallExternal
+* Manager-Pfade werden im P$Path-Wort mit Bit 15 gekennzeichnet. Nur bei
+* diesen Eintraegen werden Read/Close an IOMan gegeben; die Markierung wird
+* waehrend des Fremdaufrufs entfernt, weil IOMan die rohe PD-Nummer erwartet.
+Q9K_TrapTryManagerPathIO:
+        cmpi.w  #$89,($1370).w
+        beq.s   Q9K_TrapTryManagerRead
+        cmpi.w  #$8f,($1370).w
+        bne     Q9K_TrapOwnHandler
+        move.l  Q9K_ICloseManagerRoutine,Q9K_TrapHandlerScratch
+        bra.s   Q9K_TrapCheckManagerPath
+Q9K_TrapTryManagerRead:
+        move.l  Q9K_IReadManagerRoutine,Q9K_TrapHandlerScratch
+Q9K_TrapCheckManagerPath:
+        tst.l   Q9K_TrapHandlerScratch
+        beq     Q9K_TrapOwnHandler
+        cmpi.w  #32,d0
+        bcc     Q9K_TrapOwnHandler
+        movea.l Q9_D_Proc,a1
+        move.l  a1,d1
+        beq     Q9K_TrapOwnHandler
+        adda.l  #$168,a1
+        add.w   d0,d0
+        adda.w  d0,a1
+        btst    #7,(a1)                    * high byte bit 7 = P$Path word bit 15
+        beq     Q9K_TrapOwnHandler
+        andi.w  #$7fff,(a1)                * IOMan must see the untagged PD number
         bra     Q9K_TrapCallExternal
 Q9K_TrapOwnHandler:
 * HERKUNFTSPRUEFUNG (sechster A4-Anlauf, 2026-09-07): der Rueckweg
@@ -3146,6 +3181,12 @@ Q9K_TrapCallExternal:
 * die Dauer des Fremdaufrufs geloescht.
         clr.w   Q9K_InTrapPath
         bsr     Q9K_TrapExtInvoke                       * legt die Ruecksprungadresse ab
+* Unmittelbar CCR sichern; die Buchfuehrung danach darf das Erfolgsflag
+* nicht veraendern. Erfolgreiche managervermittelte Opens markieren ihren
+* neuen Prozesspfad. Read/Close stellen die vorher entfernte Markierung
+* wieder her, sofern der Manager den Pfad nicht geschlossen/entfernt hat.
+        move.w  sr,-(sp)
+        bsr     Q9K_TrapManagerPathBookkeeping
 * Rahmen in die Register ZURUECKSCHREIBEN -- mit einer Ausnahme: d1
 * bleibt der Registerwert des Handlers.
 * Hintergrund: der Rahmen ist nicht nur Eingabe, sondern die eigentliche
@@ -3180,7 +3221,6 @@ Q9K_TrapCallExternal:
 * beim Ruecksprung kaeme dann ein fremdes CCR heraus. Offsets beachten:
 * das SR-Wort liegt unter dem geretteten d1, der Rahmen beginnt deshalb
 * bei 6(sp) statt bei 4(sp).
-        move.w  sr,-(sp)                                           * Handler-CCR retten, VOR jedem move.l
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-04): ab hier bis zum RTE darf nichts
 * mehr dazwischenkommen. Q9K_TrapDispatch sperrt die Interrupts zwar am
 * Anfang, ein externer Handler gibt sie aber wieder frei -- er MUSS das, sonst
@@ -3219,6 +3259,46 @@ Q9K_TrapExtInvoke:
 * (s. Q9K_TrapCallExternal).
         suba.l  a6,a6                                            * A6 = 0
         rts                                                     * springt in den Handler
+
+* Managerpfad-Tags sind pro Prozess im P$Path-Wort gespeichert. A5 zeigt
+* weiter auf den R$-Eingaberahmen; dessen D0-Slot enthaelt den Pfadindex
+* (bei Open den vom Manager gelieferten Index). Aufruf-SR liegt bei Eintritt
+* auf 4(sp), hinter der BSR-Ruecksprungadresse.
+Q9K_TrapManagerPathBookkeeping:
+        movem.l d0-d2/a0-a2,-(sp)
+        move.w  ($1370).w,d2
+        cmpi.w  #$84,d2
+        bne.s   Q9K_TrapManagerPathBookkeeping_NotOpen
+        move.w  28(sp),d2                    * gespeichertes SR vor MOVEM
+        btst    #0,d2                        * Carry=1 bedeutet Open-Fehler
+        bne.s   Q9K_TrapManagerPathBookkeeping_Done
+        bra.s   Q9K_TrapManagerPathBookkeeping_Open
+Q9K_TrapManagerPathBookkeeping_NotOpen:
+        cmpi.w  #$89,d2
+        beq.s   Q9K_TrapManagerPathBookkeeping_IO
+        cmpi.w  #$8f,d2
+        bne.s   Q9K_TrapManagerPathBookkeeping_Done
+Q9K_TrapManagerPathBookkeeping_IO:
+        move.w  (a5),d0                      * Originaler P$Path-Index
+        bra.s   Q9K_TrapManagerPathBookkeeping_Tag
+Q9K_TrapManagerPathBookkeeping_Open:
+        move.w  (a5),d0                      * Rueckgabewert von I$Open
+Q9K_TrapManagerPathBookkeeping_Tag:
+        cmpi.w  #32,d0
+        bcc.s   Q9K_TrapManagerPathBookkeeping_Done
+        movea.l Q9_D_Proc,a1
+        move.l  a1,d1
+        beq.s   Q9K_TrapManagerPathBookkeeping_Done
+        adda.l  #$168,a1
+        add.w   d0,d0
+        adda.w  d0,a1
+        tst.w   (a1)                          * successful Close leaves it zero
+        beq.s   Q9K_TrapManagerPathBookkeeping_Done
+        bset    #7,(a1)                      * set bit 15: manager ownership
+Q9K_TrapManagerPathBookkeeping_Done:
+        movem.l (sp)+,d0-d2/a0-a2
+        rts
+
 Q9K_TrapAfterCall:
 * NACHTRAG 2026-08-31 (Abschnitt "CCR-Refactor"): ECHTE Konvention per
 * Read direkt im Kernel-Fund gelesen (intern dokumentiert, Fund
@@ -3680,6 +3760,7 @@ Q9K_SysFLink_InputsReady:
         move.l  a0,($15417c).l
         move.l  a0,($154174).l
         clr.l   ($154178).l                * stale bridge result must never look like a valid slot
+        move.l  #3,Q9K_FLinkTrace_Status
 * This C function lives in a later PSECT.  Call through its C-init-filled
 * pointer cell: l68's cross-PSECT BSR relocation is not reliable here.
         movea.l Q9K_FLinkSearchImplPtr,a1
@@ -3728,6 +3809,7 @@ Q9K_SysFLink_NameContinue:
         bpl.s   Q9K_SysFLink_SkipName
         bra     Q9K_SysFLink_Fail
 Q9K_SysFLink_NameDone:
+        move.l  #4,Q9K_FLinkTrace_Status
         move.l  Q9K_FLinkTrace_A2,d7             * restore the found module pointer
 * Rahmen des Trampolin-Aufrufers versorgen: d0 = Typ/Sprache (+$00),
 * d1 = Attribut/Revision (+$04), a0 = hinter dem Namen (+$20),
@@ -4405,10 +4487,10 @@ Q9K_IRQDispatch:
 * eingehalten wird. Q9K_ProcFIRQ traegt die beiden Tabellen ein.
         move.l  d0,d4
         lsl.l   #2,d0
-        lea     Q9K_FIRQHandlers(pc),a0
+        movea.l Q9K_FIRQHandlersPtr,a0
         movea.l (a0,d0.l),a1
         beq     Q9K_IRQDispatchNoFast
-        lea     Q9K_FIRQStatics(pc),a0
+        movea.l Q9K_FIRQStaticsPtr,a0
         movea.l (a0,d0.l),a2
         move.l  d4,d0
         jsr     (a1)
