@@ -42,5 +42,9 @@ Managerkommando-ABI gleichzusetzen.
 6. Mit einem einfachen Q9-SCF-Terminalpfad und danach Q9-RBF/CF end-to-end
    testen.
 
+Für Attach/Detach ist das gewünschte Zustands- und Rollbackmodell in Abschnitt
+4.3 der Protokollspezifikation festgehalten. Es ist zunächst ein Entwurf und
+noch keine implementierte Device-Lifecycle-API.
+
 Noch keine Entscheidung über Microware-binäre Kompatibilität: Ziel ist
 zunächst ein dokumentierter Q9-eigener Modulvertrag.
