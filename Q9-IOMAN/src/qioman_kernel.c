@@ -164,6 +164,12 @@ Q9IOMAN_Status q9ioman_dispatch_kernel_request(
         q9ioman_frame_write32(frame, Q9IOMAN_R_A0,
                               request.buffer + name_bytes);
     } else if (request.type == Q9IOMAN_KERNEL_READ) {
+        if (request.length != 0 &&
+            (request.buffer == 0 ||
+             request.buffer > 0xffffffffUL - (request.length - 1))) {
+            status = Q9IOMAN_E_INVALID_ARGUMENT;
+            goto failed;
+        }
         status = q9ioman_operate(manager, request.path, Q9IOMAN_OP_READ,
                                  request.buffer, 0, request.length, &result);
         if (status != Q9IOMAN_OK)
