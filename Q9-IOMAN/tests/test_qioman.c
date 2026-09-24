@@ -265,6 +265,7 @@ int main(void)
 
     {
         unsigned char frame[Q9IOMAN_R_SIZE];
+        Q9IOMAN_KernelRequest request;
         memset(frame, 0, sizeof(frame));
         q9ioman_frame_write32(frame, Q9IOMAN_R_D0, 0x12345678UL);
         q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x89abcdefUL);
@@ -276,6 +277,37 @@ int main(void)
         check("register-frame accessors use SR/PC word offsets",
               q9ioman_frame_read16(frame, Q9IOMAN_R_SR) == 0x2700U &&
               q9ioman_frame_read16(frame, Q9IOMAN_R_PC) == 0x4321U);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, 0x00000102UL);
+        check("decodes I$Open mode and preserves caller path pointer",
+              q9ioman_decode_kernel_request(0x0084, frame, &request) ==
+                  Q9IOMAN_OK &&
+              request.type == Q9IOMAN_KERNEL_OPEN && request.mode == 2 &&
+              request.buffer == 0x89abcdefUL && request.path == 0 &&
+              request.length == 0);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, 7);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 0x1234);
+        check("decodes I$Read path, length and buffer address",
+              q9ioman_decode_kernel_request(0x0089, frame, &request) ==
+                  Q9IOMAN_OK &&
+              request.type == Q9IOMAN_KERNEL_READ && request.path == 7 &&
+              request.length == 0x1234UL &&
+              request.buffer == 0x89abcdefUL);
+
+        check("decodes I$Close path without inventing buffer parameters",
+              q9ioman_decode_kernel_request(0x008f, frame, &request) ==
+                  Q9IOMAN_OK &&
+              request.type == Q9IOMAN_KERNEL_CLOSE && request.path == 7 &&
+              request.mode == 0 && request.buffer == 0 && request.length == 0);
+
+        check("rejects unsupported shadow callcodes and null decoder inputs",
+              q9ioman_decode_kernel_request(0x008a, frame, &request) ==
+                  Q9IOMAN_E_UNSUPPORTED_OPERATION &&
+              q9ioman_decode_kernel_request(0x0089, 0, &request) ==
+                  Q9IOMAN_E_INVALID_ARGUMENT &&
+              q9ioman_decode_kernel_request(0x0089, frame, 0) ==
+                  Q9IOMAN_E_INVALID_ARGUMENT);
     }
     check("maps manager errors to the Q9 kernel convention",
           q9ioman_status_to_os9_error(Q9IOMAN_OK) == 0 &&
