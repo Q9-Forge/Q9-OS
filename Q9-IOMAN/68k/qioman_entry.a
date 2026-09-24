@@ -1,0 +1,74 @@
+*******************************************************************************
+* Q9-IOMAN 68K system-module entry and initial F$SSvc registration.
+*
+* The Q9 kernel calls M$Exec after linking "ioman".  Initialize the resident
+* Q9 C manager state first, then install the manager-owned I$Open/Read/Close
+* shadow entries recognized by Q9K_ProcSSvc.  Until the register-frame bridge
+* is implemented, handlers fail closed with E$UnkSvc; in particular, no path
+* is tagged as manager-owned by the current Open stub.
+*******************************************************************************
+
+Q9_MT_SYSTEM    equ     12
+Q9_ML_OBJECT    equ     1
+Q9_MA_REENT     equ     $80
+Q9_MA_SUPER     equ     $20
+Q9_E_UNKSVC     equ     $00d0
+
+        psect   qioman,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,1,0,Q9IOMAN_Entry
+
+Q9IOMAN_Entry:
+        move.l  a4,-(sp)
+        move.l  a6,-(sp)
+        jsr     tc_q9ioman_system_init
+        tst.l   d0
+        bne     Q9IOMAN_InitFailed
+
+        lea     Q9IOMAN_SsvcTable(pc),a1
+        lea     Q9IOMAN_SvcData(pc),a3
+        trap    #0
+        dc.w    $0032                           * F$SSvc
+        bcs     Q9IOMAN_RegistrationFailed
+
+        movea.l (sp)+,a6
+        movea.l (sp)+,a4
+        moveq   #0,d1
+        andi    #$fe,ccr
+        rts
+
+Q9IOMAN_InitFailed:
+        move.w  d0,d1
+        bra     Q9IOMAN_Failed
+
+Q9IOMAN_RegistrationFailed:
+        * F$SSvc's documented failure code is retained in d1.
+Q9IOMAN_Failed:
+        movea.l (sp)+,a6
+        movea.l (sp)+,a4
+        ori     #1,ccr
+        rts
+
+* The offset is relative to the code word at each request entry, minus four,
+* matching the Q9 F$SSvc implementation and its real iattachsvc regression.
+Q9IOMAN_SsvcTable:
+Q9IOMAN_OpenRequest:
+        dc.w    $0084                           * I$Open: manager shadow
+        dc.w    Q9IOMAN_OpenEntry-Q9IOMAN_OpenRequest-4
+Q9IOMAN_ReadRequest:
+        dc.w    $0089                           * I$Read: manager shadow
+        dc.w    Q9IOMAN_ReadEntry-Q9IOMAN_ReadRequest-4
+Q9IOMAN_CloseRequest:
+        dc.w    $008f                           * I$Close: manager shadow
+        dc.w    Q9IOMAN_CloseEntry-Q9IOMAN_CloseRequest-4
+        dc.w    $ffff                           * end of registration table
+
+Q9IOMAN_OpenEntry:
+Q9IOMAN_ReadEntry:
+Q9IOMAN_CloseEntry:
+        move.w  #Q9_E_UNKSVC,d1
+        ori     #1,ccr
+        rts
+
+Q9IOMAN_SvcData:
+        dc.l    0                               * per-service A3 data base
+
+        endsect

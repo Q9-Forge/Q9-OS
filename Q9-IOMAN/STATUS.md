@@ -136,7 +136,10 @@ vor dem Codegen gegen Q9 verifiziert werden.
 
 | Subsystem/Funktion | Status | Fertigstellungskriterien |
 |---|---|---|
-| Modulstart, Systemzustand und Dispatchregistrierung | 🔴 | Q9-Systemmodul lädt, initialisiert Tabellen/Services, schlägt atomar fehl und hinterlässt keinen halben Zustand |
+| Modulstart/Systemzustand | 🟡 | Q9-Systemmodul-Entry startet den idempotenten C-Zustand; Fehlerpfad vorhanden, Boot-/Image-Integration und Laufzeittest fehlen |
+| Kernel-Service-Registrierung | 🟡 | Systemmodul namens `ioman` initialisiert C-Zustand und registriert `I$Open/Read/Close` per F$SSvc; Q9-Kernel-Schattenpfad ist unit-getestet, Emulator-/Bootintegration fehlt |
+| Register-/Pfadadapter für I$-Handler | 🟡 | 72-Byte-Rahmenoffsets sowie big-endian 16/32-bit-Zugriffe host- und Q9-toolchain-kompiliert; syscall-spezifische Validierung, Pfadslotabbildung und Fehler-/Carry-Vertrag fehlen |
+| Zielübersetzung und Modulbuild | 🟢 | Q9-eigene Kette erzeugt aus C+68K-Glue das `qioman`-OS-9-Modul; noch kein Emulator-/Kernel-Integrationstest |
 | Device-Descriptor lesen/parsen/validieren | 🔴 | Name, Typ, Treiber-/Managerreferenzen und Größen/Attribute sicher validiert |
 | Device-Descriptor finden, linken und validieren | 🔴 | Name, Typfilter, Edition, Größe und Datenfelder prüfen |
 | Im Descriptor referenzierten Treiber finden/linken | 🔴 | Modulname/Typ verifizieren, Linklebensdauer und Rollback testen |
@@ -144,7 +147,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Treiber-/Manager-Funktionsvektoren auflösen und eintragen | 🔴 | Einsprungbasis, Slotreihenfolge, relative Offsets, Nullslots und Register-ABI prüfen |
 | Attach-Transaktion und Rückabwicklung | 🔴 | Fehler an jedem Link-/Init-Schritt hinterlässt weder Teil-Device noch verlorene Modulreferenzen |
 | Device-Tabelle und Attach-Referenzen | 🔴 | Mehrfach-Attach, Sharing, Busy, Detach und Term konsistent |
-| Gerätename/Pfadprefix parsen und Manager auswählen | 🔴 | `/device/...`, Trenner, leere/ungültige Namen und Pfadrest getestet |
+| Gerätename/Pfadprefix parsen und Manager auswählen | 🟡 | Backendregister und längster Präfixtreffer mit Trennergrenze hostgetestet; Descriptor-/Attach-Auflösung und Pfadrestübergabe fehlen |
 | lokale Pfadnummern und Backendpfade verwalten | 🟡 | caller-owned Tabelle und lokale→Backend-Pfadbindung vorhanden; Prozessdescriptor-/Kernelintegration und Konkurrenzschutz fehlen |
 | `Dup`-/Close-Referenzlebenszyklus | 🔴 | Duplikate und Backendfreigabe korrekt bis zum letzten Nutzer |
 | Read-/Write-Modus und Zugriffsrechte | 🔴 | beim Open speichern, je Operation prüfen, korrekte OS-Fehler liefern |
@@ -168,6 +171,10 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Teil | Status | Testbeleg |
 |---|---|---|
 | Caller-owned Pfadtabelle initialisieren | 🟢 | Hosttest prüft Nullinitialisierung/Managerbindung im lokalen Scope |
+| Backendpräfixe registrieren und auflösen | 🟢 | Hosttest prüft Registrierung, Duplikat, längsten Treffer und `/dd` vs. `/ddx`; keine Modul-/Descriptorbindung |
+| Kernel-Rahmen-Feldzugriffe | 🟢 | Hosttests prüfen D0/A0 big-endian 32-bit sowie SR/PC 16-bit; keine syscall-spezifische Adapterlogik |
+| Managerstatus → Q9-Kernel-Fehler | 🟡 | Grundzuordnung für Parameter, Pfadnummer, volle Tabelle, nicht gefunden und nicht unterstützt implementiert/getestet; pro I$-Aufruf und Backend noch semantisch zu bestätigen |
+| Residenten Systemzustand initialisieren | 🟢 | Hosttests prüfen Zugriff vor Start, Tabellenkapazität und wiederholten Start |
 | Backend-Open und lokale Slotvergabe | 🟡 | Hosttest erfolgreich; nur bei bereits ausgewähltem Backend, keine Deviceauflösung |
 | generische Operation an Backendpfad weiterleiten | 🟡 | Hosttest prüft READ und Argumente; kein Trap-/68K-Dispatch |
 | Backend-Close und lokales Freigeben | 🟡 | Hosttest prüft Erfolg sowie Erhalt des Pfads bei Backendfehler; OS-9-Semantik noch zu bestätigen |
@@ -191,4 +198,5 @@ vor dem Codegen gegen Q9 verifiziert werden.
 - Treibervector-Slots: **7**.
 - Aktuell für Q9 implementierte OS-9-Eingänge: **0 vollständig**.
 - Teilweise vorhandener, host-getesteter Managerkern: lokale Pfadslots,
-  Backend-Open/Dispatch/Close.
+  Backendregistrierung/Präfixauflösung, Open/Dispatch/Close und
+  Registerrahmen-Zugriffshilfen.
