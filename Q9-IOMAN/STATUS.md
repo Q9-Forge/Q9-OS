@@ -17,7 +17,23 @@ Behauptung vollständiger Microware-Kompatibilität.
 
 **Wichtig:** Der IOMan ist als OS-9-Modul baubar und die drei Schattenhandler
 sind an den Router gebunden; produktive Backends/Attach fehlen noch. Der
-Kernel-/Emulatorlauf und die Prozess-/Dup-Lebensdauerintegration sind offen.
+Prozess-/Dup-Lebensdauerintegration ist offen. Ein isolierter Emulator-
+Integrationstest wurde begonnen; der aktuelle Einstiegstest schlägt fehl
+(siehe „Laufzeittest“ unten).
+
+## Laufzeittest
+
+| Test | Ergebnis | Aussage |
+|---|---|---|
+| Neues `qioman` in isoliertem OS9SYS-Klon; Bootkette enthält nachweislich den Build (15.850 Byte, gültige CRC/Parität) | ❌ Frühe Illegal Instruction, Vektor 4, `PC=$7031`; keine `F$SSvc`-Registrierung, `D_DevTbl` leer | Modul wurde geladen und gelinkt, aber sein Einstieg/Registrierungspfad ist noch nicht erfolgreich nachgewiesen. Noch kein Test von `Open`/`Read`/`Close`. |
+| Kontrollklon mit gleicher Kernel-/Diskmodul-Konfiguration und originalem IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Boot läuft über die Bootstrap-Phase hinaus; normale CompactFlash- und Programmtestausgaben; keine Exception-Mitschrift | Der Fehler ist spezifisch für den neuen IOMan-Einstieg bzw. dessen Integration, nicht ein reproduzierbarer allgemeiner Bootfehler derselben Kernel-Konfiguration. |
+
+Beide Läufe verwenden separate `cp -c`-Klone; das Master-Image wurde nicht
+verändert. Die Kontrollausgabe enthält lange `A`-Folgen aus der vorhandenen
+Kernel-/Emulatordiagnostik; sie sind kein IOMan-Erfolgskriterium. Nächster
+Schritt: Aufrufkonvention und Instruktionspfad von `Q9IOMAN_Entry` bis zum
+ersten `F$SSvc`-Trap instrumentiert prüfen. Keine Aussage über produktive
+Dateisystemfunktionalität ableiten.
 
 ## 1. Kernel → IOMan: empfangene Systemaufrufe
 
