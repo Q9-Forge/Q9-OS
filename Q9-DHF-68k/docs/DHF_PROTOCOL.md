@@ -101,3 +101,52 @@ Zukünftige Schritte
 - Mapping-Regeln (wie A0/A1 interpretiert werden) klar dokumentieren (Offset-vs-Flag vs. Pointer) und Version-Feld hinzufügen.
 - Implementierung eines SDK-Helper (C-Struct) zur Arbeit mit der Shared-Area.
 
+OS-9 Manager Memory allocation pattern
+- If the manager needs per-path or per-handle private buffers in the emulated process memory, use OS-9 system pool allocations so the memory is visible to the emulator and stable across calls:
+  - Request system memory from the manager using F$SRqMem (exposed via a C wrapper e.g. _os9_f_srqmem()). The kernel may round the size up to page boundaries.
+  - Store the returned pointer in the path descriptor (path->pd_opt) or another manager-provided slot so the driver and manager can share it across calls.
+  - When the path/handle is closed, free the memory with F$SRtMem (e.g. _os9_f_srtmem()).
+
+Example (OS-9 68k C sketch):
+
+```c
+#include <types.h>
+#include <io.h>
+
+// Command structure used by manager in emu memory
+typedef struct {
+    int command_id;
+    int param1;
+    char buffer[256];
+} MyCmdStruct;
+
+// Open: allocate system memory for per-path command area
+error_code _sysio_open(path_desc *path, ...) {
+    u_int32 size = sizeof(MyCmdStruct);
+    MyCmdStruct *cmd_ptr;
+    error_code err;
+
+    // 1. request system memory (F$SRqMem)
+    err = _os9_f_srqmem(&size, (void **)&cmd_ptr);
+    if (err != 0) return err;
+
+    // 2. initialize and store in path descriptor
+    cmd_ptr->command_id = 0;
+    cmd_ptr->param1 = 100;
+    path->pd_opt = (char *)cmd_ptr;
+    return 0;
+}
+
+// Close: release system memory
+error_code _sysio_close(path_desc *path) {
+    u_int32 size = sizeof(MyCmdStruct);
+    MyCmdStruct *cmd_ptr = (MyCmdStruct *)path->pd_opt;
+    if (cmd_ptr) _os9_f_srtmem(size, cmd_ptr);
+    return 0;
+}
+```
+
+- This approach lets the manager provide stable emulator-memory buffers whose addresses can be passed to the hardware simulator via the shared command area (param[0..4]).
+
+
+
