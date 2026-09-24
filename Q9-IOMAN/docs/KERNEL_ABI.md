@@ -54,8 +54,14 @@ auf. `A5` wird als 72-Byte-Serviceframe übergeben; der jeweilige Callcode ist
 im Stub festgelegt. Nach dem C-Aufruf werden D0/D1/A0 aus dem Frame
 wiederhergestellt und Carry passend gesetzt. `I$Open` nutzt einen begrenzten
 Pfadresolver (max. 256 Byte); in Q9s flachem Adressraum kann er ungültige oder
-nicht gemappte Speicherbereiche nicht abfangen. Das erzeugte Modul linkt die
-Assembly- und C-Brücken, aber ein Kernel-/Emulatorlauf fehlt noch.
+nicht gemappte Speicherbereiche nicht abfangen. Die Aufrufe von den
+Assembler-Stubs in die QCC-C-Psects müssen PC-relativ (`BSR`) erfolgen: ein
+absolutes `JSR` sprang im relocierbaren Modul auf den unverschobenen Psect-
+Offset statt auf die geladene Moduladresse. Der Emulator bestätigt den
+IOMan-Start, die drei `F$SSvc`-Schattenadressen und einen reentranten
+nicht-nativen `I$Open`-Aufruf bis zur Handler-Rückkehr. Ein echter Backend-
+Open/Read/Close-Pfad und dessen konkrete Fehlerregister sind noch nicht
+end-to-end verifiziert.
 
 `q9ioman_status_to_os9_error()` stellt eine erste gemeinsame Übersetzung
 dieser internen Statuswerte bereit: ungültiger Parameter→`E$Param`, ungültiger
