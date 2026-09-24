@@ -3,16 +3,17 @@
 *
 * The Q9 kernel calls M$Exec after linking "ioman".  Initialize the resident
 * Q9 C manager state first, then install the manager-owned I$Open/Read/Close
-* shadow entries recognized by Q9K_ProcSSvc.  Until the register-frame bridge
-* is implemented, handlers fail closed with E$UnkSvc; in particular, no path
-* is tagged as manager-owned by the current Open stub.
+* shadow entries recognized by Q9K_ProcSSvc.  The handlers pass the kernel's
+* 72-byte service image (A5) and the known callcode to the C dispatcher.
 *******************************************************************************
 
 Q9_MT_SYSTEM    equ     12
 Q9_ML_OBJECT    equ     1
 Q9_MA_REENT     equ     $80
 Q9_MA_SUPER     equ     $20
-Q9_E_UNKSVC     equ     $00d0
+Q9_R_D0         equ     $00
+Q9_R_D1         equ     $04
+Q9_R_A0         equ     $20
 
         psect   qioman,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,1,0,Q9IOMAN_Entry
 
@@ -62,10 +63,107 @@ Q9IOMAN_CloseRequest:
         dc.w    $ffff                           * end of registration table
 
 Q9IOMAN_OpenEntry:
-Q9IOMAN_ReadEntry:
-Q9IOMAN_CloseEntry:
-        move.w  #Q9_E_UNKSVC,d1
+        movem.l d2-d7/a3-a5,-(sp)
+        move.l  a5,-(sp)
+        move.l  #$0084,-(sp)
+        jsr     tc_q9ioman_target_dispatch
+        addq.l  #8,sp
+        tst.l   d0
+        bne     Q9IOMAN_OpenFailed
+        move.l  Q9_R_D0(a5),d0
+        move.l  Q9_R_D1(a5),d1
+        move.l  Q9_R_A0(a5),a0
+        movem.l (sp)+,d2-d7/a3-a5
+        andi    #$fe,ccr
+        rts
+Q9IOMAN_OpenFailed:
+        move.l  Q9_R_D0(a5),d0
+        move.l  Q9_R_D1(a5),d1
+        move.l  Q9_R_A0(a5),a0
+        movem.l (sp)+,d2-d7/a3-a5
         ori     #1,ccr
+        rts
+
+Q9IOMAN_ReadEntry:
+        movem.l d2-d7/a3-a5,-(sp)
+        move.l  a5,-(sp)
+        move.l  #$0089,-(sp)
+        jsr     tc_q9ioman_target_dispatch
+        addq.l  #8,sp
+        tst.l   d0
+        bne     Q9IOMAN_ReadFailed
+        move.l  Q9_R_D0(a5),d0
+        move.l  Q9_R_D1(a5),d1
+        move.l  Q9_R_A0(a5),a0
+        movem.l (sp)+,d2-d7/a3-a5
+        andi    #$fe,ccr
+        rts
+Q9IOMAN_ReadFailed:
+        move.l  Q9_R_D0(a5),d0
+        move.l  Q9_R_D1(a5),d1
+        move.l  Q9_R_A0(a5),a0
+        movem.l (sp)+,d2-d7/a3-a5
+        ori     #1,ccr
+        rts
+
+Q9IOMAN_CloseEntry:
+        movem.l d2-d7/a3-a5,-(sp)
+        move.l  a5,-(sp)
+        move.l  #$008f,-(sp)
+        jsr     tc_q9ioman_target_dispatch
+        addq.l  #8,sp
+        tst.l   d0
+        bne     Q9IOMAN_CloseFailed
+        move.l  Q9_R_D0(a5),d0
+        move.l  Q9_R_D1(a5),d1
+        move.l  Q9_R_A0(a5),a0
+        movem.l (sp)+,d2-d7/a3-a5
+        andi    #$fe,ccr
+        rts
+Q9IOMAN_CloseFailed:
+        move.l  Q9_R_D0(a5),d0
+        move.l  Q9_R_D1(a5),d1
+        move.l  Q9_R_A0(a5),a0
+        movem.l (sp)+,d2-d7/a3-a5
+        ori     #1,ccr
+        rts
+
+* C callback: (context, address, char **path, LONG *bytesIncludingNul).
+* Current Q9 has one flat 32-bit address space; bound the scan to 256 bytes
+* and reject null/wrapping addresses.  This cannot probe unmapped memory.
+tc_q9ioman_target_resolve_path:
+        link    a5,#0
+        move.l  8(a5),d0
+        bne     Q9IOMAN_PathAddressBad
+        move.l  12(a5),d1
+        beq     Q9IOMAN_PathAddressBad
+        cmpi.l  #$ffffff00,d1
+        bhi     Q9IOMAN_PathAddressBad
+        move.l  16(a5),d0
+        beq     Q9IOMAN_PathAddressBad
+        move.l  20(a5),d0
+        beq     Q9IOMAN_PathAddressBad
+        movea.l d1,a0
+        moveq   #0,d0
+Q9IOMAN_PathAddressScan:
+        cmpi.l  #256,d0
+        bhs     Q9IOMAN_PathAddressBad
+        tst.b   0(a0,d0.w)
+        beq     Q9IOMAN_PathAddressFound
+        addq.l  #1,d0
+        bra     Q9IOMAN_PathAddressScan
+Q9IOMAN_PathAddressFound:
+        movea.l 16(a5),a1
+        move.l  d1,(a1)
+        addq.l  #1,d0
+        movea.l 20(a5),a1
+        move.l  d0,(a1)
+        moveq   #0,d0
+        bra     Q9IOMAN_PathAddressDone
+Q9IOMAN_PathAddressBad:
+        moveq   #1,d0
+Q9IOMAN_PathAddressDone:
+        unlk    a5
         rts
 
 Q9IOMAN_SvcData:
