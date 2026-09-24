@@ -64,13 +64,18 @@ setzt weder Carry noch Fehler-/Ergebnisregister.
 
 `q9ioman_dispatch_kernel_request()` verbindet diese drei Requests mit der
 Pfadtabelle. Open braucht einen plattformspezifischen Resolver, der den
-NUL-terminierten Q9-Pfad sicher zugänglich macht und dessen Bytezahl inklusive
-NUL meldet. Read reicht die numerische Q9-Bufferadresse und Länge unverändert
+NUL-terminierten Q9-Pfad im aktuellen flachen Q9-Adressraum scannt (maximal
+256 Byte) und dessen Bytezahl inklusive NUL meldet. Das kann einen ungültigen
+oder nicht gemappten Zeiger nicht abfangen. Read reicht die numerische
+Q9-Bufferadresse und Länge unverändert
 an das Backend weiter. Der Dispatcher setzt bei Erfolg D0.w (Open), A0 (Open),
 D1.l (Read) und löscht Carry; bei Fehler schreibt er den gemappten Fehler in
 D1.w und setzt Carry. Er validiert/dereferenziert keine Read-Bufferadresse.
-Die vorhandenen Assembly-Schatteneinträge rufen diese C-Brücke noch nicht auf;
-deren Übergabe des Trapframes und des Callcodes ist weiterhin Integrationsarbeit.
+Die IOMan-Assembly-Schatteneinträge rufen die C-Brücke mit `A5` als Frame und
+festem Callcode auf und restaurieren die veränderlichen Ergebnisregister sowie
+Carry für den Kernel. Der Q9-Modulbuild linkt diese Brücke inzwischen. Ein
+Kernel-/Emulator-End-to-End-Test sowie Zugriffsschutz für ungültige
+Adressbereiche stehen weiterhin aus.
 
 ## Lokale Q9-Quellen
 

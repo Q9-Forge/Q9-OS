@@ -11,10 +11,11 @@ Q9_QL68K ?= $(Q9_FORGE)/Q9-QCC/Q9-BACKEND-68K/q9-ql68k/build/ql68k
 Q9_RFLAGS ?=
 Q9_CPPFLAGS ?= -Iinclude
 Q9_C_SOURCES := src/qioman.c src/qioman_system.c src/qioman_kernel.c
-Q9_ASM := $(patsubst src/%.c,build/%.s68k,$(Q9_C_SOURCES))
-Q9_IR := $(patsubst src/%.c,build/%.ir,$(Q9_C_SOURCES))
-Q9_PREPROCESSED := $(patsubst src/%.c,build/%.i,$(Q9_C_SOURCES))
-Q9_ROF := build/qioman_entry.r $(patsubst src/%.c,build/%.r,$(Q9_C_SOURCES))
+Q9_TARGET_C_SOURCES := $(Q9_C_SOURCES) src/qioman_target.c
+Q9_ASM := $(patsubst src/%.c,build/%.s68k,$(Q9_TARGET_C_SOURCES))
+Q9_IR := $(patsubst src/%.c,build/%.ir,$(Q9_TARGET_C_SOURCES))
+Q9_PREPROCESSED := $(patsubst src/%.c,build/%.i,$(Q9_TARGET_C_SOURCES))
+Q9_ROF := build/qioman_entry.r $(patsubst src/%.c,build/%.r,$(Q9_TARGET_C_SOURCES))
 
 .PHONY: all test q9-68k q9-module check-q9-tools clean
 .SECONDARY: $(Q9_PREPROCESSED) $(Q9_IR) $(Q9_ASM) $(Q9_ROF)
