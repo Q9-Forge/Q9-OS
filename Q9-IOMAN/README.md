@@ -5,6 +5,9 @@ Q9-eigener Code; `.os9-original/` ist lokales, ignoriertes Referenzmaterial
 und wird weder eingebunden noch als Implementierungsvorlage kopiert.
 
 Der vollständige Funktions- und Aufgabenstatus steht in [STATUS.md](STATUS.md).
+Der aktuelle, ausdrücklich vorläufige Kommunikationsentwurf steht in
+[docs/IO_PROTOCOL_SPEC.md](docs/IO_PROTOCOL_SPEC.md); bestätigte Leitlinien
+und offene ABI-/Lebenszyklusfragen sind dort getrennt.
 
 ## Struktur
 
@@ -24,7 +27,9 @@ Pfadtabelle bereit. Der Start ist idempotent; damit kann ein späterer
 Systemmodul-Einstieg zunächst Speicher und Tabellen einrichten.
 `src/qioman.c` enthält den minimalen Pfad-Lebenszyklus und Backend-Router:
 Öffnen über ein vom Aufrufer ausgewähltes Backend, lokale Pfadnummern,
-Operationen weiterleiten und erfolgreiches Schließen ausbuchen. Er kennt
+Operationen weiterleiten, Präfixrouten registrieren/auflösen und nach dem
+Schließen sicher wieder lösen. Ein aktiver Pfad verhindert das Lösen seiner
+Route. Er kennt
 weder Hardware noch ein Dateisystem und ruft noch keine Kernel-Syscalls auf.
 Insbesondere sind Attach-/Descriptor-Auflösung, Pfadnamen-Suche,
 Nebenläufigkeit/Warteschlangen, SCF/RBF und die Trap-Integration noch offen.
