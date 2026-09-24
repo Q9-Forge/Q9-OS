@@ -67,10 +67,12 @@ Pfadtabelle. Open braucht einen plattformspezifischen Resolver, der den
 NUL-terminierten Q9-Pfad im aktuellen flachen Q9-Adressraum scannt (maximal
 256 Byte) und dessen Bytezahl inklusive NUL meldet. Das kann einen ungültigen
 oder nicht gemappten Zeiger nicht abfangen. Read reicht die numerische
-Q9-Bufferadresse und Länge unverändert
-an das Backend weiter. Der Dispatcher setzt bei Erfolg D0.w (Open), A0 (Open),
-D1.l (Read) und löscht Carry; bei Fehler schreibt er den gemappten Fehler in
-D1.w und setzt Carry. Er validiert/dereferenziert keine Read-Bufferadresse.
+Q9-Bufferadresse und Länge unverändert an das Backend weiter, weist aber einen
+Nullzeiger bei positiver Länge und einen über den 32-bit-Adressraum
+umlaufenden Bereich vorher ab. Das prüft weder Mapping noch Lesbarkeit des
+Speichers; eine sichere Bereichsprüfung bleibt Kernelverantwortung. Der
+Dispatcher setzt bei Erfolg D0.w (Open), A0 (Open), D1.l (Read) und löscht
+Carry; bei Fehler schreibt er den gemappten Fehler in D1.w und setzt Carry.
 Die IOMan-Assembly-Schatteneinträge rufen die C-Brücke mit `A5` als Frame und
 festem Callcode auf und restaurieren die veränderlichen Ergebnisregister sowie
 Carry für den Kernel. Der Q9-Modulbuild linkt diese Brücke inzwischen. Ein

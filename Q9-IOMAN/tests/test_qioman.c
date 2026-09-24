@@ -325,8 +325,32 @@ int main(void)
                   frame, 0, 0) == Q9IOMAN_E_INVALID_ARGUMENT &&
               q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
                   Q9IOMAN_OS9_E_PARAM &&
-              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0);
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0 &&
+              dispatch_mock.operate_calls == 3);
         dispatch_mock.override_transferred = 0;
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 1);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_SR, 0x2700U);
+        check("I$Read rejects a null buffer for a nonempty request",
+              q9ioman_dispatch_kernel_request(0x0089, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_E_INVALID_ARGUMENT &&
+              q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
+                  Q9IOMAN_OS9_E_PARAM &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0 &&
+              dispatch_mock.operate_calls == 3);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0xffffffffUL);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 2);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_SR, 0x2700U);
+        check("I$Read rejects a buffer range that wraps the 32-bit address space",
+              q9ioman_dispatch_kernel_request(0x0089, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_E_INVALID_ARGUMENT &&
+              q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
+                  Q9IOMAN_OS9_E_PARAM &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0 &&
+              dispatch_mock.operate_calls == 3);
 
         q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
         check("dispatches I$Close and reports invalid path using Carry/D1.w",
