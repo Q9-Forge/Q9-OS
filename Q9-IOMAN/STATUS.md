@@ -15,9 +15,9 @@ Behauptung vollständiger Microware-Kompatibilität.
 | 🔵 | Schnittstelle, Zuständigkeit oder ABI noch zu klären; Implementierung wartet darauf |
 | ⚪ | Bewusst nach dem ersten lauffähigen System zurückgestellt / optional |
 
-**Wichtig:** Die vorhandene Host-Routerlogik ist kein laufendes OS-9-IOMan-
-Modul. Trap-Adapter, Modullader, Attach, SCF/RBF und Emulatorintegration
-fehlen weiterhin.
+**Wichtig:** Der IOMan ist als OS-9-Modul baubar und die drei Schattenhandler
+sind an den Router gebunden; produktive Backends/Attach fehlen noch. Der
+Kernel-/Emulatorlauf und die Prozess-/Dup-Lebensdauerintegration sind offen.
 
 ## 1. Kernel → IOMan: empfangene Systemaufrufe
 
