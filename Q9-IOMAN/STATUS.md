@@ -149,11 +149,11 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Im Descriptor referenzierten Treiber finden/linken | 🔴 | Modulname/Typ verifizieren, Linklebensdauer und Rollback testen |
 | Im Descriptor referenzierten File-Manager finden/linken | 🔴 | Modulname/Typ verifizieren, Linklebensdauer und Rollback testen |
 | Treiber-/Manager-Funktionsvektoren auflösen und eintragen | 🔴 | Einsprungbasis, Slotreihenfolge, relative Offsets, Nullslots und Register-ABI prüfen |
-| Attach-Transaktion und Rückabwicklung | 🔴 | Fehler an jedem Link-/Init-Schritt hinterlässt weder Teil-Device noch verlorene Modulreferenzen |
-| Device-Tabelle und Attach-Referenzen | 🔴 | Mehrfach-Attach, Sharing, Busy, Detach und Term konsistent |
+| Attach-Transaktion und Rückabwicklung | 🟡 | Zustandsmodell/Atomaritäts- und Rollbackinvarianten in `docs/IO_PROTOCOL_SPEC.md` entworfen; Link-/Init-Sequenz und Fehlerpfade noch nicht implementiert |
+| Device-Tabelle und Attach-Referenzen | 🟡 | `DETACHED/PREPARING/READY/QUIESCING`-Modell dokumentiert; echte Device-Tabelle, parallele Übergänge, Mehrfach-Attach, Referenzen und Detach noch offen |
 | Gerätename/Pfadprefix parsen und Manager auswählen | 🟡 | Backendregister und längster Präfixtreffer mit Trennergrenze hostgetestet; Descriptor-/Attach-Auflösung und Pfadrestübergabe fehlen |
 | lokale Pfadnummern und Backendpfade verwalten | 🟡 | caller-owned Tabelle und lokale→Backend-Pfadbindung vorhanden; Prozessdescriptor-/Kernelintegration und Konkurrenzschutz fehlen |
-| `Dup`-/Close-Referenzlebenszyklus | 🔴 | Duplikate und Backendfreigabe korrekt bis zum letzten Nutzer |
+| `Dup`-/Close-Referenzlebenszyklus | 🔴 | Duplikate und Backendfreigabe korrekt bis zum letzten Nutzer; Kernel-`I$Dup`-Benachrichtigung und Prozessende-Cleanup fehlen |
 | Read-/Write-Modus und Zugriffsrechte | 🔴 | beim Open speichern, je Operation prüfen, korrekte OS-Fehler liefern |
 | Pfad-Lock, Wait/Wake und Wiederaufnahme | 🔴 | konkurrierende Zugriffe serialisieren, Prozessende/Signal/Fehler sicher behandeln |
 | I/O-Queue und asynchrone Anfragen | 🔴 | Einreihen, Abbrechen, Abschluss, Wake-up und Ressourcenbesitz spezifizieren |

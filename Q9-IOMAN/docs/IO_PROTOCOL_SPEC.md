@@ -144,6 +144,47 @@ Rollback-Anforderung:
 seinen Treiber selbst verwaltet; ob `Destroy` immer mit `Init` korrespondiert;
 Fehler-/Wiederholungssemantik; Mehrfach-Attach und Referenzzählung.
 
+### 4.3 Attach-/Detach-Zustandsmodell (Vorschlag)
+
+Unabhängig von der späteren Init-Reihenfolge sollte eine Geräteinstanz erst
+nach vollständig erfolgreichem Aufbau sichtbar werden und beim Abbau keine
+neuen Opens mehr annehmen.
+
+| Zustand | Zulässige Aktion | Übergang |
+|---|---|---|
+| `DETACHED` | Attach starten | `PREPARING` |
+| `PREPARING` | Descriptor prüfen, Module linken, Vektoren validieren, Init ausführen | vollständig erfolgreich → `READY`; Fehler → Rollback → `DETACHED` |
+| `READY` | Open und Manageroperationen zulassen | Detach anfordern → `QUIESCING` |
+| `QUIESCING` | neue Opens ablehnen; bestehende Pfade/Operationen drainen | aktive Referenzen null → Destroy/UnLink → `DETACHED`; andernfalls warten oder `BUSY` zurückgeben |
+
+Vorläufige Invarianten:
+
+- Die Device-/Prefixroute wird atomar erst beim Übergang nach `READY`
+  registriert. Ein partiell initialisiertes Gerät ist für Open nicht sichtbar.
+- Jede erfolgreiche Öffnung bindet ihren lokalen Pfad an genau eine
+  Geräteinstanz und hält diese Instanz aktiv. Operationen halten sie bis zur
+  Rückkehr zusätzlich beschäftigt.
+- Ein erfolgreicher Backend-Close entfernt die Pfadbindung und gibt die
+  Aktivitätsreferenz frei. Ein fehlgeschlagener Close behält Pfad und
+  Referenz, damit der Aufrufer wiederholen kann.
+- Detach darf Module und Instanzdaten nicht freigeben, solange ein Pfad oder
+  eine laufende Operation sie referenziert. Es kann synchron warten oder
+  `BUSY` liefern; die API-Entscheidung ist offen.
+- Nach Drain werden Destroy-/Term-Aufrufe in umgekehrter Reihenfolge der
+  bestätigten erfolgreichen Init-Aufrufe ausgeführt. Modul-Links werden
+  anschließend in umgekehrter Linkreihenfolge freigegeben.
+- Ein fehlgeschlagener Attach darf keine Route veröffentlichen und muss alle
+  erworbenen Links sowie erfolgreich initialisierte Komponenten
+  zurückrollen. Ob eine fehlgeschlagene `Init` selbst bereits `Destroy`
+  benötigt oder intern vollständig aufräumt, muss der Funktionsvertrag
+  festlegen.
+
+Noch unbestätigt sind Synchronisation der Übergänge gegen parallele Open/
+Detach-Aufrufe, das Verhalten bei Prozessende, geteilte Manager-/Treiber-
+Module über mehrere Descriptors und die Lebensdauer descriptor-eigener
+Konfigurationsdaten. Dieses Modell beschreibt daher die gewünschte
+Transaktionssicherheit, nicht bereits vorhandene IOMan-Funktionalität.
+
 ## 5. Kommandoauslösung: SetStat oder Write?
 
 Vorläufige Empfehlung: **Steuer-/Kontrollkommandos über SetStat**, Datenstrom
