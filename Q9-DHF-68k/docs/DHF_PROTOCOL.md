@@ -89,14 +89,13 @@ Layout (Offsets, bytes):
   - 13 = ChDir
   - 255 = Return/Response
 
-- 0x01 (4): LONG A0 — Dateiname / Verzeichnisname (Offset/Pointer semantics: Manager kopiert Name in NAME-Bereich)
-- 0x05 (4): LONG A1 — Buffer (Offset/Pointer semantics: Manager kopiert Buffer in BUFFER-Bereich)
+- 0x01 (4): LONG A0 — Dateiname / Verzeichnisname (flag/offset semantics: 0 = unused, 1 = manager provides NAME in external block, else offset)
+- 0x05 (4): LONG A1 — Buffer (flag/offset semantics: 0 = unused, 1 = manager provides BUFFER in external block, else offset)
 - 0x09 (4): LONG D0 — Pfadnummer / Descriptor
 - 0x0D (4): LONG D1 — Statuscode / Byte-Anzahl / Max-Länge / Seek-Offset (semantisch je nach Command)
 - 0x11 (4): LONG D2 — Attribute / Flags
 
-- 0x15 (256): BYTE ARRAY[256] NAME — Null-terminierter UTF-8 Name (falls Name kürzer, mit \0 auffüllen)
-- 0x115 (512): BYTE ARRAY[512] BUFFER — Datapuffer für Read/Write/Line-Operationen
+- NAME and BUFFER are not embedded by default; manager should provide an external data block when A0/A1 indicate presence. Legacy embedded fields may still be present for backward compatibility in dhf_shared.h.
 
 Gesamtgröße (empfohlen): 0x315 (789) Bytes
 
