@@ -19,6 +19,7 @@
 /* Q9 kernel error numbers used by the IOMan's initial error adapter. */
 #define Q9IOMAN_OS9_E_PTHFUL 0x00c8
 #define Q9IOMAN_OS9_E_BPNUM  0x00c9
+#define Q9IOMAN_OS9_E_BMODE  0x00cb
 #define Q9IOMAN_OS9_E_UNKSVC 0x00d0
 #define Q9IOMAN_OS9_E_MNF    0x00dd
 #define Q9IOMAN_OS9_E_PARAM  0x00e1

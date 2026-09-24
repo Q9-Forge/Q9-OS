@@ -58,6 +58,8 @@ Q9IOMAN_u16 q9ioman_status_to_os9_error(Q9IOMAN_Status status)
         return Q9IOMAN_OS9_E_PARAM;
     case Q9IOMAN_E_INVALID_PATH:
         return Q9IOMAN_OS9_E_BPNUM;
+    case Q9IOMAN_E_WRONG_MODE:
+        return Q9IOMAN_OS9_E_BMODE;
     case Q9IOMAN_E_NO_PATH_SLOTS:
     case Q9IOMAN_E_REGISTRY_FULL:
         return Q9IOMAN_OS9_E_PTHFUL;

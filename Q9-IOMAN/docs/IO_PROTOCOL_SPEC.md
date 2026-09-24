@@ -205,10 +205,23 @@ eigenen Kommando-Kanal klar von normalen Schreibdaten unterscheiden.
 
 - Jeder Befehl liefert einen eindeutigen Erfolgs-/Fehlerstatus; bei Read/
   Write zusätzlich die tatsächlich übertragene Länge.
+- Der Q9-I$Open-Modus liefert Read-/Write-Berechtigungen in den unteren
+  beiden Bits; Modus 0 wird vom Q9-Kernel als Read+Write behandelt. Der
+  IOMan-Pfadkern speichert diese Bits und verweigert READ/READLN ohne
+  Leserecht bzw. WRITE/WRITLN ohne Schreibrecht. Weitere Modusbits und
+  Zugriffsregeln für Seek/GetStt/SetStt bleiben Manager-/Kernelvertrag.
 - Bei Fehler muss feststehen, ob teilweise bearbeitete Buffer/Objekte gültig
   bleiben und ob ein Retry erlaubt ist.
 - Kein globales veränderliches Requestobjekt. Aufruflokaler Deskriptor auf
   dem Stack des Aufrufers oder äquivalenter reentranzsicherer Kontext.
+- Aufruflokale Deskriptoren machen nur den Requestspeicher reentranzsicher;
+  sie schützen nicht automatisch die residenten Pfad-/Backendtabellen.
+  Der aktuelle Host-/Targetkern reserviert Pfadslots vor Backendcallbacks,
+  zählt aktive synchrone Operationen und sperrt rekursives Close. Das deckt
+  getestete synchrone Callback-Reentranz ab. Gegen gleichzeitig präemptierte
+  unabhängige Aufrufe gibt es noch keinen Kernel-Lock; bis dieser Vertrag
+  umgesetzt und getestet ist, muss die globale Tabellenmutation serialisiert
+  bleiben.
 - Solange Requests synchron sind, muss jeder Aufruferstack bis zur Rückkehr
   erhalten bleiben. Wird später asynchron gearbeitet, braucht es explizite
   Request-Lebensdauer, Completion, Abbruch sowie Schutz/Pinning der Buffer;
