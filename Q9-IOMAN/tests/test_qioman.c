@@ -16,6 +16,8 @@ typedef struct {
     Q9IOMAN_u16 open_calls;
     Q9IOMAN_u16 operate_calls;
     Q9IOMAN_u16 close_calls;
+    Q9IOMAN_u32 transferred_override;
+    int override_transferred;
     Q9IOMAN_Manager *nested_manager;
     Q9IOMAN_u16 nested_local_path;
     Q9IOMAN_Status nested_open_status;
@@ -103,7 +105,8 @@ static Q9IOMAN_Status mock_operate(void *opaque,
         mock->reentrant_close_status = q9ioman_close(manager, path);
     }
     result->value = 0;
-    result->transferred = arg2;
+    result->transferred = mock->override_transferred
+        ? mock->transferred_override : arg2;
     return Q9IOMAN_OK;
 }
 
@@ -303,6 +306,27 @@ int main(void)
               dispatch_mock.last_arg0 == 0x3000UL &&
               dispatch_mock.last_arg2 == 10 &&
               (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) == 0);
+
+        dispatch_mock.override_transferred = 1;
+        dispatch_mock.transferred_override = 4;
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 10);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_SR, 0x2700U);
+        check("I$Read reports a backend short read without treating it as failure",
+              q9ioman_dispatch_kernel_request(0x0089, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              q9ioman_frame_read32(frame, Q9IOMAN_R_D1) == 4 &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) == 0);
+
+        dispatch_mock.transferred_override = 11;
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 10);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_SR, 0x2700U);
+        check("I$Read rejects a backend count larger than the request",
+              q9ioman_dispatch_kernel_request(0x0089, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_E_INVALID_ARGUMENT &&
+              q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
+                  Q9IOMAN_OS9_E_PARAM &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0);
+        dispatch_mock.override_transferred = 0;
 
         q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
         check("dispatches I$Close and reports invalid path using Carry/D1.w",
