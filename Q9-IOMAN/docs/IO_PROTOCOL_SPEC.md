@@ -65,6 +65,12 @@ nicht zugängliche Adressen erkannt werden.
 
 ## 3. Manager-Kommandos
 
+Die Kernelregister der eingehenden 13 Systemaufrufe sind eine getrennte
+Schnittstelle. Der aktuelle Q9-Implementierungsstand ist in
+[`KERNEL_IO_ABI.md`](KERNEL_IO_ABI.md) aufgelistet. Diese Inventur belegt
+einige Register- und Bufferwerte, aber sie definiert nicht die 1–5 Parameter
+des neuen Managerkommandos.
+
 Die 13 Einträge entsprechen dem Q9-IOMAN-Aufgabeninventar. Die Anzahl
 „1–5“ stammt aus der bisherigen Schnittstellenplanung; die genaue Zahl und
 Belegung je Kommando ist offen und wird nicht aus OS-9-Ähnlichkeiten

@@ -180,6 +180,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Kernel-Rahmen-Feldzugriffe | 🟢 | Hosttests prüfen D0/A0 big-endian 32-bit sowie SR/PC 16-bit; keine syscall-spezifische Adapterlogik |
 | Managerstatus → Q9-Kernel-Fehler | 🟡 | Grundzuordnung für Parameter, Pfadnummer, volle Tabelle, nicht gefunden und nicht unterstützt implementiert/getestet; pro I$-Aufruf und Backend noch semantisch zu bestätigen |
 | Manager-/Treiber-/Emulator-Kommunikationsspezifikation | 🟡 | Entwurf in `docs/IO_PROTOCOL_SPEC.md`; 13 Managerkommandos ihren Kernel-Callcodes `$83`–`$8F` zugeordnet, aber getrennt von Entwurfs-IDs und Manager-Vektorslots; Datenzeigerprinzip festgehalten; genaue Parameter, Register-/SetStat-Transport sowie Init-/Destroy-Eigentümer offen |
+| Kernel-I/O-Registerinventur | 🟡 | Eingabe-/Rückgaberegister und aktuelle Implementierungsabdeckung für alle 13 I$-Callcodes aus Q9-Kernelcode inventarisiert (`docs/KERNEL_IO_ABI.md`); nicht implementierte Calls und fehlende Voll-ABI bleiben offen |
 | Residenten Systemzustand initialisieren | 🟢 | Hosttests prüfen Zugriff vor Start, Tabellenkapazität und wiederholten Start |
 | Backend-Open und lokale Slotvergabe | 🟡 | Hosttest erfolgreich; nur bei bereits ausgewähltem Backend, keine Deviceauflösung |
 | generische Operation an Backendpfad weiterleiten | 🟡 | Hosttest prüft READ und Argumente; kein Trap-/68K-Dispatch |

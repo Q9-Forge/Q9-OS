@@ -8,6 +8,8 @@ Der vollständige Funktions- und Aufgabenstatus steht in [STATUS.md](STATUS.md).
 Der aktuelle, ausdrücklich vorläufige Kommunikationsentwurf steht in
 [docs/IO_PROTOCOL_SPEC.md](docs/IO_PROTOCOL_SPEC.md); bestätigte Leitlinien
 und offene ABI-/Lebenszyklusfragen sind dort getrennt.
+Die Eingaberegister der derzeitigen Q9-Kernel-I/O-Aufrufe sind separat in
+[docs/KERNEL_IO_ABI.md](docs/KERNEL_IO_ABI.md) inventarisiert.
 
 ## Struktur
 
