@@ -9,7 +9,7 @@
  */
 
 typedef unsigned short Q9IOMAN_u16;
-typedef unsigned long Q9IOMAN_u32;
+typedef unsigned int Q9IOMAN_u32;
 
 typedef enum {
     Q9IOMAN_OK = 0,

@@ -127,6 +127,8 @@ int main(void)
     memset(&mock, 0, sizeof(mock));
     mock.expected_name = "/dd/SYS/motd";
     mock.close_status = Q9IOMAN_OK;
+    check("Q9IOMAN_u32 is exactly one 32-bit register value",
+          sizeof(Q9IOMAN_u32) == 4);
     check("system manager is unavailable before startup",
           q9ioman_system_manager() == 0);
     check("system startup initializes resident path storage",
