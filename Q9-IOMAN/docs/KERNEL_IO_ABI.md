@@ -62,6 +62,16 @@ keinen Buffer und macht noch keine Aussage zur Host-/Q9-Adressübersetzung.
 Unbekannte Callcodes werden abgewiesen. Das ist noch kein Trap-Handler und
 setzt weder Carry noch Fehler-/Ergebnisregister.
 
+`q9ioman_dispatch_kernel_request()` verbindet diese drei Requests mit der
+Pfadtabelle. Open braucht einen plattformspezifischen Resolver, der den
+NUL-terminierten Q9-Pfad sicher zugänglich macht und dessen Bytezahl inklusive
+NUL meldet. Read reicht die numerische Q9-Bufferadresse und Länge unverändert
+an das Backend weiter. Der Dispatcher setzt bei Erfolg D0.w (Open), A0 (Open),
+D1.l (Read) und löscht Carry; bei Fehler schreibt er den gemappten Fehler in
+D1.w und setzt Carry. Er validiert/dereferenziert keine Read-Bufferadresse.
+Die vorhandenen Assembly-Schatteneinträge rufen diese C-Brücke noch nicht auf;
+deren Übergabe des Trapframes und des Callcodes ist weiterhin Integrationsarbeit.
+
 ## Lokale Q9-Quellen
 
 Diese Inventur basiert auf dem Q9-Repository, insbesondere:

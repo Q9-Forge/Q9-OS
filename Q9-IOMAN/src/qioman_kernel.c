@@ -106,3 +106,83 @@ Q9IOMAN_Status q9ioman_decode_kernel_request(
     }
     return Q9IOMAN_E_UNSUPPORTED_OPERATION;
 }
+
+static void q9ioman_set_carry(unsigned char *frame, int set)
+{
+    Q9IOMAN_u16 status = q9ioman_frame_read16(frame, Q9IOMAN_R_SR);
+    if (set)
+        status = (Q9IOMAN_u16)(status | 1U);
+    else
+        status = (Q9IOMAN_u16)(status & 0xfffeU);
+    q9ioman_frame_write16(frame, Q9IOMAN_R_SR, status);
+}
+
+Q9IOMAN_Status q9ioman_dispatch_kernel_request(
+    Q9IOMAN_u16 callcode,
+    Q9IOMAN_Manager *manager,
+    unsigned char *frame,
+    Q9IOMAN_PathAddressFn resolve_path,
+    void *address_context)
+{
+    Q9IOMAN_KernelRequest request;
+    Q9IOMAN_Result result;
+    Q9IOMAN_Status status;
+    Q9IOMAN_u16 path;
+
+    if (frame == 0 || manager == 0)
+        return Q9IOMAN_E_INVALID_ARGUMENT;
+
+    status = q9ioman_decode_kernel_request(callcode, frame, &request);
+    if (status != Q9IOMAN_OK)
+        goto failed;
+
+    if (request.type == Q9IOMAN_KERNEL_OPEN) {
+        const char *name = 0;
+        Q9IOMAN_u32 name_bytes = 0;
+        if (resolve_path == 0) {
+            status = Q9IOMAN_E_INVALID_ARGUMENT;
+            goto failed;
+        }
+        status = resolve_path(address_context, request.buffer,
+                              &name, &name_bytes);
+        if (status != Q9IOMAN_OK)
+            goto failed;
+        if (name == 0 || name_bytes == 0 ||
+            request.buffer > 0xffffffffUL - name_bytes) {
+            status = Q9IOMAN_E_INVALID_ARGUMENT;
+            goto failed;
+        }
+        status = q9ioman_open_resolved(manager, name, request.mode, &path);
+        if (status != Q9IOMAN_OK)
+            goto failed;
+        q9ioman_frame_write16(frame, Q9IOMAN_R_D0 + 2, path);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0,
+                              request.buffer + name_bytes);
+    } else if (request.type == Q9IOMAN_KERNEL_READ) {
+        status = q9ioman_operate(manager, request.path, Q9IOMAN_OP_READ,
+                                 request.buffer, 0, request.length, &result);
+        if (status != Q9IOMAN_OK)
+            goto failed;
+        if (result.transferred > request.length) {
+            status = Q9IOMAN_E_INVALID_ARGUMENT;
+            goto failed;
+        }
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, result.transferred);
+    } else if (request.type == Q9IOMAN_KERNEL_CLOSE) {
+        status = q9ioman_close(manager, request.path);
+        if (status != Q9IOMAN_OK)
+            goto failed;
+    } else {
+        status = Q9IOMAN_E_UNSUPPORTED_OPERATION;
+        goto failed;
+    }
+
+    q9ioman_set_carry(frame, 0);
+    return Q9IOMAN_OK;
+
+failed:
+    q9ioman_frame_write16(frame, Q9IOMAN_R_D1 + 2,
+                          q9ioman_status_to_os9_error(status));
+    q9ioman_set_carry(frame, 1);
+    return status;
+}

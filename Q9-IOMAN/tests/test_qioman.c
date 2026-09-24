@@ -29,6 +29,20 @@ typedef struct {
 
 static int failures;
 
+static Q9IOMAN_Status resolve_test_path(void *context,
+                                        Q9IOMAN_u32 address,
+                                        const char **path,
+                                        Q9IOMAN_u32 *bytes_including_nul)
+{
+    const char *text = (const char *)context;
+    if (address != 0x2000UL || text == 0 || path == 0 ||
+        bytes_including_nul == 0)
+        return Q9IOMAN_E_INVALID_ARGUMENT;
+    *path = text;
+    *bytes_including_nul = (Q9IOMAN_u32)strlen(text) + 1;
+    return Q9IOMAN_OK;
+}
+
 static void check(const char *name, int condition)
 {
     if (condition) {
@@ -228,6 +242,56 @@ int main(void)
     check("backend was called only along valid routes",
           mock.open_calls == 4 && mock.operate_calls == 4 &&
           mock.close_calls == 4);
+
+    {
+        Q9IOMAN_Manager dispatch_manager;
+        Q9IOMAN_Path dispatch_paths[2];
+        MockBackend dispatch_mock;
+        const char *dispatch_name = "/dd/file";
+        unsigned char frame[Q9IOMAN_R_SIZE];
+        Q9IOMAN_u16 dispatch_path;
+
+        memset(&dispatch_mock, 0, sizeof(dispatch_mock));
+        dispatch_mock.expected_name = dispatch_name;
+        dispatch_mock.close_status = Q9IOMAN_OK;
+        q9ioman_init(&dispatch_manager, dispatch_paths, 2);
+        q9ioman_register_backend(&dispatch_manager, "/dd", &backend,
+                                 &dispatch_mock);
+        memset(frame, 0, sizeof(frame));
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, 1);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x2000UL);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_SR, 0x2700U);
+        check("dispatches I$Open and returns local path and advanced name pointer",
+              q9ioman_dispatch_kernel_request(0x0084, &dispatch_manager,
+                  frame, resolve_test_path, (void *)dispatch_name) ==
+                  Q9IOMAN_OK &&
+              q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2) == 1 &&
+              q9ioman_frame_read32(frame, Q9IOMAN_R_A0) == 0x2009UL &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) == 0);
+
+        dispatch_path = q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 10);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x3000UL);
+        check("dispatches I$Read and returns transferred length",
+              q9ioman_dispatch_kernel_request(0x0089, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              q9ioman_frame_read32(frame, Q9IOMAN_R_D1) == 10 &&
+              dispatch_mock.last_operation == Q9IOMAN_OP_READ &&
+              dispatch_mock.last_arg0 == 0x3000UL &&
+              dispatch_mock.last_arg2 == 10 &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) == 0);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        check("dispatches I$Close and reports invalid path using Carry/D1.w",
+              q9ioman_dispatch_kernel_request(0x008f, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              q9ioman_dispatch_kernel_request(0x008f, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_E_INVALID_PATH &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0 &&
+              q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
+                  Q9IOMAN_OS9_E_BPNUM);
+    }
 
     {
         MockBackend nested_mock;
