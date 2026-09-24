@@ -19,18 +19,30 @@ Der vollständige Funktions- und Aufgabenstatus steht in [STATUS.md](STATUS.md).
 
 ## Erster Baustein
 
-`src/qioman.c` enthält einen minimalen Pfad-Lebenszyklus und Backend-Router:
+`src/qioman_system.c` stellt einen residenten Managerzustand mit statischer
+Pfadtabelle bereit. Der Start ist idempotent; damit kann ein späterer
+Systemmodul-Einstieg zunächst Speicher und Tabellen einrichten.
+`src/qioman.c` enthält den minimalen Pfad-Lebenszyklus und Backend-Router:
 Öffnen über ein vom Aufrufer ausgewähltes Backend, lokale Pfadnummern,
 Operationen weiterleiten und erfolgreiches Schließen ausbuchen. Er kennt
 weder Hardware noch ein Dateisystem und ruft noch keine Kernel-Syscalls auf.
 Insbesondere sind Attach-/Descriptor-Auflösung, Pfadnamen-Suche,
 Nebenläufigkeit/Warteschlangen, SCF/RBF und die Trap-Integration noch offen.
 
-Hosttests:
+Hosttests und Erstellung eines OS-9-Moduls mit Q9-eigener Toolchain:
 
 ```sh
-make test
+make
 ```
+
+`make` führt Hosttests aus und erzeugt `build/qioman` (interner OS-9-Modulname
+`ioman`, wie vom Q9-Bootpfad gesucht) per
+`qcpp → qcir → qir68k → qr68k → ql68k`. Die F$SSvc-Tabelle verbindet die
+Q9-Kernel-Schatten für `I$Open`, `I$Read` und `I$Close`. Die registrierten
+Handler antworten derzeit absichtlich mit `E$UnkSvc`: der Kernelpfad ist damit
+angebunden, aber die Register-/Datenpfadadapter zu den C-Backends sind noch
+nicht implementiert. Bis Open tatsächlich einen verwalteten Pfad anlegt,
+werden Read/Close nicht an diese Stubs umgeleitet.
 
 ## Kernel-Aufrufe und QCC
 
