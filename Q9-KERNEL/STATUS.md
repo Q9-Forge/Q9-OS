@@ -17,6 +17,23 @@ The call-code names and the complete call-code set are based on
 mean that every OS-9 corner case or every hardware device is already
 supported.
 
+## Legacy IOMan integration branch
+
+The four commits ending at `3f3b02d` originally changed
+`src/kernel/q9kernel_entry.a`. After the source moved to
+`Q9-KERNEL/68k/src/kernel/q9kernel_entry.a`, their fixes were implemented
+independently in the current kernel:
+
+| Legacy commit | Current implementation |
+|---|---|
+| `d3ee23d` | `F$SRqMem` returns `D0` and `A2` through the caller's register image when a direct-call image is detected; IOMan's output vector has executable code at offset `+8`. |
+| `833ce55` | The external service call sets `A4` to `Q9_D_Proc` in `Q9K_TrapExtInvoke`; the current dispatcher preserves the caller context on the other paths. |
+| `abd55f2` | The old `$1364` CCR/name-pointer collision is absent. The obsolete CCR-scratch definition is at `$1358`; the active return path saves CCR on the stack. The old proposed `$13A8` is now used for `Q9K_TrapA4Save`. |
+| `3f3b02d` | The `F$SRqMem` failure path returns Carry and `D1` without writing into the caller's register image. |
+
+The historical branch is merged for ancestry only. Its old-path assembler
+must not replace the later implementation.
+
 ## F$ system calls
 
 | Status | Code | Command | Current Q9-OS status |
