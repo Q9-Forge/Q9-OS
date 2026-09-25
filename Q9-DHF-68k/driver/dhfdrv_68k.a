@@ -1,0 +1,162 @@
+*═══════════════════════════════════════════════════════════════════════════
+* File:   dhfdrv_68k.a                                                Ver. 1.00
+* Owner:  Claude
+* Desc.:  Q9-DHF -- echtes OS-9-Treibermodul (68k), von Hand geschrieben (kein
+*         QCC-DEFMODUL -- dessen DRIVER-Backend ist noch nicht fertig, s.
+*         Q9-QCC/Q9-FRONTEND-C/q9-qcpp/docs/STATUS_DEFMODUL.md Phase 3/4).
+*         Modulkopf + Einsprung-Sprungtabelle nach dem verifizierten Vorbild
+*         eines echten Microware-Treibers (MWOS/OS9/SRC/IO/SCF/DRVR/
+*         sc68681.a: Typ Q9Drivr, a1/a2/a4/a6-Konvention, Carry+d1-Fehler).
+*
+*         Der Treiber selbst tut so gut wie nichts (Andreas: "der Treiber
+*         muss ja nicht viel machen, im Prinzip die Daten nur an die Hard-
+*         wareschnittstelle weiter geben und wieder zurueck") -- er kopiert
+*         eine vom Aufrufer im Gast-RAM bereitgestellte struct dhf_shared
+*         (28 Byte, s. Q9-OS/Q9-DHFDRV-68k/include/dhf_shared.h) 1:1 in das
+*         MMIO-Fenster des DHF-Emulator-Geraets (Q9-Flux-68k/src/devices/
+*         dhf/q9_dhf.c, Basis $FFFF4000) und wieder zurueck. Das eigentliche
+*         Verarbeiten (Host-Dateisystem-Zugriff) macht ausschliesslich das
+*         Geraet, s. dessen eigenen Kopfkommentar.
+*
+*         WICHTIG: wie der Aufrufer (Manager) diesen Treiber tatsaechlich
+*         erreicht, ist NICHT geklaert -- manager/dhf_manager.c ruft
+*         "_os9_f_viread" auf, das nirgends im echten Microware-SDK auftaucht
+*         (gegengeprueft gegen MWOS/OS9/SRC und das Retro-OS-9-Images-Archiv).
+*         Dieses Modul ist deshalb bewusst so gebaut, dass es sich UNABHAENGIG
+*         von dhf_manager.c direkt testen laesst: (a1) muss nur auf eine
+*         gueltige struct dhf_shared zeigen, mit "command" schon gesetzt --
+*         ob das je von einem echten Manager oder erstmal nur von einem
+*         Testprogramm kommt, ist dem Treiber egal.
+*
+* Edition History
+*─────────┬──────┬────────────────────────────────────────────────────────┬──────
+* Date    │ Ver. │ Description                                            │ By
+*─────────┼──────┼────────────────────────────────────────────────────────┼──────
+* 26-09-25│ 1.00 │ Erster Wurf                                            │ Cld
+*═════════╧══════╧════════════════════════════════════════════════════════╧══════
+        nam     dhfdrv_68k
+        ttl     Q9-DHF 68k-Treiber
+
+        use     q9defs.d
+
+Edition         equ     1
+
+* MMIO-Basis des DHF-Emulator-Geraets -- MUSS mit Q9_BOARD_DHF_BASE in
+* Q9-Flux-68k/src/devices/dhf/q9_dhf.h uebereinstimmen.
+DHF_BASE        equ     $FFFF4000
+
+* Byte-Offsets in struct dhf_shared (dhf_shared.h, #pragma pack(push,1)):
+*   0 version(1) 1 command(1) 2 status(1) 3 flags(1) 4 seq(4)
+*   8 a0(4) 12 a1(4) 16 d0(4) 20 d1(4) 24 d2(4)        = 28 Byte gesamt
+SH_VERSION      equ     0
+SH_COMMAND      equ     1
+SH_STATUS       equ     2
+SH_FLAGS        equ     3
+SH_SEQ          equ     4
+SH_A0           equ     8
+SH_A1           equ     12
+SH_D0           equ     16
+SH_D1           equ     20
+SH_D2           equ     24
+SH_SIZE         equ     28
+
+* Modulbeschreibung -----------------------------------------------------------
+
+        psect   dhfdrv_68k,(Q9Drivr<<8)!Q9Objct,(Q9ReEnt<<8)!0,Edition,0,DhfEnt
+
+********************
+* Entry jump table (7 Worte, wie sc68681.a MpscEnt: Init/Read/Write/GetStat/
+* SetStat/Term/Exception-Handler(0=keiner))
+*
+DhfEnt
+        dc.w    Init
+        dc.w    Read
+        dc.w    Write
+        dc.w    GetStat
+        dc.w    SetStat
+        dc.w    Term
+        dc.w    0
+
+        pag
+***************
+* Init / Term
+*   Kein eigener Zustand -- das DHF-Geraet haelt seinen Zustand selbst
+*   (Handle-Tabelle usw. leben im Emulator, s. dhf_emu_device_t).
+*
+* Passed:  (a1) = Geraetedeskriptor (Init) / Pfaddeskriptor (Term)
+*          (a2) = Static-Storage-Adresse
+*          (a4) = Prozessdeskriptor
+*          (a6) = Systemglobal-Zeiger
+* Returns: nichts
+* Error:   (cc) = Carry gesetzt, d1.w = Fehlercode
+* Destroys: nichts
+*
+Init:
+Term:
+        andi    #$FE,ccr        Carry loeschen -- kein Fehler
+        rts
+
+        pag
+***************
+* Read / Write / GetStat / SetStat
+*   Gemeinsamer Kern: (a1) zeigt auf eine vom Aufrufer im Gast-RAM bereit-
+*   gestellte struct dhf_shared mit schon gesetztem "command"-Feld. Wir
+*   kopieren zuerst die Registerfelder (seq/a0/a1/d0/d1/d2, Offset 4..27),
+*   dann als LETZTES das command-Byte (Offset 1) -- das Schreiben dieses
+*   einen Bytes loest im Geraet die komplette Verarbeitung synchron aus
+*   (dhf_emu_device_write8, s. dessen Kopfkommentar). Danach kopieren wir
+*   status/d0/d1/d2 zurueck.
+*
+* Passed:  (a1) = Pfaddeskriptor-Adresse (zeigt auf struct dhf_shared)
+*          (a2) = Static-Storage-Adresse (ungenutzt)
+*          (a4) = Prozessdeskriptor
+*          (a6) = Systemglobal-Zeiger
+* Returns: (d0.l) = d1-Feld der struct dhf_shared nach Ausfuehrung
+*                    (Bytezahl/neue Position, kommandoabhaengig)
+* Error:   (cc) = Carry gesetzt wenn status<>0, d1.w = status
+* Destroys: a0/a3, d0-d3
+*
+Read:
+Write:
+GetStat:
+SetStat:
+        movem.l d2-d3/a3,-(a7)         Arbeitsregister retten (a1/a2/a4/a6 laut Konvention unangetastet)
+
+* Registerfelder kopieren (Offset SH_SEQ..SH_D2 einschliesslich, 24 Byte) --
+* NOCH NICHT das command-Byte, das kommt zuletzt.
+        lea     SH_SEQ(a1),a3
+        movea.l #DHF_BASE+SH_SEQ,a0
+        moveq   #24-1,d2
+CopyIn: move.b  (a3)+,(a0)+
+        dbra    d2,CopyIn
+
+* command-Byte zuletzt schreiben -- loest die Verarbeitung aus.
+        move.b  SH_COMMAND(a1),DHF_BASE+SH_COMMAND
+
+* Ergebnis zurueckkopieren: status (1 Byte) und d0/d1/d2 (12 Byte).
+        move.b  DHF_BASE+SH_STATUS,SH_STATUS(a1)
+        lea     DHF_BASE+SH_D0,a0
+        lea     SH_D0(a1),a3
+        moveq   #12-1,d3
+CopyOut: move.b (a0)+,(a3)+
+        dbra    d3,CopyOut
+
+* Rueckgabekonvention: d0.l = d1-Feld (Bytezahl/Position), Fehler ueber
+* Carry+d1.w aus dem status-Byte (0 = OK).
+        move.l  SH_D1(a1),d0
+        moveq   #0,d1
+        move.b  SH_STATUS(a1),d1
+        beq.s   ReadOk
+        movem.l (a7)+,d2-d3/a3
+        ori     #1,ccr          Carry setzen -- Fehler, d1.w schon gesetzt
+        rts
+ReadOk:
+        movem.l (a7)+,d2-d3/a3
+        andi    #$FE,ccr        Carry loeschen -- kein Fehler
+        rts
+
+        endsect
+        end
+*───────────────────────────────────────────────────────────────────────────
+* EOF dhfdrv_68k.a                                                    Ver. 1.00
+*───────────────────────────────────────────────────────────────────────────
