@@ -1,6 +1,12 @@
 .DS_Store
 build/
 *.r68o
+
+# 2026-09-25: dhfdrv_68k.a (Quelle, versioniert) wird von Q9-Flux-68ks "make test-dhf-driver"
+# frisch per qr68k/ql68k in dieses Verzeichnis gebaut (Q9-Images-Bild-Analogie: Build-Artefakte
+# bleiben lokal, nur die Quelle ist im Repo).
+Q9-DHF-68k/driver/*.mod
+Q9-DHF-68k/driver/*.r
 src/**/*.out
 src/**/*.out2
 src/**/*.map
