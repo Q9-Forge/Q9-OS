@@ -1,42 +1,90 @@
         nam     dhfmgr_68k
-        ttl     Q9-DHF FileManager-Modul (Geruest)
+        ttl     Q9-DHF FileManager-Modul
         use     q9defs.d
 *
-* 2026-09-25: Geruest des echten OS-9-FileManager-Moduls fuer DHF, analog zu
-* driver/dhfdrv_68k.a (dort verifiziert: psect-basierter Modulkopf funktioniert,
-* von "os9 ident/dump" als wohlgeformt erkannt). Fuer den Manager galt bisher
-* nur eine FALSCHE Annahme (_os9_f_viread, s. STATUS.md-Historie) -- diese Datei
-* baut stattdessen auf real verifizierten Fakten auf:
+* 2026-09-25/26: FileManager-Modul fuer DHF. Skelett (2026-09-25, alle 13 Eintraege Stub)
+* jetzt fuer die fuenf zentralen Aufrufe (Create/Open/Read/Write/Close) mit echter Logik
+* ausgestattet -- Quelle fuer ALLE Registerkonventionen sind die realen Microware-Handbuecher,
+* nicht geraten (s. STATUS.md "Real driver-call mechanism" + diese Datei):
 *
-*   - Modultyp Q9FlMgr=13 (MT_FILEMAN, MWOS/OS9/SRC/DEFS/module.h)
-*   - Sprungtabelle mit GENAU 13 Eintraegen in der Reihenfolge aufsteigender
-*     I$-Aufrufcodes (MWOS/OS9/SRC/DEFS/funcs.h: I_CREATE=$83 .. I_CLOSE=$8f,
-*     13 Werte am Stueck): Create/Open/MakDir/ChgDir/Delete/Seek/Read/Write/
-*     ReadLn/WritLn/GetStt/SetStt/Close.
-*   - EMPIRISCH bestaetigt am echten, gebooteten RBF-Kernelmodul (Q9-Images/
-*     cf_images/OS9SYS/CMDS/BOOTOBJS/rbf): dessen Modulkopf-Feld _mexec
-*     (Standard-"mod_exec"-Kopferweiterung, module.h) zeigt exakt auf eine
-*     Tabelle aus 13 Woertern -- keine Frage mehr, sondern nachgemessen per
-*     xxd/os9-Werkzeug.
-*   - Aufruf: IOMan JSRt direkt in den _mexec-Einsprung (dieselbe a1/a2/a4/a6-
-*     Konvention wie beim Treiber -- a1=Pfaddeskriptor, a2=statischer Speicher,
-*     a4=Prozessdeskriptor, a6=Systemglobal), mit d0 als Funktionscode-Index
-*     (Herleitung, noch NICHT am echten RBF-Code verifiziert -- naechster
-*     Schritt waere ein Ghidra-Abgleich mit dem eigenen Kernel-Disassemblie-
-*     rungsprojekt, s. Q9-OS/Q9-OS-ghidra).
+*   - "OS-9 v2.4 Technical I-O Manual", Kapitel "File Manager Organization": Sprungtabelle
+*     mit 13 Eintraegen (Create/Open/MakDir/ChgDir/Delete/Seek/Read/Write/ReadLn/WriteLn/
+*     GetStat/SetStat/Close), Aufruf mit a1=Pfaddeskriptor, a4=Prozessdeskriptor,
+*     a5=Zeiger auf den GERETTETEN REGISTERSATZ DES AUFRUFERS (!), a6=Systemglobal.
+*   - "OS-9 System Calls" (OS-9_v2.4_Technical_Reference_Manual.pdf), Kapitel 2 "I/O System
+*     Calls": legt fest, WELCHE Werte in diesem geretteten Registersatz stehen, je Aufruf
+*     (I$Read/I$Write: d0.w=Pfadnummer,d1.l=Anzahl,a0=Puffer; I$Open/I$Create:
+*     d0.b=Zugriffsmodus,d1.w=Attribute[nur Create],a0=Pfadname; I$Close: d0.w=Pfadnummer).
+*   - MWOS/OS9/SRC/DEFS/MACHINE/reg.h: struct REGISTERS { u_int32 d[8]; void *a[8]; ... } --
+*     das ist die Struktur, auf die a5 zeigt. d0 liegt also bei a5+0, d1 bei a5+4, a0 bei
+*     a5+32 (8*4 fuer d[], dann a0 als erstes Element von a[]).
+*   - pd_pd (Pfadnummer) UND pd_dev (Devicetbl*) sind unabhaengig vom Aufruftyp IMMER ueber
+*     den Pfaddeskriptor selbst erreichbar (path.h: pd_pd @Offset 0, pd_dev @Offset 4 --
+*     beide Offsets sind unabhaengig von Packing-Fragen sicher, da schon eine u_short(2)+
+*     zwei u_char(1+1) exakt 4 Byte ergeben, bevor der Zeiger pd_dev folgt). Genutzt statt
+*     der riskanten pd_pvt/fm_pvt-Handangabe (deren Offset haette ohne Compiler-Verifikation
+*     leicht falsch geraten werden koennen -- Lehre aus dem verworfenen _os9_f_viread).
 *
-* ALLE 13 Eintraege sind hier noch reine Stubs (liefern E$UnkSvc=$D0 laut
-* MWOS/SRC/DEFS/errno.h -- NICHT geraten, sondern aus dem echten Header
-* abgelesen). Ziel dieser Runde: nachweisen, dass ein FileManager-Modul
-* (Typ 13) genauso sauber ueber unsere eigene Toolchain (qr68k/ql68k) baubar
-* ist wie das Treibermodul -- die eigentliche Verarbeitungslogik je Aufruf
-* (Pfadnamen kopieren, an den Treiber weiterreichen wie in dhfdrv_68k.a
-* beschrieben, Fehler zurueckmelden) ist ein separater, noch offener Schritt.
+* Architektur: jeder der fuenf echten Aufrufe baut einen 28-Byte dhf_shared-Kommandoblock
+* (gleiches Layout wie beim Treiber, s. driver/dhfdrv_68k.a) in EIGENEM statischem Speicher
+* (a2, ueber psect als static-size deklariert -- NICHT im Pfaddeskriptor, um die riskante
+* pd_pvt-Offsetfrage zu vermeiden) und ruft den Treiber ueber den in STATUS.md dokumentierten
+* Devicetbl/mod_driver-Mechanismus auf (pd->pd_dev->V_driv/V_stat, Sprungtabelle bei
+* Treiberbasis+$3C+D_READ -- Read/Write/GetStat/SetStat sind im Treiber identischer Code,
+* s. driver/dhfdrv_68k.a, deshalb IMMER derselbe D_READ-Offset). Das vom Treiber bei
+* CREATE/OPEN zurueckgelieferte Handle wird in einer eigenen, nach Pfadnummer indizierten
+* Tabelle gemerkt (ebenfalls im eigenen statischen Speicher), damit spaetere Read/Write/Close
+* auf demselben Pfad es wiederfinden.
+*
+* Noch Stub (E$UnkSvc): MakDir/ChgDir/Delete/Seek/ReadLn/WriteLn/GetStt/SetStt -- naechster
+* Schritt (s. STATUS.md).
 *
 Edition         equ     1
 E_UNKSVC        equ     $D0
 
-        psect   dhfmgr_68k,(Q9FlMgr<<8)!Q9Objct,(Q9ReEnt<<8)!0,Edition,0,DhfMgrEnt
+* dhf_shared-Feldoffsets (identisch zu driver/dhfdrv_68k.a, s. dortiger Kopfkommentar)
+SH_COMMAND      equ     1
+SH_A0           equ     8
+SH_A1           equ     12
+SH_D0           equ     16
+SH_D1           equ     20
+SH_D2           equ     24
+
+* DHF-Kommandocodes (Q9-DHF-68k/manager/dhf.h bzw. Q9-Flux-68k/src/devices/dhf/dhf_proto.h)
+DHF_CMD_CREATE  equ     1
+DHF_CMD_OPEN    equ     2
+DHF_CMD_READ    equ     4
+DHF_CMD_WRITE   equ     5
+DHF_CMD_CLOSE   equ     10
+
+* Devicetbl-Feldoffsets (MWOS/OS9/SRC/DEFS/sysio.h struct devicetbl)
+DT_DRIV         equ     0               * V_driv: Treiber-Modulzeiger
+DT_STAT         equ     4               * V_stat: Treiber-eigener statischer Speicher
+
+* Treiber-Sprungtabelle: fester Offset ab Treiberbasis (module.h mod_driver, empirisch
+* gegen driver/dhfdrv_68k.a's eigenen Modulkopf bestaetigt, s. STATUS.md), D_READ aus
+* sysio.h -- Read/Write/GetStat/SetStat sind im Treiber derselbe Code, jeder der vier
+* D_-Offsets fuehrt zum selben Ziel; D_READ stellvertretend fuer alle vier genutzt.
+DRV_ENTTAB_OFF  equ     $3C
+D_READ          equ     2
+
+* Pfaddeskriptor-Feldoffsets, die unabhaengig vom Aufruftyp gebraucht werden (path.h)
+PD_PD           equ     0               * u_short: eigene Pfadnummer
+PD_DEV          equ     4               * Devicetbl*: Geraetetabelleneintrag
+
+* REGISTERS-Feldoffsets (reg.h): d[8] dann a[8], je 4 Byte
+REG_D0_B3       equ     3               * Byteteil (Bit 0-7) von d[0].l -- Zugriffsmodus
+REG_D1          equ     4               * d[1].l voll -- Anzahl Bytes bei Read/Write
+REG_D1_W2       equ     6               * Wortteil (Bit 0-15) von d[1].l -- Attribute bei Create
+REG_A0          equ     32              * a[0] -- Puffer-/Pfadname-Zeiger
+
+* Eigener statischer Speicher (a2): Handle-Tabelle + Kommandobloecke, je Pfadnummer
+MAXPATHS        equ     64
+ST_HANDLE       equ     0                       * MAXPATHS*4 Byte
+ST_CMDBLK       equ     MAXPATHS*4              * MAXPATHS*28 Byte
+ST_SIZE         equ     ST_CMDBLK+(MAXPATHS*28)
+
+        psect   dhfmgr_68k,(Q9FlMgr<<8)!Q9Objct,(Q9ReEnt<<8)!0,Edition,ST_SIZE,DhfMgrEnt
 
 DhfMgrEnt
         dc.w    Mgr_Create      * Offset  0  I$Create  $83
@@ -53,25 +101,208 @@ DhfMgrEnt
         dc.w    Mgr_SetStt      * Offset 22  I$SetStt  $8e
         dc.w    Mgr_Close       * Offset 24  I$Close   $8f
 
-* Alle 13 Einspruenge teilen sich denselben Stub-Rumpf (wie schon bei
-* Read/Write/GetStat/SetStat im Treiber) -- solange keine echte Logik dahinter
-* steckt, spart das Wiederholung und macht den Geruest-Charakter im
-* Sprungtabellen-Dump sofort sichtbar (alle 13 Werte identisch).
-Mgr_Create
-Mgr_Open
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Hilfsroutine CmdBlkAddr -- Eingabe d2.l=Pfadnummer, Ausgabe a0=Adresse des Kommandoblocks
+* dieses Pfads (a2+ST_CMDBLK+d2*28). Clobbert d0/d1.
+*───────────────────────────────────────────────────────────────────────────────────────────
+CmdBlkAddr:
+        move.l  d2,d0
+        lsl.l   #4,d0                   * d0 = d2*16
+        move.l  d2,d1
+        lsl.l   #3,d1                   * d1 = d2*8
+        add.l   d1,d0                   * d0 = d2*24
+        move.l  d2,d1
+        lsl.l   #2,d1                   * d1 = d2*4
+        add.l   d1,d0                   * d0 = d2*28
+        movea.l a2,a0
+        adda.l  #ST_CMDBLK,a0
+        adda.l  d0,a0
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Hilfsroutine HandleAddr -- Eingabe d2.l=Pfadnummer, Ausgabe a0=Adresse des gespeicherten
+* Treiber-Handles dieses Pfads (a2+ST_HANDLE+d2*4). Clobbert d0.
+*───────────────────────────────────────────────────────────────────────────────────────────
+HandleAddr:
+        move.l  d2,d0
+        lsl.l   #2,d0
+        movea.l a2,a0
+        adda.l  #ST_HANDLE,a0
+        adda.l  d0,a0
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Hilfsroutine CallDrv -- Eingabe a1=dhf_shared-Kommandoblock (wird direkt zu Treiber-a1),
+* a3=Devicetbl* (pd->pd_dev). Loest den Treiber-Aufruf ueber V_driv/V_stat aus, s. Kopf-
+* kommentar. Ausgabe wie der Treiber selbst (Carry+d1.w bei Fehler). Clobbert d0/a0 --
+* a1/a2/a3 nach Rueckkehr unveraendert (a2 wird intern kurz auf V_stat umgebogen, danach
+* wiederhergestellt -- movea/rts beeinflussen CCR nicht, Carry vom Treiber bleibt erhalten).
+*───────────────────────────────────────────────────────────────────────────────────────────
+CallDrv:
+        move.l  a2,-(a7)                * eigenen statischen Speicher retten
+        movea.l DT_DRIV(a3),a0          * a0 = V_driv (Treiber-Modulbasis)
+        movea.l DT_STAT(a3),a2          * a2 = V_stat (Treiber-eigener statischer Speicher)
+        move.w  DRV_ENTTAB_OFF+D_READ(a0),d0
+        ext.l   d0
+        adda.l  d0,a0                   * a0 = absolute Einsprungadresse im Treiber
+        jsr     (a0)
+        movea.l (a7)+,a2                * eigenen statischen Speicher wiederherstellen
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Mgr_Create -- I$Create: (a5) d0.b=Zugriffsmodus @+3, d1.w=Attribute @+6, a0=Pfadname @+32.
+* DHF_CMD_CREATE erwartet a0=Pfadname, d1=Attribute, d2=Modus (Bit0=read,Bit1=write --
+* deckungsgleich mit OS-9s eigener Zugriffsmodus-Kodierung, keine Uebersetzungstabelle
+* noetig). Bei Erfolg: vom Treiber geliefertes Handle (SH_D0) in der Handle-Tabelle des
+* Pfads ablegen.
+*───────────────────────────────────────────────────────────────────────────────────────────
+Mgr_Create:
+        movem.l d2-d3/a3,-(a7)
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer
+        movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*) -- a1 danach frei
+        bsr     CmdBlkAddr              * a0 = Kommandoblock dieses Pfads
+        move.l  REG_A0(a5),SH_A0(a0)    * Pfadname-Zeiger unveraendert durchreichen
+        clr.l   SH_A1(a0)
+        moveq   #0,d1
+        move.w  REG_D1_W2(a5),d1        * Attribut-Bits
+        move.l  d1,SH_D1(a0)
+        moveq   #0,d1
+        move.b  REG_D0_B3(a5),d1        * Zugriffsmodus-Byte
+        andi.b  #3,d1                   * Bit0=read,Bit1=write -> DHF_MODE_READ/WRITE
+        move.l  d1,SH_D2(a0)
+        move.b  #DHF_CMD_CREATE,SH_COMMAND(a0)
+        movea.l a0,a1
+        bsr     CallDrv
+        bcs     MgrErr
+        bsr     HandleAddr              * a0 = Handle-Slot dieses Pfads (d2 noch gueltig)
+        move.l  SH_D0(a1),(a0)          * a1 zeigt weiterhin auf den Kommandoblock
+        movem.l (a7)+,d2-d3/a3
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Mgr_Open -- I$Open: (a5) d0.b=Zugriffsmodus @+3, a0=Pfadname @+32. DHF_CMD_OPEN erwartet
+* a0=Pfadname, d2=Modus (wie bei Create). Bei Erfolg: Handle merken wie bei Create.
+*───────────────────────────────────────────────────────────────────────────────────────────
+Mgr_Open:
+        movem.l d2-d3/a3,-(a7)
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        bsr     CmdBlkAddr
+        move.l  REG_A0(a5),SH_A0(a0)
+        clr.l   SH_A1(a0)
+        moveq   #0,d1
+        move.b  REG_D0_B3(a5),d1
+        andi.b  #3,d1
+        move.l  d1,SH_D2(a0)
+        move.b  #DHF_CMD_OPEN,SH_COMMAND(a0)
+        movea.l a0,a1
+        bsr     CallDrv
+        bcs     MgrErr
+        bsr     HandleAddr
+        move.l  SH_D0(a1),(a0)
+        movem.l (a7)+,d2-d3/a3
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Mgr_Read -- I$Read: (a5) d1.l=Maximalzahl Bytes @+4, a0=Puffer @+32. DHF_CMD_READ erwartet
+* d0=gemerktes Handle, a1=Puffer, d1=Maximallaenge. Rueckgabe (SH_D1, vom Treiber aus dem
+* Geraet kopiert) = tatsaechlich gelesene Bytes -> zurueck nach (a5) d1.l.
+*
+* Reihenfolge wichtig: HandleAddr UND CmdBlkAddr liefern ihr Ergebnis beide in a0 -- deshalb
+* erst das Handle aus der Tabelle in d3 zwischenspeichern, DANACH den Kommandoblock holen.
+*───────────────────────────────────────────────────────────────────────────────────────────
+Mgr_Read:
+        movem.l d2-d3/a3,-(a7)
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        bsr     HandleAddr              * a0 = Handle-Slot
+        move.l  (a0),d3                 * d3 = gemerktes Treiber-Handle
+        bsr     CmdBlkAddr              * a0 = Kommandoblock (d2 unveraendert)
+        move.l  d3,SH_D0(a0)
+        move.l  REG_A0(a5),SH_A1(a0)    * Zielpuffer
+        move.l  REG_D1(a5),SH_D1(a0)    * angeforderte Maximallaenge
+        move.b  #DHF_CMD_READ,SH_COMMAND(a0)
+        movea.l a0,a1
+        bsr     CallDrv
+        bcs     MgrErr
+        move.l  SH_D1(a1),REG_D1(a5)    * tatsaechlich gelesene Byteanzahl zurueckmelden
+        movem.l (a7)+,d2-d3/a3
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Mgr_Write -- I$Write: (a5) d1.l=Anzahl Bytes @+4, a0=Puffer @+32. DHF_CMD_WRITE erwartet
+* d0=gemerktes Handle, a1=Puffer, d1=Anzahl. Rueckgabe (SH_D1) = tatsaechlich geschriebene
+* Bytes -> zurueck nach (a5) d1.l. Aufbau spiegelbildlich zu Mgr_Read.
+*───────────────────────────────────────────────────────────────────────────────────────────
+Mgr_Write:
+        movem.l d2-d3/a3,-(a7)
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        bsr     HandleAddr
+        move.l  (a0),d3
+        bsr     CmdBlkAddr
+        move.l  d3,SH_D0(a0)
+        move.l  REG_A0(a5),SH_A1(a0)
+        move.l  REG_D1(a5),SH_D1(a0)
+        move.b  #DHF_CMD_WRITE,SH_COMMAND(a0)
+        movea.l a0,a1
+        bsr     CallDrv
+        bcs     MgrErr
+        move.l  SH_D1(a1),REG_D1(a5)
+        movem.l (a7)+,d2-d3/a3
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Mgr_Close -- I$Close: nur d0.w=Pfadnummer (redundant zu pd_pd, ungenutzt). DHF_CMD_CLOSE
+* erwartet nur d0=gemerktes Handle. Handle-Slot wird bewusst NICHT geloescht (harmlos: wird
+* beim naechsten Create/Open auf derselben Pfadnummer ohnehin ueberschrieben) -- haelt die
+* Routine einfach.
+*───────────────────────────────────────────────────────────────────────────────────────────
+Mgr_Close:
+        movem.l d2-d3/a3,-(a7)
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        bsr     HandleAddr
+        move.l  (a0),d3
+        bsr     CmdBlkAddr
+        move.l  d3,SH_D0(a0)
+        move.b  #DHF_CMD_CLOSE,SH_COMMAND(a0)
+        movea.l a0,a1
+        bsr     CallDrv
+        bcs     MgrErr
+        movem.l (a7)+,d2-d3/a3
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Gemeinsamer Fehlerpfad: Carry/d1 vom Treiber (via CallDrv) unveraendert nach oben reichen.
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrErr:
+        movem.l (a7)+,d2-d3/a3
+        ori     #1,ccr
+        rts
+
+* Alle acht noch nicht implementierten Aufrufe teilen sich einen Stub-Rumpf, der E$UnkSvc
+* liefert (s. Skelett-Kopfkommentar 2026-09-25, MWOS/SRC/DEFS/errno.h: E_UNKSVC=$D0).
 Mgr_MakDir
 Mgr_ChgDir
 Mgr_Delete
 Mgr_Seek
-Mgr_Read
-Mgr_Write
 Mgr_ReadLn
 Mgr_WritLn
 Mgr_GetStt
 Mgr_SetStt
-Mgr_Close
-        moveq   #0,d1                  * moveq erlaubt nur -128..127 -- $D0 passt nicht
-        move.b  #E_UNKSVC,d1           * hinein (waere fehlerhaft vorzeichenerweitert)
+        moveq   #0,d1                  * moveq erlaubt nur -128..127 -- $D0 passt nicht hinein
+        move.b  #E_UNKSVC,d1            * (waere fehlerhaft vorzeichenerweitert)
         ori     #1,ccr
         rts
 
