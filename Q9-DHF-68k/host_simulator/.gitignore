@@ -1,0 +1,3 @@
+*.o
+host_simulator
+test_create_mem
