@@ -9,6 +9,8 @@ Q9-DHF-68k/driver/*.mod
 Q9-DHF-68k/driver/*.r
 Q9-DHF-68k/manager/*.mod
 Q9-DHF-68k/manager/*.r
+Q9-DHF-68k/descriptor/*.mod
+Q9-DHF-68k/descriptor/*.r
 src/**/*.out
 src/**/*.out2
 src/**/*.map

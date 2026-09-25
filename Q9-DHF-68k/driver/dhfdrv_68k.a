@@ -96,6 +96,19 @@ SH_SIZE         equ     28
 * "Attr_Revs equ ((ReEnt+Supstat)<<8)+0", hier zunaechst uebersehen).
         psect   dhfdrv,(Q9Drivr<<8)!Q9Objct,((Q9ReEnt!Q9SupStat)<<8)!0,Edition,STATIC_SIZE,DhfEnt
 
+* 2026-09-26: STATIC_SIZE als psect-Parameter 5 wird von qr68k/ql68k als "stksz"
+* interpretiert (generische Stackgroesse), NICHT als Treiber-Statischspeicher --
+* das ist ein eigenes ROF-Feld "statstorage", das nur ueber ein "ds" INNERHALB
+* eines vsect-Blocks befuellt wird (s. q9-qr68k/README.md, ROF-Feldtabelle:
+* "20 4 statstorage reservierte Daten (ds im vsect)"). Ohne diesen Block blieb
+* der Modulkopf-Feld _mdata (mod_driver, Offset $38) auf 0, obwohl STATIC_SIZE=46
+* im Quelltext stand -- der echte Kernel verlangt _mdata!=0 fuer JEDEN Treiber
+* (gefunden per Disassemblierung des echten ioman-Moduls, Adresse $ece4-$edf8,
+* nach "iniz dhf0" mit E$NORAM ($ed) statt Erfolg fehlschlug -- s. STATUS.md).
+        vsect
+        ds.b    STATIC_SIZE
+        ends
+
 ********************
 * Entry jump table (7 Worte, wie sc68681.a MpscEnt: Init/Read/Write/GetStat/
 * SetStat/Term/Exception-Handler(0=keiner))
