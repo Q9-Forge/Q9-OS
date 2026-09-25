@@ -30,15 +30,15 @@ ist noch nicht end-to-end nachgewiesen (siehe „Laufzeittest“).
 | Kontrollklon mit gleichem frisch gebautem Kernel und denselben Diskmodulen, aber originalem IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Bootstrap läuft weiter; CompactFlash-Treiber und normale Programmtestausgaben erscheinen; Exception-Mitschrift bleibt leer | Derselbe Kernel-/Emulatorlauf funktioniert mit dem originalen IOMan. Das grenzt den Fehler auf den neuen IOMan-Einstieg oder dessen Integration ein. |
 | Neuer Build mit PC-relativen `BSR`-Aufrufen zu QCC-Funktionen | 🟡 Einstieg und C-Initialisierung laufen ohne Exception; Watchpoint bestätigt `F$SSvc`-Einträge `Open=$18D64`, `Read=$18DA8`, `Close=$18DEC`; Instruktionsspur erreicht `Q9IOMAN_OpenEntry` bei `$18D64` | Relokationsfehler behoben und `I$Open`-Dispatch bis zum Handler-Eintritt live nachgewiesen. Handler-Rückgabe mit fehlendem Backend, `Read`/`Close`, Attach und Dateisystem-Backends sind noch offen. |
 | Kontrollierter, temporärer nicht-nativer `I$Open` aus `M$Exec` ohne registriertes Backend | 🟡 Kernel-Trace: `$84`-Trap → externer Handler (`X`) → Rückkehr (`A`); keine Exception | Der reentrante Aufruf läuft durch den registrierten Open-Einstieg und kehrt zum Aufrufer zurück. Der Emulatorlauf sicherte `D1`/Carry nicht; der Hosttest bestätigt separat `E$MNF` plus Carry. Der Test-Hook ist aus dem Produktionsbuild entfernt. |
-| Zusätzlicher Bootlauf mit Trace-Freeze am C-Dispatcher-Einsprung | 🟡 Kein Treffer am Dispatcher während dieses Bootlaufs; keine Exception | Der normale Bootpfad löst den Testaufruf nicht zuverlässig aus. Deshalb wurde der oben genannte explizite, temporäre Open-Aufruf zum kontrollierten Nachweis verwendet. |
+| Temporärer Emulator-Backendtest `Open → Read → Close` mit Testmodus | 🟡 `I$Open` erreicht den Backendpfad und liefert Handle `1`; `I$Read` wird mit Handle `1`, Buffer und Länge `4` aufgerufen, kehrt aber mit `E$BPNum` (`D1=$00C9`, Carry gesetzt) zurück; Close wird nicht erreicht | Der Test fand zwei QCC-Stack-ABI-Fehler: Assembler-Stubs pushten `(frame, callcode)` statt `(callcode, frame)`, und der handgeschriebene Pfadresolver las Callbackargumente in falscher Reihenfolge. Beide Korrekturen sind umgesetzt. Open und Read-Dispatch laufen nun bis zum Pfadslotzugriff; warum der Slot beim Read nicht mehr als offen erkannt wird, ist noch offen. Test-Hooks wurden danach aus dem Produktionsbuild entfernt. |
+| Temporärer Zustandstest mit registriertem `/q9diag`-Backend | 🟡 Trace bestätigt `F$SSvc` und Eintritt in den externen `I$Open`-Handler für `/q9diag/file`; der Handler liefert in diesem Testlauf keine sichtbare Rückkehr und `I$Read` wird nicht erreicht | Dieser Testaufbau bleibt daher nicht als Beleg für den ursprünglichen Read-Fehler verwendbar. Instruktionsspur endet in einer Kernel-Warteschleife; Diagnose-Backend und Selbsttest wurden aus dem Produktionsbuild entfernt. |
 
 Beide Läufe verwenden separate `cp -c`-Klone; das Master-Image wurde nicht
 verändert. Die Kontrollausgabe enthält lange `A`-Folgen aus der vorhandenen
 Kernel-/Emulatordiagnostik; sie sind kein IOMan-Erfolgskriterium. Nächster
-Schritt: den konkreten `D1`-/Carry-Rückgabewert des nicht erfolgreichen
-Open-Aufrufs festhalten; danach `Read`/`Close` über einen gültig geöffneten
-Managerpfad testen. Die Emulator-Dumpzähler für externe
-`F$SSvc`-Registrierungen belegen die Manager-Schattenhandler nicht:
+Schritt: die Ursache für `E$BPNum` beim Read finden; danach `Close` und den
+erfolgreichen Open/Read/Close-Rundlauf nachweisen. Die Emulator-Dumpzähler für
+externe `F$SSvc`-Registrierungen belegen die Manager-Schattenhandler nicht:
 `I$Open`/`I$Read`/`I$Close` sind Kernel-eigene Dienste und werden separat
 gehalten. Die Testklone liegen unter `/private/tmp/q9ioman-bridge-test-full.hda` und
 `/private/tmp/q9ioman-control-original-full.hda`. Keine Aussage über
@@ -70,18 +70,18 @@ internen Funktionen.
 | K-IATTACH | `I$Attach` | Descriptor/Device/Manager anbinden und Gerätetabelleneintrag liefern | 🔴 | Namen auflösen, Module link(en), Typen prüfen, Init ausführen, atomar veröffentlichen, Rollback |
 | K-IDETACH | `I$Detach` | Attach-Referenz lösen und Gerät ggf. terminieren | 🔴 | Referenz-/Busy-Regeln, Term, Tabelle bereinigen, Links freigeben |
 | K-IDUP | `I$Dup` | offenen lokalen Pfad duplizieren | 🔴 | Pfad- und Backend-Referenzzähler, Fehlerrückabwicklung |
-| K-ICREATE | `I$Create` | Datei/Objekt anlegen und öffnen | 🔴 | Manager auswählen, Create-Semantik, Pfadslot und Rechte |
+| K-ICREATE | `I$Create` | Datei/Objekt anlegen und öffnen | 🟡 | Hostdispatcher plus Backend-Create-Callback und lokaler Pfadslot; Kernel-Schattenhandler und Emulatornachweis fehlen |
 | K-IOPEN | `I$Open` | Pfad öffnen und lokale Pfadnummer vergeben | 🟡 | Hostkern kann mit vorgewähltem Backend öffnen und lokalen Slot vergeben; Kernel-Trap, Namens-/Deviceauflösung, Attach und Rechteprüfung fehlen |
-| K-IMAKDIR | `I$MakDir` | Verzeichnis anlegen | 🔴 | Pfad-/Managerauflösung, Backend-Aufruf und Cleanup |
+| K-IMAKDIR | `I$MakDir` | Verzeichnis anlegen | 🟡 | Hostdispatcher plus Backend-Namensoperation; Kernel-Schattenhandler und Emulatornachweis fehlen |
 | K-ICHGDIR | `I$ChgDir` | Prozess-Arbeitsverzeichnis ändern | 🔴 | Pfadtyp prüfen, Prozessdescriptor aktualisieren und Fehlervertrag |
-| K-IDEL | `I$Delete` | Datei/Verzeichnis löschen | 🔴 | Zielauflösung, Rechte/Typ, Manageroperation und Fehlerfälle |
-| K-ISEEK | `I$Seek` | Position eines offenen Pfades ändern | 🟡 | generischer Backend-Dispatch vorhanden; OS-9-Parameter, Position/Range und Trap-ABI fehlen |
-| K-IREAD | `I$Read` | Bytes lesen | 🟡 | generischer Backend-Dispatch vorhanden; Kernelpufferprüfung/-kopie, Kurzread, EOF und Fehlervertrag fehlen |
-| K-IWRITE | `I$Write` | Bytes schreiben | 🟡 | generischer Backend-Dispatch vorhanden; Pufferprüfung/-kopie, Rechte, Kurzwrite und Fehlervertrag fehlen |
-| K-IREADLN | `I$ReadLn` | zeilenorientiert lesen | 🟡 | generischer Backend-Dispatch vorhanden; Zeilen-/Puffersemantik, SCF und Grenzfälle fehlen |
-| K-IWRITLN | `I$WritLn` | zeilenorientiert schreiben | 🟡 | generischer Backend-Dispatch vorhanden; Terminator-/Puffersemantik und SCF fehlen |
-| K-IGETSTT | `I$GetStt` | Manager-/Gerätestatus abfragen | 🟡 | generischer Backend-Dispatch vorhanden; Statuscode-ABI, Ausgabevalidierung und Backendabdeckung fehlen |
-| K-ISETSTT | `I$SetStt` | Manager-/Gerätestatus setzen | 🟡 | generischer Backend-Dispatch vorhanden; Eingabevalidierung, Rechte und Statuscodevertrag fehlen |
+| K-IDEL | `I$Delete` | Datei/Verzeichnis löschen | 🟡 | Hostdispatcher plus Backend-Namensoperation; Kernel-Schattenhandler, Rechte-/Typprüfung und Emulatornachweis fehlen |
+| K-ISEEK | `I$Seek` | Position eines offenen Pfades ändern | 🟡 | Registerdecoder/Hostdispatcher mit 32-bit-Position; Kernel-Schattenhandler und Emulatornachweis fehlen |
+| K-IREAD | `I$Read` | Bytes lesen | 🟡 | Buffer-/Range- und Transferlängenprüfung im Hostdispatcher; Emulatorlauf endet noch mit `E$BPNum` |
+| K-IWRITE | `I$Write` | Bytes schreiben | 🟡 | Registerdecoder/Hostdispatcher mit Zugriffsprüfung; Kernel-Schattenhandler und Emulatornachweis fehlen |
+| K-IREADLN | `I$ReadLn` | zeilenorientiert lesen | 🟡 | Registerdecoder/Hostdispatcher; Zeilenregeln, SCF und Emulatornachweis fehlen |
+| K-IWRITLN | `I$WritLn` | zeilenorientiert schreiben | 🟡 | Registerdecoder/Hostdispatcher; Terminatorregeln, SCF und Emulatornachweis fehlen |
+| K-IGETSTT | `I$GetStt` | Manager-/Gerätestatus abfragen | 🟡 | Registerdecoder/Hostdispatcher mit Statuscode und Ausgabezeiger; Statusformat und Backendimplementierung fehlen |
+| K-ISETSTT | `I$SetStt` | Manager-/Gerätestatus setzen | 🟡 | Registerdecoder/Hostdispatcher mit Statuscode und Eingabezeiger; Rechte- und Statusvertrag fehlen |
 | K-ICLOSE | `I$Close` | Pfad schließen und lokale Nummer freigeben | 🟡 | Hostkern schließt über Backend und behält den Slot bei Close-Fehler; Trap-/Prozessintegration und endgültige OS-9-Fehlersemantik fehlen |
 | K-ISGETST | `I$SGetSt` | systemweiten Status abfragen | 🔴 | Ziel/Anwendungsfälle, Berechtigungen und Kernel-/Managervertrag klären |
 
@@ -202,7 +202,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Backendpräfixe registrieren und auflösen | 🟢 | Hosttest prüft Registrierung, Duplikat, längsten Treffer und `/dd` vs. `/ddx`; keine Modul-/Descriptorbindung |
 | Backendpräfix sicher lösen (Detach-Grundlage) | 🟢 | Hosttest prüft Busy bei aktivem Pfad, erfolgreiches Lösen nach Close und anschließendes Not-Found; noch keine Descriptor-/Modulreferenzfreigabe |
 | Kernel-Rahmen-Feldzugriffe | 🟢 | Hosttests prüfen D0/A0 big-endian 32-bit sowie SR/PC 16-bit; keine syscall-spezifische Adapterlogik |
-| Kernel-Request-Decoder für Schatten-I/O | 🟢 | Hosttests prüfen Open-Modus/Pathpointer, Read-Pfad/Länge/Buffer, Close-Pfad, Nullargumente und unbekannten Callcode; keine Dereferenzierung und kein Trap-Dispatch |
+| Kernel-Request-Decoder für I/O | 🟡 | Hosttests prüfen Registerfelder aller 13 Callcodes `$83`–`$8F`; `ChgDir` wird decodiert, aber nicht an ein Dateisystembackend delegiert |
 | Managerstatus → Q9-Kernel-Fehler | 🟡 | Grundzuordnung für Parameter, Pfadnummer, falschen Modus, volle Tabelle, nicht gefunden und nicht unterstützt implementiert/getestet; pro I$-Aufruf und Backend noch semantisch zu bestätigen |
 | Manager-/Treiber-/Emulator-Kommunikationsspezifikation | 🟡 | Entwurf in `docs/IO_PROTOCOL_SPEC.md`; 13 Managerkommandos ihren Kernel-Callcodes `$83`–`$8F` zugeordnet, aber getrennt von Entwurfs-IDs und Manager-Vektorslots; Vorschlag für aufruflokalen, kommandoabhängig langen Block ohne unnötige Parameter; genaue Arity, Register-/SetStat-Transport sowie Init-/Destroy-Eigentümer offen |
 | Kernel-I/O-Registerinventur | 🟡 | Eingabe-/Rückgaberegister und aktuelle Implementierungsabdeckung für alle 13 I$-Callcodes aus Q9-Kernelcode inventarisiert (`docs/KERNEL_IO_ABI.md`); nicht implementierte Calls und fehlende Voll-ABI bleiben offen |
@@ -211,6 +211,7 @@ vor dem Codegen gegen Q9 verifiziert werden.
 | Open-Rollback und synchrone Callback-Reentranz | 🟢 | Backendfehler gibt reservierten Slot frei; reentrant Open bekommt anderen Slot; Detach bleibt während OPENING gesperrt; parallele präemptive Aufrufe sind nicht abgedeckt |
 | Pfadzugriffsmodus prüfen | 🟡 | Q9-Open-Modus wird gespeichert; READ/READLN und WRITE/WRITLN geprüft, Modus 0 als Read+Write getestet; weitere Modusbits und OS-Fehlervertrag offen |
 | generische Operation an Backendpfad weiterleiten | 🟡 | Hosttest prüft READ und Argumente; kein Trap-/68K-Dispatch |
+| Create- und namensbasierte Backendaufrufe | 🟡 | `Create`-Callback reserviert lokalen Pfad; `MakDir`/`Delete` werden über längsten Backendpräfixtreffer geroutet; keine Managervektorbindung |
 | Backend-Close und lokales Freigeben | 🟡 | Hosttest prüft Erfolg sowie Erhalt des Pfads bei Backendfehler; OS-9-Semantik noch zu bestätigen |
 | Host-Regressionstest-Suite | 🟢 | `make test` besteht; deckt ausschließlich den aktuellen Q9-eigenen Routerkern ab |
 

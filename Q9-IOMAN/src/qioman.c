@@ -13,7 +13,40 @@ static Q9IOMAN_Status q9ioman_open_backend(Q9IOMAN_Manager *manager,
                                            const char *path,
                                            const char *route_prefix,
                                            Q9IOMAN_u16 mode,
+                                           int create,
                                            Q9IOMAN_u16 *local_path);
+static Q9IOMAN_u16 q9ioman_prefix_length(const char *text);
+
+static Q9IOMAN_BackendRegistration *q9ioman_find_backend(
+    Q9IOMAN_Manager *manager,
+    const char *path)
+{
+    Q9IOMAN_BackendRegistration *entry;
+    Q9IOMAN_BackendRegistration *selected = 0;
+    Q9IOMAN_u16 index;
+    Q9IOMAN_u16 selected_length = 0;
+    Q9IOMAN_u16 path_length;
+    if (manager == 0 || manager->paths == 0 || path == 0)
+        return 0;
+    path_length = q9ioman_prefix_length(path);
+    entry = manager->backends;
+    for (index = 0; index < Q9IOMAN_BACKEND_CAPACITY; ++index) {
+        if (entry->state == Q9IOMAN_BACKEND_USED) {
+            Q9IOMAN_u16 length = q9ioman_prefix_length(entry->prefix);
+            Q9IOMAN_u16 pos;
+            for (pos = 0; pos < length && pos < path_length &&
+                 entry->prefix[pos] == path[pos]; ++pos) { }
+            if (pos == length && length <= path_length &&
+                (path[length] == '\0' || path[length] == '/') &&
+                length > selected_length) {
+                selected = entry;
+                selected_length = length;
+            }
+        }
+        entry = entry + 1;
+    }
+    return selected;
+}
 
 static Q9IOMAN_Path *q9ioman_find_path(Q9IOMAN_Manager *manager,
                                        Q9IOMAN_u16 local_path)
@@ -183,47 +216,70 @@ Q9IOMAN_Status q9ioman_open_resolved(Q9IOMAN_Manager *manager,
                                      Q9IOMAN_u16 mode,
                                      Q9IOMAN_u16 *local_path)
 {
-    Q9IOMAN_BackendRegistration *entry;
-    Q9IOMAN_BackendRegistration *selected = 0;
-    Q9IOMAN_u16 index;
-    Q9IOMAN_u16 selected_length = 0;
-    Q9IOMAN_u16 path_length;
+    Q9IOMAN_BackendRegistration *selected;
     if (local_path == 0)
         return Q9IOMAN_E_INVALID_ARGUMENT;
     *local_path = 0;
     if (manager == 0 || path == 0)
         return Q9IOMAN_E_INVALID_ARGUMENT;
-    path_length = q9ioman_prefix_length(path);
-    entry = manager->backends;
-    for (index = 0; index < Q9IOMAN_BACKEND_CAPACITY; ++index) {
-        if (entry->state == Q9IOMAN_BACKEND_USED) {
-            Q9IOMAN_u16 length = q9ioman_prefix_length(entry->prefix);
-            Q9IOMAN_u16 pos;
-            for (pos = 0; pos < length && pos < path_length &&
-                 entry->prefix[pos] == path[pos]; ++pos) { }
-            if (pos == length && length <= path_length &&
-                (path[length] == '\0' || path[length] == '/') &&
-                length > selected_length) {
-                selected = entry;
-                selected_length = length;
-            }
-        }
-        entry = entry + 1;
-    }
+    selected = q9ioman_find_backend(manager, path);
     if (selected == 0)
         return Q9IOMAN_E_NOT_FOUND;
     return q9ioman_open_backend(manager, selected->backend,
                                 selected->context, path, selected->prefix,
-                                mode, local_path);
+                                mode, 0, local_path);
+}
+
+Q9IOMAN_Status q9ioman_create_resolved(Q9IOMAN_Manager *manager,
+                                       const char *path,
+                                       Q9IOMAN_u16 mode,
+                                       Q9IOMAN_u16 *local_path)
+{
+    Q9IOMAN_BackendRegistration *selected;
+    if (local_path == 0)
+        return Q9IOMAN_E_INVALID_ARGUMENT;
+    *local_path = 0;
+    if (manager == 0 || path == 0)
+        return Q9IOMAN_E_INVALID_ARGUMENT;
+    selected = q9ioman_find_backend(manager, path);
+    if (selected == 0)
+        return Q9IOMAN_E_NOT_FOUND;
+    if (selected->backend == 0 || selected->backend->create == 0)
+        return Q9IOMAN_E_UNSUPPORTED_OPERATION;
+    return q9ioman_open_backend(manager, selected->backend,
+                                selected->context, path, selected->prefix,
+                                mode, 1, local_path);
+}
+
+Q9IOMAN_Status q9ioman_name_operation(Q9IOMAN_Manager *manager,
+                                     const char *path,
+                                     Q9IOMAN_Operation operation,
+                                     Q9IOMAN_Result *result)
+{
+    Q9IOMAN_BackendRegistration *selected;
+    if (manager == 0 || path == 0 || result == 0)
+        return Q9IOMAN_E_INVALID_ARGUMENT;
+    if (operation != Q9IOMAN_OP_MAKE_DIR && operation != Q9IOMAN_OP_DELETE)
+        return Q9IOMAN_E_UNSUPPORTED_OPERATION;
+    result->value = 0;
+    result->transferred = 0;
+    selected = q9ioman_find_backend(manager, path);
+    if (selected == 0)
+        return Q9IOMAN_E_NOT_FOUND;
+    if (selected->backend == 0 || selected->backend->name_operation == 0)
+        return Q9IOMAN_E_UNSUPPORTED_OPERATION;
+    return selected->backend->name_operation(selected->context, operation,
+                                              path, result);
 }
 
 static Q9IOMAN_Status q9ioman_open_backend(Q9IOMAN_Manager *manager,
                                            const Q9IOMAN_BackendOps *backend,
-                                           void *backend_context,
-                                           const char *path,
-                                           const char *route_prefix,
-                                           Q9IOMAN_u16 mode,
-                                           Q9IOMAN_u16 *local_path)
+                            void *backend_context,
+                            const char *path,
+                            const char *route_prefix,
+                            Q9IOMAN_u16 mode,
+                            int create,
+                            Q9IOMAN_u16 *local_path)
 {
     Q9IOMAN_u16 index;
     Q9IOMAN_u16 backend_path;
@@ -234,7 +290,8 @@ static Q9IOMAN_Status q9ioman_open_backend(Q9IOMAN_Manager *manager,
         return Q9IOMAN_E_INVALID_ARGUMENT;
     *local_path = 0;
     if (manager == 0 || manager->paths == 0 || backend == 0 ||
-        backend->open == 0 || backend->close == 0 || path == 0 ||
+        (create ? backend->create == 0 : backend->open == 0) ||
+        backend->close == 0 || path == 0 ||
         manager->capacity == 0)
         return Q9IOMAN_E_INVALID_ARGUMENT;
 
@@ -258,7 +315,10 @@ static Q9IOMAN_Status q9ioman_open_backend(Q9IOMAN_Manager *manager,
         path_slot->access_mode = Q9IOMAN_ACCESS_READ | Q9IOMAN_ACCESS_WRITE;
 
     backend_path = 0;
-    status = backend->open(backend_context, path, mode, &backend_path);
+    if (create)
+        status = backend->create(backend_context, path, mode, &backend_path);
+    else
+        status = backend->open(backend_context, path, mode, &backend_path);
     if (status != Q9IOMAN_OK) {
         path_slot->backend_path = 0;
         path_slot->access_mode = 0;
@@ -284,7 +344,7 @@ Q9IOMAN_Status q9ioman_open(Q9IOMAN_Manager *manager,
                             Q9IOMAN_u16 *local_path)
 {
     return q9ioman_open_backend(manager, backend, backend_context, path, 0,
-                                mode, local_path);
+                                mode, 0, local_path);
 }
 
 Q9IOMAN_Status q9ioman_operate(Q9IOMAN_Manager *manager,

@@ -63,6 +63,15 @@ nicht-nativen `I$Open`-Aufruf bis zur Handler-Rückkehr. Ein echter Backend-
 Open/Read/Close-Pfad und dessen konkrete Fehlerregister sind noch nicht
 end-to-end verifiziert.
 
+**QCC-68K-Stackkonvention für Assemblerbrücken:** Bei einem C-Aufruf mit
+`(callcode, frame)` erwartet der QCC-Einstieg den letzten Parameter `frame`
+bei `8(a5)` und den ersten Parameter `callcode` bei `12(a5)`. Der Assembler
+muss daher erst den ersten und danach den letzten Parameter pushen. Der
+Resolver-Callback `(context, address, path, length)` liest seine Argumente
+entsprechend bei `20/16/12/8(a5)`. Abweichende Reihenfolge vertauscht
+Argumente, obwohl C-Code und Modul-Link sauber aussehen. Die IOMan-Brücken
+wurden nach einem Emulatorlauf entsprechend korrigiert.
+
 `q9ioman_status_to_os9_error()` stellt eine erste gemeinsame Übersetzung
 dieser internen Statuswerte bereit: ungültiger Parameter→`E$Param`, ungültiger
 Pfadslot→`E$BPNum`, falscher Read-/Write-Modus→`E$BMODE`, erschöpfte

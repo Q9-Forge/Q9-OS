@@ -65,8 +65,8 @@ Q9IOMAN_CloseRequest:
 
 Q9IOMAN_OpenEntry:
         movem.l d2-d7/a3-a5,-(sp)
-        move.l  a5,-(sp)
         move.l  #$0084,-(sp)
+        move.l  a5,-(sp)
         bsr     tc_q9ioman_target_dispatch
         addq.l  #8,sp
         tst.l   d0
@@ -87,8 +87,8 @@ Q9IOMAN_OpenFailed:
 
 Q9IOMAN_ReadEntry:
         movem.l d2-d7/a3-a5,-(sp)
-        move.l  a5,-(sp)
         move.l  #$0089,-(sp)
+        move.l  a5,-(sp)
         bsr     tc_q9ioman_target_dispatch
         addq.l  #8,sp
         tst.l   d0
@@ -109,8 +109,8 @@ Q9IOMAN_ReadFailed:
 
 Q9IOMAN_CloseEntry:
         movem.l d2-d7/a3-a5,-(sp)
-        move.l  a5,-(sp)
         move.l  #$008f,-(sp)
+        move.l  a5,-(sp)
         bsr     tc_q9ioman_target_dispatch
         addq.l  #8,sp
         tst.l   d0
@@ -134,15 +134,16 @@ Q9IOMAN_CloseFailed:
 * and reject null/wrapping addresses.  This cannot probe unmapped memory.
 tc_q9ioman_target_resolve_path:
         link    a5,#0
-        move.l  8(a5),d0
+        * QCC places the last C argument nearest the return address.
+        move.l  20(a5),d0                         * context
         bne     Q9IOMAN_PathAddressBad
-        move.l  12(a5),d1
+        move.l  16(a5),d1                         * input address
         beq     Q9IOMAN_PathAddressBad
         cmpi.l  #$ffffff00,d1
         bhi     Q9IOMAN_PathAddressBad
-        move.l  16(a5),d0
+        move.l  12(a5),d0                         * char **path
         beq     Q9IOMAN_PathAddressBad
-        move.l  20(a5),d0
+        move.l  8(a5),d0                          * LONG *length
         beq     Q9IOMAN_PathAddressBad
         movea.l d1,a0
         moveq   #0,d0
@@ -154,10 +155,10 @@ Q9IOMAN_PathAddressScan:
         addq.l  #1,d0
         bra     Q9IOMAN_PathAddressScan
 Q9IOMAN_PathAddressFound:
-        movea.l 16(a5),a1
+        movea.l 12(a5),a1
         move.l  d1,(a1)
         addq.l  #1,d0
-        movea.l 20(a5),a1
+        movea.l 8(a5),a1
         move.l  d0,(a1)
         moveq   #0,d0
         bra     Q9IOMAN_PathAddressDone
