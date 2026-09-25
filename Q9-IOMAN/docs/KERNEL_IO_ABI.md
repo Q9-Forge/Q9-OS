@@ -53,17 +53,22 @@ es behauptet nicht, dass ein späterer externer Handler unmöglich wäre.
 
 ## Implementierter Decoder im Q9-IOMAN
 
-`q9ioman_decode_kernel_request()` liest derzeit ausschließlich die drei
-registrierten Schattenaufrufe `I$Open` (`$84`), `I$Read` (`$89`) und
-`I$Close` (`$8F`) aus dem 72-Byte-Registerframe. Er liefert Typ, Pfadnummer,
-Open-Modus, Bufferadresse und Länge in einer neutralen Anfrage zurück. Die
-Bufferadresse bleibt eine 32-bit-Zahl: der Decoder dereferenziert oder kopiert
-keinen Buffer und macht noch keine Aussage zur Host-/Q9-Adressübersetzung.
-Unbekannte Callcodes werden abgewiesen. Das ist noch kein Trap-Handler und
-setzt weder Carry noch Fehler-/Ergebnisregister.
+`q9ioman_decode_kernel_request()` decodiert jetzt alle 13 Callcodes `$83`–`$8F`
+und deren dokumentierte Registerfelder in eine neutrale Anfrage. Der
+Hostdispatcher routet Create/Open, MakDir/Delete, Seek, Read/Write,
+ReadLn/WritLn, GetStt/SetStt und Close zu den Backend-Callbacks. `ChgDir` wird
+bewusst nicht an ein Dateisystembackend delegiert: der aktuelle Q9-Kernel
+aktualisiert dafür den Prozessdescriptor nativ. Diese Erweiterungen sind
+hostgetestet, aber nicht durch Kernel-Schattenhandler oder Emulatorläufe
+verifiziert. Die Systemmodul-Registrierung umfasst weiterhin nur Open/Read/Close.
 
-`q9ioman_dispatch_kernel_request()` verbindet diese drei Requests mit der
-Pfadtabelle. Open braucht einen plattformspezifischen Resolver, der den
+Bufferadressen bleiben 32-bit-Werte; der IOMan kopiert keine Daten. Read,
+Write und Line-I/O prüfen Nullzeiger und Adressüberlauf, können aber keine
+Speicherrechte oder Abbildungen validieren. Statusdatenformate und genaue
+Zeilen-/Terminatorregeln müssen die Backends festlegen.
+
+`q9ioman_dispatch_kernel_request()` verbindet diese Requests mit Pfadtabelle
+und Backendvertrag. Open/Create/MakDir/Delete brauchen einen plattformspezifischen Resolver, der den
 NUL-terminierten Q9-Pfad im aktuellen flachen Q9-Adressraum scannt (maximal
 256 Byte) und dessen Bytezahl inklusive NUL meldet. Das kann einen ungültigen
 oder nicht gemappten Zeiger nicht abfangen. Read reicht die numerische

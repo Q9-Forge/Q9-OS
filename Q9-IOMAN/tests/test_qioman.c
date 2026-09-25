@@ -16,6 +16,8 @@ typedef struct {
     Q9IOMAN_u16 open_calls;
     Q9IOMAN_u16 operate_calls;
     Q9IOMAN_u16 close_calls;
+    Q9IOMAN_u16 name_calls;
+    Q9IOMAN_Operation last_name_operation;
     Q9IOMAN_u32 transferred_override;
     int override_transferred;
     Q9IOMAN_Manager *nested_manager;
@@ -124,12 +126,39 @@ static Q9IOMAN_Status mock_close(void *opaque, Q9IOMAN_u16 backend_path)
     return mock->close_status;
 }
 
+static Q9IOMAN_Status mock_create(void *opaque,
+                                const char *name,
+                                Q9IOMAN_u16 mode,
+                                Q9IOMAN_u16 *backend_path)
+{
+    return mock_open(opaque, name, mode, backend_path);
+}
+
+static Q9IOMAN_Status mock_name_operation(void *opaque,
+                                         Q9IOMAN_Operation operation,
+                                         const char *name,
+                                         Q9IOMAN_Result *result)
+{
+    MockBackend *mock = (MockBackend *)opaque;
+    ++mock->name_calls;
+    mock->last_name_operation = operation;
+    if (name == 0 || result == 0 ||
+        (operation != Q9IOMAN_OP_MAKE_DIR &&
+         operation != Q9IOMAN_OP_DELETE))
+        return Q9IOMAN_E_INVALID_ARGUMENT;
+    result->value = 0;
+    result->transferred = 0;
+    return Q9IOMAN_OK;
+}
+
 int main(void)
 {
     static const Q9IOMAN_BackendOps backend = {
         mock_open,
         mock_operate,
-        mock_close
+        mock_close,
+        mock_create,
+        mock_name_operation
     };
     Q9IOMAN_Manager manager;
     Q9IOMAN_Manager nested_manager;
@@ -253,6 +282,7 @@ int main(void)
         const char *dispatch_name = "/dd/file";
         unsigned char frame[Q9IOMAN_R_SIZE];
         Q9IOMAN_u16 dispatch_path;
+        Q9IOMAN_u16 create_path;
 
         memset(&dispatch_mock, 0, sizeof(dispatch_mock));
         dispatch_mock.expected_name = dispatch_name;
@@ -293,8 +323,18 @@ int main(void)
               q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2) == 1 &&
               q9ioman_frame_read32(frame, Q9IOMAN_R_A0) == 0x2009UL &&
               (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) == 0);
-
         dispatch_path = q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, 2);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x2000UL);
+        check("dispatches I$Create through backend create and reserves a path",
+              q9ioman_dispatch_kernel_request(0x0083, &dispatch_manager,
+                  frame, resolve_test_path, (void *)dispatch_name) ==
+                  Q9IOMAN_OK &&
+              q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2) == 2 &&
+              q9ioman_frame_read32(frame, Q9IOMAN_R_A0) == 0x2009UL);
+        create_path = q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2);
+
         q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
         q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 10);
         q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x3000UL);
@@ -306,6 +346,87 @@ int main(void)
               dispatch_mock.last_arg0 == 0x3000UL &&
               dispatch_mock.last_arg2 == 10 &&
               (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) == 0);
+
+        dispatch_paths[0].access_mode = Q9IOMAN_ACCESS_MASK;
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 6);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x3100UL);
+        check("dispatches I$Write with buffer and length",
+              q9ioman_dispatch_kernel_request(0x008a, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              dispatch_mock.last_operation == Q9IOMAN_OP_WRITE &&
+              dispatch_mock.last_arg0 == 0x3100UL &&
+              dispatch_mock.last_arg2 == 6 &&
+              q9ioman_frame_read32(frame, Q9IOMAN_R_D1) == 6);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x2000UL);
+        check("dispatches I$MakDir through the backend name operation",
+              q9ioman_dispatch_kernel_request(0x0085, &dispatch_manager,
+                  frame, resolve_test_path, (void *)dispatch_name) ==
+                  Q9IOMAN_OK &&
+              dispatch_mock.last_name_operation == Q9IOMAN_OP_MAKE_DIR);
+        check("dispatches I$Delete through the backend name operation",
+              q9ioman_dispatch_kernel_request(0x0087, &dispatch_manager,
+                  frame, resolve_test_path, (void *)dispatch_name) ==
+                  Q9IOMAN_OK &&
+              dispatch_mock.last_name_operation == Q9IOMAN_OP_DELETE);
+        check("keeps I$ChgDir outside filesystem-backend dispatch",
+              q9ioman_dispatch_kernel_request(0x0086, &dispatch_manager,
+                  frame, resolve_test_path, (void *)dispatch_name) ==
+                  Q9IOMAN_E_UNSUPPORTED_OPERATION &&
+              q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
+                  Q9IOMAN_OS9_E_UNKSVC &&
+              (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 0x12345678UL);
+        check("dispatches I$Seek with the absolute position",
+              q9ioman_dispatch_kernel_request(0x0088, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              dispatch_mock.last_operation == Q9IOMAN_OP_SEEK &&
+              dispatch_mock.last_arg0 == 0x12345678UL);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_D1 + 2, 0x12);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x3200UL);
+        check("dispatches I$GetStt with status and output pointer",
+              q9ioman_dispatch_kernel_request(0x008d, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              dispatch_mock.last_operation == Q9IOMAN_OP_GET_STATUS &&
+              dispatch_mock.last_arg0 == 0x12 &&
+              dispatch_mock.last_arg1 == 0x3200UL);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_D1 + 2, 0x13);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x3300UL);
+        check("dispatches I$SetStt with status and input pointer",
+              q9ioman_dispatch_kernel_request(0x008e, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              dispatch_mock.last_operation == Q9IOMAN_OP_SET_STATUS &&
+              dispatch_mock.last_arg0 == 0x13 &&
+              dispatch_mock.last_arg1 == 0x3300UL);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 7);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x3400UL);
+        check("dispatches I$ReadLn and returns its byte count",
+              q9ioman_dispatch_kernel_request(0x008b, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              dispatch_mock.last_operation == Q9IOMAN_OP_READ_LINE &&
+              dispatch_mock.last_arg0 == 0x3400UL &&
+              dispatch_mock.last_arg2 == 7 &&
+              q9ioman_frame_read32(frame, Q9IOMAN_R_D1) == 7);
+
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 8);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x3500UL);
+        check("dispatches I$WritLn and returns its byte count",
+              q9ioman_dispatch_kernel_request(0x008c, &dispatch_manager,
+                  frame, 0, 0) == Q9IOMAN_OK &&
+              dispatch_mock.last_operation == Q9IOMAN_OP_WRITE_LINE &&
+              dispatch_mock.last_arg0 == 0x3500UL &&
+              dispatch_mock.last_arg2 == 8 &&
+              q9ioman_frame_read32(frame, Q9IOMAN_R_D1) == 8);
 
         dispatch_mock.override_transferred = 1;
         dispatch_mock.transferred_override = 4;
@@ -326,7 +447,7 @@ int main(void)
               q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
                   Q9IOMAN_OS9_E_PARAM &&
               (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0 &&
-              dispatch_mock.operate_calls == 3);
+              dispatch_mock.operate_calls == 9);
         dispatch_mock.override_transferred = 0;
 
         q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
@@ -339,7 +460,7 @@ int main(void)
               q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
                   Q9IOMAN_OS9_E_PARAM &&
               (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0 &&
-              dispatch_mock.operate_calls == 3);
+              dispatch_mock.operate_calls == 9);
 
         q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0xffffffffUL);
         q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 2);
@@ -350,7 +471,7 @@ int main(void)
               q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
                   Q9IOMAN_OS9_E_PARAM &&
               (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0 &&
-              dispatch_mock.operate_calls == 3);
+              dispatch_mock.operate_calls == 9);
 
         q9ioman_frame_write32(frame, Q9IOMAN_R_D0, dispatch_path);
         check("dispatches I$Close and reports invalid path using Carry/D1.w",
@@ -361,6 +482,8 @@ int main(void)
               (q9ioman_frame_read16(frame, Q9IOMAN_R_SR) & 1U) != 0 &&
               q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2) ==
                   Q9IOMAN_OS9_E_BPNUM);
+        check("closes the path returned by I$Create",
+              q9ioman_close(&dispatch_manager, create_path) == Q9IOMAN_OK);
     }
 
     {
@@ -435,8 +558,52 @@ int main(void)
               request.type == Q9IOMAN_KERNEL_CLOSE && request.path == 7 &&
               request.mode == 0 && request.buffer == 0 && request.length == 0);
 
-        check("rejects unsupported shadow callcodes and null decoder inputs",
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, 2);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 0x12345678UL);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_A0, 0x76543210UL);
+        check("decodes I$Create mode and path pointer",
+              q9ioman_decode_kernel_request(0x0083, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_CREATE &&
+              request.mode == 2 && request.buffer == 0x76543210UL);
+        check("decodes I$MakDir and I$Delete path pointers",
+              q9ioman_decode_kernel_request(0x0085, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_MAKDIR &&
+              request.buffer == 0x76543210UL &&
+              q9ioman_decode_kernel_request(0x0087, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_DELETE &&
+              request.buffer == 0x76543210UL);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_D0 + 2, 3);
+        check("decodes I$ChgDir selector and path pointer",
+              q9ioman_decode_kernel_request(0x0086, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_CHGDIR &&
+              request.selector == 3 && request.buffer == 0x76543210UL);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, 9);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D1, 0x23456789UL);
+        check("decodes I$Seek path and absolute position",
+              q9ioman_decode_kernel_request(0x0088, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_SEEK &&
+              request.path == 9 && request.position == 0x23456789UL);
+        check("decodes I$Write, I$ReadLn and I$WritLn data arguments",
               q9ioman_decode_kernel_request(0x008a, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_WRITE &&
+              request.path == 9 && request.length == 0x23456789UL &&
+              request.buffer == 0x76543210UL &&
+              q9ioman_decode_kernel_request(0x008b, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_READ_LINE &&
+              q9ioman_decode_kernel_request(0x008c, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_WRITE_LINE);
+        q9ioman_frame_write16(frame, Q9IOMAN_R_D1 + 2, 0x55aa);
+        check("decodes I$GetStt and I$SetStt status arguments",
+              q9ioman_decode_kernel_request(0x008d, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_GET_STATUS &&
+              request.status_code == 0x55aa && request.path == 9 &&
+              request.buffer == 0x76543210UL &&
+              q9ioman_decode_kernel_request(0x008e, frame, &request) ==
+                  Q9IOMAN_OK && request.type == Q9IOMAN_KERNEL_SET_STATUS &&
+              request.status_code == 0x55aa);
+
+        check("rejects unsupported callcodes and null decoder inputs",
+              q9ioman_decode_kernel_request(0x0090, frame, &request) ==
                   Q9IOMAN_E_UNSUPPORTED_OPERATION &&
               q9ioman_decode_kernel_request(0x0089, 0, &request) ==
                   Q9IOMAN_E_INVALID_ARGUMENT &&

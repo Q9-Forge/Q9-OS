@@ -26,8 +26,18 @@
 
 typedef enum {
     Q9IOMAN_KERNEL_NONE = 0,
+    Q9IOMAN_KERNEL_CREATE,
     Q9IOMAN_KERNEL_OPEN,
+    Q9IOMAN_KERNEL_MAKDIR,
+    Q9IOMAN_KERNEL_CHGDIR,
+    Q9IOMAN_KERNEL_DELETE,
+    Q9IOMAN_KERNEL_SEEK,
     Q9IOMAN_KERNEL_READ,
+    Q9IOMAN_KERNEL_WRITE,
+    Q9IOMAN_KERNEL_READ_LINE,
+    Q9IOMAN_KERNEL_WRITE_LINE,
+    Q9IOMAN_KERNEL_GET_STATUS,
+    Q9IOMAN_KERNEL_SET_STATUS,
     Q9IOMAN_KERNEL_CLOSE
 } Q9IOMAN_KernelRequestType;
 
@@ -35,8 +45,11 @@ typedef struct {
     Q9IOMAN_KernelRequestType type;
     Q9IOMAN_u16 path;
     Q9IOMAN_u16 mode;
+    Q9IOMAN_u16 selector;
+    Q9IOMAN_u16 status_code;
     Q9IOMAN_u32 buffer;
     Q9IOMAN_u32 length;
+    Q9IOMAN_u32 position;
 } Q9IOMAN_KernelRequest;
 
 /* Platform bridge must validate and map a NUL-terminated Q9 path string. */

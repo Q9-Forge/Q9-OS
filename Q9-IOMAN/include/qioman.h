@@ -35,7 +35,9 @@ typedef enum {
     Q9IOMAN_OP_WRITE_LINE,
     Q9IOMAN_OP_SEEK,
     Q9IOMAN_OP_GET_STATUS,
-    Q9IOMAN_OP_SET_STATUS
+    Q9IOMAN_OP_SET_STATUS,
+    Q9IOMAN_OP_MAKE_DIR,
+    Q9IOMAN_OP_DELETE
 } Q9IOMAN_Operation;
 
 typedef struct {
@@ -56,11 +58,22 @@ typedef Q9IOMAN_Status (*Q9IOMAN_OperateFn)(void *context,
                                            Q9IOMAN_Result *result);
 typedef Q9IOMAN_Status (*Q9IOMAN_CloseFn)(void *context,
                                          Q9IOMAN_u16 backend_path);
+typedef Q9IOMAN_Status (*Q9IOMAN_CreateFn)(void *context,
+                                          const char *path,
+                                          Q9IOMAN_u16 mode,
+                                          Q9IOMAN_u16 *backend_path);
+typedef Q9IOMAN_Status (*Q9IOMAN_NameOperationFn)(
+    void *context,
+    Q9IOMAN_Operation operation,
+    const char *path,
+    Q9IOMAN_Result *result);
 
 typedef struct Q9IOMAN_BackendOps {
     Q9IOMAN_OpenFn open;
     Q9IOMAN_OperateFn operate;
     Q9IOMAN_CloseFn close;
+    Q9IOMAN_CreateFn create;
+    Q9IOMAN_NameOperationFn name_operation;
 } Q9IOMAN_BackendOps;
 
 typedef struct {
@@ -110,6 +123,14 @@ Q9IOMAN_Status q9ioman_open_resolved(Q9IOMAN_Manager *manager,
                                      const char *path,
                                      Q9IOMAN_u16 mode,
                                      Q9IOMAN_u16 *local_path);
+Q9IOMAN_Status q9ioman_create_resolved(Q9IOMAN_Manager *manager,
+                                       const char *path,
+                                       Q9IOMAN_u16 mode,
+                                       Q9IOMAN_u16 *local_path);
+Q9IOMAN_Status q9ioman_name_operation(Q9IOMAN_Manager *manager,
+                                     const char *path,
+                                     Q9IOMAN_Operation operation,
+                                     Q9IOMAN_Result *result);
 
 Q9IOMAN_Status q9ioman_operate(Q9IOMAN_Manager *manager,
                                Q9IOMAN_u16 local_path,
