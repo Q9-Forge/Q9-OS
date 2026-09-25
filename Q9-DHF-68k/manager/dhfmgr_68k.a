@@ -161,22 +161,27 @@ CallDrv:
 * Kommandonummer, von den Sprungbrettern oben gesetzt).
 *
 * d0-d3/a0-a3 sind laut OS-9-Konvention fuer FileManager-Aufrufe freie Arbeitsregister (nur
-* a1/a4/a5/a6/a7 sind vorgegeben) -- kein generelles Retten/Wiederherstellen noetig, nur d3
-* (Kommandonummer) muss ueber den F$SRqMem-Aufruf hinweg gesichert werden (Systemaufrufe
-* duerfen Arbeitsregister clobbern).
+* a1/a4/a5/a6/a7 sind vorgegeben). WICHTIG (2026-09-26, per Q9_ITRACE_PATH-Instrumentierung
+* im echten Emulator gefunden): das Retten von a1/d3 UEBER den F$SRqMem-Aufruf hinweg per
+* Stack (move.l x,-(a7) ... move.l (a7)+,x) SCHLUG FEHL -- der zurueckgelesene Wert war 0
+* statt des geretteten Pfaddeskriptors, obwohl der Stackpointer selbst nach dem Syscall
+* korrekt wiederhergestellt war (F$SRqMems interne Nutzung des Aufrufer-Stacks scheint den
+* Speicher UNTER dem eigentlichen SP-Stand trotzdem zu beruehren -- Ursache nicht abschliessend
+* geklaert, aber empirisch reproduzierbar: PMMU-Absturz beim ersten echten "dir /dhf0" nach
+* erfolgreichem iniz). Fix: alles aus a1 VOR dem Syscall in Datenregister extrahieren (d2/d4/d5
+* sind laut Konvention nirgends als Systemaufruf-Arbeitsregister dokumentiert, ueberleben also
+* zuverlaessig) statt auf dem Stack zu parken.
 *───────────────────────────────────────────────────────────────────────────────────────────
-* a1 (Pfaddeskriptor) retten -- wird gleich zum Kommandoblock-Zeiger
 MgrCommon:
-        move.l  a1,-(a7)
-        move.l  d3,-(a7)                * Kommandonummer retten
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer (VOR F$SRqMem aus a1 lesen)
+        move.l  PD_DEV(a1),d5           * d5 = pd_dev (Devicetbl*) als Rohwert gerettet
+        move.l  d3,d4                   * Kommandonummer gerettet (kein Stack noetig)
         move.l  #CMDBLK_SIZE,d0
         OS9     F$SRqMem
         bcs     MgrAllocErr
-        move.l  (a7)+,d3                * Kommandonummer zurueck
-        movea.l (a7)+,a0                * a0 = urspruenglicher Pfaddeskriptor
-        moveq   #0,d2
-        move.w  PD_PD(a0),d2            * d2 = eigene Pfadnummer
-        movea.l PD_DEV(a0),a3           * a3 = pd_dev (Devicetbl*)
+        move.l  d4,d3                   * Kommandonummer zurueck
+        movea.l d5,a3                   * a3 = pd_dev (Devicetbl*) zurueck
         movea.l a2,a1                   * a1 = frisch geholter Kommandoblock
 
 * Uniforme Nutzlast: a0 des Aufrufers traegt je nach Aufrufart entweder den Pfadnamen
@@ -219,10 +224,8 @@ MgrRetOk:
         andi    #$FE,ccr
         rts
 
-* die beiden geretteten Langworte (d3, a1) wieder vom Stack nehmen -- Carry/d1 kommen
-* bereits von F$SRqMem selbst
+* Carry/d1 kommen bereits von F$SRqMem selbst -- nichts auf dem Stack zum Abbauen (s. o.)
 MgrAllocErr:
-        addq.l  #8,a7
         rts
 
 * Sieben Aufrufe bleiben Stub (E$UnkSvc, $D0 aus MWOS/SRC/DEFS/errno.h): ihre Nutzlast passt
