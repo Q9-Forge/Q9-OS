@@ -14,36 +14,62 @@
 *         eine vom Aufrufer im Gast-RAM bereitgestellte struct dhf_shared
 *         (28 Byte, s. Q9-OS/Q9-DHFDRV-68k/include/dhf_shared.h) 1:1 in das
 *         MMIO-Fenster des DHF-Emulator-Geraets (Q9-Flux-68k/src/devices/
-*         dhf/q9_dhf.c, Basis $FFFF4000) und wieder zurueck. Das eigentliche
+*         dhf/q9_dhf.c, Basis konfigurierbar per Geraetedeskriptor M$Port,
+*         s. Edition 1.10) und wieder zurueck. Das eigentliche
 *         Verarbeiten (Host-Dateisystem-Zugriff) macht ausschliesslich das
 *         Geraet, s. dessen eigenen Kopfkommentar.
 *
-*         WICHTIG: wie der Aufrufer (Manager) diesen Treiber tatsaechlich
-*         erreicht, ist NICHT geklaert -- manager/dhf_manager.c ruft
-*         "_os9_f_viread" auf, das nirgends im echten Microware-SDK auftaucht
-*         (gegengeprueft gegen MWOS/OS9/SRC und das Retro-OS-9-Images-Archiv).
-*         Dieses Modul ist deshalb bewusst so gebaut, dass es sich UNABHAENGIG
-*         von dhf_manager.c direkt testen laesst: (a1) muss nur auf eine
-*         gueltige struct dhf_shared zeigen, mit "command" schon gesetzt --
-*         ob das je von einem echten Manager oder erstmal nur von einem
-*         Testprogramm kommt, ist dem Treiber egal.
+*         Wie der Manager diesen Treiber erreicht, ist inzwischen geklaert und
+*         real verifiziert (s. Q9-OS/Q9-DHF-68k/STATUS.md "Real driver-call
+*         mechanism" + manager/dhfmgr_68k.a) -- ueber Devicetbl/mod_driver,
+*         NICHT ueber das fruehere, fiktive "_os9_f_viread".
 *
 * Edition History
 *─────────┬──────┬────────────────────────────────────────────────────────┬──────
 * Date    │ Ver. │ Description                                            │ By
 *─────────┼──────┼────────────────────────────────────────────────────────┼──────
 * 26-09-25│ 1.00 │ Erster Wurf                                            │ Cld
+* 26-09-27│ 1.10 │ MMIO-Basis jetzt aus M$Port/V_PORT (statischer Speicher,│ Cld
+*         │      │ vom Kernel automatisch aus dem Deskriptor befuellt,    │
+*         │      │ s. sc68681.a Init) statt fest einkompiliert. Init      │
+*         │      │ liest den Basispfad-String aus M$DevCon des Deskriptors│
+*         │      │ und loest damit DHF_CMD_INIT im Geraet aus.            │
 *═════════╧══════╧════════════════════════════════════════════════════════╧══════
-        nam     dhfdrv_68k
+* 2026-09-27: interner Modulname MUSS <=6 Zeichen sein -- I$Attach kuerzt den aus M$PDev
+* gelesenen Treibernamen intern auf 6 Zeichen, bevor es F$Load damit aufruft (gefunden per
+* Q9_TRAP_TRACE_ALL-Instrumentierung im echten Emulator: F$Load bekam "dhfdrv" statt
+* "dhfdrv_68k", darum E$MNF "Module Not Found" bei "iniz dhf0"). Der Dateiname bleibt
+* bewusst "dhfdrv_68k.a" (Makefile/Tests/Doku verweisen bereits ueberall darauf) -- nur der
+* interne Modulname (nam/psect) ist jetzt kurz.
+        nam     dhfdrv
         ttl     Q9-DHF 68k-Treiber
 
         use     q9defs.d
 
 Edition         equ     1
 
-* MMIO-Basis des DHF-Emulator-Geraets -- MUSS mit Q9_BOARD_DHF_BASE in
-* Q9-Flux-68k/src/devices/dhf/q9_dhf.h uebereinstimmen.
-DHF_BASE        equ     $FFFF4000
+* Static-Storage-Groesse: MUSS mindestens sysioStatic sein (MWOS/OS9/SRC/DEFS/
+* iodev.a: v_port(4)+v_lprc(2)+v_busy(2)+v_wake(2)+v_paths(4)+v_dumm1[8](32)
+* = 46 Byte) -- "wird vom Kernel fuer ALLE Geraete verlangt" laut dortigem
+* Kommentar. Bisher stand hier 0 (unbemerkt harmlos, solange (a2) nie gelesen
+* wurde) -- jetzt braucht Read/Write/GetStat/SetStat/Init V_PORT daraus,
+* 0 waere also ab jetzt ein echter Fehler gewesen.
+STATIC_SIZE     equ     46
+
+* MMIO-Basis des DHF-Emulator-Geraets kommt jetzt zur Laufzeit aus M$Port des
+* Geraetedeskriptors -- der Kernel kopiert diesen Wert automatisch in Offset 0
+* des Treiber-eigenen statischen Speichers (V_PORT, MWOS/OS9/SRC/DEFS/iodev.a),
+* noch BEVOR Init aufgerufen wird (verifiziert an sc68681.a's echtem Init:
+* "movea.l V_PORT(a2),a3"). Kein fest einkompilierter Wert mehr noetig.
+V_PORT          equ     0
+
+* Geraetedeskriptor-Feldoffset M$DevCon (module.a: "org M$IDSize" -- relativ zum
+* GEMEINSAMEN 48-Byte-Modulkopf, NICHT zum psect-Beginn: Port(4)+Vector(1)+
+* IRQLvl(1)+Prior(1)+Mode(1)+FMgr(2)+PDev(2) = 12 Byte davor, macht $30+12=$3C).
+M$DevCon        equ     $3C             * Offset zur eigenen Options-Tabelle
+
+* DHF-Kommandocode fuer Init (Q9-Flux-68k/src/devices/dhf/dhf_proto.h)
+DHF_CMD_INIT    equ     18
 
 * Byte-Offsets in struct dhf_shared (dhf_shared.h, #pragma pack(push,1)):
 *   0 version(1) 1 command(1) 2 status(1) 3 flags(1) 4 seq(4)
@@ -62,7 +88,13 @@ SH_SIZE         equ     28
 
 * Modulbeschreibung -----------------------------------------------------------
 
-        psect   dhfdrv_68k,(Q9Drivr<<8)!Q9Objct,(Q9ReEnt<<8)!0,Edition,0,DhfEnt
+* Attribut/Revision: ReEnt+SupStat -- I/O-Systemmodule MUESSEN das System-State-Bit
+* gesetzt haben (OS-9 v2.4 Technical I-O Manual, "File Managers": "They must have the
+* system-state bit set in the attribute byte of the module header"), sonst schlaegt
+* I$Attach fehl -- gefunden 2026-09-27 nach erfolglosem "iniz dhf0" im echten Emulator
+* (die Sample-FileManager-Listing im selben Handbuch hatte es schon immer richtig:
+* "Attr_Revs equ ((ReEnt+Supstat)<<8)+0", hier zunaechst uebersehen).
+        psect   dhfdrv,(Q9Drivr<<8)!Q9Objct,((Q9ReEnt!Q9SupStat)<<8)!0,Edition,STATIC_SIZE,DhfEnt
 
 ********************
 * Entry jump table (7 Worte, wie sc68681.a MpscEnt: Init/Read/Write/GetStat/
@@ -79,11 +111,50 @@ DhfEnt
 
         pag
 ***************
-* Init / Term
-*   Kein eigener Zustand -- das DHF-Geraet haelt seinen Zustand selbst
-*   (Handle-Tabelle usw. leben im Emulator, s. dhf_emu_device_t).
+* Init -- liest den Basispfad-String aus der Options-Tabelle des Geraete-
+*   deskriptors (M$DevCon) und loest damit DHF_CMD_INIT im Geraet aus (dessen
+*   Handler ruft dhf_host_fs_init() mit diesem Pfad auf, s. dhf_emu_device.c).
+*   Kein Basispfad konfiguriert (M$DevCon=0 oder Options-Tabelle liefert 0) ->
+*   ueberspringen, das Geraet behaelt seinen bisherigen Basispfad.
 *
-* Passed:  (a1) = Geraetedeskriptor (Init) / Pfaddeskriptor (Term)
+*   Anders als Read/Write/GetStat/SetStat gibt es hier KEINEN vom Aufrufer
+*   bereitgestellten Kommandoblock (a1 zeigt auf den Deskriptor, nicht auf
+*   eine struct dhf_shared) -- die MMIO-Felder werden deshalb direkt
+*   einzeln beschrieben statt ueber die Kopierschleife.
+*
+* Passed:  (a1) = Geraetedeskriptor
+*          (a2) = Static-Storage-Adresse (V_PORT bereits vom Kernel befuellt)
+*          (a4) = Prozessdeskriptor
+*          (a6) = Systemglobal-Zeiger
+* Returns: nichts
+* Error:   (cc) = Carry gesetzt, d1.w = Fehlercode
+* Destroys: d0-d1/a0/a3
+*
+Init:
+        movem.l d0-d1/a0/a3,-(a7)
+        move.w  M$DevCon(a1),d0
+        beq.s   InitDone
+        movea.l a1,a3
+        adda.w  d0,a3                   Options-Tabelle des Deskriptors
+        move.w  (a3),d0                 Offset des Basispfad-Strings darin
+        beq.s   InitDone
+        movea.l a1,a3
+        adda.w  d0,a3                   a3 = Adresse des Basispfad-Strings
+
+        movea.l (a2),a0                 a0 = konfigurierte MMIO-Basis (V_PORT)
+        move.l  a3,SH_A0(a0)            Pfad-String-Zeiger direkt ins Register
+        move.b  #DHF_CMD_INIT,SH_COMMAND(a0)  loest die Verarbeitung aus
+InitDone:
+        movem.l (a7)+,d0-d1/a0/a3
+        andi    #$FE,ccr        Carry loeschen -- kein Fehler
+        rts
+
+        pag
+***************
+* Term -- kein eigener Zustand im Treiber (das Geraet haelt seinen Zustand
+*   selbst, s. dhf_emu_device_t); noch kein DHF_CMD_TERM ausgeloest.
+*
+* Passed:  (a1) = Geraetedeskriptor
 *          (a2) = Static-Storage-Adresse
 *          (a4) = Prozessdeskriptor
 *          (a6) = Systemglobal-Zeiger
@@ -91,7 +162,6 @@ DhfEnt
 * Error:   (cc) = Carry gesetzt, d1.w = Fehlercode
 * Destroys: nichts
 *
-Init:
 Term:
         andi    #$FE,ccr        Carry loeschen -- kein Fehler
         rts
@@ -108,7 +178,7 @@ Term:
 *   status/d0/d1/d2 zurueck.
 *
 * Passed:  (a1) = Pfaddeskriptor-Adresse (zeigt auf struct dhf_shared)
-*          (a2) = Static-Storage-Adresse (ungenutzt)
+*          (a2) = Static-Storage-Adresse (V_PORT bereits vom Kernel befuellt)
 *          (a4) = Prozessdeskriptor
 *          (a6) = Systemglobal-Zeiger
 * Returns: (d0.l) = d1-Feld der struct dhf_shared nach Ausfuehrung
@@ -123,19 +193,23 @@ SetStat:
         movem.l d2-d3/a3,-(a7)         Arbeitsregister retten (a1/a2/a4/a6 laut Konvention unangetastet)
 
 * Registerfelder kopieren (Offset SH_SEQ..SH_D2 einschliesslich, 24 Byte) --
-* NOCH NICHT das command-Byte, das kommt zuletzt.
+* NOCH NICHT das command-Byte, das kommt zuletzt. a0 = konfigurierte MMIO-
+* Basis (V_PORT, vom Kernel automatisch aus M$Port des Deskriptors befuellt).
         lea     SH_SEQ(a1),a3
-        movea.l #DHF_BASE+SH_SEQ,a0
+        movea.l (a2),a0
+        adda.w  #SH_SEQ,a0
         moveq   #24-1,d2
 CopyIn: move.b  (a3)+,(a0)+
         dbra    d2,CopyIn
 
-* command-Byte zuletzt schreiben -- loest die Verarbeitung aus.
-        move.b  SH_COMMAND(a1),DHF_BASE+SH_COMMAND
+* command-Byte zuletzt schreiben -- loest die Verarbeitung aus. a0 zeigt nach
+* der Kopierschleife auf MMIO-Basis+SH_SIZE, deshalb MMIO-Basis erneut laden.
+        movea.l (a2),a0
+        move.b  SH_COMMAND(a1),SH_COMMAND(a0)
 
 * Ergebnis zurueckkopieren: status (1 Byte) und d0/d1/d2 (12 Byte).
-        move.b  DHF_BASE+SH_STATUS,SH_STATUS(a1)
-        lea     DHF_BASE+SH_D0,a0
+        move.b  SH_STATUS(a0),SH_STATUS(a1)
+        lea     SH_D0(a0),a0
         lea     SH_D0(a1),a3
         moveq   #12-1,d3
 CopyOut: move.b (a0)+,(a3)+

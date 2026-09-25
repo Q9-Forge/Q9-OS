@@ -1,4 +1,7 @@
-        nam     dhfmgr_68k
+* 2026-09-27: interner Modulname MUSS <=6 Zeichen sein -- s. driver/dhfdrv_68k.a fuer die
+* volle Herleitung (I$Attach kuerzt intern auf 6 Zeichen, bevor F$Load damit aufgerufen
+* wird). Dateiname bleibt "dhfmgr_68k.a", nur der interne Modulname ist jetzt kurz.
+        nam     dhfmgr
         ttl     Q9-DHF FileManager-Modul
         use     q9defs.d
 *
@@ -85,7 +88,10 @@ F$SRtMem        equ     $29
 * 32 ist die naechste Rundung oberhalb SH_SIZE(28).
 CMDBLK_SIZE     equ     32
 
-        psect   dhfmgr_68k,(Q9FlMgr<<8)!Q9Objct,(Q9ReEnt<<8)!0,Edition,0,DhfMgrEnt
+* Attribut/Revision: ReEnt+SupStat -- I/O-Systemmodule MUESSEN das System-State-Bit
+* gesetzt haben (OS-9 v2.4 Technical I-O Manual, "File Managers"), sonst schlaegt
+* I$Attach fehl -- s. driver/dhfdrv_68k.a fuer die volle Herleitung (2026-09-27).
+        psect   dhfmgr,(Q9FlMgr<<8)!Q9Objct,((Q9ReEnt!Q9SupStat)<<8)!0,Edition,0,DhfMgrEnt
 
 DhfMgrEnt
         dc.w    Mgr_Create      * Offset  0  I$Create  $83

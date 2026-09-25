@@ -1,0 +1,78 @@
+        nam     dhf0
+        ttl     Q9-DHF Geraetedeskriptor
+        use     q9defs.d
+*
+* 2026-09-27: Geraetedeskriptor fuer DHF, nach dem Vorbild der echten Microware-Quellen
+* MWOS/OS9/SRC/IO/RBF/DESC/rbfdesc.a und .../SCF/DESC/scfdesc.a (Feldreihenfolge/-namen
+* 1:1 uebernommen, s. deren Kopfkommentare und MWOS/OS9/SRC/DEFS/module.a). Drei Dinge sind
+* hier bewusst aenderbar, ohne Treiber/Manager neu bauen zu muessen (s. Q9-OS/Q9-DHF-68k/
+* STATUS.md):
+*
+*   1. DHF_PORT (M$Port) -- Hardware-/MMIO-Basisadresse. Der Kernel kopiert diesen Wert
+*      automatisch in Offset 0 des Treiber-eigenen statischen Speichers (V_PORT), noch
+*      bevor Init aufgerufen wird -- verifiziert an MWOS/OS9/SRC/IO/SCF/DRVR/sc68681.a's
+*      echtem Init ("movea.l V_PORT(a2),a3"). driver/dhfdrv_68k.a (ab Edition 1.10) liest
+*      die Basis von dort, nicht mehr als einkompilierte Konstante.
+*   2. Der Name dieses Moduls selbst (aktuell "dhf0", s. "nam"-Zeile oben) -- das ist der
+*      Name, unter dem man das Geraet per "iniz dhf0" anspricht.
+*   3. BASEPATH -- der Host-Dateisystem-Basispfad. driver/dhfdrv_68k.a's Init liest ihn aus
+*      der Options-Tabelle (M$DevCon) und loest damit DHF_CMD_INIT im Simulator aus
+*      (dessen Handler ruft dhf_host_fs_init() auf, s. dhf_emu_device.c) -- der Simulator
+*      braucht dafuer selbst KEINE Aenderung, DHF_CMD_INIT existierte schon, wurde bisher
+*      nur nie ausgeloest (der bisherige Basispfad kam ausschliesslich hartkodiert aus
+*      m68krt.c).
+*
+* M$FMgr/M$PDev (Manager-/Treibername) sind bewusst NICHT konfigurierbar gemacht -- anders
+* als bei RBF/SCF (viele verschiedene Treiber fuer denselben FileManager) gibt es zu DHF
+* nur diesen einen Treiber/Manager, eine Umbenennung waere ohne Nutzen.
+*
+Edition         equ     1
+
+* Hardware-/MMIO-Basisadresse -- MUSS mit Q9_BOARD_DHF_BASE in Q9-Flux-68k/src/devices/dhf/
+* q9_dhf.h uebereinstimmen (dortige Registrierung, nicht dieser Deskriptor, legt fest, WELCHE
+* Adresse das emulierte Geraet tatsaechlich bedient -- diese Zeile sagt dem TREIBER nur, wo
+* er suchen soll).
+DHF_PORT        equ     $FFFF4000
+
+* Mode-Bits (MWOS/OS9/SRC/DEFS/funcs.a "File Access Permissions and Mode values") -- wie
+* rbfdesc.a's "Descriptor Defaults" (Dir_+ISize_+Append_+Exec_+Updat_), aber ohne ISize_/
+* Append_: DHF alloziert keine Dateigroesse vorab und erzwingt kein Anhaengen an EOF.
+Read_           equ     %00000001
+Write_          equ     %00000010
+Exec_           equ     %00000100
+Updat_          equ     Read_+Write_
+Dir_            equ     %10000000
+DHF_MODE        equ     Dir_+Exec_+Updat_
+
+* Reiner Datenmodul -- Sprache 0 (NICHT Q9Objct=1, s. rbfdesc.a/scfdesc.a: "TypeLang set
+* (Devic<<8)+0"), kein Code, deshalb static-size=0 und Einsprungpunkt=0.
+        psect   dhf0,(Q9Devic<<8)!0,(Q9ReEnt<<8)!0,Edition,0,0
+
+        dc.l    DHF_PORT        * M$Port -- Hardware-/MMIO-Basisadresse
+        dc.b    0               * M$Vector -- kein IRQ
+        dc.b    0               * M$IRQLvl -- kein IRQ
+        dc.b    0               * M$Prior -- kein IRQ
+        dc.b    DHF_MODE        * M$Mode -- Geraete-Faehigkeitsbits
+        dc.w    FileMgr         * M$FMgr -- Offset des FileManager-Namens
+        dc.w    DevDrv          * M$PDev -- Offset des Treiber-Namens
+        dc.w    OptTbl          * M$DevCon -- Offset der eigenen Options-Tabelle
+        dc.w    0,0,0,0         * reserviert
+        dc.w    OptLen          * M$Opt -- Groesse der Options-Tabelle in Byte
+
+* Eigene Options-Tabelle: ein Wort mit dem Offset des Basispfad-Strings (eigene Konvention,
+* s. driver/dhfdrv_68k.a Init -- kein Vorbild aus RBF/SCF, da die keinen Host-Dateisystem-
+* Pfad kennen).
+OptTbl
+        dc.w    BasePath
+OptLen  equ     *-OptTbl
+
+* 2026-09-27: interne Modulnamen sind "dhfmgr"/"dhfdrv" (<=6 Zeichen), NICHT die
+* Dateinamen "dhfmgr_68k"/"dhfdrv_68k" -- I$Attach kuerzt laengere Namen intern auf 6
+* Zeichen, bevor es F$Load aufruft (s. driver/dhfdrv_68k.a Kopfkommentar fuer die volle
+* Herleitung per Q9_TRAP_TRACE_ALL-Instrumentierung im echten Emulator).
+FileMgr dc.b    "dhfmgr",0
+DevDrv  dc.b    "dhfdrv",0
+BasePath dc.b   "/tmp/q9dhf_claude_descriptor_test",0
+
+        endsect
+        end
