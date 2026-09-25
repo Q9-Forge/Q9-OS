@@ -1,0 +1,79 @@
+        nam     dhfmgr_68k
+        ttl     Q9-DHF FileManager-Modul (Geruest)
+        use     q9defs.d
+*
+* 2026-09-25: Geruest des echten OS-9-FileManager-Moduls fuer DHF, analog zu
+* driver/dhfdrv_68k.a (dort verifiziert: psect-basierter Modulkopf funktioniert,
+* von "os9 ident/dump" als wohlgeformt erkannt). Fuer den Manager galt bisher
+* nur eine FALSCHE Annahme (_os9_f_viread, s. STATUS.md-Historie) -- diese Datei
+* baut stattdessen auf real verifizierten Fakten auf:
+*
+*   - Modultyp Q9FlMgr=13 (MT_FILEMAN, MWOS/OS9/SRC/DEFS/module.h)
+*   - Sprungtabelle mit GENAU 13 Eintraegen in der Reihenfolge aufsteigender
+*     I$-Aufrufcodes (MWOS/OS9/SRC/DEFS/funcs.h: I_CREATE=$83 .. I_CLOSE=$8f,
+*     13 Werte am Stueck): Create/Open/MakDir/ChgDir/Delete/Seek/Read/Write/
+*     ReadLn/WritLn/GetStt/SetStt/Close.
+*   - EMPIRISCH bestaetigt am echten, gebooteten RBF-Kernelmodul (Q9-Images/
+*     cf_images/OS9SYS/CMDS/BOOTOBJS/rbf): dessen Modulkopf-Feld _mexec
+*     (Standard-"mod_exec"-Kopferweiterung, module.h) zeigt exakt auf eine
+*     Tabelle aus 13 Woertern -- keine Frage mehr, sondern nachgemessen per
+*     xxd/os9-Werkzeug.
+*   - Aufruf: IOMan JSRt direkt in den _mexec-Einsprung (dieselbe a1/a2/a4/a6-
+*     Konvention wie beim Treiber -- a1=Pfaddeskriptor, a2=statischer Speicher,
+*     a4=Prozessdeskriptor, a6=Systemglobal), mit d0 als Funktionscode-Index
+*     (Herleitung, noch NICHT am echten RBF-Code verifiziert -- naechster
+*     Schritt waere ein Ghidra-Abgleich mit dem eigenen Kernel-Disassemblie-
+*     rungsprojekt, s. Q9-OS/Q9-OS-ghidra).
+*
+* ALLE 13 Eintraege sind hier noch reine Stubs (liefern E$UnkSvc=$D0 laut
+* MWOS/SRC/DEFS/errno.h -- NICHT geraten, sondern aus dem echten Header
+* abgelesen). Ziel dieser Runde: nachweisen, dass ein FileManager-Modul
+* (Typ 13) genauso sauber ueber unsere eigene Toolchain (qr68k/ql68k) baubar
+* ist wie das Treibermodul -- die eigentliche Verarbeitungslogik je Aufruf
+* (Pfadnamen kopieren, an den Treiber weiterreichen wie in dhfdrv_68k.a
+* beschrieben, Fehler zurueckmelden) ist ein separater, noch offener Schritt.
+*
+Edition         equ     1
+E_UNKSVC        equ     $D0
+
+        psect   dhfmgr_68k,(Q9FlMgr<<8)!Q9Objct,(Q9ReEnt<<8)!0,Edition,0,DhfMgrEnt
+
+DhfMgrEnt
+        dc.w    Mgr_Create      * Offset  0  I$Create  $83
+        dc.w    Mgr_Open        * Offset  2  I$Open    $84
+        dc.w    Mgr_MakDir      * Offset  4  I$MakDir  $85
+        dc.w    Mgr_ChgDir      * Offset  6  I$ChgDir  $86
+        dc.w    Mgr_Delete      * Offset  8  I$Delete  $87
+        dc.w    Mgr_Seek        * Offset 10  I$Seek    $88
+        dc.w    Mgr_Read        * Offset 12  I$Read    $89
+        dc.w    Mgr_Write       * Offset 14  I$Write   $8a
+        dc.w    Mgr_ReadLn      * Offset 16  I$ReadLn  $8b
+        dc.w    Mgr_WritLn      * Offset 18  I$WritLn  $8c
+        dc.w    Mgr_GetStt      * Offset 20  I$GetStt  $8d
+        dc.w    Mgr_SetStt      * Offset 22  I$SetStt  $8e
+        dc.w    Mgr_Close       * Offset 24  I$Close   $8f
+
+* Alle 13 Einspruenge teilen sich denselben Stub-Rumpf (wie schon bei
+* Read/Write/GetStat/SetStat im Treiber) -- solange keine echte Logik dahinter
+* steckt, spart das Wiederholung und macht den Geruest-Charakter im
+* Sprungtabellen-Dump sofort sichtbar (alle 13 Werte identisch).
+Mgr_Create
+Mgr_Open
+Mgr_MakDir
+Mgr_ChgDir
+Mgr_Delete
+Mgr_Seek
+Mgr_Read
+Mgr_Write
+Mgr_ReadLn
+Mgr_WritLn
+Mgr_GetStt
+Mgr_SetStt
+Mgr_Close
+        moveq   #0,d1                  * moveq erlaubt nur -128..127 -- $D0 passt nicht
+        move.b  #E_UNKSVC,d1           * hinein (waere fehlerhaft vorzeichenerweitert)
+        ori     #1,ccr
+        rts
+
+        endsect
+        end
