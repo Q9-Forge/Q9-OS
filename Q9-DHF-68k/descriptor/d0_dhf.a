@@ -47,7 +47,11 @@ Write_          equ     %00000010
 Exec_           equ     %00000100
 Updat_          equ     Read_+Write_
 Dir_            equ     %10000000
-DHF_MODE        equ     Dir_+Exec_+Updat_
+ISize_          equ     %00100000       * Create: Anfangsgroesse in d2 (funcs.a)
+Append_         equ     %00010000       * Schreiben immer ans Dateiende (funcs.a)
+* 2026-09-26: wie rbfdesc.a ("Mode set Dir_+ISize_+Append_+Exec_+Updat_") -- IOMan lehnt
+* jeden Zugriffsmodus mit einem hier fehlenden Bit ab (E$BMode); "copy" nutzt ISize_.
+DHF_MODE        equ     Dir_+ISize_+Append_+Exec_+Updat_
 
 * Reiner Datenmodul -- Sprache 0 (NICHT Q9Objct=1, s. rbfdesc.a/scfdesc.a: "TypeLang set
 * (Devic<<8)+0"), kein Code, deshalb static-size=0 und Einsprungpunkt=0.
@@ -60,16 +64,52 @@ DHF_MODE        equ     Dir_+Exec_+Updat_
         dc.b    DHF_MODE        * M$Mode -- Geraete-Faehigkeitsbits
         dc.w    FileMgr         * M$FMgr -- Offset des FileManager-Namens
         dc.w    DevDrv          * M$PDev -- Offset des Treiber-Namens
-        dc.w    OptTbl          * M$DevCon -- Offset der eigenen Options-Tabelle
+        dc.w    DevCon          * M$DevCon -- Offset der DHF-eigenen Tabelle (Basispfad)
         dc.w    0,0,0,0         * reserviert
         dc.w    OptLen          * M$Opt -- Groesse der Options-Tabelle in Byte
 
-* Eigene Options-Tabelle: ein Wort mit dem Offset des Basispfad-Strings (eigene Konvention,
-* s. driver/dhfdrv_68k.a Init -- kein Vorbild aus RBF/SCF, da die keinen Host-Dateisystem-
-* Pfad kennen).
+* 2026-09-26: Options-Tabelle (wird von IOMan nach PD_OPT kopiert) im RBF-Aufbau nach
+* MWOS/OS9/SRC/IO/RBF/DESC/rbfdesc.a -- vorher stand hier nur der Basispfad-Offset, dessen
+* oberes Byte ($00) als Geraetetyp PD_DTP gelesen wurde: 0 = SCF. Utilities wie "rename"
+* holen PD_OPT per SS_Opt und verweigern sich bei PD_DTP <> DT_RBF ("pathname not RBF
+* device"). Geometriefelder sind fuer DHF bedeutungslos, nur Typ und Sektorgroesse zaehlen.
 OptTbl
-        dc.w    BasePath
+        dc.b    1               * PD_DTP   Geraetetyp DT_RBF
+        dc.b    0               * PD_DRV   Laufwerksnummer
+        dc.b    0               * PD_STP   Schrittrate
+        dc.b    $80             * PD_TYP   Plattentyp: Festplatte
+        dc.b    0               * PD_DNS   Dichte
+        dc.b    0               * reserviert
+        dc.w    0               * PD_CYL   Zylinder
+        dc.b    0               * PD_SID   Koepfe
+        dc.b    1               * PD_VFY   kein Verify
+        dc.w    0               * PD_SCT   Sektoren/Spur
+        dc.w    0               * PD_T0S   Sektoren/Spur 0
+        dc.w    8               * PD_SAS   Segment-Zuordnungsgroesse
+        dc.b    1               * PD_ILV   Interleave
+        dc.b    0               * PD_TFM   DMA-Modus
+        dc.b    0               * PD_TOffs
+        dc.b    0               * PD_SOffs
+        dc.w    256             * PD_SSize Bytes/Sektor
+        dc.w    0               * PD_Cntl
+        dc.b    0               * PD_Trys
+        dc.b    0               * PD_LUN
+        dc.w    0               * PD_WPC
+        dc.w    0               * PD_RWR
+        dc.w    0               * PD_Park
+        dc.l    0               * PD_LSNOffs
+        dc.w    0               * PD_TotCyls
+        dc.b    0               * PD_CtrlrID
+        dc.b    0               * PD_Rate
+        dc.l    0               * PD_ScsiOpt
+        dc.l    $FFFFFFFF       * PD_MaxCnt
+        dc.l    0               * PD_PartSize
 OptLen  equ     *-OptTbl
+
+* DHF-eigene Tabelle (M$DevCon): ein Wort mit dem Offset des Basispfad-Strings, s.
+* driver/dhfdrv_68k.a Init (kein Vorbild in RBF/SCF, die kennen keinen Host-Pfad).
+DevCon
+        dc.w    BasePath
 
 * 2026-09-27: interne Modulnamen sind "dhfmgr"/"dhfdrv" (<=6 Zeichen), NICHT die
 * Dateinamen "dhfmgr_68k"/"dhfdrv_68k" -- I$Attach kuerzt laengere Namen intern auf 6

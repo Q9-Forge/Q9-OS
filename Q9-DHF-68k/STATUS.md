@@ -619,3 +619,37 @@ an vier Stellen, alle per `Q9_TRAP_TRACE_ALL` auf einer Image-Kopie eingegrenzt:
 
 Neue Gast-Pruefungen 91-97 (Verzeichnis-Delete mit/ohne Dir-Bit, SS_Pos mit Muell im oberen
 Wort, SS_Opt). **Stand: Gast 97/97, Host 14/14**, zweimal hintereinander, je ~11 s.
+
+## 2026-09-26, Nachtrag: echte `rename`- und `free`-Utility laufen
+
+Nutzermeldung: "free und rename funktionieren nicht". Claudia hatte beide als "architektonisch
+nicht abbildbar" eingestuft -- stimmte nicht; per Ablaufverfolgung (`Q9_TRAP_TRACE_ALL`,
+`Q9_ITRACE_LINK`) auf einer Image-Kopie und Disassemblierung der Utilities geklaert:
+
+1. **Geraetetyp.** `rename` holt PD_OPT per SS_Opt und prueft PD_DTP == DT_RBF. Die
+   Options-Tabelle der Deskriptoren bestand nur aus dem Basispfad-Offset (oberes Byte $00 =
+   SCF). Jetzt vollstaendige RBF-Options-Tabelle nach `rbfdesc.a` (DT_RBF, PD_SSize 256, ...),
+   der Basispfad-Offset in einer eigenen `DevCon`-Tabelle (Treiber unveraendert).
+2. **SS_Rename ($42), RBF-Konvention** (nirgends dokumentiert): `rename` wechselt ins
+   Elternverzeichnis, oeffnet "." mit `$82` und ruft SetStt auf diesem VERZEICHNIS mit
+   d2 -> alter Name, d3 -> neuer Name. Manager + Simulator entsprechend; der Eintrag behaelt
+   seinen Platz in der Platztabelle; Namen mit `/`/`..` -> E$BPNam. Die fruehere, geratene
+   Konvention (Pfad = Datei, a0 = neuer Name) haette mit Verzeichnis-Handles ganze
+   Verzeichnisse umbenennen koennen.
+3. **Modus-Faehigkeiten.** Mit DT_RBF legt `copy` Zieldateien mit Modus-Bit ISize_ ($20,
+   Anfangsgroesse in d2) an -- IOMan lehnte das ab (E$BMode), weil `M$Mode` es nicht
+   erlaubte. Jetzt wie `rbfdesc.a`: Dir_+ISize_+Append_+Exec_+Updat_; ISize_ setzt die
+   Dateigroesse (Manager reicht d2 bei Create in SH_A1 durch), Append_ -> O_APPEND.
+4. **SS_VolStore ($45)** (nirgends dokumentiert, Aufbau aus `/CMDS/free`): 16-Byte-Puffer
+   {Bytes/Sektor, Sektoren gesamt, Sektoren frei, groesster freier Block}. `free` fragt das
+   zuerst; ohne liest es LSN0 + Bitmap, aber mit einer Sektorgroesse aus einem RBF-internen
+   PD_OPT-Feld (sonst 256) -- daher zeigte es anfangs "4 GB". Jetzt aus `statvfs()`, 512-Byte-
+   Sektoren: `free /d0` zeigt 1953049944 Sektoren gesamt, 846778712 frei (= `df`). Die
+   Byte-Zeile von `free` laeuft bei >4 GB ueber (32-Bit-Rechnung in `free` selbst, bei jeder
+   grossen RBF-Platte genauso) -- die Sektorzeilen stimmen.
+5. **Rohgeraet `/<geraet>@`** zusaetzlich (fuer Werkzeuge, die LSN0/Bitmap lesen): virtuelles
+   LSN0 (rbf.h `sector0`, Sync "Cruz", dd_maplsn 1) und Bitmap aus `statvfs()`; NIE schreibbar
+   (Open zum Schreiben -> E$WP), damit z.B. `format` dem Host nichts tun kann.
+
+Neue Gast-Pruefungen 98-109, Host H15 (`rename`), H16 (`free`); `dhfrenfree_68k.a` auf die
+RBF-Konvention umgestellt. **Stand: Gast 109/109, Host 16/16.**

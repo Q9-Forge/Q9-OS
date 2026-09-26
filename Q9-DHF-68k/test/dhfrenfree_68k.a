@@ -77,13 +77,25 @@ FreeErr:
         bra     TestRename
 
 * --- SS_Rename ---------------------------------------------------------------
+* 2026-09-26: RBF-Konvention (wie /CMDS/rename): SetStt auf dem mit $82 geoeffneten
+* Verzeichnis /d0, d2 -> alter Name, d3 -> neuer Name
 TestRename:
-        lea     PathNum(pc),a3
-        move.w  (a3),d0
+        lea     DirName(pc),a0
+        move.l  #$82,d0
+        OS9     I_OPEN
+        bcs     RenameErr
+        lea     DirNum(pc),a3
+        move.w  d0,(a3)
         moveq   #SS_Rename,d1
+        lea     OldName(pc),a0
+        move.l  a0,d2
         lea     NewName(pc),a0
+        move.l  a0,d3
         OS9     I_SETSTT
         bcs     RenameErr
+        lea     DirNum(pc),a3
+        move.w  (a3),d0
+        OS9     I_CLOSE
         lea     MsgRenameOk(pc),a0
         move.l  #MsgRenameOkLen,d1
         bsr     PrintMsg
@@ -208,10 +220,13 @@ MsgCloseFail    dc.b    "CLOSE: FEHLER, Code:",$0D
 MsgCloseFailLen equ     *-MsgCloseFail
 
 PathName        dc.b    "/d0/hello.txt",0
-NewName         dc.b    "/d0/hello_renamed.txt",0
+DirName         dc.b    "/d0",0
+OldName         dc.b    "hello.txt",0
+NewName         dc.b    "hello_renamed.txt",0
 
         align   2
 PathNum         ds.w    1
+DirNum          ds.w    1
 HexBuf          ds.b    12
 
         endsect
