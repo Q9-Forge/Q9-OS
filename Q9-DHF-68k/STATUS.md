@@ -716,3 +716,34 @@ H18 (`dsave | mshell`, `diff -r`), Gast 110-118. **Stand: Gast 118/118, Host 18/
    im Schwesterprojekt `Q9-DHFDRV-68k` und im TCP-Backend. Nichts geloescht.
 
 **Stand: Gast 123/123, Host 26/26, ~13 s.**
+
+## 2026-09-26, Nachtrag: Booten von DHF
+
+Ziel (Nutzervorgabe): eine DHF-„Platte“ bootfähig machen. Umgesetzt als **eigener ROM-Booter**
+statt DHF-Module im ROM: der CBOOT-Booter des Q9-Ports (Quellen `MWOS/OS9/68030/PORTS/Q9/
+ROM_CBOOT`, Claude-ROM = dessen ROMBUG-`romboot` + Module, byteidentisch nachgeprüft) bekam
+`io_dhf.c`: INIT ohne Basispfad, OPEN `OS9Boot`, GETSTT (Größe), `getbootmem`, READ in einem
+Stück. Der Booter braucht keine OS-9-Module -- Manager, Treiber und Deskriptor `dd` kommen mit
+dem OS9Boot vom Host. ROM `Claude_cb030_DHF_BIOS.BIN`: romboot 88.236 -> 88.776 Byte, alle 52
+Module unverändert, 400 Byte frei (nichts entfernt, nicht vergrößert).
+
+Dabei gefunden und behoben:
+
+1. **Pfadnamen enden wie bei OS-9 am ersten Zeichen <= $20**, nicht erst am NUL (Emulator,
+   `guest_os9_path`). `sysgo` übergibt `"CMDS"` direkt aus seinen CR-getrennten Konstanten
+   (`"CMDS\rSysgo can't open ..."`) -> vorher E$FNA/E$PNNF für `chx CMDS` und `SYS/startup`.
+   Nur INIT liest weiter bis NUL (Host-Basispfad, darf Leerzeichen enthalten).
+2. **SS_Size bei Dateien >= 256 Byte falsch** (Manager): `MgrGst_Size` benutzte CmdBlk als
+   Statuspuffer, der Treiber schreibt danach das Statusbyte nach CmdBlk+2 -- mitten in die
+   Größe (324 -> 68). **F$Load** fragt SS_Size ab und scheiterte deshalb an JEDEM Modul von DHF
+   (auch `load /d1/...` im CF-System); ohne F$Load startete login keine Shell. Jetzt eigener
+   Puffer `StatBuf`. Neue Gast-Prüfungen 124/125 (SetStt/GetStt SS_Size 300).
+3. INIT ohne Basispfad und ohne `[dhfN] hostpath` -> E$NotRdy (vorher still OK) -- damit bootet
+   der Booter nur von einem ausdrücklich konfigurierten Laufwerk.
+4. Diagnose: `Q9_DHF_DEBUG=2` protokolliert jedes Kommando (seq, d0/d1/d2, a1, Pfad, Status).
+
+Boottest `test/run_dhfboot.sh`: Lauf 1 bootet von einem Klon des Bootbaums (Bootmeldung,
+`mdir`/`devs` zeigen dd/dhfdrv/dhfmgr, `pd`, `dir /dd/SYS`, `echo >/dd/...` landet auf dem
+Host, Netz und xterms starten), Lauf 2 bootet denselben ROM ohne `[dhf0]` von CF.
+
+**Stand: Gast 125/125, Host 26/26; Boottest 13/13.**

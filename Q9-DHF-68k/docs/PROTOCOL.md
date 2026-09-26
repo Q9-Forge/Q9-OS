@@ -58,7 +58,7 @@ eigenem Basispfad, eigener Handle- und Nummerntabelle.
 | 11 | DELETE | a0 Pfad | – | I$Delete |
 | 12 | MKDIR | a0 Pfad, d1 Attribute | – | I$MakDir |
 | 13 | CHDIR | a0 Pfad | a0 Verzeichnisnummer (→ P$DIO+4) | I$ChgDir |
-| 18 | INIT | a0 Basispfad, d1 Flags (Bit 0 = nur lesbar) | – | iniz (Treiber-Init) |
+| 18 | INIT | a0 Basispfad (0 = nur `[dhfN] hostpath`, sonst E$NotRdy), d1 Flags (Bit 0 = nur lesbar) | – | iniz (Treiber-Init), ROM-Booter |
 | 19 | TERM | – | – | Treiber-Term |
 | 20 | GETFD | d0, d1 Anzahl, a1 Puffer | FD-Abbild (Figure 7-2) | SS_FD |
 | 21 | SETATTR | d0, d1 Attributbyte | – | SS_Attr |
@@ -88,6 +88,8 @@ Alles per Ablaufverfolgung der echten Utilities ermittelt (s. STATUS.md):
   pd_dfd $BA als **Byteadresse** (Sektornummer × 256), pd_dvt $C2.
 - **Aktuelles Verzeichnis je Prozess** in P$DIO ($148 im Prozessdeskriptor; +0 Gerät von
   IOMan, +4 DHF-Verzeichnisnummer; Ausführungsverzeichnis ab +$10). Wird vererbt.
+- **Pfadnamen** enden wie bei OS-9 am ersten Zeichen <= $20 (NUL, CR, Leerzeichen) – `sysgo`
+  übergibt CR-terminierte Namen. Nur der INIT-Basispfad (Host) wird bis NUL gelesen.
 - **Pfade:** Gerätename entfällt (Basispfad = Wurzel), „...“ = zwei Ebenen hoch usw.,
   „..“ nie über die Wurzel hinaus.
 - **Öffnen:** Verzeichnis ohne Dir-Bit ($80) → E$FNA, Datei mit Dir-Bit → E$FNA
@@ -122,4 +124,11 @@ Wort 1 Flags, Bit 0 = nur lesbar).
 ## Diagnose
 
 `Q9_DHF_DEBUG=1` in der Umgebung des Emulators: Jeder Open/Create wird mit aufgelöstem
-Host-Pfad und pd_fd/pd_dfd protokolliert.
+Host-Pfad und pd_fd/pd_dfd protokolliert. `Q9_DHF_DEBUG=2` zusätzlich jedes Kommando mit
+seq, d0/d1/d2, a1, Pfad und Status.
+
+## Booten
+
+Der ROM-Booter `bootdhf` (Q9-Port `ROM_CBOOT/io_dhf.c`) benutzt Instanz 0 ohne OS-9: INIT mit
+a0 = 0, OPEN `OS9Boot` (Pfadnummer 1, Modus Read), GETSTT, READ der ganzen Datei nach
+`bootram`, CLOSE. Zeichenketten legt er auf den Stack (das Gerät liest nur Gast-RAM).

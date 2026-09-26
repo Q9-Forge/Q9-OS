@@ -513,16 +513,20 @@ MgrGst_Size:
         moveq   #0,d2
         move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer (wie MgrCommon)
         movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*) -- direkt, kein F$SRqMem
-        lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock, dient hier
-                                         * zugleich als 16-Byte-Statuspuffer fuer den Treiber
-        move.l  a1,SH_A1(a1)            * (a0) fuer den Treiber: Zielpuffer = derselbe Block
+        lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock
+* 2026-09-26: eigener 16-Byte-Statuspuffer (StatBuf). Vorher diente CmdBlk selbst als Puffer
+* -- der Treiber kopiert nach dem Aufruf aber das Statusbyte nach CmdBlk+2 zurueck, mitten in
+* die Dateigroesse: bei >= 256 Byte kam eine falsche Groesse heraus (324 -> 68). F$Load fragt
+* SS_Size ab und scheiterte daran bei JEDEM Modul von DHF (gefunden beim Booten von DHF).
+        lea     StatBuf(pc),a0
+        move.l  a0,SH_A1(a1)            * Zielpuffer fuer den 16-Byte-Statusblock
         move.l  d2,SH_D0(a1)
         move.b  #DHF_CMD_GETSTT,SH_COMMAND(a1)
         bsr     CallDrv
         bcc.s   MgrGst_SizeOk
         rts
 MgrGst_SizeOk:
-        move.l  (a1),REG_D2(a5)         * Statuspuffer-Offset 0 = Dateigroesse (dhf_host_fs_getstat)
+        move.l  StatBuf(pc),REG_D2(a5)  * Offset 0 = Dateigroesse (dhf_host_fs_getstat_at)
         andi    #$FE,ccr
         rts
 
@@ -897,6 +901,7 @@ MgrSst_RenameOk:
 * (wie bei vielen OS-9/68k-Systemen ohne durchgaengige Speicherschutz-Durchsetzung) reiner
 * Programmkonvention ohne Hardware-Durchsetzung bleibt.
 CmdBlk  ds.b    CMDBLK_SIZE
+StatBuf ds.b    16              * SS_Size: {Groesse, Modus, mtime, atime}, s. MgrGst_Size
 
         endsect
         end

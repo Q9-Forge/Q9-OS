@@ -320,6 +320,21 @@ FreeZero:
         CHK     0,N44
         bsr     TakePath
 
+* 2026-09-26: Groesse >= 256 -- MgrGst_Size las die Groesse frueher aus CmdBlk, in dessen
+* Byte 2 der Treiber das Statusbyte zurueckschreibt (300 = $12C kam als $2C = 44 an; F$Load
+* von DHF scheiterte daran, gefunden beim Booten von DHF)
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        move.l  #300,d2
+        OS9     I_SETSTT
+        CHK     0,N124
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        move.l  d2,d6
+        VAL     300,N125
+
         move.w  d5,d0
         moveq   #SS_Size,d1
         moveq   #5,d2
@@ -1301,6 +1316,8 @@ N120    dc.b    "120 SS_Lock ganze Datei",0
 N121    dc.b    "121 Write ueber 2. Pfad desselben Prozesses",0
 N122    dc.b    "122 SS_Lock 0 (freigeben)",0
 N123    dc.b    "123 Share_: zweiter Open desselben Prozesses",0
+N124    dc.b    "124 SetStt SS_Size 300",0
+N125    dc.b    "125 SS_Size = 300 (>= 256)",0
 
         align   2
 NOk             ds.w    1

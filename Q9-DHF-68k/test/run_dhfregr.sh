@@ -14,6 +14,7 @@
 #
 # Aufruf: Q9_LOGIN_PASS=<Passwort fuer "super"> test/run_dhfregr.sh [-k] [-i]
 #         -k  Emulator-Protokoll und Arbeitsverzeichnis behalten
+#         -v  Emulator-Sitzung live mitzeigen (Login, Kommandos, Ausgaben)
 #         -i  wenn alles gruen: die frisch gebauten Module auch ins ECHTE Image
 #             einspielen (nur, wenn gerade kein Emulator mit dhf_claude.q9 laeuft)
 # Exit:   0 = alles gruen, 1 = mindestens ein FEHLER, 2 = Test lief nicht durch
@@ -29,8 +30,8 @@
 # 26-09-26│ 1.00 │ Erster Wurf                                               │ Cld
 #═════════╧══════╧═══════════════════════════════════════════════════════════╧══════
 set -u
-KEEP=0; INSTALL=0
-for a in "$@"; do case "$a" in -k) KEEP=1;; -i) INSTALL=1;; *) echo "unbekannte Option $a" >&2; exit 2;; esac; done
+KEEP=0; INSTALL=0; VERBOSE=0
+for a in "$@"; do case "$a" in -k) KEEP=1;; -i) INSTALL=1;; -v) VERBOSE=1;; *) echo "unbekannte Option $a" >&2; exit 2;; esac; done
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 DHF=$(cd "$HERE/.." && pwd)
@@ -114,7 +115,7 @@ HELLO_SUM=$(md5 -q "$ROOT/d0/hello.txt" 2>/dev/null || md5sum "$ROOT/d0/hello.tx
 # Nachtrag SS_Rename/SS_Free); "ROOT# " allein passt nach "chd" nicht mehr (Prompt "/d0/x# ").
 LOG=$W/emu.log
 cat >"$W/run.exp" <<EOF
-log_user 0
+log_user $VERBOSE
 log_file -a $LOG
 set timeout $TMO
 set prompt {# \$}
@@ -203,7 +204,7 @@ host "1 d0/rt existiert als Verzeichnis"          '[ -d "$ROOT/d0/rt" ]'
 host "2 d0/rt ist fuer den Besitzer rwx"          '[ -r "$ROOT/d0/rt" ] && [ -w "$ROOT/d0/rt" ] && [ -x "$ROOT/d0/rt" ]'
 host "3 d0/rt ist danach leer"                    '[ -z "$(ls -A "$ROOT/d0/rt" 2>/dev/null)" ]'
 host "4 hello.txt unveraendert"                   '[ "$HELLO_SUM" = "$(md5 -q "$ROOT/d0/hello.txt" 2>/dev/null || md5sum "$ROOT/d0/hello.txt" | cut -d" " -f1)" ]'
-host "5 nichts ausserhalb von d0 angelegt"        '[ -z "$(ls -A "$ROOT" | grep -v "^d0$" | grep -v "^d0_nachbar$")" ] && [ "$(cat "$ROOT/d0_nachbar/geheim.txt")" = geheim ]'
+host "5 nichts ausserhalb von d0 angelegt"        '[ -z "$(ls -A "$ROOT" | grep -v "^d0$" | grep -v "^d0_nachbar$" | grep -v "^boot$")" ] && [ "$(cat "$ROOT/d0_nachbar/geheim.txt")" = geheim ]'
 host "6 list /d0/hello.txt (Standard-Utility)"    'grep -q "^Hallo von Claude, DHF-Testdatei" "$W/emu.txt"'
 host "7 attr /d0 zeigt Verzeichnis"               'grep -qE "^d[-a-z]+ +/d0$" "$W/emu.txt"'
 host "8 makdir /d0/ut legt Host-Verzeichnis an"   '[ -d "$ROOT/d0/ut" ]'
