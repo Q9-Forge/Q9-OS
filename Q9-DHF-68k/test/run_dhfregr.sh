@@ -9,7 +9,7 @@
 #         Q9-Images/emu_config/dhf_claude.q9 (dessen /SYS/startup haengt /d0 und /d1
 #         selbst an), laesst test/dhfregr_68k.a laufen, prueft danach die
 #         Host-Seite unter Q9-Images/dhf_root, laesst zusaetzlich die ECHTEN OS-9-Kommandos
-#         list/attr/makdir/copy/del/deldir -q/rename/free und eine Shell-Umleitung (echo >) auf /d0 los und
+#         list/attr/makdir/copy/del/deldir -q/rename/free/dsave, bash-getwd und eine Shell-Umleitung (echo >) auf /d0 los und
 #         fasst alles zusammen.
 #
 # Aufruf: Q9_LOGIN_PASS=<Passwort fuer "super"> test/run_dhfregr.sh [-k] [-i]
@@ -95,21 +95,24 @@ done <<<"$MODS"
 mkdir -p "$ROOT/d0"
 for d in rt ut dd; do chmod -R u+rwx "$ROOT/d0/$d" 2>/dev/null; rm -rf "$ROOT/d0/$d"; done
 rm -f "$ROOT/d0/rn2.txt"; cp "$ROOT/d0/hello.txt" "$ROOT/d0/rn.txt"   # fuer "rename"
+rm -rf "$ROOT/d0/dsq" "$ROOT/d0/dsz"                                  # fuer "dsave"
+mkdir -p "$ROOT/d0/dsq/a/b"; printf "eins\r" >"$ROOT/d0/dsq/f1"; printf "zwei\r" >"$ROOT/d0/dsq/a/f2"
+cp "$ROOT/d0/hello.txt" "$ROOT/d0/dsq/a/b/f3"
 # Koeder fuer Fall 86: Nachbarverzeichnis, dessen Name mit dem d0-Basispfad BEGINNT
 mkdir -p "$ROOT/d0_nachbar"; echo geheim >"$ROOT/d0_nachbar/geheim.txt"
 D1ROOT=$FORGE/Q9-Images/cf_images/OS9SYS
 HELLO_SUM=$(md5 -q "$ROOT/d0/hello.txt" 2>/dev/null || md5sum "$ROOT/d0/hello.txt" | cut -d' ' -f1)
 
 #── 4. Emulator ────────────────────────────────────────────────────────────────────────
-# Prompt-Muster bewusst auf "ROOT# " festgenagelt: das fruehere [#$] ?$ griff auf jedes
-# "$" der Testausgabe (Hexwerte, "E$CEF") und beendete den Emulator mitten im Lauf
-# (s. STATUS.md, Nachtrag SS_Rename/SS_Free).
+# Prompt-Muster "# " am Pufferende: das fruehere [#$] ?$ griff auf jedes "$" der
+# Testausgabe (Hexwerte, "E$CEF") und beendete den Emulator mitten im Lauf (s. STATUS.md,
+# Nachtrag SS_Rename/SS_Free); "ROOT# " allein passt nach "chd" nicht mehr (Prompt "/d0/x# ").
 LOG=$W/emu.log
 cat >"$W/run.exp" <<EOF
 log_user 0
 log_file -a $LOG
 set timeout $TMO
-set prompt {ROOT# \$}
+set prompt {# \$}
 cd "$EMU"
 spawn ./build/macos/q9.exe "$CFG"
 # ACHTUNG: expect-Musterlisten in {} MUESSEN mehrzeilig sein -- einzeilig liest expect das
@@ -155,6 +158,12 @@ run "copy /d0/hello.txt /d0/dd/unter/g.txt"
 run "deldir -q /d0/dd"
 run "rename /d0/rn.txt rn2.txt"
 run "free /d0"
+run "chd /d0/ut"
+run "bash -c pwd"
+run "makdir /d0/dsz"
+run "chd /d0/dsq"
+run "dsave -s /d0/dsz | mshell"
+run "chd /dd/HOME/ROOT"
 # Alle Pfade sind jetzt geschlossen -> der Emulator darf KEINE Datei unter dhf_root mehr
 # offen halten (Beleg dafuer, dass I\$Close den Host wirklich erreicht, s. Mgr_Close/PD_COUNT)
 catch {exec lsof -p [exp_pid] > $W/lsof.txt}
@@ -198,12 +207,14 @@ host "13 d1: list /d1/cfboot_os9.bl = Host-Datei" 'grep -qx "/c0/CMDS/BOOTOBJS/c
 
 host "14 deldir -q /d0/dd loescht rekursiv"     '[ ! -e "$ROOT/d0/dd" ]'
 host "16 free /d0 meldet freien Platz"           'grep -q "free on media" "$W/emu.txt" && ! grep -q "free: can" "$W/emu.txt"'
+host "17 bash getwd in /d0/ut (pwd)"            'grep -qx "/d0/ut" "$W/emu.txt"'
+host "18 dsave | mshell: Baum 1:1 kopiert"          'diff -r "$ROOT/d0/dsq" "$ROOT/d0/dsz" >/dev/null 2>&1'
 host "15 rename /d0/rn.txt rn2.txt"               '[ ! -e "$ROOT/d0/rn.txt" ] && [ -f "$ROOT/d0/rn2.txt" ]'
 
 TOTAL_FAIL=$((G_FAIL+H_FAIL))
 echo "══ ERGEBNIS: Gast $G_OK OK / $G_FAIL FEHLER, Host $H_OK OK / $H_FAIL FEHLER"
 for d in rt ut dd; do chmod -R u+rwx "$ROOT/d0/$d" 2>/dev/null; rm -rf "$ROOT/d0/$d"; done
-rm -rf "$ROOT/d0_nachbar"; rm -f "$ROOT/d0/rn.txt" "$ROOT/d0/rn2.txt"
+rm -rf "$ROOT/d0_nachbar" "$ROOT/d0/dsq" "$ROOT/d0/dsz"; rm -f "$ROOT/d0/rn.txt" "$ROOT/d0/rn2.txt"
 [ $TOTAL_FAIL = 0 ] || exit 1
 if [ $INSTALL = 1 ]; then
     if pgrep -f "q9.exe .*dhf_claude.q9" >/dev/null; then

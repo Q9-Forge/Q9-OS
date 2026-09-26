@@ -540,8 +540,8 @@ LsnZero:
         VAL     33,N84                  * Stuecke ueber Eintragsgrenzen hinweg
         moveq   #0,d6
         move.b  RBuf+31(pc),d6
-        VAL     $2E,N85                 * Pos. 32 = erstes Byte von ".." ("." ohne Hochbit);
-                                         * ohne wirksamen Seek stuende hier 0 (Eintrag 0, Byte 31)
+        VAL     $AE,N85                 * Pos. 32 = Eintrag 1 = "." ("." mit Hochbit, RBF-Reihen-
+                                         * folge ".." vor "."); ohne Seek stuende hier 0
         move.w  d5,d0
         OS9     I_CLOSE
 
@@ -557,6 +557,100 @@ LsnZero:
         bcs.s   RelNo
         OS9     I_CLOSE
 RelNo:
+        lea     PDots(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN                  * ".../hello.txt": "..." = zwei Ebenen hoch (OS-9)
+        CHK     0,N115
+        bcs.s   DotsNo
+        OS9     I_CLOSE
+DotsNo:
+* getwd-Grundlage (so ermittelt bash das aktuelle Verzeichnis): pd_fd von "." (SS_Opt,
+* rbf_opt Offset $36) muss der Sektornummer des Eintrags "rt" in ".." entsprechen
+        lea     PDot(pc),a0
+        move.l  #M_DIRREAD,d0
+        OS9     I_OPEN
+        bsr     TakePath
+        bsr     ClearRB
+        move.w  d5,d0
+        moveq   #SS_Opt,d1
+        lea     OptBuf(pc),a0
+        OS9     I_GETSTT
+        move.w  d5,d0
+        moveq   #0,d1
+        OS9     I_SEEK
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #2,d1
+        OS9     I_READ
+        moveq   #0,d6
+        move.w  RBuf(pc),d6
+        VAL     $2EAE,N114              * Eintrag 0 = ".." (Hochbit am zweiten Punkt)
+        move.w  d5,d0                   * so macht es dsave: Eintrag 1 (= ".") von "." lesen
+        moveq   #32,d1
+        OS9     I_SEEK
+        move.w  d5,d0
+        lea     DirBuf(pc),a0
+        moveq   #32,d1
+        OS9     I_READ
+        lea     DirBuf(pc),a2
+        moveq   #0,d3
+        move.b  29(a2),d3
+        lsl.l   #8,d3
+        move.b  30(a2),d3
+        lsl.l   #8,d3
+        move.b  31(a2),d3
+        lea     LsnDot(pc),a2
+        move.l  d3,(a2)                 * Sektornummer aus Eintrag "." merken
+        move.w  d5,d0
+        OS9     I_CLOSE
+        move.l  OptBuf+$36(pc),d4       * pd_fd von "."
+        move.l  OptBuf+$3A(pc),d6       * pd_dfd von "." = Verzeichnis, in dem "." steht = es selbst
+        move.l  d4,d7
+        pea     N112(pc)
+        bsr     ReportSP
+        move.l  d4,d6
+        moveq   #1,d7
+        tst.l   d6
+        beq.s   FdZero
+        move.l  d6,d7
+FdZero:
+        pea     N110(pc)
+        bsr     ReportSP
+        lea     PDotDot(pc),a0
+        move.l  #M_DIRREAD,d0
+        OS9     I_OPEN
+        bsr     TakePath
+        moveq   #0,d6                   * gefundene Sektornummer von "rt"
+        moveq   #49,d2
+GwLoop:
+        move.w  d5,d0
+        lea     DirBuf(pc),a0
+        moveq   #32,d1
+        OS9     I_READ
+        bcs.s   GwEnd
+        lea     DirBuf(pc),a2
+        cmpi.w  #$72F4,(a2)             * "rt" (Hochbit am letzten Zeichen)
+        bne.s   GwNext
+        moveq   #0,d6
+        move.b  29(a2),d6
+        lsl.l   #8,d6
+        move.b  30(a2),d6
+        lsl.l   #8,d6
+        move.b  31(a2),d6
+        bra.s   GwEnd
+GwNext:
+        dbra    d2,GwLoop
+GwEnd:
+        move.w  d5,d0
+        OS9     I_CLOSE
+        move.l  d4,d7
+        lsr.l   #8,d7                   * pd_fd ist Byteadresse (x pd_ssize 256), s. bash getwd
+        pea     N111(pc)
+        bsr     ReportSP                * ist = Eintrag in "..", soll = pd_fd von "."
+        move.l  LsnDot(pc),d7
+        pea     N113(pc)
+        bsr     ReportSP                * ist = Eintrag in "..", soll = Eintrag "." (dsave)
         lea     PD0(pc),a0
         moveq   #M_READ,d0
         OS9     I_CHGDIR
@@ -730,11 +824,11 @@ RawWNo:
         lea     PEsc(pc),a0
         moveq   #M_READ,d0
         OS9     I_OPEN
-        CHK     E_BPNAM,N69             * Ausbruch aus dem Basisverzeichnis
+        CHK     E_PNNF,N69              * ".." bleibt in der Wurzel (wie RBF) -> nicht gefunden
         lea     PSib(pc),a0
         moveq   #M_READ,d0
         OS9     I_OPEN
-        CHK     E_BPNAM,N86             * Nachbarverzeichnis mit gleichem Namensanfang
+        CHK     E_PNNF,N86              * Nachbarverzeichnis unerreichbar (".." bleibt in der Wurzel)
         lea     PD0(pc),a0
         moveq   #M_READ,d0              * Verzeichnis OHNE Dir-Bit oeffnen
         OS9     I_OPEN
@@ -742,6 +836,48 @@ RawWNo:
         bcs.s   FnaNo
         OS9     I_CLOSE
 FnaNo:
+        lea     PHello(pc),a0
+        move.l  #M_DIRREAD,d0           * Datei MIT Dir-Bit oeffnen
+        OS9     I_OPEN
+        CHK     E_FNA,N116              * RBF-Verhalten, "copy" erkennt daran Dateien
+        bcs.s   FnaNo2
+        OS9     I_CLOSE
+FnaNo2:
+* SetStt SS_FD: FD_DAT (Offset 3) setzen, per GetStt SS_FD zuruecklesen
+        lea     PFdt(pc),a0
+        moveq   #M_UPDATE,d0
+        move.l  #$1B,d1
+        OS9     I_CREATE
+        bsr     TakePath
+        bsr     ClearFD
+        lea     FDBuf(pc),a0
+        move.b  #101,3(a0)              * 2001
+        move.b  #2,4(a0)                * Februar
+        move.b  #3,5(a0)                * 3.
+        move.b  #4,6(a0)                * 04:05
+        move.b  #5,7(a0)
+        move.w  d5,d0
+        moveq   #SS_FD,d1
+        OS9     I_SETSTT
+        CHK     0,N117
+        bsr     ClearFD
+        move.w  d5,d0
+        moveq   #SS_FD,d1
+        moveq   #16,d2
+        lea     FDBuf(pc),a0
+        OS9     I_GETSTT
+        lea     FDBuf+3(pc),a2
+        moveq   #0,d6
+        moveq   #3,d0
+FdtL:   lsl.l   #8,d6
+        move.b  (a2)+,d6
+        dbra    d0,FdtL
+        VAL     $65020304,N118          * Jahr/Monat/Tag/Stunde zurueckgelesen
+        move.w  d5,d0
+        OS9     I_CLOSE
+        lea     PFdt(pc),a0
+        moveq   #M_WRITE,d0
+        OS9     I_DELETE
         bcs.s   SibNo
         OS9     I_CLOSE
 SibNo:
@@ -958,6 +1094,11 @@ NameB           dc.b    "b.txt",0
 NameEsc         dc.b    "../raus.txt",0
 PSize           dc.b    "/d0/rt/gross.txt",0
 PRaw            dc.b    "/d0@",0
+PDot            dc.b    ".",0
+PDotDot         dc.b    "..",0
+PDots           dc.b    ".../hello.txt",0
+PHello          dc.b    "/d0/hello.txt",0
+PFdt            dc.b    "/d0/rt/fdt.txt",0
 PSub            dc.b    "/d0/rt/sub",0
 PEsc            dc.b    "/d0/../../../../../../../../etc/hosts",0
 
@@ -1033,7 +1174,7 @@ N65     dc.b    "65 Delete b.txt",0
 N66     dc.b    "66 b.txt weg -> E$PNNF",0
 N67     dc.b    "67 Delete fehlt -> E$PNNF",0
 N68     dc.b    "68 Create in fehlendem Verz. -> E$PNNF",0
-N69     dc.b    "69 Basispfad-Ausbruch -> E$BPNam",0
+N69     dc.b    "69 Basispfad-Ausbruch per .. -> E$PNNF",0
 N70     dc.b    "70 Create dup.txt",0
 N71     dc.b    "71 I$Dup",0
 N72     dc.b    "72 Close Original (Abbild offen)",0
@@ -1050,7 +1191,7 @@ N82     dc.b    "82 SS_Size Verzeichnis 96",0
 N83     dc.b    "83 SS_EOF Verzeichnis-Ende",0
 N84     dc.b    "84 Read 33 ab Pos. 1 -> 33 Byte",0
 N85     dc.b    "85 Byteposition 32 korrekt",0
-N86     dc.b    "86 Nachbarverz. d0_nachbar -> E$BPNam",0
+N86     dc.b    "86 Nachbarverz. d0_nachbar -> E$PNNF",0
 N87     dc.b    "87 Verzeichnis ohne Dir-Bit -> E$FNA",0
 N88     dc.b    "88 Eintrag traegt Sektornummer <>0",0
 N89     dc.b    "89 GetStt SS_FDInf",0
@@ -1074,6 +1215,15 @@ N106    dc.b    "106 Open Rohgeraet zum Schreiben -> E$WP",0
 N107    dc.b    "107 GetStt SS_VolStore",0
 N108    dc.b    "108 VolStore: 512 Byte/Sektor",0
 N109    dc.b    "109 VolStore: 0 < frei <= gesamt",0
+N110    dc.b    "110 pd_fd von . (SS_Opt) <> 0",0
+N111    dc.b    "111 Eintrag rt in .. = pd_fd>>8 von .",0
+N112    dc.b    "112 pd_dfd von . = pd_fd von . (RBF)",0
+N113    dc.b    "113 Eintrag rt in .. = Eintrag 1 (.) in rt (dsave)",0
+N114    dc.b    "114 Eintrag 0 ist .. (RBF-Reihenfolge)",0
+N115    dc.b    "115 Open .../hello.txt (drei Punkte = 2 Ebenen)",0
+N116    dc.b    "116 Datei mit Dir-Bit -> E$FNA",0
+N117    dc.b    "117 SetStt SS_FD (Datum setzen)",0
+N118    dc.b    "118 FD_DAT zurueckgelesen = 2001-02-03 04h",0
 
         align   2
 NOk             ds.w    1
@@ -1082,6 +1232,8 @@ LineBuf         ds.b    96
 RBuf            ds.b    64
 FDBuf           ds.b    16
 DirBuf          ds.b    32
+OptBuf          ds.b    128
+LsnDot          ds.l    1
 
         endsect
         end

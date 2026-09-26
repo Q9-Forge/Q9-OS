@@ -653,3 +653,41 @@ nicht abbildbar" eingestuft -- stimmte nicht; per Ablaufverfolgung (`Q9_TRAP_TRA
 
 Neue Gast-Pruefungen 98-109, Host H15 (`rename`), H16 (`free`); `dhfrenfree_68k.a` auf die
 RBF-Konvention umgestellt. **Stand: Gast 109/109, Host 16/16.**
+
+## 2026-09-26, Nachtrag: `dsave` und bashs `getwd` -- sechs weitere RBF-Eigenheiten
+
+Nutzermeldung: `chd /d1; dsave -e -s /d0/d1` bricht mit "shell-init: getwd: cannot access
+parent directories" und "tmode ... cannot execute binary file" ab. Per Ablaufverfolgung
+(`Q9_TRAP_TRACE_ALL`, `Q9_ITRACE_PATH`/`_LINK`), Disassemblierung von `/CMDS/dsave` und
+`/CMDS/bash` und neuer Diagnose `Q9_DHF_DEBUG=1` (Simulator protokolliert jeden Open mit
+aufgeloestem Pfad und pd_fd/pd_dfd) eingegrenzt:
+
+1. **Eintragsreihenfolge.** RBF: Eintrag 0 = "..", Eintrag 1 = "." -- DHF hatte es umgekehrt.
+   `dsave` liest beide, erkennt an Gleichheit die Wurzel und sucht sonst Eintrag 1 im
+   Elternverzeichnis ('can't read directory ".."').
+2. **pd_fd/pd_dfd im RBF-Optionsteil** (rbf.h `struct rbf_opt`: pd_att $B5, pd_fd $B6,
+   pd_dfd $BA, pd_dvt $C2) wurden nie gefuellt. bashs getwd vergleicht pd_fd von "." (per
+   SS_Opt) mit den Sektornummern im Elternverzeichnis. pd_fd ist eine BYTEADRESSE (bash rechnet
+   `pd_fd >> log2(pd_ssize)`), pd_dfd = Verzeichnis, in dem der letzte Pfadbestandteil steht.
+   Dazu: der Treiber kopierte nur d0/d1/d2 zurueck (jetzt auch a0/a1), und MgrCommon hielt den
+   Pfaddeskriptor in a0 -- das CallDrv ueberschreibt; **PD_ATT wurde dadurch seit jeher IN DAS
+   TREIBERMODUL geschrieben** statt in den Pfaddeskriptor (jetzt a2).
+3. **Mehrpunkt-Pfade.** OS-9: "..." = zwei Ebenen hoch, "...." = drei; bash bildet genau so
+   "./..", "./...", "./....". Simulator normalisiert Pfade jetzt selbst (Komponente fuer
+   Komponente, ".." nie ueber die Laufwerkswurzel -- `/d0/..` = `/d0` wie RBF).
+4. **Aktuelles Verzeichnis je Prozess.** Es gab EIN cwd je Laufwerk fuer alle Prozesse --
+   `dsave ... | mshell` verstellte sich gegenseitig das Verzeichnis ("can't chd to b"). Jetzt
+   wie RBF: ChgDir legt die Verzeichnisnummer in P$DIO+4 des Prozessdeskriptors ab (per
+   F$GPrDsc vermessen: P$DIO $148, +0 Geraetetabelle von IOMan, +4 FileManager-Daten, +$10
+   Ausfuehrungsverzeichnis); der Manager schickt sie bei jedem Aufruf in SH_SEQ mit, Kinder
+   erben sie beim Fork. Dafuer ist die Nummerntabelle jetzt dauerhaft (Hash, bis 16 Mio.,
+   kein Ring mehr -- ein wiederverwendeter Platz haette gemerkte Verzeichnisse umgebogen).
+5. **Datei mit Dir-Bit oeffnen -> E$FNA** (wie RBF). `copy` prueft so, ob die Quelle ein
+   Verzeichnis ist ("you must specify -z or files to copy").
+6. **SetStt SS_FD** (Write FD, 68k_tech.pdf S. 587): FD_DAT -> Aenderungszeit der Host-Datei.
+   `copy` dupliziert so das FD der Quelle ("can't put file descriptor").
+
+**Nicht DHF:** `dsave -e` scheitert auch auf reinem RBF (`/dd/SYS` -> `/r0`) identisch --
+`dsave -e` startet "shell", in diesem Image die bash, die das Skript nicht versteht. Richtig:
+`chd /d1; dsave -s /d0/ziel | mshell` (Microware-Shell). Runner-Pruefungen H17 (bash getwd),
+H18 (`dsave | mshell`, `diff -r`), Gast 110-118. **Stand: Gast 118/118, Host 18/18.**

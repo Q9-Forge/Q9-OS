@@ -188,7 +188,7 @@ Term:
 *   dann als LETZTES das command-Byte (Offset 1) -- das Schreiben dieses
 *   einen Bytes loest im Geraet die komplette Verarbeitung synchron aus
 *   (dhf_emu_device_write8, s. dessen Kopfkommentar). Danach kopieren wir
-*   status/d0/d1/d2 zurueck.
+*   status/a0/a1/d0/d1/d2 zurueck.
 *
 * Passed:  (a1) = Pfaddeskriptor-Adresse (zeigt auf struct dhf_shared)
 *          (a2) = Static-Storage-Adresse (V_PORT bereits vom Kernel befuellt)
@@ -220,11 +220,13 @@ CopyIn: move.b  (a3)+,(a0)+
         movea.l (a2),a0
         move.b  SH_COMMAND(a1),SH_COMMAND(a0)
 
-* Ergebnis zurueckkopieren: status (1 Byte) und d0/d1/d2 (12 Byte).
+* Ergebnis zurueckkopieren: status (1 Byte) und a0/a1/d0/d1/d2 (20 Byte). 2026-09-26: vorher nur
+* d0/d1/d2 -- Open/Create liefern jetzt in a0/a1 die Pseudo-Sektornummern fuer pd_fd/pd_dfd
+* (s. dhfmgr_68k.a MgrCommon); alle anderen Kommandos geben a0/a1 unveraendert zurueck.
         move.b  SH_STATUS(a0),SH_STATUS(a1)
-        lea     SH_D0(a0),a0
-        lea     SH_D0(a1),a3
-        moveq   #12-1,d3
+        lea     SH_A0(a0),a0
+        lea     SH_A0(a1),a3
+        moveq   #20-1,d3
 CopyOut: move.b (a0)+,(a3)+
         dbra    d3,CopyOut
 
