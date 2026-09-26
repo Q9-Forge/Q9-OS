@@ -67,21 +67,35 @@ DHF_CMD_DELETE  equ     11
 DHF_CMD_MKDIR   equ     12
 DHF_CMD_CHDIR   equ     13
 DHF_CMD_GETFD   equ     20              * I$GetStt SS_FD, s. dhf_proto.h/Mgr_GetStt
+DHF_CMD_SETATTR equ     21              * I$SetStt SS_Attr
+DHF_CMD_GETPOS  equ     22              * I$GetStt SS_Pos
+DHF_CMD_ISEOF   equ     23              * I$GetStt SS_EOF
 
 * I$Seek "whence" -- I$Seek ist laut "OS-9 System Calls" Kap. 2 IMMER eine absolute
 * Positionierung (kein relatives Unix-lseek), deshalb hier fest verdrahtet statt aus dem
 * Aufrufer uebernommen (s. Mgr_Seek).
 DHF_SEEK_SET    equ     0
 
-* I$GetStt-Funktionscodes (MWOS/OS9/SRC/DEFS/sg_codes.h, "OS-9 System Calls" Kap. 2)
+* I$GetStt/I$SetStt-Funktionscodes (MWOS/OS9/SRC/DEFS/sg_codes.h, "OS-9 System Calls" Kap. 2)
 SS_Ready        equ     $01
 SS_Size         equ     $02
+SS_Pos          equ     $05             * aktuelle Dateiposition
+SS_EOF          equ     $06             * Dateiende-Test
 SS_FD           equ     $0F             * "Read File Descriptor Sector" (sg_codes.h) --
                                          * genutzt u.a. von der echten "attr"-Utility.
+SS_DevNm        equ     $0E             * Geraetename zurueckgeben (32-Byte-Puffer)
+SS_Attr         equ     $1C             * Dateiattribute setzen (Gegenstueck zu SS_FD)
 
-* Devicetbl-Feldoffsets (MWOS/OS9/SRC/DEFS/sysio.h struct devicetbl)
+* Devicetbl-Feldoffsets (MWOS/OS9/SRC/DEFS/sysio.h struct devicetbl/sysio.a)
 DT_DRIV         equ     0               * V_driv: Treiber-Modulzeiger
 DT_STAT         equ     4               * V_stat: Treiber-eigener statischer Speicher
+DT_DESC         equ     8               * V_desc: Geraetedeskriptor-Modulzeiger (fuer
+                                         * SS_DevNm, s. Mgr_GetStt)
+
+* Modulkopf-Feldoffset (MWOS/OS9/SRC/DEFS/module.a): M$Name, ein LONGWORD-Offset (relativ
+* zur Modulbasis) auf den eigenen, NUL-terminierten Namensstring des Moduls -- fuer SS_DevNm
+* wird damit der Name des GERAETEDESKRIPTORS (z.B. "d0") gelesen, nicht der des Managers.
+MOD_NAME_OFF    equ     12
 
 * Treiber-Sprungtabelle: fester Offset ab Treiberbasis (module.h mod_driver, empirisch gegen
 * driver/dhfdrv_68k.a's eigenen Modulkopf bestaetigt, s. STATUS.md). D_WRIT aus sysio.h --
@@ -342,11 +356,21 @@ Mgr_GetStt:
         andi    #$FE,ccr
         rts
 
+* 2026-09-26: die drei NEUEN Verzweigungen (Pos/EOF/DevNm) benutzen bewusst ".w" statt ".s"
+* -- ihre Ziele liegen (nach MgrGst_FDs Rumpf) weiter weg, als ein 8-Bit-Kurzsprung sicher
+* abdeckt; qr68k waehlt Sprungweiten NICHT automatisch (kein "-b"), ein zu weiter ".s"-
+* Sprung waere derselbe Fehlerklasse wie der DhfMgrEnt-Tabellenbug (STATUS.md).
 MgrGst_TrySize:
         cmpi.l  #SS_Size,d0
         beq.s   MgrGst_Size
         cmpi.l  #SS_FD,d0
         beq.s   MgrGst_FD
+        cmpi.l  #SS_Pos,d0
+        beq.w   MgrGst_Pos
+        cmpi.l  #SS_EOF,d0
+        beq.w   MgrGst_Eof
+        cmpi.l  #SS_DevNm,d0
+        beq.w   MgrGst_DevNm
         bra     MgrUnkSvc
 
 MgrGst_Size:
@@ -390,6 +414,72 @@ MgrGst_FDOk:
         andi    #$FE,ccr
         rts
 
+*───────────────────────────────────────────────────────────────────────────────────────────
+* MgrGst_Pos -- SS_Pos ("Get Current File Position"): keine Eingabe ausser Pfadnummer,
+* Ausgabe d2.l=aktuelle Position (REG_D2(a5)).
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrGst_Pos:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        lea     CmdBlk(pc),a1
+        move.l  d2,SH_D0(a1)
+        move.b  #DHF_CMD_GETPOS,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrGst_PosOk
+        rts
+MgrGst_PosOk:
+        move.l  SH_D1(a1),REG_D2(a5)
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* MgrGst_Eof -- SS_EOF ("Test for End of File"): Erfolgsfall d1.l=0 (nicht am Ende) --
+* SH_D1 deshalb VOR dem Aufruf explizit auf 0 gesetzt (sonst koennte Altzustand aus einem
+* frueheren CmdBlk-Aufruf durchscheinen). Am Dateiende meldet der Simulator status=
+* DHF_ERR_EOF (== echtes E$EOF, $D3) -- der generische Treiber-Fehlerpfad setzt dann
+* automatisch Carry+d1.w=Status, genau wie die Spezifikation es verlangt.
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrGst_Eof:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        lea     CmdBlk(pc),a1
+        move.l  d2,SH_D0(a1)
+        moveq   #0,d0
+        move.l  d0,SH_D1(a1)
+        move.b  #DHF_CMD_ISEOF,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrGst_EofOk
+        rts
+MgrGst_EofOk:
+        move.l  SH_D1(a1),REG_D1(a5)
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* MgrGst_DevNm -- SS_DevNm ("Return Device Name"): a0=32-Byte-Zielpuffer (REG_A0(a5)),
+* Ausgabe NUL-terminiert. Braucht KEINEN Treiber-/Simulator-Aufruf -- der Name steht bereits
+* im Modulkopf des Geraetedeskriptors (a1->PD_DEV->DT_DESC->MOD_NAME_OFF), rein lokal
+* lesbar. a1 wird hier bewusst auf den Zielpuffer umgebogen (kein CmdBlk/CallDrv in diesem
+* Zweig, also unproblematisch).
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrGst_DevNm:
+        movea.l PD_DEV(a1),a3           * a3 = Devicetbl*
+        movea.l DT_DESC(a3),a0          * a0 = Geraetedeskriptor-Modulbasis
+        move.l  MOD_NAME_OFF(a0),d0
+        adda.l  d0,a0                   * a0 = Namensstring im Deskriptor (NUL-terminiert)
+        movea.l REG_A0(a5),a1           * Zielpuffer des Aufrufers, 32 Byte
+        moveq   #30,d1                  * max. 31 Zeichen + garantierte Null-Terminierung
+MgrGst_DevNmLoop:
+        move.b  (a0)+,(a1)+
+        beq.s   MgrGst_DevNmDone
+        dbra    d1,MgrGst_DevNmLoop
+        clr.b   (a1)                    * Puffer voll -- letztes Byte sicher auf 0
+MgrGst_DevNmDone:
+        andi    #$FE,ccr
+        rts
+
 MgrUnkSvc:
         moveq   #0,d1
         move.b  #E_UNKSVC,d1
@@ -413,6 +503,8 @@ Mgr_SetStt:
         move.l  REG_D1(a5),d0
         cmpi.l  #SS_Size,d0
         beq.s   MgrSst_Size
+        cmpi.l  #SS_Attr,d0
+        beq.s   MgrSst_Attr
         bra     MgrUnkSvc
 
 MgrSst_Size:
@@ -428,6 +520,26 @@ MgrSst_Size:
         bcc.s   MgrSst_Ok
         rts
 MgrSst_Ok:
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* MgrSst_Attr -- SS_Attr ("Set the File Attributes"): Eingabe d2.w=neues Attribut-Byte
+* (REG_D2(a5), gleiche Bitlage wie FD_ATT bei SS_FD) -- Gegenstueck zu MgrGst_FD.
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrSst_Attr:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer
+        movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*)
+        lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock
+
+        move.l  d2,SH_D0(a1)            * Pfadnummer (Handle)
+        move.l  REG_D2(a5),SH_D1(a1)    * neues Attribut-Byte (d2.w des Aufrufers)
+        move.b  #DHF_CMD_SETATTR,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrSst_AttrOk
+        rts
+MgrSst_AttrOk:
         andi    #$FE,ccr
         rts
 

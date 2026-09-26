@@ -1,0 +1,320 @@
+*═══════════════════════════════════════════════════════════════════════════
+* File:   dhfstt2_68k.a                                                Ver. 1.00
+* Owner:  Claude
+* Desc.:  Testprogramm fuer die vier neu verdrahteten GetStt/SetStt-Aufrufe:
+*         SS_Pos, SS_EOF, SS_DevNm (I$GetStt) und SS_Attr (I$SetStt).
+*
+* Edition History
+*─────────┬──────┬────────────────────────────────────────────────────────┬──────
+* Date    │ Ver. │ Description                                            │ By
+*─────────┼──────┼────────────────────────────────────────────────────────┼──────
+* 26-09-26│ 1.00 │ Erster Wurf                                            │ Cld
+*═════════╧══════╧════════════════════════════════════════════════════════╧══════
+        nam     dhfstt2
+        ttl     Q9-DHF Testprogramm: SS_Pos/SS_EOF/SS_DevNm/SS_Attr
+
+        use     q9defs.d
+
+Edition         equ     1
+
+I_OPEN          equ     $84
+I_READ          equ     $89
+I_CLOSE         equ     $8f
+I_GETSTT        equ     $8d
+I_SETSTT        equ     $8e
+
+SS_DevNm        equ     $0E
+SS_Pos          equ     $05
+SS_EOF          equ     $06
+SS_Attr         equ     $1C
+
+STDOUT          equ     1
+
+        psect   dhfstt2,(Prgrm<<8)!Objct,0,Edition,1024,Start
+
+Start:
+        lea     MsgStart(pc),a0
+        move.l  #MsgStartLen,d1
+        bsr     PrintMsg
+
+        lea     PathName(pc),a0
+        moveq   #3,d0                    * Update (Read+Write) -- fuer SS_Attr noetig
+        OS9     I_OPEN
+        bcs     OpenErr
+        lea     PathNum(pc),a3
+        move.w  d0,(a3)
+        lea     MsgOpenOk(pc),a0
+        move.l  #MsgOpenOkLen,d1
+        bsr     PrintMsg
+        bra     TestDevNm
+
+OpenErr:
+        move.w  d1,d4
+        lea     MsgOpenFail(pc),a0
+        move.l  #MsgOpenFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     Done
+
+* --- SS_DevNm ------------------------------------------------------------
+TestDevNm:
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        moveq   #SS_DevNm,d1
+        lea     DevNmBuf(pc),a0
+        OS9     I_GETSTT
+        bcs     DevNmErr
+        lea     MsgDevNmOk(pc),a0
+        move.l  #MsgDevNmOkLen,d1
+        bsr     PrintMsg
+        lea     DevNmBuf(pc),a0
+        bsr     PrintCString
+        bra     TestEofBefore
+DevNmErr:
+        move.w  d1,d4
+        lea     MsgDevNmFail(pc),a0
+        move.l  #MsgDevNmFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     TestEofBefore
+
+* --- SS_EOF (vor dem Lesen -- sollte NICHT am Ende sein) ------------------
+TestEofBefore:
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        moveq   #SS_EOF,d1
+        OS9     I_GETSTT
+        bcs     EofBeforeAtEof
+        lea     MsgNotEof(pc),a0
+        move.l  #MsgNotEofLen,d1
+        bsr     PrintMsg
+        bra     TestPos
+EofBeforeAtEof:
+        lea     MsgIsEof(pc),a0
+        move.l  #MsgIsEofLen,d1
+        bsr     PrintMsg
+        bra     TestPos
+
+* --- I$Read (alles lesen) + SS_Pos danach ---------------------------------
+TestPos:
+        lea     ReadBuf(pc),a0
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        move.l  #64,d1
+        OS9     I_READ
+
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        moveq   #SS_Pos,d1
+        OS9     I_GETSTT
+        bcs     PosErr
+        lea     MsgPosOk(pc),a0
+        move.l  #MsgPosOkLen,d1
+        bsr     PrintMsg
+        move.l  d2,d2                    * (Position steht in d2 -- s. Kommentar unten)
+        bsr     PrintHexD2Long
+        bra     TestEofAfter
+PosErr:
+        move.w  d1,d4
+        lea     MsgPosFail(pc),a0
+        move.l  #MsgPosFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     TestEofAfter
+
+* --- SS_EOF (nach dem Lesen -- sollte jetzt am Ende sein) -----------------
+TestEofAfter:
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        moveq   #SS_EOF,d1
+        OS9     I_GETSTT
+        bcs     EofAfterAtEof
+        lea     MsgNotEof(pc),a0
+        move.l  #MsgNotEofLen,d1
+        bsr     PrintMsg
+        bra     TestAttr
+EofAfterAtEof:
+        lea     MsgIsEof(pc),a0
+        move.l  #MsgIsEofLen,d1
+        bsr     PrintMsg
+        bra     TestAttr
+
+* --- SS_Attr: Owner-Write-Bit entfernen (nur lesbar machen) ---------------
+TestAttr:
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        moveq   #SS_Attr,d1
+        move.l  #1,d2                    * nur Owner-Read (Bit0), Write/Exec aus
+        OS9     I_SETSTT
+        bcs     AttrErr
+        lea     MsgAttrOk(pc),a0
+        move.l  #MsgAttrOkLen,d1
+        bsr     PrintMsg
+        bra     DoClose
+AttrErr:
+        move.w  d1,d4
+        lea     MsgAttrFail(pc),a0
+        move.l  #MsgAttrFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     DoClose
+
+DoClose:
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        OS9     I_CLOSE
+        bcs     CloseErr
+        lea     MsgCloseOk(pc),a0
+        move.l  #MsgCloseOkLen,d1
+        bsr     PrintMsg
+        bra     Done
+CloseErr:
+        move.w  d1,d4
+        lea     MsgCloseFail(pc),a0
+        move.l  #MsgCloseFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+
+Done:
+        OS9     F$Exit
+
+*───────────────────────────────────────────────────────────────────────────
+PrintMsg:
+        moveq   #STDOUT,d0
+        OS9     I$WritLn
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+* PrintCString -- Eingabe (a0)=NUL-terminierter String, max 32 Byte. Zerstoert
+* d0-d3/a0-a3.
+*───────────────────────────────────────────────────────────────────────────
+PrintCString:
+        move.l  a0,a2
+        moveq   #0,d2
+PCSLen: cmpi.b  #32,d2
+        bge.s   PCSGo
+        tst.b   (a0,d2.w)
+        beq.s   PCSGo
+        addq.l  #1,d2
+        bra.s   PCSLen
+PCSGo:
+        move.l  a2,a0
+        move.l  d2,d1
+        bsr     PrintMsg
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+* PrintHexD2 -- gibt d2.w als "$xxxx"+CR aus. Zerstoert d0-d3/a0.
+*───────────────────────────────────────────────────────────────────────────
+PrintHexD2:
+        lea     HexBuf(pc),a0
+        move.b  #'$',(a0)+
+        move.w  d2,d3
+        moveq   #3,d1
+HexLoop:
+        move.w  d3,d0
+        lsr.w   #8,d0
+        lsr.w   #4,d0
+        andi.w  #$0F,d0
+        cmpi.b  #10,d0
+        blt.s   HexDigit
+        addi.b  #'A'-10,d0
+        bra.s   HexStore
+HexDigit:
+        addi.b  #'0',d0
+HexStore:
+        move.b  d0,(a0)+
+        lsl.w   #4,d3
+        dbra    d1,HexLoop
+        move.b  #$0D,(a0)+
+        lea     HexBuf(pc),a0
+        moveq   #6,d1
+        bsr     PrintMsg
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+* PrintHexD2Long -- wie PrintHexD2, aber alle 8 Hex-Ziffern von d2.l.
+*───────────────────────────────────────────────────────────────────────────
+PrintHexD2Long:
+        lea     HexBuf(pc),a0
+        move.b  #'$',(a0)+
+        move.l  d2,d3
+        moveq   #7,d1
+HexLoopL:
+        move.l  d3,d0
+        lsr.l   #8,d0
+        lsr.l   #8,d0
+        lsr.l   #8,d0
+        lsr.l   #4,d0
+        andi.w  #$0F,d0
+        cmpi.b  #10,d0
+        blt.s   HexDigitL
+        addi.b  #'A'-10,d0
+        bra.s   HexStoreL
+HexDigitL:
+        addi.b  #'0',d0
+HexStoreL:
+        move.b  d0,(a0)+
+        lsl.l   #4,d3
+        dbra    d1,HexLoopL
+        move.b  #$0D,(a0)+
+        lea     HexBuf(pc),a0
+        moveq   #10,d1
+        bsr     PrintMsg
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+MsgStart        dc.b    "=== dhfstt2: SS_Pos/SS_EOF/SS_DevNm/SS_Attr gegen /d0/hello.txt ===",$0D
+MsgStartLen     equ     *-MsgStart
+
+MsgOpenOk       dc.b    "OPEN: ok",$0D
+MsgOpenOkLen    equ     *-MsgOpenOk
+
+MsgOpenFail     dc.b    "OPEN: FEHLER, Code:",$0D
+MsgOpenFailLen  equ     *-MsgOpenFail
+
+MsgDevNmOk      dc.b    "SS_DevNm: ok, Name:",$0D
+MsgDevNmOkLen   equ     *-MsgDevNmOk
+
+MsgDevNmFail    dc.b    "SS_DevNm: FEHLER, Code:",$0D
+MsgDevNmFailLen equ     *-MsgDevNmFail
+
+MsgNotEof       dc.b    "SS_EOF: nicht am Ende",$0D
+MsgNotEofLen    equ     *-MsgNotEof
+
+MsgIsEof        dc.b    "SS_EOF: AM ENDE",$0D
+MsgIsEofLen     equ     *-MsgIsEof
+
+MsgPosOk        dc.b    "SS_Pos: ok, Position:",$0D
+MsgPosOkLen     equ     *-MsgPosOk
+
+MsgPosFail      dc.b    "SS_Pos: FEHLER, Code:",$0D
+MsgPosFailLen   equ     *-MsgPosFail
+
+MsgAttrOk       dc.b    "SS_Attr: ok (nur noch lesbar)",$0D
+MsgAttrOkLen    equ     *-MsgAttrOk
+
+MsgAttrFail     dc.b    "SS_Attr: FEHLER, Code:",$0D
+MsgAttrFailLen  equ     *-MsgAttrFail
+
+MsgCloseOk      dc.b    "CLOSE: ok",$0D
+MsgCloseOkLen   equ     *-MsgCloseOk
+
+MsgCloseFail    dc.b    "CLOSE: FEHLER, Code:",$0D
+MsgCloseFailLen equ     *-MsgCloseFail
+
+PathName        dc.b    "/d0/hello.txt",0
+
+        align   2
+PathNum         ds.w    1
+HexBuf          ds.b    12
+DevNmBuf        ds.b    32
+ReadBuf         ds.b    64
+
+        endsect
+        end

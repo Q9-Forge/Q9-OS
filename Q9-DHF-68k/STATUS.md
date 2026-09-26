@@ -421,3 +421,43 @@ funktioniert z.B. ein attr?" -- Antwort: ja, `SS_FD` fehlte, jetzt gefunden+beho
    aktuelle Position abfragen), `SS_EOF` (`$06`, Dateiende pruefen ohne zu lesen), `SS_DevNm`
    (`$0E`, Geraetename zurueckgeben, trivial). Keiner davon wurde angefragt oder als fehlend
    beobachtet -- nur dokumentiert, nicht implementiert.
+
+## 2026-09-26, Nachtrag: SS_Attr/SS_Pos/SS_EOF/SS_DevNm verdrahtet -- alle vier verifiziert
+
+Nutzerauftrag: "die vier implementiere bitte alle noch". Alle vier gegen die echten
+Registertabellen aus "OS-9 System Calls" Kap. 2 geprueft, gebaut und per neuem Testprogramm
+`test/dhfstt2_68k.a` verifiziert (Ausgabe: `SS_DevNm: ok, Name: d0` / `SS_EOF: nicht am
+Ende` (vor dem Lesen) / `SS_Pos: ok, Position: $00000020` (nach Lesen der 32-Byte-Datei) /
+`SS_EOF: AM ENDE` (danach) / `SS_Attr: ok` -- Host-Datei tatsaechlich auf `r--------`
+gesetzt, per `ls -la` bestaetigt und wieder zurueckgesetzt).
+
+1. **`SS_Attr`** (SetStt, `$1C`, Gegenstueck zu `SS_FD`): `d2.w`=neues Attribut-Byte (gleiche
+   Bitlage wie `FD_ATT`). Neue Simulator-Funktion `dhf_host_fs_setattr_at()` mappt die Bits
+   auf Unix-Rechte (Bit0-2=Besitzer r/w/x, Bit3-5=oeffentlich r/w/x) und ruft `fchmod()`
+   (bzw. `chmod()` fuer Verzeichnis-Handles) auf. Bit6 (exklusiv) und Bit7 (Verzeichnis)
+   werden bewusst ignoriert (kein Host-Aequivalent bzw. per Handbuch ohnehin nicht erlaubt,
+   das Verzeichnis-Bit einer normalen Datei zu setzen). Neues Wire-Kommando
+   `DHF_CMD_SETATTR=21`. Manager: `MgrSst_Attr` (neue Verzweigung in `Mgr_SetStt`).
+2. **`SS_Pos`** (GetStt, `$05`): keine Eingabe ausser Pfadnummer, Ausgabe `d2.l`=aktuelle
+   Position. Neue Simulator-Funktion `dhf_host_fs_getpos_at()` (`lseek(fd,0,SEEK_CUR)`).
+   Neues Wire-Kommando `DHF_CMD_GETPOS=22`. Manager: `MgrGst_Pos`.
+3. **`SS_EOF`** (GetStt, `$06`): Erfolgsfall `d1.l=0` (nicht am Ende); am Dateiende Carry+
+   `d1.w=E$EOF`. Neue Simulator-Funktion `dhf_host_fs_iseof_at()` vergleicht aktuelle
+   Position (`lseek`) gegen Dateigroesse (`fstat`) und setzt `status=DHF_ERR_EOF` (== echtes
+   `E$EOF`, keine Umrechnung noetig) wenn erreicht. Manager: `MgrGst_Eof` setzt `SH_D1`
+   VOR dem Aufruf explizit auf 0 (sonst koennte Altzustand aus `CmdBlk` durchscheinen).
+   Neues Wire-Kommando `DHF_CMD_ISEOF=23`.
+4. **`SS_DevNm`** (GetStt, `$0E`): `a0`=32-Byte-Zielpuffer, Ausgabe NUL-terminiert. Braucht
+   **keinen** Treiber-/Simulator-Aufruf -- der Geraetename steht bereits im Modulkopf des
+   Geraetedeskriptors selbst, rein lokal lesbar: `PD_DEV(a1)` -> `Devicetbl` -> `V_desc`
+   (Offset `8`, neu als `DT_DESC` benannt) -> Deskriptor-Modulbasis -> `M$Name` (Modulkopf-
+   Feld, Offset `12`, ein LONGWORD-Offset auf den eigenen NUL-terminierten Namensstring,
+   neu als `MOD_NAME_OFF` benannt) -> Name kopieren. Manager: `MgrGst_DevNm`.
+5. **Toolchain-Vorsicht bei den neuen Verzweigungen**: `MgrGst_TrySize`s Dispatch-Kette hat
+   jetzt sechs `cmpi.l`/`beq`-Paare -- die drei NEUEN Ziele (`MgrGst_Pos`/`MgrGst_Eof`/
+   `MgrGst_DevNm`) liegen (nach `MgrGst_FD`s vollem Rumpf) weiter weg, als ein 8-Bit-
+   Kurzsprung (`beq.s`) sicher abdeckt; bewusst `beq.w` verwendet (`qr68k` waehlt
+   Sprungweiten NICHT automatisch, s. "-b"-Flag) -- sonst waere das dieselbe Fehlerklasse
+   wie der `DhfMgrEnt`-Tabellenbug weiter oben gewesen. Vor dem Deployment per Capstone-
+   Disassemblierung des fertigen `.mod`-Files verifiziert: alle Sprungziele landen exakt auf
+   den erwarteten Instruktionsgrenzen, `.w`/`.b`-Kodierung von `qr68k` korrekt gewaehlt.
