@@ -12,7 +12,8 @@ Im Gast sieht es aus wie ein RBF-Laufwerk; echte Utilities (`dir -e -r`, `attr`,
 | `driver/dhfdrv_68k.a` | Treiber (Modul `dhfdrv`) |
 | `descriptor/d0_dhf.a` | Laufwerk `d0` → `Q9-Images/dhf_root/d0`, beschreibbar, Port `$FFFF4000` |
 | `descriptor/d1_dhf.a` | Laufwerk `d1` → `Q9-Images/cf_images/OS9SYS`, **nur lesbar**, Port `$FFFF4100` |
-| `test/dhfregr_68k.a` | Regressionstest im Gast (Modul `dhfregr`, 118 Prüfungen) |
+| `test/dhfregr_68k.a` | Regressionstest im Gast (Modul `dhfregr`, 123 Prüfungen) |
+| `test/dhflock_68k.a`, `test/dhflockp_68k.a` | Sperrtest über zwei Prozesse (vom Runner benutzt) |
 | `test/run_dhfregr.sh` | kompletter Lauf auf dem Mac (baut, testet auf Image-Kopie, prüft Host-Seite) |
 | `Q9-Flux/Q9-Flux-68k/src/devices/dhf/` | Gerät im Emulator (`dhf_emu_device.c`, `dhf_host_fs.c`, …) |
 | `docs/PROTOCOL.md` | Protokoll und nachgebildete RBF-Semantik |
@@ -22,7 +23,9 @@ Im Gast sieht es aus wie ein RBF-Laufwerk; echte Utilities (`dir -e -r`, `attr`,
 Benutzen: `Q9-Images/emu_config/dhf_claude.q9` starten; `/SYS/startup` im Claude-Image hängt
 `d0` und `d1` an. Testen:
 `Q9_LOGIN_PASS=… test/run_dhfregr.sh [-k] [-i]`.
-Laufwerk schreibbar/nur lesbar: Flags-Wort in der `DevCon`-Tabelle des Deskriptors (Bit 0).
+Host-Verzeichnis und Schreibschutz: am einfachsten per `[dhf0]`/`[dhf1]` in der `.q9`-Datei
+(`hostpath =`, `readonly = yes|no`, Vorrang vor dem Deskriptor); sonst Basispfad und Flags-Wort
+(Bit 0 = nur lesbar) in der `DevCon`-Tabelle des Deskriptors.
 
 ## Veraltet – nicht mehr gepflegt, nicht darauf aufbauen
 

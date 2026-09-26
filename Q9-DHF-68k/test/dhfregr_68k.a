@@ -55,6 +55,7 @@ SS_DevNm        equ     $0E
 SS_FD           equ     $0F
 SS_Attr         equ     $1C
 SS_FDInf        equ     $20
+SS_Lock         equ     $11
 SS_VolStore     equ     $45
 SS_Rename       equ     $42
 SS_Free         equ     $43
@@ -803,6 +804,76 @@ VolBad:
         OS9     I_CLOSE
 RawWNo:
 
+*════════ Sperren innerhalb EINES Prozesses (duerfen sich nicht behindern) ═
+        lea     PLk2(pc),a0
+        moveq   #M_UPDATE,d0
+        move.l  #$1B,d1
+        OS9     I_CREATE
+        bsr     TakePath
+        move.w  d5,d0
+        lea     Data10(pc),a0
+        moveq   #10,d1
+        OS9     I_WRITE
+        move.w  d5,d0
+        OS9     I_CLOSE
+        lea     PLk2(pc),a0
+        moveq   #M_UPDATE,d0
+        OS9     I_OPEN
+        bsr     TakePath
+        move.w  d5,d4                   * Pfad A
+        lea     PLk2(pc),a0
+        moveq   #M_UPDATE,d0
+        OS9     I_OPEN
+        bsr     TakePath                * d5 = Pfad B
+        move.w  d4,d0
+        lea     RBuf(pc),a0
+        moveq   #4,d1
+        OS9     I_READ                  * A liest (Update -> Bereich 0..3 gesperrt)
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #4,d1
+        OS9     I_READ                  * B liest denselben Bereich
+        CHK     0,N119                  * derselbe Prozess: kein Warten, kein E$Lock
+        move.w  d4,d0
+        moveq   #SS_Lock,d1
+        moveq   #-1,d2
+        OS9     I_SETSTT
+        CHK     0,N120                  * A sperrt die ganze Datei
+        move.w  d5,d0
+        moveq   #0,d1
+        OS9     I_SEEK
+        move.w  d5,d0
+        lea     Data10(pc),a0
+        moveq   #2,d1
+        OS9     I_WRITE
+        CHK     0,N121                  * B schreibt trotzdem (derselbe Prozess)
+        move.w  d4,d0
+        moveq   #SS_Lock,d1
+        moveq   #0,d2
+        OS9     I_SETSTT
+        CHK     0,N122                  * Sperre aufheben
+        move.w  d4,d0
+        OS9     I_CLOSE
+        move.w  d5,d0
+        OS9     I_CLOSE
+        lea     PLk2(pc),a0
+        move.l  #$43,d0                 * nicht teilbar
+        OS9     I_OPEN
+        bsr     TakePath
+        move.w  d5,d4
+        lea     PLk2(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     0,N123                  * zweiter Open desselben Prozesses erlaubt
+        bsr     TakePath
+        move.w  d5,d0
+        OS9     I_CLOSE
+        move.w  d4,d0
+        OS9     I_CLOSE
+        lea     PLk2(pc),a0
+        moveq   #M_WRITE,d0
+        OS9     I_DELETE
+
 *════════ Delete + Fehlerfaelle ═════════════════════════════════════════
         lea     PB(pc),a0
         moveq   #M_WRITE,d0
@@ -1099,6 +1170,7 @@ PDotDot         dc.b    "..",0
 PDots           dc.b    ".../hello.txt",0
 PHello          dc.b    "/d0/hello.txt",0
 PFdt            dc.b    "/d0/rt/fdt.txt",0
+PLk2            dc.b    "/d0/rt/lk2.txt",0
 PSub            dc.b    "/d0/rt/sub",0
 PEsc            dc.b    "/d0/../../../../../../../../etc/hosts",0
 
@@ -1224,6 +1296,11 @@ N115    dc.b    "115 Open .../hello.txt (drei Punkte = 2 Ebenen)",0
 N116    dc.b    "116 Datei mit Dir-Bit -> E$FNA",0
 N117    dc.b    "117 SetStt SS_FD (Datum setzen)",0
 N118    dc.b    "118 FD_DAT zurueckgelesen = 2001-02-03 04h",0
+N119    dc.b    "119 zwei Pfade eines Prozesses: Read ohne Sperrkonflikt",0
+N120    dc.b    "120 SS_Lock ganze Datei",0
+N121    dc.b    "121 Write ueber 2. Pfad desselben Prozesses",0
+N122    dc.b    "122 SS_Lock 0 (freigeben)",0
+N123    dc.b    "123 Share_: zweiter Open desselben Prozesses",0
 
         align   2
 NOk             ds.w    1
