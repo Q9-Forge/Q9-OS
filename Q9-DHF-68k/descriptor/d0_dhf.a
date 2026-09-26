@@ -77,7 +77,11 @@ OptLen  equ     *-OptTbl
 * Herleitung per Q9_TRAP_TRACE_ALL-Instrumentierung im echten Emulator).
 FileMgr dc.b    "dhfmgr",0
 DevDrv  dc.b    "dhfdrv",0
-BasePath dc.b   "/tmp/q9dhf_claude_descriptor_test",0
+* 2026-09-26: Basispfad von /tmp (geht beim Mac-Neustart verloren) in das dauerhafte
+* Q9-Images/dhf_root verlegt -- Teil der fertigen Emulator-Konfiguration
+* Q9-Images/emu_config/dhf_claude.q9. Unterhalb liegt wie bisher je Geraet ein
+* Unterverzeichnis ("/d0/hello.txt" -> dhf_root/d0/hello.txt).
+BasePath dc.b   "/Volumes/SSD1TB/projects/Q9-Forge/Q9-Images/dhf_root",0
 
         endsect
         end
