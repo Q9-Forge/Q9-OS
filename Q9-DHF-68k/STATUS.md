@@ -113,6 +113,82 @@ own behavior from ours entirely, or extending `m68krt.c`'s existing "path"-loggi
 (`callcode == 0x80/0x83/0x84/0x86/0x87`) to also cover `0x89` (`I$Read`) so `Q9_ITRACE_PATH`
 can arm on it directly instead of needing the `I$Open`-then-continue workaround).
 
+**UPDATE, follow-up session, 2026-09-26 -- root cause FOUND AND FIXED. `dhftest` now
+completes `OPEN: ok` / `READ: ok` (real file content printed) / `CLOSE: ok` end-to-end for
+the first time ever. The "IOMan bug from a forked process" theory above was WRONG -- this
+was a bug in our own `manager/dhfmgr_68k.a`, hiding in plain sight.**
+
+1. **Extended `Q9-Flux-68k/src/kernel/m68krt.c`'s `Q9_ITRACE_PATH` mechanism** exactly as
+   suggested above: `I$Read` ($89) carries the OS-9 path NUMBER in `d0.w`, not a pathname in
+   `a0` (unlike `I$Open`/`I$Attach`), so it can't path-match the same way. Fix: when the
+   `Q9_ITRACE_PATH`-watched `I$Open` returns successfully, its returned path number is now
+   remembered (`g_itrace_target_pathnum`); any later `I$Read` whose `d0.w` matches that
+   number arms the instruction trace directly, no more "arm on Open, keep tracing and hope
+   to catch Read in the same window" workaround. New statics `g_itrace_open_pending` /
+   `g_itrace_target_pathnum_valid` / `g_itrace_target_pathnum`, committed in `Q9-Flux`.
+2. **Traced a real `dhftest` run this way** and found the CPU hook fires BEFORE each
+   instruction executes (confirmed from Musashi's own `m68kcpu.c`: `m68ki_instr_hook(REG_PC)`
+   runs, then `m68ki_instruction_jump_table[REG_IR]()` dispatches) -- so the LAST logged PC
+   before the trace jumps into the kernel's known exception-to-errno converter (`$78be`-
+   `$78f2`, identified in an earlier session) is the actual faulting instruction's address.
+   That address was `$00f20e1e` -- and disassembling the just-extracted `dhfmgr_68k.mod`
+   (`os9 copy image,/CMDS/dhf/dhfmgr_68k /tmp/...`, capstone) showed the CPU landing exactly
+   TWO BYTES into the middle of a 4-byte `lea` instruction, decoding whatever garbage bytes
+   happen to follow as a bogus opcode.
+3. **Reconstructed IOMan's own generic FileManager-dispatch code** (disassembled directly
+   from `ioman.mod`, address `$0000f55c`-`$0000f59a`, real 68k assembly, not guessed): reads
+   `PD_DEV(a1)` -> `Devicetbl*`, then `V_FMGR` (offset `$c`, matching `sysio.h`) -> the
+   FileManager module's own base address, then adds the module's own `_mexec` header field
+   (a stored byte offset, itself read from module-base+`$30`) to get the jump table's base
+   address, then reads a **16-bit, SIGNED, TABLE-BASE-RELATIVE** word at
+   `table_base + (callcode-$83)*2` and adds it to `table_base` to get the final entry point.
+   This is the standard, and only sane, OS-9 convention (a table that doesn't care where in
+   memory the module got loaded, exactly the point of `_mexec`), and it matches what the
+   *real* Microware `rbf`/`scf` modules must do too (same generic IOMan code runs for every
+   FileManager type).
+4. **Root cause**: `manager/dhfmgr_68k.a`'s own `DhfMgrEnt` table was written as bare
+   `dc.w Mgr_Create` / `dc.w Mgr_Open` / ... for all 13 entries -- which `qr68k`/`ql68k`
+   assemble as each label's plain, ABSOLUTE offset from the MODULE'S OWN base (i.e., exactly
+   what `os9 dump`/capstone show when reading the label's address directly), **not** relative
+   to the table's own position. Since `_mexec` (the table's own module-relative offset) is
+   `$3c` in this build, EVERY SINGLE jump-table entry pointed exactly `$3c` bytes too far into
+   the module -- for `Create`/`Open` this coincidentally still landed on a valid-but-wrong
+   instruction *inside* `MgrCommon` (skipping its first two setup instructions, silently using
+   garbage/stale `d2` as the path number -- explains why `iniz`/`dir`/earlier ad-hoc tests
+   never caught this: whatever they exercised happened to still "work" by accident), but for
+   `Read` it landed mid-instruction, producing the `E$ILLINS` illegal-opcode crash that took
+   this whole investigation to explain. **This is a 4th real, confirmed toolchain/authoring
+   gotcha for this project's hand-written 68k modules** (after the `-n=`/`-gu=` linker-flag
+   issues, the `dc.b` single-vs-double-quote string bug, and the `psect`-vs-`vsect`
+   static-size bug): **any module's own jump table written as `dc.w Label` must instead be
+   written `dc.w Label-TableName`** (explicit table-relative arithmetic), matching the
+   universal Microware/OS-9 module convention for `_mexec`-style tables -- `qr68k`/`ql68k`
+   assemble the arithmetic correctly once written this way, they just don't do it implicitly
+   for a bare label reference (unlike, say, a relative branch instruction).
+5. **Fix applied**: rewrote all 13 `DhfMgrEnt` entries as `dc.w LabelName-DhfMgrEnt`,
+   rebuilt (`qr68k`+`ql68k -n=dhfmgr -gu=0.0`), verified the new table's computed targets
+   against every real label's actual file offset (found independently via raw byte-pattern
+   search for each thunk's `moveq` opcode) -- all 13 now match exactly, including the six
+   wired thunks and the shared `MgrUnkSvc`-branch stub target. Redeployed to
+   `OS9SYS_Claude.hda`'s `/CMDS/dhf/dhfmgr_68k` (`os9 del` + `os9 copy` + `os9 attr -e`).
+6. **Result, verified end-to-end for the first time ever**: `dhftest` against
+   `/dhf0/hello.txt` now prints `OPEN: ok`, `READ: ok, Inhalt folgt: <real file content>`,
+   `CLOSE: ok` -- no crash, no hang, no wrong error. (One test-setup wrinkle found along the
+   way, not a bug: `I$Open` receives the FULL pathname INCLUDING the device-name component
+   -- `/dhf0/hello.txt`, not just `hello.txt` -- since our manager does no path parsing of
+   its own and forwards `a0` verbatim to the driver/host-fs, the *test file* had to actually
+   live at `<basepath>/dhf0/hello.txt` on the host, not `<basepath>/hello.txt`, for this
+   particular test program's hardcoded path string. Worth revisiting for real usage: either
+   document that DHF host paths always mirror the full OS-9 pathname including the device
+   name, or have the driver/manager strip the leading device-name component -- not decided
+   yet, flagged for later, not a defect in the fix above.)
+7. **Not yet re-verified after this fix**: `Mgr_GetStt`'s `SS_Size` path (used by `dir`/
+   `list`) -- it was validated against an OLDER build of this file (before the 2026-09-27
+   thunk redesign), and its own table entry was equally affected by the same `_mexec`-relative
+   bug (confirmed: the broken table's `GetStt` entry also pointed `$3c` bytes past its real
+   label). Now fixed by the same table rewrite, but a fresh `dir /dhf0`/`list /dhf0/hello.txt`
+   run has not been repeated this session to confirm.
+
 > Legend: ❌ Not started, 🟡 Partially/rudimentary, ✅ Done
 
 ## Architecture note
