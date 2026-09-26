@@ -99,20 +99,27 @@ CMDBLK_SIZE     equ     32
 * I$Attach fehl -- s. driver/dhfdrv_68k.a fuer die volle Herleitung (2026-09-27).
         psect   dhfmgr,(Q9FlMgr<<8)!Q9Objct,((Q9ReEnt!Q9SupStat)<<8)!0,Edition,0,DhfMgrEnt
 
+* WICHTIG (2026-09-26, per Instruktionsspur im echten Emulator gefunden): jeder Eintrag MUSS
+* relativ zu DhfMgrEnt SELBST kodiert werden ("Label-DhfMgrEnt"), NICHT als blosses "dc.w
+* Label" (das ergibt den absoluten Modul-Offset des Ziels statt des von IOMans generischem
+* FileManager-Dispatch erwarteten Tabellen-relativen Offsets -- IOMan laedt a0=M$Exec-Adresse
+* und rechnet "a0 + Tabellenwort", nicht "Modulbasis + Tabellenwort"). Ohne "-DhfMgrEnt" landet
+* jeder Sprung um genau M$Exec's eigenen Offset (hier $3c) zu weit hinten im Modul -- meist
+* mitten in einer fremden Instruktion, was als "illegale Instruktion" (E$ILLINS, $68) endet.
 DhfMgrEnt
-        dc.w    Mgr_Create      * Offset  0  I$Create  $83
-        dc.w    Mgr_Open        * Offset  2  I$Open    $84
-        dc.w    Mgr_MakDir      * Offset  4  I$MakDir  $85
-        dc.w    Mgr_ChgDir      * Offset  6  I$ChgDir  $86
-        dc.w    Mgr_Delete      * Offset  8  I$Delete  $87
-        dc.w    Mgr_Seek        * Offset 10  I$Seek    $88
-        dc.w    Mgr_Read        * Offset 12  I$Read    $89
-        dc.w    Mgr_Write       * Offset 14  I$Write   $8a
-        dc.w    Mgr_ReadLn      * Offset 16  I$ReadLn  $8b
-        dc.w    Mgr_WritLn      * Offset 18  I$WritLn  $8c
-        dc.w    Mgr_GetStt      * Offset 20  I$GetStt  $8d
-        dc.w    Mgr_SetStt      * Offset 22  I$SetStt  $8e
-        dc.w    Mgr_Close       * Offset 24  I$Close   $8f
+        dc.w    Mgr_Create-DhfMgrEnt    * Offset  0  I$Create  $83
+        dc.w    Mgr_Open-DhfMgrEnt      * Offset  2  I$Open    $84
+        dc.w    Mgr_MakDir-DhfMgrEnt    * Offset  4  I$MakDir  $85
+        dc.w    Mgr_ChgDir-DhfMgrEnt    * Offset  6  I$ChgDir  $86
+        dc.w    Mgr_Delete-DhfMgrEnt    * Offset  8  I$Delete  $87
+        dc.w    Mgr_Seek-DhfMgrEnt      * Offset 10  I$Seek    $88
+        dc.w    Mgr_Read-DhfMgrEnt      * Offset 12  I$Read    $89
+        dc.w    Mgr_Write-DhfMgrEnt     * Offset 14  I$Write   $8a
+        dc.w    Mgr_ReadLn-DhfMgrEnt    * Offset 16  I$ReadLn  $8b
+        dc.w    Mgr_WritLn-DhfMgrEnt    * Offset 18  I$WritLn  $8c
+        dc.w    Mgr_GetStt-DhfMgrEnt    * Offset 20  I$GetStt  $8d
+        dc.w    Mgr_SetStt-DhfMgrEnt    * Offset 22  I$SetStt  $8e
+        dc.w    Mgr_Close-DhfMgrEnt     * Offset 24  I$Close   $8f
 
 *───────────────────────────────────────────────────────────────────────────────────────────
 * Sechs Sprungbretter zu MgrCommon (uniform passende Nutzlast, s. Kopfkommentar): jeweils nur
