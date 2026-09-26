@@ -691,3 +691,28 @@ aufgeloestem Pfad und pd_fd/pd_dfd) eingegrenzt:
 `dsave -e` startet "shell", in diesem Image die bash, die das Skript nicht versteht. Richtig:
 `chd /d1; dsave -s /d0/ziel | mshell` (Microware-Shell). Runner-Pruefungen H17 (bash getwd),
 H18 (`dsave | mshell`, `diff -r`), Gast 110-118. **Stand: Gast 118/118, Host 18/18.**
+
+## 2026-09-26, Nachtrag: Restliste abgearbeitet (Zeit, Schreibschutz, Namen, Sperren, Config, Doku)
+
+1. **Ortszeit:** alle Zeitstempel (FD_DAT/FD_Creat, LSN0, SetStt SS_FD) in Ortszeit statt UTC --
+   `dir -e` zeigte alles 2 h zu frueh. Test H19.
+2. **Nur lesbare Laufwerke:** DevCon-Wort 1 = Flags (Bit 0), der Treiber reicht es beim Init
+   durch, der Simulator lehnt jede veraendernde Operation mit E$WP ab (Host-seitig durchgesetzt).
+   `d1` (OS9SYS-Baum) ist jetzt nur lesbar, zusaetzlich PD_Cntl CNTL_NOWRITE. Test H20.
+3. **Host-Namen:** Verzeichnislisten blenden `.DS_Store`, `._*`, Namen > 28 Zeichen und Namen mit
+   Bytes >= $80/Steuerzeichen aus (Bit 7 ist im RBF-Eintrag das Namensende). Test H21.
+4. **Sperren wie RBF:** Share_ -> E$Share fuer andere Prozesse; implizite Lesesperre im
+   Update-Modus, SS_Lock (Bereich/ganze Datei/freigeben), SS_Ticks. Konflikt -> Geraet meldet
+   E$Lock, der Manager schlaeft je einen Tick und wiederholt bis zum Timeout (0 = unbegrenzt).
+   Dafuer: neues Fensterfeld `pid` (Offset 28, Treiber kopiert 28 statt 24 Byte; der Manager
+   setzt es in CallDrv aus P$ID). Pfade desselben Prozesses sperren sich nicht (Gast 119-123);
+   ueber zwei Prozesse mit den Hilfsprogrammen `dhflock`/`dhflockp` geprueft (H22-24:
+   E$Share, E$Lock nach Timeout, Warten bis zur Freigabe).
+5. **Config:** `[dhf0]`/`[dhf1]` in der `.q9` mit `hostpath =` und `readonly =` -- Vorrang vor dem
+   Deskriptor, also kein Neubau fuer ein anderes Verzeichnis; bleibt beim Speichern durch den
+   Konfig-Editor erhalten (`q9_board_cfg_save`). Test H25/H26 (zweite, kurze Runner-Phase).
+6. **Aufraeumen:** `README.md` (aktive vs. veraltete Teile), `docs/PROTOCOL.md` und
+   `docs/DHF_ERRNO_MAP.md` auf den echten Stand; Veraltet-Hinweise in den Fruehphasen-READMEs,
+   im Schwesterprojekt `Q9-DHFDRV-68k` und im TCP-Backend. Nichts geloescht.
+
+**Stand: Gast 123/123, Host 26/26, ~13 s.**

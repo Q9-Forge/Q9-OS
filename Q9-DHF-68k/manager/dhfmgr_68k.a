@@ -42,10 +42,13 @@
 *
 Edition         equ     1
 E_UNKSVC        equ     $D0
+E_LOCK          equ     $FC             * Record is busy -> warten und wiederholen
+F_SLEEP         equ     $0A             * F$Sleep (funcs.h)
 
 * dhf_shared-Feldoffsets (identisch zu driver/dhfdrv_68k.a)
 SH_COMMAND      equ     1
 SH_SEQ          equ     4               * 2026-09-26: Verzeichnisnummer des Aufrufers (P$DIO)
+SH_PID          equ     28              * 2026-09-26: Prozess-ID des Aufrufers (Sperren)
 SH_A0           equ     8
 SH_A1           equ     12
 SH_D0           equ     16
@@ -76,6 +79,7 @@ DHF_CMD_GETFREE equ     25              * I$GetStt SS_Free
 DHF_CMD_FDINF   equ     26              * I$GetStt SS_FDInf (FD zu einer Sektornummer)
 DHF_CMD_VOLSTORE equ    27              * I$GetStt SS_VolStore (Speicherstatistik)
 DHF_CMD_SETFD   equ     28              * I$SetStt SS_FD (FD_DAT -> Aenderungszeit)
+DHF_CMD_LOCK    equ     29              * I$SetStt SS_Lock (Bereich sperren)
 
 * I$Seek "whence" -- I$Seek ist laut "OS-9 System Calls" Kap. 2 IMMER eine absolute
 * Positionierung (kein relatives Unix-lseek), deshalb hier fest verdrahtet statt aus dem
@@ -92,6 +96,8 @@ SS_FD           equ     $0F             * "Read File Descriptor Sector" (sg_code
 SS_DevNm        equ     $0E             * Geraetename zurueckgeben (32-Byte-Puffer)
 SS_Attr         equ     $1C             * Dateiattribute setzen (Gegenstueck zu SS_FD)
 SS_FDInf        equ     $20             * FD zu einer Sektornummer ("dir -e"/"dir -r")
+SS_Ticks        equ     $10             * Warte-Timeout fuer Sperren (sg_codes.h)
+SS_Lock         equ     $11             * Bereich sperren/freigeben (sg_codes.h)
 SS_Rename       equ     $42             * Datei umbenennen -- ACHTUNG: kein reales Utility
                                          * erreicht diesen Aufruf, s. dhf_proto.h/STATUS.md.
 SS_VolStore     equ     $45             * Speicherstatistik ("free", s. MgrGst_VolStore)
@@ -130,6 +136,10 @@ PD_DEV          equ     4               * Devicetbl*: Geraetetabelleneintrag
 P_DIO           equ     $148
 DIO_EXEC        equ     $10
 DIO_FM          equ     4
+* 2026-09-26: DHF-eigene Felder im FileManager-Bereich PD_FST ($2A..$7F, sysio.a) des
+* Pfaddeskriptors: Warte-Timeout (SS_Ticks) und Wartezaehler fuer gesperrte Bereiche
+PD_TICKS        equ     $2A             * Ticks, wie lange auf eine Sperre gewartet wird (0 = immer)
+PD_LKCNT        equ     $2E             * bisher gewartete Ticks im laufenden Aufruf
 PD_OPT          equ     $80             * Optionsteil des Pfaddeskriptors (128 Byte, sysio.a)
 PD_COUNT        equ     $1A             * u_short: Anzahl Pfade auf diesem Deskriptor (I$Dup),
                                          * von IOMan gepflegt (sysio.a / 68k_techio.pdf)
@@ -296,6 +306,9 @@ MgrSeekOk:
 * eigenen a2-Inhalt retten (hier: Kommandoblock-Adresse, s. MgrCommon -- wird fuer F$SRtMem
 * nach der Rueckkehr wieder gebraucht)
 CallDrv:
+        moveq   #0,d0                   * 2026-09-26: Prozess-ID (P$ID, Offset 0 des Prozess-
+        move.w  (a4),d0                 * deskriptors) mitschicken -- Sperren zwischen Pfaden
+        move.l  d0,SH_PID(a1)           * desselben Prozesses gibt es nicht (wie RBF)
         move.l  a2,-(a7)
         movea.l DT_DRIV(a3),a0          * a0 = V_driv (Treiber-Modulbasis)
         movea.l DT_STAT(a3),a2          * a2 = V_stat (Treiber-eigener statischer Speicher)
@@ -323,6 +336,8 @@ CallDrv:
 * zuverlaessig) statt auf dem Stack zu parken.
 *───────────────────────────────────────────────────────────────────────────────────────────
 MgrCommon:
+        clr.l   PD_LKCNT(a1)            * Wartezaehler fuer diesen Aufruf
+MgrCommonRetry:
         movea.l a1,a2                   * a2 = urspruenglicher Pfaddeskriptor (fuer PD_ATT/pd_fd
                                          * nach Open unten -- a1 wird gleich auf CmdBlk umgebogen).
                                          * 2026-09-26: vorher a0 -- das ueberschreibt CallDrv mit
@@ -370,7 +385,28 @@ MgrCmnNoSize:
 
         bsr     CallDrv
         bcc.s   MgrOk
-        rts                             * Carry+d1 kommen direkt vom Treiber, nichts freizugeben
+        cmpi.w  #E_LOCK,d1              * Bereich von einem anderen Prozess gesperrt?
+        beq.s   MgrLockWait
+        ori     #1,ccr                  * Carry+d1 kommen direkt vom Treiber
+        rts
+
+* 2026-09-26: wie RBF auf die Freigabe warten statt sofort E$Lock zu melden: einen Tick
+* schlafen und den Aufruf komplett wiederholen (CmdBlk neu fuellen -- ein anderer Prozess kann
+* ihn waehrenddessen benutzt haben), bis PD_TICKS (SS_Ticks) erreicht ist; 0 = unbegrenzt.
+MgrLockWait:
+        addq.l  #1,PD_LKCNT(a2)
+        move.l  PD_TICKS(a2),d0
+        beq.s   MgrLockSleep
+        cmp.l   PD_LKCNT(a2),d0
+        bhi.s   MgrLockSleep
+        move.w  #E_LOCK,d1              * Timeout -> E$Lock an den Aufrufer
+        ori     #1,ccr
+        rts
+MgrLockSleep:
+        moveq   #1,d0
+        OS9     F_SLEEP
+        movea.l a2,a1
+        bra     MgrCommonRetry
 MgrOk:
 * Ergebnis (Byteanzahl o.ae.) an den Aufrufer zurueckmelden -- a1 zeigt weiterhin auf den
 * Kommandoblock (Treiber aendert a1 nicht)
@@ -385,6 +421,7 @@ MgrOk:
         cmpi.b  #DHF_CMD_CREATE,d3
         bne.s   MgrNoFd
 MgrSetFd:
+        clr.l   PD_TICKS(a2)            * neuer Pfad: auf Sperren unbegrenzt warten (RBF-Vorgabe)
         move.l  SH_A0(a1),PD_FD(a2)
         move.l  SH_A1(a1),PD_DFD(a2)
         move.l  PD_DEV(a2),PD_DVT(a2)
@@ -546,6 +583,49 @@ MgrSst_FD:
         bcc.s   MgrSstFdOk
         rts
 MgrSstFdOk:
+        andi    #$FE,ccr
+        rts
+
+* MgrSst_Ticks -- SS_Ticks: d2.l = wie viele Ticks ein Zugriff auf einen fremd gesperrten
+* Bereich wartet (0 = unbegrenzt, Vorgabe). Nur im Pfaddeskriptor gemerkt (PD_TICKS).
+MgrSst_Ticks:
+        move.l  REG_D2(a5),PD_TICKS(a1)
+        andi    #$FE,ccr
+        rts
+
+* MgrSst_Lock -- SS_Lock (68k_tech.pdf S. 589): d2.l = Groesse ab aktueller Position,
+* 0 = alle Sperren aufheben, $FFFFFFFF = ganze Datei. Ist der Bereich fremd gesperrt: warten
+* wie in MgrCommon (Wiederholung bis PD_TICKS).
+MgrSst_Lock:
+        clr.l   PD_LKCNT(a1)
+MgrSstLkRetry:
+        movea.l a1,a2
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        lea     CmdBlk(pc),a1
+        move.l  d2,SH_D0(a1)
+        move.l  REG_D2(a5),SH_D1(a1)
+        move.b  #DHF_CMD_LOCK,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrSstLkOk
+        cmpi.w  #E_LOCK,d1
+        bne.s   MgrSstLkErr
+        addq.l  #1,PD_LKCNT(a2)
+        move.l  PD_TICKS(a2),d0
+        beq.s   MgrSstLkSleep
+        cmp.l   PD_LKCNT(a2),d0
+        bhi.s   MgrSstLkSleep
+        move.w  #E_LOCK,d1
+MgrSstLkErr:
+        ori     #1,ccr
+        rts
+MgrSstLkSleep:
+        moveq   #1,d0
+        OS9     F_SLEEP
+        movea.l a2,a1
+        bra.s   MgrSstLkRetry
+MgrSstLkOk:
         andi    #$FE,ccr
         rts
 
@@ -715,6 +795,10 @@ Mgr_SetStt:
         beq.w   MgrSst_Opt
         cmpi.l  #SS_FD,d0
         beq.w   MgrSst_FD
+        cmpi.l  #SS_Ticks,d0
+        beq.w   MgrSst_Ticks
+        cmpi.l  #SS_Lock,d0
+        beq.w   MgrSst_Lock
         cmpi.l  #SS_Size,d0
         beq.s   MgrSst_Size
         cmpi.l  #SS_Attr,d0

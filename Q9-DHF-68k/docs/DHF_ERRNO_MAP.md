@@ -18,6 +18,8 @@ Quelle: `errno_to_dhf()` und `enum dhf_error` in `Q9-Flux-68k/src/devices/dhf/`.
 | ENAMETOOLONG, ELOOP, Name mit „/“ oder „..“ bei Rename | E$BPNam | $D7 |
 | EBUSY, ETXTBSY | E$Share | $FD |
 | Dateiende (Read, ReadLn, SS_EOF) | E$EOF | $D3 |
+| Bereich von einem anderen Prozess gesperrt (Manager wartet erst bis SS_Ticks) | E$Lock | $FC |
+| nicht teilbare Datei schon von anderem Prozess offen (Share_) | E$Share | $FD |
 | unbekanntes Kommando | E$UnkSvc | $D0 |
 | Gerät/Backend antwortet nicht | E$NotRdy | $F6 |
 | alles andere | E$Write | $F5 |

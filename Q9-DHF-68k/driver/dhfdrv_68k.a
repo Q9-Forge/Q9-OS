@@ -216,7 +216,7 @@ SetStat:
         lea     SH_SEQ(a1),a3
         movea.l (a2),a0
         adda.w  #SH_SEQ,a0
-        moveq   #24-1,d2
+        moveq   #28-1,d2                * 2026-09-26: +4 Byte pid (Offset 28)
 CopyIn: move.b  (a3)+,(a0)+
         dbra    d2,CopyIn
 

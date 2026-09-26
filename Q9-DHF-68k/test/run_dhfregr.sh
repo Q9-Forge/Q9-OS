@@ -64,7 +64,9 @@ driver/dhfdrv_68k.a:dhfdrv:dhfdrv_68k
 descriptor/d0_dhf.a:d0:d0
 descriptor/d1_dhf.a:d1:d1
 test/dhfregr_68k.a:dhfregr:dhfregr
-test/dhfrenfree_68k.a:dhfrfr:dhfrenfree"
+test/dhfrenfree_68k.a:dhfrfr:dhfrenfree
+test/dhflock_68k.a:dhflck:dhflock
+test/dhflockp_68k.a:dhflkp:dhflockp"
 cp "$DEFS" "$W/"
 echo "── Bauen"
 while IFS=: read -r src nam dst; do
@@ -96,6 +98,7 @@ mkdir -p "$ROOT/d0"
 for d in rt ut dd; do chmod -R u+rwx "$ROOT/d0/$d" 2>/dev/null; rm -rf "$ROOT/d0/$d"; done
 rm -f "$ROOT/d0/rn2.txt"; cp "$ROOT/d0/hello.txt" "$ROOT/d0/rn.txt"   # fuer "rename"
 rm -rf "$ROOT/d0/dsq" "$ROOT/d0/dsz" "$ROOT/d0/zt" "$ROOT/d0/nm"      # fuer "dsave"/Zeit/Namen
+printf "sperre\r" >"$ROOT/d0/lk.txt"; printf "teilen\r" >"$ROOT/d0/sh.txt"   # Sperrtest
 mkdir -p "$ROOT/d0/zt"; echo t >"$ROOT/d0/zt/zeit.txt"; touch -t 202001020304 "$ROOT/d0/zt/zeit.txt"
 mkdir -p "$ROOT/d0/nm"; for n in ok.txt .DS_Store ._ok.txt abcdefghijklmnopqrstuvwxyz1234 "$(printf "\303\274mlaut.txt")"; do echo x >"$ROOT/d0/nm/$n"; done
 mkdir -p "$ROOT/d0/dsq/a/b"; printf "eins\r" >"$ROOT/d0/dsq/f1"; printf "zwei\r" >"$ROOT/d0/dsq/a/f2"
@@ -170,6 +173,8 @@ run "dir -e /d0/zt"
 run "copy /d0/hello.txt /d1/rotest.txt"
 run "makdir /d1/rotest"
 run "dir /d0/nm"
+run "/dd/CMDS/dhf/dhflock &"
+run "/dd/CMDS/dhf/dhflockp"
 # Alle Pfade sind jetzt geschlossen -> der Emulator darf KEINE Datei unter dhf_root mehr
 # offen halten (Beleg dafuer, dass I\$Close den Host wirklich erreicht, s. Mgr_Close/PD_COUNT)
 catch {exec lsof -p [exp_pid] > $W/lsof.txt}
@@ -220,12 +225,25 @@ host "15 rename /d0/rn.txt rn2.txt"               '[ ! -e "$ROOT/d0/rn.txt" ] &&
 host "19 Ortszeit: dir -e zeigt 20/01/02 0304"   'grep -q "20/01/02 0304.* zeit.txt" "$W/emu.txt"'
 host "20 /d1 nur lesbar: copy/makdir abgelehnt"  '[ ! -e "$D1ROOT/rotest.txt" ] && [ ! -e "$D1ROOT/rotest" ]'
 host "21 dir blendet .DS_Store/._/lange/UTF-8 aus" 'sed -n "/Directory of \/d0\/nm/,/# *\$/p" "$W/emu.txt" | grep -q "ok.txt" && ! grep -q -e DS_Store -e "_ok.txt" -e abcdefghijklmnopqrstuvwxyz -e mlaut "$W/emu.txt"'
+host "22 anderer Prozess: nicht teilbar -> E\$Share" 'grep -q "PROBE share: \$00FD" "$W/emu.txt"'
+host "23 gesperrter Bereich + SS_Ticks -> E\$Lock"   'grep -q "PROBE timeout: \$00FC" "$W/emu.txt"'
+host "24 ohne Timeout: wartet bis zur Freigabe"      'grep -q "PROBE gewartet: ok" "$W/emu.txt"'
 rm -f "$D1ROOT/rotest.txt"; rmdir "$D1ROOT/rotest" 2>/dev/null
+
+#── 7. Zweite, kurze Phase: [dhf1] aus der .q9-Config (Vorrang vor dem Deskriptor) ────
+mkdir -p "$W/d1alt"; printf "aus der Config\r" >"$W/d1alt/marker.txt"
+{ cat "$CFG"; printf "\n[dhf1]\nhostpath = %s\nreadonly = no\n" "$W/d1alt"; } >"$W/emu2.q9"
+sed -e "s|$CFG|$W/emu2.q9|" -e "s|$LOG|$W/emu2.log|" -e '/^run "/d' -e '/^catch/d' "$W/run.exp" \
+    | awk '/^send "\\x1d"/ && !x {print "run \"list /d1/marker.txt\""; print "run \"copy /d0/hello.txt /d1/neu.txt\""; x=1} {print}' >"$W/run2.exp"
+expect "$W/run2.exp" >/dev/null 2>&1
+tr -d '\r' <"$W/emu2.log" >"$W/emu2.txt" 2>/dev/null
+host "25 [dhf1] hostpath aus der Config"          'grep -qx "aus der Config" "$W/emu2.txt"'
+host "26 [dhf1] readonly = no hebt Schutz auf"    'cmp -s "$ROOT/d0/hello.txt" "$W/d1alt/neu.txt"'
 
 TOTAL_FAIL=$((G_FAIL+H_FAIL))
 echo "══ ERGEBNIS: Gast $G_OK OK / $G_FAIL FEHLER, Host $H_OK OK / $H_FAIL FEHLER"
 for d in rt ut dd; do chmod -R u+rwx "$ROOT/d0/$d" 2>/dev/null; rm -rf "$ROOT/d0/$d"; done
-rm -rf "$ROOT/d0_nachbar" "$ROOT/d0/dsq" "$ROOT/d0/dsz" "$ROOT/d0/zt" "$ROOT/d0/nm"; rm -f "$ROOT/d0/rn.txt" "$ROOT/d0/rn2.txt"
+rm -rf "$ROOT/d0_nachbar" "$ROOT/d0/dsq" "$ROOT/d0/dsz" "$ROOT/d0/zt" "$ROOT/d0/nm"; rm -f "$ROOT/d0/rn.txt" "$ROOT/d0/rn2.txt" "$ROOT/d0/lk.txt" "$ROOT/d0/sh.txt"
 [ $TOTAL_FAIL = 0 ] || exit 1
 if [ $INSTALL = 1 ]; then
     if pgrep -f "q9.exe .*dhf_claude.q9" >/dev/null; then

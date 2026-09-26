@@ -1,0 +1,62 @@
+*═══════════════════════════════════════════════════════════════════════════
+* dhflock_68k.a -- Hilfsprogramm fuer den Sperrtest (test/run_dhfregr.sh): haelt
+* /d0/lk.txt komplett gesperrt (SS_Lock $FFFFFFFF) und /d0/sh.txt nicht teilbar
+* offen (Modus Share_), schlaeft ~2 s und gibt dann frei. Gegenstueck: dhflockp.
+*═══════════════════════════════════════════════════════════════════════════
+        nam     dhflck
+        ttl     DHF Sperrtest: Halter
+        use     q9defs.d
+I_OPEN          equ     $84
+I_CLOSE         equ     $8f
+I_SETSTT        equ     $8e
+F_SLEEP         equ     $0A
+SS_Lock         equ     $11
+        psect   dhflck,(Prgrm<<8)!Objct,0,1,1024,Start
+Start:
+        lea     PLk(pc),a0
+        moveq   #3,d0                   * Update
+        OS9     I_OPEN
+        bcs     Fail
+        move.w  d0,d4
+        moveq   #SS_Lock,d1
+        moveq   #-1,d2                  * ganze Datei
+        OS9     I_SETSTT
+        bcs     Fail
+        lea     PSh(pc),a0
+        moveq   #$43,d0                 * Update + Share_ (nicht teilbar)
+        OS9     I_OPEN
+        bcs     Fail
+        move.w  d0,d5
+        lea     MHold(pc),a0
+        moveq   #MHoldL,d1
+        bsr     Print
+        move.l  #200,d0
+        OS9     F_SLEEP
+        move.w  d4,d0
+        OS9     I_CLOSE
+        move.w  d5,d0
+        OS9     I_CLOSE
+        lea     MFree(pc),a0
+        moveq   #MFreeL,d1
+        bsr     Print
+        moveq   #0,d1
+        OS9     F$Exit
+Fail:   move.w  d1,d6
+        lea     MFail(pc),a0
+        moveq   #MFailL,d1
+        bsr     Print
+        move.w  d6,d1
+        OS9     F$Exit
+Print:  moveq   #1,d0
+        OS9     I$WritLn
+        rts
+MHold   dc.b    "HALTER: gesperrt",$0D
+MHoldL  equ     *-MHold
+MFree   dc.b    "HALTER: frei",$0D
+MFreeL  equ     *-MFree
+MFail   dc.b    "HALTER: FEHLER",$0D
+MFailL  equ     *-MFail
+PLk     dc.b    "/d0/lk.txt",0
+PSh     dc.b    "/d0/sh.txt",0
+        endsect
+        end

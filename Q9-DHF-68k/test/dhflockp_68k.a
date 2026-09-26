@@ -1,0 +1,106 @@
+*═══════════════════════════════════════════════════════════════════════════
+* dhflockp_68k.a -- Pruefer fuer den Sperrtest (laeuft, waehrend dhflock im
+* Hintergrund /d0/lk.txt sperrt und /d0/sh.txt nicht teilbar offen haelt):
+*   "PROBE share: $00FD"       Open von sh.txt durch einen anderen Prozess -> E$Share
+*   "PROBE timeout: $00FC"     Read auf gesperrtem lk.txt mit SS_Ticks 30 -> E$Lock
+*   "PROBE gewartet: ok"       Read mit SS_Ticks 0 wartet, bis dhflock freigibt
+*═══════════════════════════════════════════════════════════════════════════
+        nam     dhflkp
+        ttl     DHF Sperrtest: Pruefer
+        use     q9defs.d
+I_OPEN          equ     $84
+I_READ          equ     $89
+I_CLOSE         equ     $8f
+I_SETSTT        equ     $8e
+F_SLEEP         equ     $0A
+SS_Ticks        equ     $10
+        psect   dhflkp,(Prgrm<<8)!Objct,0,1,1024,Start
+Start:
+        moveq   #50,d0                  * dem Halter Vorsprung lassen
+        OS9     F_SLEEP
+        lea     PSh(pc),a0
+        moveq   #1,d0
+        OS9     I_OPEN
+        bcc.s   ShOpen
+        lea     MSh(pc),a1
+        bsr     Report                  * d1.w = Fehlercode
+        bra.s   TLock
+ShOpen: OS9     I_CLOSE
+        lea     MSh(pc),a1
+        moveq   #0,d1
+        bsr     Report
+TLock:  lea     PLk(pc),a0
+        moveq   #3,d0
+        OS9     I_OPEN
+        bcs     Done
+        move.w  d0,d4
+        moveq   #SS_Ticks,d1
+        moveq   #30,d2
+        OS9     I_SETSTT
+        move.w  d4,d0
+        lea     Buf(pc),a0
+        moveq   #1,d1
+        OS9     I_READ
+        bcs.s   TOut
+        moveq   #0,d1
+TOut:   lea     MTo(pc),a1
+        bsr     Report
+        move.w  d4,d0
+        moveq   #SS_Ticks,d1
+        moveq   #0,d2
+        OS9     I_SETSTT
+        move.w  d4,d0
+        lea     Buf(pc),a0
+        moveq   #1,d1
+        OS9     I_READ
+        bcs.s   WFail
+        lea     MOk(pc),a0
+        moveq   #MOkL,d1
+        bsr     Print
+        bra.s   WDone
+WFail:  lea     MTo2(pc),a1
+        bsr     Report
+WDone:  move.w  d4,d0
+        OS9     I_CLOSE
+Done:   moveq   #0,d1
+        OS9     F$Exit
+* Report: a1 = Text (NUL), d1.w = Code -> "<Text>$xxxx"
+Report: move.w  d1,d3
+        lea     Line(pc),a0
+RCp:    move.b  (a1)+,d0
+        beq.s   RHex
+        move.b  d0,(a0)+
+        bra.s   RCp
+RHex:   move.b  #'$',(a0)+
+        moveq   #3,d2
+RHl:    rol.w   #4,d3
+        move.b  d3,d0
+        andi.b  #$0F,d0
+        cmpi.b  #10,d0
+        blt.s   RHd
+        addi.b  #'A'-10,d0
+        bra.s   RHp
+RHd:    addi.b  #'0',d0
+RHp:    move.b  d0,(a0)+
+        dbra    d2,RHl
+        move.b  #$0D,(a0)+
+        move.l  a0,d1
+        lea     Line(pc),a0
+        sub.l   a0,d1
+        bsr     Print
+        rts
+Print:  moveq   #1,d0
+        OS9     I$WritLn
+        rts
+MSh     dc.b    "PROBE share: ",0
+MTo     dc.b    "PROBE timeout: ",0
+MTo2    dc.b    "PROBE gewartet: FEHLER ",0
+MOk     dc.b    "PROBE gewartet: ok",$0D
+MOkL    equ     *-MOk
+PLk     dc.b    "/d0/lk.txt",0
+PSh     dc.b    "/d0/sh.txt",0
+        align   2
+Line    ds.b    64
+Buf     ds.b    4
+        endsect
+        end

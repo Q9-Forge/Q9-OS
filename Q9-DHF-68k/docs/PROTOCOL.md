@@ -13,7 +13,7 @@ direkt auf ein Verzeichnis des Hosts zugreift.
    a5 = Registersatz des Aufrufers).
 2. Der Manager füllt seinen Kommandoblock (`CmdBlk`, Layout wie das Fenster) und ruft den
    Treiber immer über dessen `D_WRIT`-Eintrag auf.
-3. Der Treiber kopiert Byte 4–27 ins Fenster (`V_PORT` aus `M$Port` des Deskriptors) und
+3. Der Treiber kopiert Byte 4–31 ins Fenster (`V_PORT` aus `M$Port` des Deskriptors) und
    schreibt **zuletzt** das Kommandobyte. Dieser Schreibzugriff löst im Emulator die
    Verarbeitung synchron aus.
 4. Danach kopiert der Treiber Status und a0/a1/d0/d1/d2 (Byte 2 und 8–27) zurück. Ist der
@@ -22,7 +22,7 @@ direkt auf ein Verzeichnis des Hosts zugreift.
 Das ist nur deshalb sicher, weil OS-9/68k im System-State nicht unterbrochen wird und das
 Gerät synchron arbeitet. Für mehrere CPUs wäre ein anderes Protokoll nötig (nicht geplant).
 
-## Fenster (`struct dhf_shared`, 28 Byte, big-endian)
+## Fenster (`struct dhf_shared`, 32 Byte, big-endian)
 
 | Offset | Feld | Bedeutung |
 |---:|---|---|
@@ -36,6 +36,7 @@ Gerät synchron arbeitet. Für mehrere CPUs wäre ein anderes Protokoll nötig (
 | 16 | d0 | meist Pfadnummer (= Handle im Gerät) |
 | 20 | d1 | Byteanzahl / Position / Attribute |
 | 24 | d2 | Modus / whence / Rückgabe |
+| 28 | pid | Prozess-ID des Aufrufers (für Sperren: Pfade desselben Prozesses sperren sich nicht) |
 
 Zwei Geräte-Instanzen: `$FFFF4000` (Deskriptor `d0`) und `$FFFF4100` (Deskriptor `d1`), je mit
 eigenem Basispfad, eigener Handle- und Nummerntabelle.
@@ -68,10 +69,12 @@ eigenem Basispfad, eigener Handle- und Nummerntabelle.
 | 26 | FDINF | d2 Sektornummer, d1 Anzahl, a1 Puffer | FD-Abbild | SS_FDInf |
 | 27 | VOLSTORE | a1 Puffer | 16 Byte {Bytes/Sektor, gesamt, frei, größter Block} | SS_VolStore |
 | 28 | SETFD | d0, a1 FD-Abbild | – (nur FD_DAT wirkt) | SS_FD (SetStt) |
+| 29 | LOCK | d0, d1 Größe (0 = freigeben, $FFFFFFFF = ganze Datei) | – | SS_Lock |
 | 254 | PING | – | – | – |
 
 14–17 (RMDIR, RENAME, OPENDIR, READDIR) sind Reste der frühen Unix-artigen Planung und von
-keinem I$-Aufruf erreichbar. SS_Ready, SS_DevNm und SS_Opt beantwortet der Manager selbst.
+keinem I$-Aufruf erreichbar. SS_Ready, SS_DevNm, SS_Opt und SS_Ticks beantwortet der
+Manager selbst.
 
 ## RBF-Semantik, die DHF nachbildet
 
@@ -95,6 +98,26 @@ Alles per Ablaufverfolgung der echten Utilities ermittelt (s. STATUS.md):
   als 28 Zeichen, Bytes ab $80.
 - **Zeiten** in Ortszeit.
 - **Nur lesbares Laufwerk:** jede verändernde Operation → E$WP.
+- **Sperren** (Kap. 7 „Record Locking“): Open mit Share_ ($40) → nicht teilbar, ein anderer
+  Prozess bekommt E$Share. Im Update-Modus sperrt jedes Read den gelesenen Bereich bis zum
+  nächsten Read/Write/Close; SS_Lock sperrt explizit. Zugriffe anderer Prozesse auf einen
+  gesperrten Bereich meldet das Gerät mit E$Lock; der **Manager wartet** dann (F$Sleep, je ein
+  Tick) und wiederholt, bis SS_Ticks erreicht ist (0 = unbegrenzt). Timeout und Zähler liegen
+  im FileManager-Bereich des Pfaddeskriptors (PD_FST $2A/$2E). Nicht nachgebildet:
+  EOF-Sperre, Deadlock-Erkennung.
+
+## Konfiguration im Emulator
+
+Abschnitte `[dhf0]`/`[dhf1]` in der `.q9`-Datei haben Vorrang vor dem Deskriptor:
+
+```
+[dhf1]
+hostpath = ../cf_images/OS9SYS   ; relativ zur .q9-Datei
+readonly = yes                   ; yes|no
+```
+
+Ohne Abschnitt gelten Basispfad und Flag aus dem Deskriptor (`DevCon`: Wort 0 Basispfad,
+Wort 1 Flags, Bit 0 = nur lesbar).
 
 ## Diagnose
 
