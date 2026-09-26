@@ -461,3 +461,50 @@ gesetzt, per `ls -la` bestaetigt und wieder zurueckgesetzt).
    wie der `DhfMgrEnt`-Tabellenbug weiter oben gewesen. Vor dem Deployment per Capstone-
    Disassemblierung des fertigen `.mod`-Files verifiziert: alle Sprungziele landen exakt auf
    den erwarteten Instruktionsgrenzen, `.w`/`.b`-Kodierung von `qr68k` korrekt gewaehlt.
+
+## 2026-09-26, Nachtrag: SS_Rename/SS_Free verdrahtet -- und die "Terminal-Verzoegerung" war ein Testskript-Fehler
+
+Nutzerauftrag: "dann mach bitte noch das rename und free". Umgesetzt (von einer Sitzung
+begonnen, deren Limit vor dem Commit auslief; von einer Folgesitzung nachgeprueft und
+abgeschlossen):
+
+1. **`SS_Rename`** (SetStt, `$42`): `a0`=Zeiger auf den neuen Namen. Neue Simulator-
+   Funktion `dhf_host_fs_rename_at()` (Handle-basiert wie alle `_at`-Varianten: alte Seite
+   ist der beim Open gespeicherte Host-Pfad, neuer Name laeuft durch dieselbe Basispfad-
+   Einsperrung `resolve_confined_path()`; der gespeicherte Handle-Pfad wird danach
+   nachgefuehrt). Neues Wire-Kommando `DHF_CMD_RENAMEAT=24`. Manager: `MgrSst_Rename`.
+   **Registerkonvention ist eine eigene Annahme** -- "OS-9 System Calls" dokumentiert
+   `SS_Rename` nicht (nur `sg_codes.h`: "0x42 rename file"), und die echte `rename`-Utility
+   verweigert sich bei jedem Nicht-RBF-FileManager schon VOR jedem Syscall ("pathname not
+   RBF device", per `Q9_TRAP_TRACE_ALL` gesehen). Nur fuer eigene Werkzeuge nutzbar.
+2. **`SS_Free`** (GetStt, `$43`): Ausgabe `d0.l`=freier Platz in Byte (ungewoehnlich: `d0`,
+   nicht `d1`/`d2` wie die anderen GetStt-Antworten). Neue Simulator-Funktion
+   `dhf_host_fs_getfree()` (`statvfs()` auf den Basispfad, auf 32 Bit gekappt). Neues
+   Wire-Kommando `DHF_CMD_GETFREE=25`. Manager: `MgrGst_Free`. Die echte `free`-Utility
+   erreicht auch diesen Aufruf nie -- sie oeffnet immer roh `<geraet>@` und liest Bitmap-
+   Sektoren, fuer ein Host-Passthrough ohne LSNs nicht abbildbar.
+3. **Neuer Test** `test/dhfrenfree_68k.a` (Modul `dhfrfr`, im Image als
+   `/CMDS/dhf/dhfrenfree`): `I$Open`(Update) + `SS_Free` + `SS_Rename("hello_renamed.txt")`
+   + `I$Close`. **Verifiziert, 3 von 3 Laeufen ohne jede Instrumentierung**: `SS_Free: ok,
+   $FFFFFFFF` (Host meldet ~40 GB frei, korrekt gekappt), `SS_Rename: ok`, `CLOSE: ok`; die
+   Host-Datei heisst danach tatsaechlich `hello_renamed.txt` (nach jedem Lauf zurueck-
+   benannt). Manager- und Testmodul im Image `OS9SYS_Claude.hda` byteidentisch (`cmp`) mit
+   einem frischen Bau aus dem committeten Quellstand.
+4. **Regression gegen den neuen Manager, ein Lauf**: `dhftest` (Open/Read/Close), `dhfstt2`
+   (DevNm/EOF/Pos/Attr), `dhfdirtest` (Verzeichnis bis `E$EOF` `$D3`), `list /d0/hello.txt`,
+   `attr /d0/hello.txt`, `attr /d0` (`d-e-rewr`) -- alle unveraendert gruen. (`dhfstt2`
+   setzt die Host-Datei auf `r--------`; danach `chmod 644` zuruecksetzen.)
+
+**KORREKTUR zu den frueheren "Netzwerk-Multiterminal-Verzoegerungen"** (bei `dhfsetstt` und
+`dhfdirtest` oben, und zunaechst auch hier): das war KEIN Timing-Effekt des Emulators,
+sondern ein Fehler in den `expect`-Skripten. Deren Prompt-Muster `set prompt {[#$] ?$}`
+greift auf JEDES `$` am Ende des bisher gelesenen Puffers -- also auch auf das `$` einer
+Hex-Ausgabe (`$FFFFFFFF`) oder eines Syscall-Namens im Testbanner (`I$Open`, `I$SetStt`).
+Das Skript haelt den Befehl dann fuer beendet und schickt sofort `Ctrl-]` -> Emulator weg,
+Ausgabe mitten im Wort abgeschnitten. Genau das zeigen die Fehllaeufe hier: `$FFFFF`,
+`$FFFFF`, `$FFFF` -- je nachdem, wie viele Zeichen gerade im Puffer lagen. Dass es mit
+`Q9_ITRACE_*` "sofort durchlief", war Zufall der Pufferung, kein Beleg. Bei `dhfdirtest`
+("Ausgabe brach nach ~24 Byte der ersten Meldung ab") passt es exakt: das erste `$` steht
+in `=== dhfdirtest: I$Open...` nach 18 Zeichen. **Fix: Prompt-Muster auf den echten Prompt
+festnageln, `set prompt {ROOT# $}`** -- damit liefen alle Laeufe oben beim ersten Versuch
+durch. Wer ein neues Testskript schreibt: dieses Muster nehmen, nicht `[#$]`.
