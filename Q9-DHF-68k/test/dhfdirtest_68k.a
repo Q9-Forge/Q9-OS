@@ -1,0 +1,196 @@
+*═══════════════════════════════════════════════════════════════════════════
+* File:   dhfdirtest_68k.a                                            Ver. 1.00
+* Owner:  Claude
+* Desc.:  Minimales OS-9-Programmmodul: oeffnet "/d0" MIT gesetztem Directory-
+*         Bit (d0.b bit7, "OS-9 System Calls" Kap. 2 I$Open) und liest die
+*         rohen 32-Byte-RBF-Verzeichniseintraege direkt, um den neuen
+*         Verzeichnis-Lesemechanismus (dhf_host_fs_open_at/read fuer
+*         Verzeichnisse) unabhaengig von der echten "dir"-Utility zu
+*         verifizieren.
+*
+* Edition History
+*─────────┬──────┬────────────────────────────────────────────────────────┬──────
+* Date    │ Ver. │ Description                                            │ By
+*─────────┼──────┼────────────────────────────────────────────────────────┼──────
+* 26-09-26│ 1.00 │ Erster Wurf                                            │ Cld
+*═════════╧══════╧════════════════════════════════════════════════════════╧══════
+        nam     dhfdir
+        ttl     Q9-DHF Testprogramm: I$Open(Dir-Bit)/I$Read/I$Close gegen /d0
+
+        use     q9defs.d
+
+Edition         equ     1
+
+I_OPEN          equ     $84
+I_READ          equ     $89
+I_CLOSE         equ     $8f
+
+STDOUT          equ     1
+ENTRY_SIZE      equ     32
+
+        psect   dhfdir,(Prgrm<<8)!Objct,0,Edition,1024,Start
+
+Start:
+        lea     MsgStart(pc),a0
+        move.l  #MsgStartLen,d1
+        bsr     PrintMsg
+
+        lea     PathName(pc),a0
+        moveq   #1,d0                    * Zugriffsmodus: nur Read -- Directory-Bit ($81)
+                                          * bewusst NICHT gesetzt fuer diesen Testlauf (s.
+                                          * STATUS.md: Verdacht auf RBF-spezifische Kernel-
+                                          * Logik bei gesetztem Dir-Bit gegen Nicht-RBF-Pfad)
+        OS9     I_OPEN
+        bcs     OpenErr
+        lea     PathNum(pc),a3
+        move.w  d0,(a3)
+        lea     MsgOpenOk(pc),a0
+        move.l  #MsgOpenOkLen,d1
+        bsr     PrintMsg
+        bra     ReadLoop
+
+OpenErr:
+        move.w  d1,d4
+        lea     MsgOpenFail(pc),a0
+        move.l  #MsgOpenFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     Done
+
+* --- Leseschleife: pro Durchlauf genau EIN 32-Byte-Verzeichniseintrag --------
+ReadLoop:
+        lea     EntryBuf(pc),a0
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        move.l  #ENTRY_SIZE,d1
+        OS9     I_READ
+        bcs     ReadDone                 * E$EOF oder anderer Fehler -> Schleifenende
+        lea     EntryBuf(pc),a0
+        moveq   #28-1,d1                 * Dateiname: Byte 0-27, High-Bit auf letztem
+        bsr     PrintDirName             * Zeichen gesetzt -- vor Ausgabe maskieren
+        bra     ReadLoop
+
+ReadDone:
+        move.w  d1,d4
+        lea     MsgReadEnd(pc),a0
+        move.l  #MsgReadEndLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     DoClose
+
+DoClose:
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        OS9     I_CLOSE
+        bcs     CloseErr
+        lea     MsgCloseOk(pc),a0
+        move.l  #MsgCloseOkLen,d1
+        bsr     PrintMsg
+        bra     Done
+
+CloseErr:
+        move.w  d1,d4
+        lea     MsgCloseFail(pc),a0
+        move.l  #MsgCloseFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+
+Done:
+        OS9     F$Exit
+
+*───────────────────────────────────────────────────────────────────────────
+* PrintDirName -- Eingabe (a0)=32-Byte-Eintrag, d1=27 (letzter gueltiger Index
+* VOR der Laengenkorrektur). Loescht das High-Bit auf dem letzten Namenszeichen
+* zwischenzeitlich im Puffer selbst (kein Nutz-Zeichen danach mehr noetig),
+* gibt dann bis zum ersten Byte=0 (oder max. 28) via WritLn aus. Zerstoert
+* d0-d3/a0-a3.
+*───────────────────────────────────────────────────────────────────────────
+PrintDirName:
+        move.l  a0,a2
+        moveq   #0,d2                   * d2 = Laenge
+FindLen:
+        cmpi.b  #28,d2
+        bge.s   FoundLen
+        move.b  (a0,d2.w),d3
+        beq.s   FoundLen                * Byte 0 = geloescht/Ende -- nicht mit ausgeben
+        addq.l  #1,d2
+        bra.s   FindLen
+FoundLen:
+        tst.l   d2
+        beq.s   PrintDirNameDone         * leerer Name (geloeschter Eintrag) -- nichts ausgeben
+* High-Bit auf dem letzten Zeichen (Index d2-1) loeschen, damit es lesbar bleibt
+        move.l  d2,d3
+        subq.l  #1,d3
+        move.b  (a2,d3.w),d0
+        andi.b  #$7F,d0
+        move.b  d0,(a2,d3.w)
+        move.l  a2,a0
+        move.l  d2,d1
+        bsr     PrintMsg
+PrintDirNameDone:
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+PrintMsg:
+        moveq   #STDOUT,d0
+        OS9     I$WritLn
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+PrintHexD2:
+        lea     HexBuf(pc),a0
+        move.b  #'$',(a0)+
+        move.w  d2,d3
+        moveq   #3,d1
+HexLoop:
+        move.w  d3,d0
+        lsr.w   #8,d0
+        lsr.w   #4,d0
+        andi.w  #$0F,d0
+        cmpi.b  #10,d0
+        blt.s   HexDigit
+        addi.b  #'A'-10,d0
+        bra.s   HexStore
+HexDigit:
+        addi.b  #'0',d0
+HexStore:
+        move.b  d0,(a0)+
+        lsl.w   #4,d3
+        dbra    d1,HexLoop
+        move.b  #$0D,(a0)+
+        lea     HexBuf(pc),a0
+        moveq   #6,d1
+        bsr     PrintMsg
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+MsgStart        dc.b    "=== dhfdirtest: I$Open(Dir-Bit)/I$Read/I$Close gegen /d0 ===",$0D
+MsgStartLen     equ     *-MsgStart
+
+MsgOpenOk       dc.b    "OPEN: ok",$0D
+MsgOpenOkLen    equ     *-MsgOpenOk
+
+MsgOpenFail     dc.b    "OPEN: FEHLER, Code:",$0D
+MsgOpenFailLen  equ     *-MsgOpenFail
+
+MsgReadEnd      dc.b    "-- Ende der Liste, Code:",$0D
+MsgReadEndLen   equ     *-MsgReadEnd
+
+MsgCloseOk      dc.b    "CLOSE: ok",$0D
+MsgCloseOkLen   equ     *-MsgCloseOk
+
+MsgCloseFail    dc.b    "CLOSE: FEHLER, Code:",$0D
+MsgCloseFailLen equ     *-MsgCloseFail
+
+PathName        dc.b    "/d0",0
+
+        align   2
+PathNum         ds.w    1
+HexBuf          ds.b    8
+EntryBuf        ds.b    32
+
+        endsect
+        end

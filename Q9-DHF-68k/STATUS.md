@@ -316,3 +316,65 @@ ihrer jeweils EINEN verdrahteten Funktion (`SS_Ready`/`SS_Size` bzw. `SS_Size`) 
 `E$UnkSvc` zurueck, das ist aber jetzt eine bewusste Fallunterscheidung innerhalb einer
 echten Routine, kein pauschaler Stub mehr. Einzige verbleibende groessere Luecke ist die
 echte Verzeichnislistung (`dir`, s. vorheriger Abschnitt).
+
+## 2026-09-26, Nachtrag: RBF-Verzeichnisformat gebaut+verifiziert -- echte "dir"-Utility zeigt es noch nicht an
+
+Nutzerauftrag: "pass das dir format an so das es beim dir kommando richtig angezeigt wird".
+Der zugrundeliegende Lese-Mechanismus ist jetzt fertig, korrekt und per eigenem Testprogramm
+verifiziert -- die STOCK-`/CMDS/dir`-Utility selbst zeigt trotzdem noch nichts an, Grund
+gefunden aber NICHT geloest (s. Punkt 4/5 unten).
+
+1. **Directory File Format** ("OS-9 Technical Manual" Kap. 7, lokal unter /Volumes/SSD1TB/
+   Documents/OS-9 v2.4 Technical Reference Manual): 32-Byte-Eintraege, Byte 0-27=Dateiname
+   (High-Bit auf dem LETZTEN Zeichen gesetzt, Byte 0=0 -> geloescht/Ende), Byte 28 unbenutzt/
+   0, Byte 29-31=3-Byte "FD"-LSN-Zeiger (bei DHF ohne echtes Medium bedeutungslos, bleibt 0).
+2. **`dhf_host_fs_open_at()`** (`Q9-Flux-68k/src/devices/dhf/dhf_host_fs.c`) erkennt jetzt
+   per `stat()`, ob das Ziel ein Host-Verzeichnis ist, und benutzt dann `opendir()` statt
+   `open()` (ein Directory-fd laesst sich unter POSIX nicht `read()`en -- `EISDIR`).
+   **`dhf_host_fs_read()`** liefert fuer solche Handles ueber die neue Hilfsfunktion
+   `dhf_read_dir_entries()` die echten 32-Byte-RBF-Eintraege (per `readdir()`, inkl. der vom
+   Host ohnehin schon geliefertern "."/".."-Eintraege) -- am echten Verzeichnisende (kein
+   `readdir()`-Ergebnis mehr) greift dieselbe `DHF_ERR_EOF`-Logik wie bei normalen Dateien.
+3. **Neuer Test** `test/dhfdirtest_68k.a`: `I$Open`+Leseschleife (ein `I$Read` je 32-Byte-
+   Eintrag)+`I$Close` gegen `/d0`. **Verifiziert, mehrfach reproduzierbar**: listet
+   `.`/`..`/`hello.txt`/`hello_backup.txt` korrekt und beendet sauber mit `E$EOF` ($D3).
+   Zwei Testlaeufe wirkten zunaechst wie ein echter Haenger (Ausgabe brach nach ~24 Byte der
+   ersten Meldung ab, auch nach 150s kein Fortschritt) -- ein DRITTER Lauf (mit leichter
+   `Q9_ITRACE_LINK`-Instrumentierung, aus Diagnosegruenden dazugeschaltet) lief dagegen sofort
+   sauber durch, ein VIERTER Lauf ganz ohne jede Instrumentierung ebenfalls -- also doch kein
+   echter Haenger, sondern Netzwerk-Multiterminal-Verzoegerung wie schon bei `dhfsetstt`
+   dokumentiert (s. oben), nur diesmal mit besonders langer Verzoegerung. Kein Code-Bug.
+4. **Warum die STOCK-`dir`-Utility trotzdem nichts anzeigt**: per `Q9_ITRACE_PATH`+
+   Disassemblierung von `/CMDS/dir` (echtes Microware-Binary, 9302 Byte) verifiziert: `dir
+   /d0` ruft `I$Open("/d0", d0.b=0)` (Modus 0 -- laut "OS-9 System Calls" Kap. 2 ein reiner
+   Attribut-Probe-Open, "does not permit any actual I/O on the path"), bekommt Pfadnummer 6
+   zurueck (kein Fehler), tut dann NICHTS WEITER mit Pfad 6 (kein `I$Read`, kein `I$GetStt`,
+   kein `I$ChgDir` -- per vollstaendiger `Q9_TRAP_TRACE_ALL`-Spur bestaetigt: die einzigen
+   `I$GetStt`-Aufrufe in diesem Fenster zielen auf Pfad 1 (Konsole), nicht auf Pfad 6) und
+   schliesst Pfad 6 sofort wieder -- druckt danach nur den blossen Geraetenamen ("/d0") als
+   Fallback. `dir` entscheidet also OHNE weiteren Syscall auf Pfad 6, muss also etwas direkt
+   aus dem Pfaddeskriptor (Zeiger in `a2`, von `I$Open` zurueckgegeben) lesen.
+5. **Versuchte, NICHT erfolgreiche Erklaerung**: `PD_ATT` (Pfaddeskriptor-Offset `$B5`, Bit 7
+   = "Set if directory file", "OS-9 Technical Manual" Anhang B, "RBF Definitions of the Path
+   Descriptor") ist laut Handbuch GENAU das Feld, das ein Aufrufer ohne Syscall pruefen
+   koennte -- ABER dieses Feld ist ausdruecklich RBF-EIGEN ("Maintained by: File Manager",
+   nur RBF fuellt es tatsaechlich). `MgrCommon` wurde entsprechend erweitert (`movea.l a1,a0`
+   am Anfang rettet den urspruenglichen Pfaddeskriptor, da `a1` gleich auf `CmdBlk`
+   umgebogen wird; nach erfolgreichem `I$Open`, wenn der Simulator ueber ein neues,
+   sonst bei OPEN ungenutztes `SH_D2`-Ruecklauffeld "ist ein Host-Verzeichnis" meldet
+   (`dhf_host_fs_open_at()`s `is_dir`, per `dhf_emu_device.c`s `DHF_CMD_OPEN`-Fall
+   durchgereicht), schreibt `MgrCommon` `$80` nach `PD_ATT(a0)`). **Ergebnis: keine
+   Aenderung im Verhalten von `dir`** -- entweder liest `dir` ein anderes Feld/nutzt einen
+   anderen Mechanismus (z. B. Pruefung des FileManager-Modulnamens gegen "rbf", oder ein
+   Feld, dessen Offset in diesem Handbuch fuer eine andere OS-9-Version/Konfiguration nicht
+   exakt passt), oder mein Schreibzugriff landet aus einem noch nicht gefundenen Grund nicht
+   dort, wo `dir` tatsaechlich hinschaut. Der PD_ATT-Schreibzugriff selbst ist harmlos und
+   bleibt im Code (schadet nichts, hilft aber `dir` bisher nicht) -- **nicht weiter verfolgt,
+   da eine vollstaendige Klaerung eine tiefere Disassemblierung des kompletten `dir`-Binaries
+   braeuchte** (ueber das hinausgehend, was fuer diese Sitzung vertretbar war).
+6. **Fazit**: das DHF-Verzeichnisformat selbst ist fertig, korrekt und wiederverwendbar
+   (jedes eigene oder zukuenftige Werkzeug kann `/d0` wie jedes andere Verzeichnis oeffnen
+   und lesen). Die STOCK-`dir`-Utility zu ueberzeugen ist ein eigenstaendiges, noch offenes
+   Reverse-Engineering-Problem -- naechster Schritt waere eine vollstaendige Disassemblierung
+   von `/CMDS/dir`, oder alternativ ein eigenes, einfaches Listing-Werkzeug (wie
+   `dhfdirtest_68k.a`, nur benutzerfreundlicher formatiert) als praktischer Ersatz.

@@ -94,6 +94,16 @@ D_WRIT          equ     4
 PD_PD           equ     0               * u_short: eigene Pfadnummer
 PD_DEV          equ     4               * Devicetbl*: Geraetetabelleneintrag
 
+* 2026-09-26: RBF-spezifisches Pfaddeskriptor-Feld (path.h/"OS-9 Technical Manual" Anhang
+* B, "RBF Definitions of the Path Descriptor", Offset $B5) -- eigentlich NUR von RBF
+* gepflegt, aber RBF-orientierte Utilities wie "dir" lesen es DIREKT (kein Syscall!) um zu
+* entscheiden, ob ein geoeffneter Pfad ueberhaupt als Verzeichnis behandelt werden soll (Bit
+* 7 = "Set if directory file", s. Kopfkommentar Mgr_Open weiter unten). DHF ist kein RBF,
+* muss dieses Feld aber selbst setzen, sonst haelt "dir" JEDEN DHF-Pfad fuer eine normale
+* Datei und listet nie echten Inhalt (gefunden per Disassemblierung von /CMDS/dir + Q9_
+* ITRACE_PATH, s. STATUS.md).
+PD_ATT          equ     $B5
+
 * REGISTERS-Feldoffsets (reg.h): d[8] dann a[8], je 4 Byte
 REG_D0          equ     0
 REG_D1          equ     4
@@ -257,6 +267,9 @@ CallDrv:
 * zuverlaessig) statt auf dem Stack zu parken.
 *───────────────────────────────────────────────────────────────────────────────────────────
 MgrCommon:
+        movea.l a1,a0                   * a0 = urspruenglicher Pfaddeskriptor rueckversichert
+                                         * (fuer den PD_ATT-Schreibzugriff nach Open unten --
+                                         * a1 wird gleich auf CmdBlk umgebogen)
         moveq   #0,d2
         move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer
         movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*) -- direkt, kein F$SRqMem
@@ -286,6 +299,17 @@ MgrOk:
 * Ergebnis (Byteanzahl o.ae.) an den Aufrufer zurueckmelden -- a1 zeigt weiterhin auf den
 * Kommandoblock (Treiber aendert a1 nicht)
         move.l  SH_D1(a1),REG_D1(a5)
+
+* 2026-09-26: nur bei I$Open, und nur wenn der Simulator SH_D2 (hier: is_dir-Flag aus
+* dhf_emu_device.c) ungleich 0 zurueckgemeldet hat, das RBF-Feld PD_ATT im URSPRUENGLICHEN
+* Pfaddeskriptor (a0, s. MgrCommon-Anfang) setzen -- s. Kopfkommentar bei PD_ATTs equ-
+* Definition fuer die volle Herleitung (echte "dir"-Utility braucht das).
+        cmpi.b  #DHF_CMD_OPEN,d3
+        bne.s   MgrCommonDone
+        tst.l   SH_D2(a1)
+        beq.s   MgrCommonDone
+        move.b  #$80,PD_ATT(a0)
+MgrCommonDone:
         andi    #$FE,ccr
         rts
 
