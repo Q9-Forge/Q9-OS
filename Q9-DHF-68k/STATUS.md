@@ -378,3 +378,46 @@ gefunden aber NICHT geloest (s. Punkt 4/5 unten).
    Reverse-Engineering-Problem -- naechster Schritt waere eine vollstaendige Disassemblierung
    von `/CMDS/dir`, oder alternativ ein eigenes, einfaches Listing-Werkzeug (wie
    `dhfdirtest_68k.a`, nur benutzerfreundlicher formatiert) als praktischer Ersatz.
+
+## 2026-09-26, Nachtrag: I$GetStt SS_FD verdrahtet -- echte "attr"-Utility funktioniert jetzt
+
+Nutzerfrage: "gibt es vielleicht noch set-/getstat funktionen die uns noch fehlen? wie
+funktioniert z.B. ein attr?" -- Antwort: ja, `SS_FD` fehlte, jetzt gefunden+behoben.
+
+1. **`attr /d0/hello.txt` scheiterte** mit "attr: error reading FD sector." Per
+   `Q9_TRAP_TRACE_ALL` verifiziert: `attr` ruft nach dem `I$Open` sofort `I$GetStt` mit
+   Funktionscode `$0F` (`SS_FD`, sg_codes.h: "return file descriptor") auf Pfad 6 auf --
+   **kein physischer Sektorzugriff**, sondern ein ganz gewoehnliches GetStt mit dokumentiertem
+   Format ("OS-9 System Calls" Kap. 2: `d0.w`=Pfadnummer, `d1.w`=`$0F`, `d2.w`=gewuenschte
+   Byteanzahl, `a0`=Zielpuffer). Das widerlegt die vorherige Vermutung, `attr`/`dir` braeuchten
+   echte RBF-LSN-Sektoren -- nur `attr` (nicht `dir`) nutzt diesen Mechanismus, und er ist
+   vollstaendig ohne echtes Blockmedium abbildbar.
+2. **FD-Sektor-Format** ("OS-9 Technical Manual" Kap. 7, Figure 7-2): Offset `$00`(1)=FD_ATT
+   (Attribute, Bit7=Verzeichnis/Bit6=exklusiv/Bit5-3=oeffentlich x-w-r/Bit2-0=Besitzer x-w-r),
+   `$01`(2)=FD_OWN, `$03`(5)=FD_DAT (Jahr/Monat/Tag/Stunde/Minute), `$08`(1)=FD_LNK,
+   `$09`(4)=FD_SIZ, `$0D`(3)=FD_CREAT (Jahr/Monat/Tag), `$10`(240)=FD_SEG (Segmentliste --
+   bleibt genullt, "Unused segments must be zero").
+3. **Neue Funktion** `dhf_host_fs_getfd_at()` (`Q9-Flux-68k/src/devices/dhf/dhf_host_fs.c`,
+   Handle-basiert wie `getstat_at`/`setsize_at`) baut dieses Abbild aus `fstat()`/`stat()`
+   (Unix-Rechte-Bits -> FD_ATT, `st_size` -> FD_SIZ, `st_mtime`/`st_ctime` -> FD_DAT/FD_CREAT
+   per `gmtime_r()`). Neues Wire-Kommando `DHF_CMD_GETFD=20` (`dhf_proto.h`), neuer Fall in
+   `dhf_emu_device.c` (liest `d0`=Handle/`d1`=gewuenschte Bytezahl, schreibt via
+   `resolve_guest_ptr` direkt in den vom Aufrufer vorgegebenen Gast-RAM-Puffer -- NICHT ueber
+   `CmdBlk`, da bis zu 256 Byte angefordert werden koennen, mehr als `CmdBlk`s 32 Byte fassen).
+4. **`MgrGst_FD`** (Manager, neue Verzweigung in `Mgr_GetStt` neben `SS_Ready`/`SS_Size`):
+   `SH_D0`=Pfadnummer, `SH_A1`=`REG_A0(a5)` (Aufrufer-Zielpuffer, bewusst NICHT `CmdBlk`s
+   eigene Adresse wie bei `SS_Size`), `SH_D1`=`REG_D2(a5)` (gewuenschte Byteanzahl).
+5. **Ergebnis, verifiziert**: `attr /d0/hello.txt` zeigt jetzt `----r-wr  /d0/hello.txt`
+   (korrekte Unix-Rechte), `attr /d0` zeigt `d-e-rewr  /d0` (Verzeichnis-Bit korrekt
+   gesetzt!). **`dir /d0` bleibt trotzdem unveraendert** (weiterhin nur der Geraetename) --
+   per erneutem Test bestaetigt, dass `dir` NICHT ueber `SS_FD` entscheidet, sondern ueber
+   einen anderen, noch nicht gefundenen Mechanismus (s. vorheriger Abschnitt) -- `attr` und
+   `dir` loesen ihre "ist das ein Verzeichnis"-Frage also unterschiedlich.
+6. **Restliche GetStt/SetStt-Funktionscodes, ueberflogen** (vollstaendige Liste: `MWOS/OS9/
+   SRC/DEFS/sg_codes.h`) -- die meisten (CDFM/Sockets/UCM/Grafik/...) sind fuer ein reines
+   Host-Passthrough-Dateisystem irrelevant. Plausible, noch nicht verdrahtete Kandidaten,
+   FALLS spaeter gebraucht: `SS_Attr` (`$1C`, SetStt-Gegenstueck zu unserem neuen `SS_FD` --
+   wuerde `attr -w`/`chmod`-artige Aenderungen erlauben, aktuell nur lesend), `SS_Pos` (`$05`,
+   aktuelle Position abfragen), `SS_EOF` (`$06`, Dateiende pruefen ohne zu lesen), `SS_DevNm`
+   (`$0E`, Geraetename zurueckgeben, trivial). Keiner davon wurde angefragt oder als fehlend
+   beobachtet -- nur dokumentiert, nicht implementiert.
