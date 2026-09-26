@@ -180,15 +180,10 @@ CallDrv:
 *───────────────────────────────────────────────────────────────────────────────────────────
 MgrCommon:
         moveq   #0,d2
-        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer (VOR F$SRqMem aus a1 lesen)
-        move.l  PD_DEV(a1),d5           * d5 = pd_dev (Devicetbl*) als Rohwert gerettet
-        move.l  d3,d4                   * Kommandonummer gerettet (kein Stack noetig)
-        move.l  #CMDBLK_SIZE,d0
-        OS9     F$SRqMem
-        bcs     MgrAllocErr
-        move.l  d4,d3                   * Kommandonummer zurueck
-        movea.l d5,a3                   * a3 = pd_dev (Devicetbl*) zurueck
-        movea.l a2,a1                   * a1 = frisch geholter Kommandoblock
+        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer
+        movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*) -- direkt, kein F$SRqMem
+                                         * mehr noetig (s. CmdBlk-Kommentar unten)
+        lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock
 
 * Uniforme Nutzlast: a0 des Aufrufers traegt je nach Aufrufart entweder den Pfadnamen
 * (Create/Open/Delete) oder den Datenpuffer (Read/Write) -- beide Zielfelder bekommen
@@ -207,31 +202,13 @@ MgrCommon:
         move.b  d3,SH_COMMAND(a1)
 
         bsr     CallDrv
-        move.l  d1,d2                   * Treiber-Ergebnis retten -- F$SRtMem clobbert d1
         bcc.s   MgrOk
-        moveq   #1,d3                   * Merker: Fehlerfall
-        bra.s   MgrFree
+        rts                             * Carry+d1 kommen direkt vom Treiber, nichts freizugeben
 MgrOk:
-        moveq   #0,d3
 * Ergebnis (Byteanzahl o.ae.) an den Aufrufer zurueckmelden -- a1 zeigt weiterhin auf den
 * Kommandoblock (Treiber aendert a1 nicht)
         move.l  SH_D1(a1),REG_D1(a5)
-MgrFree:
-        movea.l a1,a2                   * Kommandoblock-Adresse fuer F$SRtMem
-        move.l  #CMDBLK_SIZE,d0
-* Fehler hier bewusst ignoriert -- das Treiber-Ergebnis (in d2 gerettet) hat Vorrang
-        OS9     F$SRtMem
-        move.l  d2,d1                   * urspruengliches Treiber-d1 wiederherstellen
-        tst.l   d3
-        beq.s   MgrRetOk
-        ori     #1,ccr
-        rts
-MgrRetOk:
         andi    #$FE,ccr
-        rts
-
-* Carry/d1 kommen bereits von F$SRqMem selbst -- nichts auf dem Stack zum Abbauen (s. o.)
-MgrAllocErr:
         rts
 
 *───────────────────────────────────────────────────────────────────────────────────────────
@@ -268,34 +245,17 @@ MgrGst_TrySize:
 MgrGst_Size:
         moveq   #0,d2
         move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer (wie MgrCommon)
-        move.l  PD_DEV(a1),d5           * d5 = pd_dev (Devicetbl*) gerettet
-        move.l  #CMDBLK_SIZE,d0
-        OS9     F$SRqMem
-        bcs     MgrAllocErr
-        movea.l d5,a3                   * a3 = pd_dev (Devicetbl*) zurueck
-        movea.l a2,a1                   * a1 = frisch geholter Kommandoblock (dient hier
-                                         * zugleich als 16-Byte-Statuspuffer fuer den Treiber)
+        movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*) -- direkt, kein F$SRqMem
+        lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock, dient hier
+                                         * zugleich als 16-Byte-Statuspuffer fuer den Treiber
         move.l  a1,SH_A1(a1)            * (a0) fuer den Treiber: Zielpuffer = derselbe Block
         move.l  d2,SH_D0(a1)
         move.b  #DHF_CMD_GETSTT,SH_COMMAND(a1)
         bsr     CallDrv
-        move.l  d1,d2                   * Treiber-Ergebnis retten -- F$SRtMem clobbert d1
         bcc.s   MgrGst_SizeOk
-        moveq   #1,d3
-        bra.s   MgrGst_SizeFree
-MgrGst_SizeOk:
-        moveq   #0,d3
-        move.l  (a1),REG_D2(a5)         * Statuspuffer-Offset 0 = Dateigroesse (dhf_host_fs_getstat)
-MgrGst_SizeFree:
-        movea.l a1,a2
-        move.l  #CMDBLK_SIZE,d0
-        OS9     F$SRtMem
-        move.l  d2,d1
-        tst.l   d3
-        beq.s   MgrGst_SizeDone
-        ori     #1,ccr
         rts
-MgrGst_SizeDone:
+MgrGst_SizeOk:
+        move.l  (a1),REG_D2(a5)         * Statuspuffer-Offset 0 = Dateigroesse (dhf_host_fs_getstat)
         andi    #$FE,ccr
         rts
 
@@ -316,6 +276,36 @@ Mgr_ReadLn
 Mgr_WritLn
 Mgr_SetStt
         bra     MgrUnkSvc
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* CmdBlk -- statischer, gemeinsam genutzter Kommandoblock (ersetzt seit 2026-09-26 die
+* F$SRqMem/F$SRtMem-Anforderung PRO AUFRUF). Grund: per Bisektion (STATUS.md "DHF I$Read von
+* einem geforkten Prozess") gefunden, dass F$SRqMem -- NUR wenn aus dem echten FileManager-
+* Dispatch heraus aufgerufen (verschachtelt in einem laufenden I$Open eines FRISCH GEFORKTEN
+* Prozesses; aus normalem Programmcode oder aus dem Shell-Prozess selbst heraus nie
+* reproduzierbar) -- einen Speicherblock zurueckgibt, der bereits von einer anderen Kernel-
+* Struktur belegt ist: reines F$SRqMem/F$SRtMem ohne jeden Schreibzugriff auf den Block blieb
+* unauffaellig, aber SOBALD die uebliche Nutzlast (SH_A0/SH_A1/SH_D0/SH_D1/SH_D2/SH_COMMAND)
+* hineingeschrieben wurde, haengte sich der Kernel auf (in einer internen Ringlisten-
+* Traversal, Interrupts dabei gesperrt) oder stuerzte je nach genau geschriebenen Werten
+* sogar ganz ab (voller Reboot beobachtet). Ob das ein echter Bug im Microware-Kernelport
+* oder ein noch nicht verstandenes Nutzungsdetail von F$SRqMem ist, ist offen -- der
+* praktische Fix ist, den Syscall an dieser Stelle schlicht zu vermeiden. Nachteil: ein
+* GEMEINSAMER (nicht pro Pfad/Prozess getrennter) Puffer -- bei zwei Prozessen, die
+* GLEICHZEITIG denselben DHF-Aufruf taetigen, waere das ein Wettlaufproblem; fuer den
+* aktuellen Test- und Einzelbenutzerbetrieb unkritisch, aber vor produktivem Mehrprozess-
+* einsatz nachzuruesten (z. B. per F$Event/Ev$Wait als Mutex, analog zur urspruenglichen
+* Architektur-Idee, s. [[q9-hostfs-manager-idee]]).
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Kein vsect: PC-relative Adressierung (fuer den Zugriff aus dem Code heraus zwingend, da
+* FileManager-Module -- anders als Treiber mit ihrem kernelseitig befuellten V_stat/(a2) --
+* keinen kernelseitig bereitgestellten Datenzeiger bekommen) funktioniert nicht ueber
+* Abschnittsgrenzen hinweg (qr68k: "PC-Bezug auf einen anderen Abschnitt"). CmdBlk liegt
+* deshalb direkt im psect (Code-Abschnitt) -- testet zugleich empirisch, ob das ReEnt-Bit
+* auf diesem Board tatsaechlich Schreibschutz fuer den Code-Abschnitt erzwingt, oder ob
+* (wie bei vielen OS-9/68k-Systemen ohne durchgaengige Speicherschutz-Durchsetzung) reiner
+* Programmkonvention ohne Hardware-Durchsetzung bleibt.
+CmdBlk  ds.b    CMDBLK_SIZE
 
         endsect
         end
