@@ -1,0 +1,270 @@
+*═══════════════════════════════════════════════════════════════════════════
+* File:   dhftest_68k.a                                               Ver. 1.00
+* Owner:  Claude
+* Desc.:  Minimales OS-9-Programmmodul, das I$Open/I$Read/I$Close DIREKT gegen
+*         eine feste Datei unter DHF aufruft und jeden Schritt (Erfolg/Fehler)
+*         auf stdout (Pfad 1, laut OS-9-Konvention beim Programmstart schon
+*         offen) meldet -- als Ersatz fuer den undurchsichtigen "list"-
+*         Systembefehl, dessen Fehlschlag ("can't read") sich per
+*         Q9_TRAP_TRACE_ALL nicht weiter aufklaeren liess (das Tracing selbst
+*         verlangsamt die Emulation zu stark, s. STATUS.md "list /dhf0/datei").
+*
+*         Registerkonventionen aus "OS-9 System Calls" Kap. 2 (lokales PDF
+*         "OS-9 v2.4 Technical Reference Manual", per pdftotext -layout
+*         durchsucht) -- I$Open/I$Read/I$Close/I$WritLn, nicht geraten.
+*
+* Edition History
+*─────────┬──────┬────────────────────────────────────────────────────────┬──────
+* Date    │ Ver. │ Description                                            │ By
+*─────────┼──────┼────────────────────────────────────────────────────────┼──────
+* 26-09-26│ 1.00 │ Erster Wurf                                            │ Cld
+*═════════╧══════╧════════════════════════════════════════════════════════╧══════
+        nam     dhfsrq
+        ttl     Q9-DHF Testprogramm: I$Open/I$Read/I$Close gegen eine feste Datei
+
+        use     q9defs.d
+
+Edition         equ     1
+
+* I$-Callcodes (MWOS/OS9/SRC/DEFS/funcs.h) -- nicht in q9defs.d vordefiniert,
+* wie schon in driver/dhfdrv_68k.a und manager/dhfmgr_68k.a gehandhabt.
+I_OPEN          equ     $84
+I_READ          equ     $89
+I_CLOSE         equ     $8f
+F_SLEEP         equ     $0a
+F$SRqMem        equ     $28
+F$SRtMem        equ     $29
+
+STDOUT          equ     1               * Pfad 1 ist beim Programmstart schon offen
+
+* Bewusst NICHT ReEnt: ein wiederverwendbares (reentrantes) Programmmodul
+* braucht seine beschreibbaren Variablen (PathNum/BytesRead/HexBuf/ReadBuf
+* unten) in einem separaten, per Prozess frisch zugewiesenen Datenbereich
+* (vsect/_mdata) statt im gemeinsamen, potenziell schreibgeschuetzten
+* Code-Abschnitt -- genau die Falle, die driver/dhfdrv_68k.a's vsect-Fund
+* aufgedeckt hat. Fuer dieses simple Einmal-Testprogramm ist ein nicht-
+* reentrantes Modul (jeder Prozess bekommt seine eigene Kopie, Variablen
+* direkt im psect erlaubt) die einfachste sichere Loesung.
+        psect   dhfsrq,(Prgrm<<8)!Objct,0,Edition,16384,Start
+
+*───────────────────────────────────────────────────────────────────────────
+* Start -- Einsprung laut Konvention: a1=Parameterbereich, a4=Prozessdeskriptor,
+* a6=Systemglobal (hier alle drei ungenutzt, feste Testdatei statt argv).
+*───────────────────────────────────────────────────────────────────────────
+Start:
+        lea     MsgStart(pc),a0
+        move.l  #MsgStartLen,d1
+        bsr     PrintMsg
+
+* --- Reine F$SRqMem/F$SRtMem-Zyklen, KEIN DHF, KEIN I$Open ueberhaupt ------
+* 100x denselben 32-Byte-Block anfordern und sofort wieder freigeben (exakt
+* dieselbe Groesse wie CMDBLK_SIZE in MgrCommon) -- prueft, ob die Korruption
+* schon aus der reinen Zyklenzahl/dem Muster entsteht, unabhaengig von DHF.
+        moveq   #100,d6                 * Zyklenzaehler (d6: sicher ueber Syscalls)
+SRqLoop:
+        move.l  #32,d0
+        OS9     F$SRqMem
+        bcs     SRqErr
+        movea.l a2,a3                   * a3: geliehen als Blockadresse-Merker
+        move.l  #32,d0
+        OS9     F$SRtMem
+        bcs     SRtErr
+        subq.l  #1,d6
+        bne.s   SRqLoop
+        lea     MsgOpenOk(pc),a0
+        move.l  #MsgOpenOkLen,d1
+        bsr     PrintMsg
+        bra     Done
+
+SRqErr:
+        move.w  d1,d4
+        lea     MsgOpenFail(pc),a0
+        move.l  #MsgOpenFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     Done
+
+SRtErr:
+        move.w  d1,d4
+        lea     MsgReadFail(pc),a0
+        move.l  #MsgReadFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     Done
+
+OpenErr:
+        move.w  d1,d4                   * Fehlercode retten (d4, NICHT d2 -- Syscalls duerfen
+                                         * d0-d3/a0-a3 clobbern, s. MgrCommon-Fund in STATUS.md)
+        lea     MsgOpenFail(pc),a0
+        move.l  #MsgOpenFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     Done
+
+* --- Test 2: I$Read ----------------------------------------------------------
+DoRead:
+        lea     ReadBuf(pc),a0
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        move.l  #ReadBufLen,d1
+        OS9     I_READ
+        bcs     ReadErr
+        lea     BytesRead(pc),a3
+        move.l  d1,(a3)
+        lea     MsgReadOk(pc),a0
+        move.l  #MsgReadOkLen,d1
+        bsr     PrintMsg
+
+* gelesene Bytes selbst ausgeben (I$WritLn: (a0)=Puffer, d1.l=Bytezahl,
+* d0.w=Pfad -- schreibt bis Bytezahl ODER Carriage Return, je nachdem was
+* zuerst eintrifft)
+        lea     ReadBuf(pc),a0
+        lea     BytesRead(pc),a3
+        move.l  (a3),d1
+        bsr     PrintMsg
+        bra     DoClose
+
+ReadErr:
+        move.w  d1,d4                   * Fehlercode retten (d4, NICHT d2 -- Syscalls duerfen
+                                         * d0-d3/a0-a3 clobbern, s. MgrCommon-Fund in STATUS.md)
+        lea     MsgReadFail(pc),a0
+        move.l  #MsgReadFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+        bra     DoClose
+
+* --- Test 3: I$Close ----------------------------------------------------------
+DoClose:
+        lea     PathNum(pc),a3
+        move.w  (a3),d0
+        OS9     I_CLOSE
+        bcs     CloseErr
+        lea     MsgCloseOk(pc),a0
+        move.l  #MsgCloseOkLen,d1
+        bsr     PrintMsg
+        bra     Done
+
+CloseErr:
+        move.w  d1,d4                   * Fehlercode retten (d4, NICHT d2 -- Syscalls duerfen
+                                         * d0-d3/a0-a3 clobbern, s. MgrCommon-Fund in STATUS.md)
+        lea     MsgCloseFail(pc),a0
+        move.l  #MsgCloseFailLen,d1
+        bsr     PrintMsg
+        move.w  d4,d2
+        bsr     PrintHexD2
+
+* --- Bisektion (2026-09-26, s. STATUS.md "DHF I$Read von einem geforkten Prozess"):
+* KEIN I$Read hier (s. "bra DoClose" oben statt "bra DoRead") -- nur Open+Close, dann
+* mehrfach 1 Sekunde schlafen und das jeweils melden. Wenn der Kernel-Ringlisten-Hang
+* schon HIER (ohne jedes I$Read) beim naechsten Zeittakt auftritt, entstand die
+* Korruption bereits durch Open/Close alleine (F$SRqMem/F$SRtMem in MgrCommon) und
+* NICHT durch den MMIO-Pufferzugriff, den nur I$Read zusaetzlich macht.
+Done:
+        lea     MsgWaitStart(pc),a0
+        move.l  #MsgWaitStartLen,d1
+        bsr     PrintMsg
+        moveq   #5,d6                   * 5 Durchlaeufe (d6: sicher, kein Arbeitsregister)
+WaitLoop:
+        move.l  #100,d0                 * 100 Ticks (~1s bei 100 Ticks/s)
+        OS9     F_SLEEP
+        lea     MsgWaitTick(pc),a0
+        move.l  #MsgWaitTickLen,d1
+        bsr     PrintMsg
+        subq.l  #1,d6
+        bne.s   WaitLoop
+        lea     MsgWaitDone(pc),a0
+        move.l  #MsgWaitDoneLen,d1
+        bsr     PrintMsg
+        OS9     F$Exit
+
+*───────────────────────────────────────────────────────────────────────────
+* PrintMsg -- Eingabe: (a0)=Puffer, d1.l=Bytezahl. Gibt sie ueber I$WritLn auf
+* STDOUT aus. Zerstoert d0 (d1/a0 vom Aufrufer ohnehin als Eingabe gedacht).
+*───────────────────────────────────────────────────────────────────────────
+PrintMsg:
+        moveq   #STDOUT,d0
+        OS9     I$WritLn
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+* PrintHexD2 -- gibt d2.w als "$xxxx"+CR auf STDOUT aus (fuer Fehlercodes).
+* Zerstoert d0-d3/a0.
+*───────────────────────────────────────────────────────────────────────────
+PrintHexD2:
+        lea     HexBuf(pc),a0
+        move.b  #'$',(a0)+
+        move.w  d2,d3
+        moveq   #3,d1
+HexLoop:
+        move.w  d3,d0
+        lsr.w   #8,d0
+        lsr.w   #4,d0
+        andi.w  #$0F,d0
+        cmpi.b  #10,d0
+        blt.s   HexDigit
+        addi.b  #'A'-10,d0
+        bra.s   HexStore
+HexDigit:
+        addi.b  #'0',d0
+HexStore:
+        move.b  d0,(a0)+
+        lsl.w   #4,d3
+        dbra    d1,HexLoop
+        move.b  #$0D,(a0)+
+        lea     HexBuf(pc),a0
+        moveq   #6,d1                   * '$'+4 Hex-Ziffern+CR = 6 Byte
+        bsr     PrintMsg
+        rts
+
+*───────────────────────────────────────────────────────────────────────────
+* Daten (im Code-Abschnitt, kein vsect noetig -- reine Konstanten; nur
+* PathNum/BytesRead/HexBuf/ReadBuf werden zur Laufzeit beschrieben, liegen
+* aber trotzdem im selben psect wie ein normales "Prgrm"-Modul es erwartet,
+* da M$Mem/_mdata fuer Programmmodule -- anders als bei Treibern, s. driver/
+* dhfdrv_68k.a's vsect-Fund -- hier keine Kernel-Pruefung mit "!=0" hat).
+*───────────────────────────────────────────────────────────────────────────
+MsgStart        dc.b    "=== dhftest: I$Open/I$Read/I$Close gegen /dhf0/hello.txt ===",$0D
+MsgStartLen     equ     *-MsgStart
+
+MsgOpenOk       dc.b    "OPEN: ok",$0D
+MsgOpenOkLen    equ     *-MsgOpenOk
+
+MsgOpenFail     dc.b    "OPEN: FEHLER, Code:",$0D
+MsgOpenFailLen  equ     *-MsgOpenFail
+
+MsgReadOk       dc.b    "READ: ok, Inhalt folgt:",$0D
+MsgReadOkLen    equ     *-MsgReadOk
+
+MsgReadFail     dc.b    "READ: FEHLER, Code:",$0D
+MsgReadFailLen  equ     *-MsgReadFail
+
+MsgCloseOk      dc.b    "CLOSE: ok",$0D
+MsgCloseOkLen   equ     *-MsgCloseOk
+
+MsgCloseFail    dc.b    "CLOSE: FEHLER, Code:",$0D
+MsgCloseFailLen equ     *-MsgCloseFail
+
+MsgWaitStart    dc.b    "=== Bisektion: kein Read, warte 5x1s ===",$0D
+MsgWaitStartLen equ     *-MsgWaitStart
+
+MsgWaitTick     dc.b    "tick",$0D
+MsgWaitTickLen  equ     *-MsgWaitTick
+
+MsgWaitDone     dc.b    "fertig, kein Haenger ohne Read",$0D
+MsgWaitDoneLen  equ     *-MsgWaitDone
+
+PathName        dc.b    "/dhf0/hello.txt",0
+
+        align   2
+PathNum         ds.w    1
+BytesRead       ds.l    1
+HexBuf          ds.b    8
+ReadBuf         ds.b    64
+ReadBufLen      equ     64
+
+        endsect
+        end
