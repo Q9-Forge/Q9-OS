@@ -508,3 +508,28 @@ Ausgabe mitten im Wort abgeschnitten. Genau das zeigen die Fehllaeufe hier: `$FF
 in `=== dhfdirtest: I$Open...` nach 18 Zeichen. **Fix: Prompt-Muster auf den echten Prompt
 festnageln, `set prompt {ROOT# $}`** -- damit liefen alle Laeufe oben beim ersten Versuch
 durch. Wer ein neues Testskript schreibt: dieses Muster nehmen, nicht `[#$]`.
+
+## 2026-09-26, Nachtrag: fertige Emulator-Konfiguration `Q9-Images/emu_config/dhf_claude.q9`
+
+Nutzervorgabe: "es sollte auch eine fertige Emulations-Config geben, so dass die Komponenten
+enthalten sind". Umgesetzt:
+
+1. **`Q9-Images/emu_config/dhf_claude.q9`** -- Claude-ROM + `OS9SYS_Claude.hda` (c0, rbf,
+   onboard/master, wie `emu.q9`), `net = nat`. Start aus `Q9-Flux/Q9-Flux-68k`:
+   `./build/macos/q9.exe ../../Q9-Images/emu_config/dhf_claude.q9`.
+2. **`/SYS/startup` im Image** laedt jetzt `dhfmgr_68k`/`dhfdrv_68k`/`d0` aus `/dd/CMDS/dhf/`
+   und macht `iniz d0` (nach `startspf`, vor den xterms). Vorherige Fassung im Image als
+   `/SYS/startup.vor_dhf` gesichert. Kein `load`/`iniz` von Hand mehr noetig.
+3. **Basispfad im Deskriptor** (`descriptor/d0_dhf.a`) von `/tmp/q9dhf_claude_descriptor_test`
+   (flüchtig) nach `/Volumes/SSD1TB/projects/Q9-Forge/Q9-Images/dhf_root` verlegt, Testdatei
+   `d0/hello.txt` dorthin kopiert. Neu gebaut (`ql68k -n=d0 -gu=0.0`, 152 Byte, CRC gut,
+   `BasePath`-Offset `$58` im Hexdump geprueft) und eingespielt. Der alte `/tmp`-Ordner bleibt
+   unangetastet liegen, wird aber nicht mehr benutzt.
+4. **Verifiziert per Boot NUR ueber die Config** (kein manuelles `load`/`iniz`): `mdir` zeigt
+   `dhfmgr dhfdrv d0`, `list /d0/hello.txt`, `attr /d0` (`d-e-rewr`), `dhfdirtest` (bis
+   `$00D3`), `dhfrenfree` (Free `$FFFFFFFF`, Rename ok) -- die Umbenennung landete in
+   `Q9-Images/dhf_root/d0/`, beweist also den neuen Basispfad (danach zurueckbenannt).
+
+**Achtung Namenskonflikt:** in der Standard-Konfig `Q9-Flux-68k/emu.q9` heisst ein RBF-CF-
+Laufwerk ebenfalls `d0` (hd1.hda). Im Claude-Image gibt es diesen CF-Deskriptor nicht, daher
+kein Konflikt hier -- wer DHF in ein Image mit echtem `d0` uebernimmt, muss umbenennen.
