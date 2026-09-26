@@ -45,6 +45,7 @@ E_UNKSVC        equ     $D0
 
 * dhf_shared-Feldoffsets (identisch zu driver/dhfdrv_68k.a)
 SH_COMMAND      equ     1
+SH_SEQ          equ     4               * 2026-09-26: Verzeichnisnummer des Aufrufers (P$DIO)
 SH_A0           equ     8
 SH_A1           equ     12
 SH_D0           equ     16
@@ -74,6 +75,7 @@ DHF_CMD_RENAMEAT equ    24              * I$SetStt SS_Rename (Handle-basiert)
 DHF_CMD_GETFREE equ     25              * I$GetStt SS_Free
 DHF_CMD_FDINF   equ     26              * I$GetStt SS_FDInf (FD zu einer Sektornummer)
 DHF_CMD_VOLSTORE equ    27              * I$GetStt SS_VolStore (Speicherstatistik)
+DHF_CMD_SETFD   equ     28              * I$SetStt SS_FD (FD_DAT -> Aenderungszeit)
 
 * I$Seek "whence" -- I$Seek ist laut "OS-9 System Calls" Kap. 2 IMMER eine absolute
 * Positionierung (kein relatives Unix-lseek), deshalb hier fest verdrahtet statt aus dem
@@ -121,6 +123,13 @@ D_WRIT          equ     4
 * Pfaddeskriptor-Feldoffsets (path.h)
 PD_PD           equ     0               * u_short: eigene Pfadnummer
 PD_DEV          equ     4               * Devicetbl*: Geraetetabelleneintrag
+* Prozessdeskriptor (MWOS/OS9/SRC/DEFS/process.a): P$DIO = Default-I/O-Daten, je 16 Byte
+* Daten- und Ausfuehrungsverzeichnis; +0 Geraetetabelle (pflegt IOMan), +4 FileManager-Daten
+* (RBF: Verzeichnisadresse; DHF: Pseudo-Sektornummer des Verzeichnisses). Per F$GPrDsc
+* nachgemessen (2026-09-26).
+P_DIO           equ     $148
+DIO_EXEC        equ     $10
+DIO_FM          equ     4
 PD_OPT          equ     $80             * Optionsteil des Pfaddeskriptors (128 Byte, sysio.a)
 PD_COUNT        equ     $1A             * u_short: Anzahl Pfade auf diesem Deskriptor (I$Dup),
                                          * von IOMan gepflegt (sysio.a / 68k_techio.pdf)
@@ -134,6 +143,9 @@ PD_COUNT        equ     $1A             * u_short: Anzahl Pfade auf diesem Deskr
 * Datei und listet nie echten Inhalt (gefunden per Disassemblierung von /CMDS/dir + Q9_
 * ITRACE_PATH, s. STATUS.md).
 PD_ATT          equ     $B5
+PD_FD           equ     $B6             * rbf_opt.pd_fd  (u_int)
+PD_DFD          equ     $BA             * rbf_opt.pd_dfd (u_int)
+PD_DVT          equ     $C2             * rbf_opt.pd_dvt (u_int)
 
 * REGISTERS-Feldoffsets (reg.h): d[8] dann a[8], je 4 Byte
 REG_D0          equ     0
@@ -311,14 +323,27 @@ CallDrv:
 * zuverlaessig) statt auf dem Stack zu parken.
 *───────────────────────────────────────────────────────────────────────────────────────────
 MgrCommon:
-        movea.l a1,a0                   * a0 = urspruenglicher Pfaddeskriptor rueckversichert
-                                         * (fuer den PD_ATT-Schreibzugriff nach Open unten --
-                                         * a1 wird gleich auf CmdBlk umgebogen)
+        movea.l a1,a2                   * a2 = urspruenglicher Pfaddeskriptor (fuer PD_ATT/pd_fd
+                                         * nach Open unten -- a1 wird gleich auf CmdBlk umgebogen).
+                                         * 2026-09-26: vorher a0 -- das ueberschreibt CallDrv mit
+                                         * der Treiber-Einsprungadresse, PD_ATT landete dadurch
+                                         * IM TREIBERMODUL statt im Pfaddeskriptor. a2 rettet
+                                         * CallDrv selbst (Stack).
         moveq   #0,d2
         move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer
         movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*) -- direkt, kein F$SRqMem
                                          * mehr noetig (s. CmdBlk-Kommentar unten)
         lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock
+
+* 2026-09-26: aktuelles Verzeichnis DES AUFRUFENDEN PROZESSES mitgeben (P$DIO+4, bei Exec_ im
+* Modus das Ausfuehrungsverzeichnis) -- relative Pfade gelten ab dort, nicht mehr ab einem
+* gemeinsamen cwd je Laufwerk. Kinder erben P$DIO beim Fork (IOMan), wie auf RBF.
+        move.w  #P_DIO+DIO_FM,d0
+        btst    #2,REG_D0+3(a5)
+        beq.s   MgrCwdData
+        move.w  #P_DIO+DIO_EXEC+DIO_FM,d0
+MgrCwdData:
+        move.l  (a4,d0.w),SH_SEQ(a1)
 
 * Uniforme Nutzlast: a0 des Aufrufers traegt je nach Aufrufart entweder den Pfadnamen
 * (Create/Open/Delete) oder den Datenpuffer (Read/Write) -- beide Zielfelder bekommen
@@ -351,6 +376,34 @@ MgrOk:
 * Kommandoblock (Treiber aendert a1 nicht)
         move.l  SH_D1(a1),REG_D1(a5)
 
+* 2026-09-26: nach Open/Create die RBF-Felder im Optionsteil fuellen (rbf.h struct rbf_opt):
+* pd_fd/pd_dfd = Pseudo-Sektornummern Datei/Elternverzeichnis (vom Simulator in SH_A0/SH_A1),
+* pd_dvt = Geraetetabelle. bashs getwd vergleicht pd_fd von "." mit den Sektornummern der
+* Eintraege in ".." -- ohne das "getwd: cannot access parent directories" (dsave -e).
+        cmpi.b  #DHF_CMD_OPEN,d3
+        beq.s   MgrSetFd
+        cmpi.b  #DHF_CMD_CREATE,d3
+        bne.s   MgrNoFd
+MgrSetFd:
+        move.l  SH_A0(a1),PD_FD(a2)
+        move.l  SH_A1(a1),PD_DFD(a2)
+        move.l  PD_DEV(a2),PD_DVT(a2)
+MgrNoFd:
+
+* 2026-09-26: ChgDir -> Verzeichnisnummer (Simulator in SH_A0) in P$DIO+4 des Prozesses:
+* Exec_ im Modus -> Ausfuehrungsverzeichnis, Read/Write (oder Modus 0) -> Datenverzeichnis.
+        cmpi.b  #DHF_CMD_CHDIR,d3
+        bne.s   MgrNoChd
+        move.b  REG_D0+3(a5),d0
+        btst    #2,d0
+        beq.s   MgrChdNoX
+        move.l  SH_A0(a1),P_DIO+DIO_EXEC+DIO_FM(a4)
+        andi.b  #3,d0
+        beq.s   MgrNoChd                * nur Exec_ -> Datenverzeichnis bleibt
+MgrChdNoX:
+        move.l  SH_A0(a1),P_DIO+DIO_FM(a4)
+MgrNoChd:
+
 * 2026-09-26: nur bei I$Open, und nur wenn der Simulator SH_D2 (hier: is_dir-Flag aus
 * dhf_emu_device.c) ungleich 0 zurueckgemeldet hat, das RBF-Feld PD_ATT im URSPRUENGLICHEN
 * Pfaddeskriptor (a0, s. MgrCommon-Anfang) setzen -- s. Kopfkommentar bei PD_ATTs equ-
@@ -359,7 +412,7 @@ MgrOk:
         bne.s   MgrCommonDone
         tst.l   SH_D2(a1)
         beq.s   MgrCommonDone
-        move.b  #$80,PD_ATT(a0)
+        move.b  #$80,PD_ATT(a2)
 MgrCommonDone:
         andi    #$FE,ccr
         rts
@@ -475,6 +528,24 @@ MgrGst_Opt:
 MgrGstOptLoop:
         move.b  (a3)+,(a2)+
         dbra    d0,MgrGstOptLoop
+        andi    #$FE,ccr
+        rts
+
+* MgrSst_FD -- SetStt SS_FD ("Write File Descriptor Sector", 68k_tech.pdf S. 587): a0 = FD-
+* Abbild; nur FD_DAT wird uebernommen (Aenderungszeit der Host-Datei). "copy" dupliziert so das
+* FD der Quelle ("can't put file descriptor" ohne), 2026-09-26.
+MgrSst_FD:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        lea     CmdBlk(pc),a1
+        move.l  d2,SH_D0(a1)
+        move.l  REG_A0(a5),SH_A1(a1)
+        move.b  #DHF_CMD_SETFD,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrSstFdOk
+        rts
+MgrSstFdOk:
         andi    #$FE,ccr
         rts
 
@@ -642,6 +713,8 @@ Mgr_SetStt:
         move.w  REG_D1+2(a5),d0
         tst.l   d0
         beq.w   MgrSst_Opt
+        cmpi.l  #SS_FD,d0
+        beq.w   MgrSst_FD
         cmpi.l  #SS_Size,d0
         beq.s   MgrSst_Size
         cmpi.l  #SS_Attr,d0
