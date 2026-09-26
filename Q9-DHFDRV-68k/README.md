@@ -1,3 +1,7 @@
+> **VERALTET (26.09.2026):** Dieses Schwesterprojekt ist vom aktiven DHF in
+> `Q9-OS/Q9-DHF-68k` überholt (eigene, ältere Protokollkopie mit alten Fehlercodes; kein
+> FileManager). Nicht mehr gepflegt – s. `Q9-OS/Q9-DHF-68k/README.md`.
+
 # Q9-DHFDRV-68k
 
 OS-9 (Q9) Treiber und emuliertes Hardware-Gegenstück für den **DHF Filemanager** (Direct Host Filesystem).

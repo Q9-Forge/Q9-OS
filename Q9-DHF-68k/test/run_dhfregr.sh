@@ -95,7 +95,9 @@ done <<<"$MODS"
 mkdir -p "$ROOT/d0"
 for d in rt ut dd; do chmod -R u+rwx "$ROOT/d0/$d" 2>/dev/null; rm -rf "$ROOT/d0/$d"; done
 rm -f "$ROOT/d0/rn2.txt"; cp "$ROOT/d0/hello.txt" "$ROOT/d0/rn.txt"   # fuer "rename"
-rm -rf "$ROOT/d0/dsq" "$ROOT/d0/dsz"                                  # fuer "dsave"
+rm -rf "$ROOT/d0/dsq" "$ROOT/d0/dsz" "$ROOT/d0/zt" "$ROOT/d0/nm"      # fuer "dsave"/Zeit/Namen
+mkdir -p "$ROOT/d0/zt"; echo t >"$ROOT/d0/zt/zeit.txt"; touch -t 202001020304 "$ROOT/d0/zt/zeit.txt"
+mkdir -p "$ROOT/d0/nm"; for n in ok.txt .DS_Store ._ok.txt abcdefghijklmnopqrstuvwxyz1234 "$(printf "\303\274mlaut.txt")"; do echo x >"$ROOT/d0/nm/$n"; done
 mkdir -p "$ROOT/d0/dsq/a/b"; printf "eins\r" >"$ROOT/d0/dsq/f1"; printf "zwei\r" >"$ROOT/d0/dsq/a/f2"
 cp "$ROOT/d0/hello.txt" "$ROOT/d0/dsq/a/b/f3"
 # Koeder fuer Fall 86: Nachbarverzeichnis, dessen Name mit dem d0-Basispfad BEGINNT
@@ -164,6 +166,10 @@ run "makdir /d0/dsz"
 run "chd /d0/dsq"
 run "dsave -s /d0/dsz | mshell"
 run "chd /dd/HOME/ROOT"
+run "dir -e /d0/zt"
+run "copy /d0/hello.txt /d1/rotest.txt"
+run "makdir /d1/rotest"
+run "dir /d0/nm"
 # Alle Pfade sind jetzt geschlossen -> der Emulator darf KEINE Datei unter dhf_root mehr
 # offen halten (Beleg dafuer, dass I\$Close den Host wirklich erreicht, s. Mgr_Close/PD_COUNT)
 catch {exec lsof -p [exp_pid] > $W/lsof.txt}
@@ -211,10 +217,15 @@ host "17 bash getwd in /d0/ut (pwd)"            'grep -qx "/d0/ut" "$W/emu.txt"'
 host "18 dsave | mshell: Baum 1:1 kopiert"          'diff -r "$ROOT/d0/dsq" "$ROOT/d0/dsz" >/dev/null 2>&1'
 host "15 rename /d0/rn.txt rn2.txt"               '[ ! -e "$ROOT/d0/rn.txt" ] && [ -f "$ROOT/d0/rn2.txt" ]'
 
+host "19 Ortszeit: dir -e zeigt 20/01/02 0304"   'grep -q "20/01/02 0304.* zeit.txt" "$W/emu.txt"'
+host "20 /d1 nur lesbar: copy/makdir abgelehnt"  '[ ! -e "$D1ROOT/rotest.txt" ] && [ ! -e "$D1ROOT/rotest" ]'
+host "21 dir blendet .DS_Store/._/lange/UTF-8 aus" 'sed -n "/Directory of \/d0\/nm/,/# *\$/p" "$W/emu.txt" | grep -q "ok.txt" && ! grep -q -e DS_Store -e "_ok.txt" -e abcdefghijklmnopqrstuvwxyz -e mlaut "$W/emu.txt"'
+rm -f "$D1ROOT/rotest.txt"; rmdir "$D1ROOT/rotest" 2>/dev/null
+
 TOTAL_FAIL=$((G_FAIL+H_FAIL))
 echo "══ ERGEBNIS: Gast $G_OK OK / $G_FAIL FEHLER, Host $H_OK OK / $H_FAIL FEHLER"
 for d in rt ut dd; do chmod -R u+rwx "$ROOT/d0/$d" 2>/dev/null; rm -rf "$ROOT/d0/$d"; done
-rm -rf "$ROOT/d0_nachbar" "$ROOT/d0/dsq" "$ROOT/d0/dsz"; rm -f "$ROOT/d0/rn.txt" "$ROOT/d0/rn2.txt"
+rm -rf "$ROOT/d0_nachbar" "$ROOT/d0/dsq" "$ROOT/d0/dsz" "$ROOT/d0/zt" "$ROOT/d0/nm"; rm -f "$ROOT/d0/rn.txt" "$ROOT/d0/rn2.txt"
 [ $TOTAL_FAIL = 0 ] || exit 1
 if [ $INSTALL = 1 ]; then
     if pgrep -f "q9.exe .*dhf_claude.q9" >/dev/null; then

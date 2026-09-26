@@ -1,14 +1,27 @@
-# DHF errno mapping
+# DHF: Host-errno → OS-9-Fehlercode
 
-This document contains a minimal mapping from host errno values to Q9/OS-9 DHF result codes used in dhf_shared.result_code.
+Stand 26.09.2026. Das Status-Byte des Geräts geht **unverändert** als d1.w (mit Carry) an den
+I$-Aufrufer, die Werte sind also die echten OS-9-Codes aus `MWOS/SRC/DEFS/errno.h`.
+Quelle: `errno_to_dhf()` und `enum dhf_error` in `Q9-Flux-68k/src/devices/dhf/`.
 
-For now, host errno values are passed through directly as 32-bit integers. Later we may map them into a compact Q9 code space.
+| Host (errno / Lage) | OS-9 | Code |
+|---|---|---|
+| ENOENT | E$PNNF | $D8 |
+| EACCES, EPERM | E$FNA | $D6 |
+| EEXIST (Create auf vorhandene Datei) | E$CEF | $DA |
+| EBADF, unbekannte Pfadnummer | E$BPNum | $C9 |
+| ENOSPC, EDQUOT, EFBIG | E$Full | $F8 |
+| EISDIR, ENOTDIR, Verzeichnis ohne/Datei mit Dir-Bit | E$FNA | $D6 |
+| ENOTEMPTY (Verzeichnis löschen) | E$DNE | $EE |
+| EROFS, nur lesbares Laufwerk, Rohgerät schreiben | E$WP | $F2 |
+| EMFILE, ENFILE | E$PthFul | $C8 |
+| ENAMETOOLONG, ELOOP, Name mit „/“ oder „..“ bei Rename | E$BPNam | $D7 |
+| EBUSY, ETXTBSY | E$Share | $FD |
+| Dateiende (Read, ReadLn, SS_EOF) | E$EOF | $D3 |
+| unbekanntes Kommando | E$UnkSvc | $D0 |
+| Gerät/Backend antwortet nicht | E$NotRdy | $F6 |
+| alles andere | E$Write | $F5 |
 
-Examples:
-- 0 -> OK
-- EACCES -> 13
-- ENOENT -> 2
-- EFAULT -> 14
-- ENOSYS -> 78
-
-(These are host errno numbers on POSIX; final mapping for Q9 codes to be defined.)
+Vom Manager selbst: unbekannter GetStt/SetStt-Code → E$UnkSvc ($D0).
+Von IOMan (erreichen DHF gar nicht): Schreiben auf Lesepfad → E$BMode ($CB), Modus-Bit nicht
+in M$Mode → E$BMode.

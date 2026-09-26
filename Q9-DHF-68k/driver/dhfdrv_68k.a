@@ -156,6 +156,11 @@ Init:
 
         movea.l (a2),a0                 a0 = konfigurierte MMIO-Basis (V_PORT)
         move.l  a3,SH_A0(a0)            Pfad-String-Zeiger direkt ins Register
+* 2026-09-26: zweites DevCon-Wort = Laufwerks-Flags (Bit 0 = nur lesbar) -> d1
+        move.w  M$DevCon(a1),d0
+        moveq   #0,d1
+        move.w  2(a1,d0.w),d1
+        move.l  d1,SH_D1(a0)
         move.b  #DHF_CMD_INIT,SH_COMMAND(a0)  loest die Verarbeitung aus
 InitDone:
         movem.l (a7)+,d0-d1/a0/a3

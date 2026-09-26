@@ -1,114 +1,102 @@
-# Q9-DHF Mini-Protocol (Manager -> Driver)
+# DHF-Protokoll (Manager → Treiber → Emulator-Gerät)
 
-Zweck
-- Übergabe von Filemanager-Aufrufen vom Q9-DHF Manager an den Treiber (dhfdrv-68k).
-- Ein kompaktes Set/GetStat-basiertes Kommandomodell, das Funktions-IDs und strukturierte Payloads kapselt.
+Stand 26.09.2026. Beschreibt, was **tatsächlich** implementiert ist: `manager/dhfmgr_68k.a`,
+`driver/dhfdrv_68k.a` und das Gerät im Emulator (`Q9-Flux/Q9-Flux-68k/src/devices/dhf/`).
+Die frühere Fassung dieser Datei beschrieb ein nie umgesetztes Nachrichtenformat.
 
-Design-Grundsätze
-- Einfaches, klar strukturiertes Binary-ähnliches Kommandoformat, aber als Text/JSON in ersten Implementationen möglich.
-- Jede Nachricht enthält: Opcode (1 byte), Subcommand/FuncID (1 byte), Flags (1 byte), PayloadLength (2 bytes, big endian), Payload (variable).
-- Antworten: Status (1 byte: 0 OK, non-zero Fehler), DataLength (2 bytes), Data.
-- Für SetStat/GetStat wird das Subcommand als Funktions-Selector genutzt.
-- Pfadnamen UTF-8, null-terminated im Payload, bei relativem Pfad vor Konfinezungsprüfung (absolut vs. relativ) durch Manager.
+DHF gibt es nur im Emulator: Das „Gerät“ ist ein MMIO-Fenster, hinter dem der Emulator
+direkt auf ein Verzeichnis des Hosts zugreift.
 
-Opcode Übersicht
-- 0x01: FM_CALL — allgemeiner FileManager-Aufruf (Open/Close/Read/Write/GetStat/SetStat/...) mit FuncID im Subcommand
-- 0x02: FM_CTRL — Steuerbefehle (Init, Terminate, Sync/Flush)
-- 0x03: FM_DESC — Descriptor/Config-Operationen (GetBasePath, SetBasePath)
-- 0xFF: FM_PING — Test/Ping
+## Ablauf eines Aufrufs
 
-Beispiel: GetStat
-Request:
-- Opcode=0x01 (FM_CALL)
-- Subcommand=0x10 (FUNC_GETSTAT)
-- Flags=0x00
-- PayloadLength=2 + N
-- Payload: [PathLength(2)][Path UTF-8 bytes]
+1. IOMan ruft den FileManager `dhfmgr` auf (a1 = Pfaddeskriptor, a4 = Prozessdeskriptor,
+   a5 = Registersatz des Aufrufers).
+2. Der Manager füllt seinen Kommandoblock (`CmdBlk`, Layout wie das Fenster) und ruft den
+   Treiber immer über dessen `D_WRIT`-Eintrag auf.
+3. Der Treiber kopiert Byte 4–27 ins Fenster (`V_PORT` aus `M$Port` des Deskriptors) und
+   schreibt **zuletzt** das Kommandobyte. Dieser Schreibzugriff löst im Emulator die
+   Verarbeitung synchron aus.
+4. Danach kopiert der Treiber Status und a0/a1/d0/d1/d2 (Byte 2 und 8–27) zurück. Ist der
+   Status ungleich 0, kehrt er mit Carry und d1.w = Status zurück.
 
-Response:
-- Status(1)
-- DataLength(2)
-- Data: serialized stat structure (mode, uid, gid, size, atime, mtime, ctime) in defined order, big-endian
+Das ist nur deshalb sicher, weil OS-9/68k im System-State nicht unterbrochen wird und das
+Gerät synchron arbeitet. Für mehrere CPUs wäre ein anderes Protokoll nötig (nicht geplant).
 
-SetStat
-- Subcommand=0x11 (FUNC_SETSTAT)
-- Payload: serialized target fields bitmap + corresponding values
-- Driver validates fields, applies changes, returns Status
+## Fenster (`struct dhf_shared`, 28 Byte, big-endian)
 
-FuncID Mapping (erste Version)
-- 0x10: FUNC_GETSTAT
-- 0x11: FUNC_SETSTAT
-- 0x20: FUNC_OPEN
-- 0x21: FUNC_CLOSE
-- 0x22: FUNC_READ
-- 0x23: FUNC_WRITE
-- 0x30: FUNC_OPENDIR
-- 0x31: FUNC_READDIR
-- 0x40: FUNC_MKDIR
-- 0x41: FUNC_RMDIR
-- 0x42: FUNC_UNLINK
-- 0x43: FUNC_RENAME
-- 0x50: FUNC_CHDIR
-- 0x60: FUNC_STAT64 (extended)
+| Offset | Feld | Bedeutung |
+|---:|---|---|
+| 0 | version | 1 |
+| 1 | command | Kommando (s. u.); Schreiben löst die Verarbeitung aus |
+| 2 | status | Ergebnis: 0 = OK, sonst **OS-9-Fehlercode** (geht unverändert an den Aufrufer) |
+| 3 | flags | unbenutzt |
+| 4 | seq | **aktuelles Verzeichnis des aufrufenden Prozesses** (Pseudo-Sektornummer aus P$DIO+4, bei Exec-Modus P$DIO+$14); relative Pfade gelten ab dort |
+| 8 | a0 | meist Zeiger auf den Pfadnamen (Gast-RAM) |
+| 12 | a1 | meist Zeiger auf einen Puffer |
+| 16 | d0 | meist Pfadnummer (= Handle im Gerät) |
+| 20 | d1 | Byteanzahl / Position / Attribute |
+| 24 | d2 | Modus / whence / Rückgabe |
 
-Errors
-- Status bytes non-zero map to errno-like codes; reserve 0x80..0xFF for driver-specific codes.
+Zwei Geräte-Instanzen: `$FFFF4000` (Deskriptor `d0`) und `$FFFF4100` (Deskriptor `d1`), je mit
+eigenem Basispfad, eigener Handle- und Nummerntabelle.
 
-Security / Confinement
-- Manager MUST normalize and resolve paths and enforce confinement: resolved_path must start with basepath.
-- Driver SHOULD double-check (realpath) to prevent symlink escape, but manager is primary enforcer.
-- chdir/cd must only affect per-descriptor CWD tracked by manager; global CWD not allowed.
+## Kommandos
 
-Extension
-- Future: binary-packed payloads, TLV encoding for SetStat fields, async call IDs for long ops.
+| Nr | Kommando | Eingaben | Ausgaben | I$-Aufruf |
+|---:|---|---|---|---|
+| 1 | CREATE | a0 Pfad, d0 Pfadnr, d1 OS-9-Attribute, d2 Modus, a1 Anfangsgröße (bei ISize_ $20) | a0 pd_fd, a1 pd_dfd (Byteadressen) | I$Create |
+| 2 | OPEN | a0 Pfad, d0 Pfadnr, d2 Modus | a0 pd_fd, a1 pd_dfd, d2 = 1 wenn Verzeichnis | I$Open |
+| 3 | SEEK | d0, d1 Position, d2 whence (Manager: immer 0) | d1 Position | I$Seek |
+| 4 | READ | d0, a1 Puffer, d1 Anzahl | d1 gelesen | I$Read |
+| 5 | WRITE | d0, a1 Puffer, d1 Anzahl | d1 geschrieben | I$Write |
+| 6 | READLN | d0, a1, d1 Maximum | d1 gelesen (bis CR/LF) | I$ReadLn |
+| 7 | WRITELN | d0, a1, d1 | d1 geschrieben (bis einschl. CR) | I$WritLn |
+| 8 | GETSTT | d0, a1 Puffer | 16 Byte {Größe, Modus, mtime, atime} | SS_Size |
+| 9 | SETSTT | d0, d1 neue Größe | – | SS_Size (SetStt) |
+| 10 | CLOSE | d0 | – | I$Close (nur beim letzten Abbild, PD_COUNT) |
+| 11 | DELETE | a0 Pfad | – | I$Delete |
+| 12 | MKDIR | a0 Pfad, d1 Attribute | – | I$MakDir |
+| 13 | CHDIR | a0 Pfad | a0 Verzeichnisnummer (→ P$DIO+4) | I$ChgDir |
+| 18 | INIT | a0 Basispfad, d1 Flags (Bit 0 = nur lesbar) | – | iniz (Treiber-Init) |
+| 19 | TERM | – | – | Treiber-Term |
+| 20 | GETFD | d0, d1 Anzahl, a1 Puffer | FD-Abbild (Figure 7-2) | SS_FD |
+| 21 | SETATTR | d0, d1 Attributbyte | – | SS_Attr |
+| 22 | GETPOS | d0 | d1 Position | SS_Pos |
+| 23 | ISEOF | d0 | Status E$EOF am Ende | SS_EOF |
+| 24 | RENAMEAT | d0 Verzeichnis-Pfadnr, a0 alter Name, a1 neuer Name | – | SS_Rename |
+| 25 | GETFREE | d0 | d1 freie Bytes (32 Bit gekappt) | SS_Free |
+| 26 | FDINF | d2 Sektornummer, d1 Anzahl, a1 Puffer | FD-Abbild | SS_FDInf |
+| 27 | VOLSTORE | a1 Puffer | 16 Byte {Bytes/Sektor, gesamt, frei, größter Block} | SS_VolStore |
+| 28 | SETFD | d0, a1 FD-Abbild | – (nur FD_DAT wirkt) | SS_FD (SetStt) |
+| 254 | PING | – | – | – |
 
-Notes aus RBF-Analyse
-- RBF verwendet GetStat/SetStat hooks. Das Protokoll kodiert spezielle GetStat subcommands, so dass der Treiber SetStat/Call intern auf die richtigen Host-APIs mappt (chmod/chown/utimes/...).
-- Bei Bedarf können bestimmte RBF-internen control-codes als FM_CTRL Subcommands abgebildet werden.
+14–17 (RMDIR, RENAME, OPENDIR, READDIR) sind Reste der frühen Unix-artigen Planung und von
+keinem I$-Aufruf erreichbar. SS_Ready, SS_DevNm und SS_Opt beantwortet der Manager selbst.
 
+## RBF-Semantik, die DHF nachbildet
 
-## Universeller Kommando-Bereich (Shared Command Area)
+Alles per Ablaufverfolgung der echten Utilities ermittelt (s. STATUS.md):
 
-Für Operationen mit Pfadnamen oder großen Buffern wird ein einheitlicher Kommando-Bereich definiert, der vom Manager gefüllt und vom Treiber gelesen werden kann. Die Struktur ist "packed" (keine Einfüge-Padding-Bytes); alle LONG-Felder sind 32-bit big-endian.
+- **Verzeichnisse** sind virtuelle RBF-Verzeichnisdateien aus 32-Byte-Einträgen: Eintrag 0 = „..“,
+  Eintrag 1 = „.“, Name mit Bit 7 am letzten Zeichen, Byte 29–31 = Pseudo-Sektornummer.
+  Einträge haben feste Plätze (gelöscht = freier Platz), frei positionierbar per Seek.
+- **Pseudo-Sektornummern:** je Host-Pfad fest vergeben, bis zum nächsten `iniz`.
+- **Pfaddeskriptor, Optionsteil** (rbf.h `struct rbf_opt`): pd_att $B5, pd_fd $B6 und
+  pd_dfd $BA als **Byteadresse** (Sektornummer × 256), pd_dvt $C2.
+- **Aktuelles Verzeichnis je Prozess** in P$DIO ($148 im Prozessdeskriptor; +0 Gerät von
+  IOMan, +4 DHF-Verzeichnisnummer; Ausführungsverzeichnis ab +$10). Wird vererbt.
+- **Pfade:** Gerätename entfällt (Basispfad = Wurzel), „...“ = zwei Ebenen hoch usw.,
+  „..“ nie über die Wurzel hinaus.
+- **Öffnen:** Verzeichnis ohne Dir-Bit ($80) → E$FNA, Datei mit Dir-Bit → E$FNA
+  (Ausnahme: Verzeichnis, dessen Dir-Bit per SS_Attr entfernt wurde → `deldir`).
+- **Create** auf eine vorhandene Datei → E$CEF.
+- **Rohgerät** `/<gerät>@`: nur lesbar, liefert ein virtuelles LSN0 und eine Bitmap.
+- **Namen**, die OS-9 nicht darstellen kann, werden ausgeblendet: `.DS_Store`, `._*`, mehr
+  als 28 Zeichen, Bytes ab $80.
+- **Zeiten** in Ortszeit.
+- **Nur lesbares Laufwerk:** jede verändernde Operation → E$WP.
 
-Layout (Offsets, bytes):
-- 0x00 (1): BYTE Command
-  - 0 = Idle
-  - 1 = Create
-  - 2 = Open
-  - 3 = Seek
-  - 4 = Read
-  - 5 = Write
-  - 6 = ReadLn
-  - 7 = WriteLn
-  - 8 = GetStt (GetStat)
-  - 9 = SetStt (SetStat)
-  - 10 = Close
-  - 11 = Delete
-  - 12 = MkDir
-  - 13 = ChDir
-  - 255 = Return/Response
+## Diagnose
 
-- 0x01 (4): LONG A0 — Dateiname / Verzeichnisname (Offset/Pointer semantics: Manager kopiert Name in NAME-Bereich)
-- 0x05 (4): LONG A1 — Buffer (Offset/Pointer semantics: Manager kopiert Buffer in BUFFER-Bereich)
-- 0x09 (4): LONG D0 — Pfadnummer / Descriptor
-- 0x0D (4): LONG D1 — Statuscode / Byte-Anzahl / Max-Länge / Seek-Offset (semantisch je nach Command)
-- 0x11 (4): LONG D2 — Attribute / Flags
-
-- 0x15 (256): BYTE ARRAY[256] NAME — Null-terminierter UTF-8 Name (falls Name kürzer, mit \0 auffüllen)
-- 0x115 (512): BYTE ARRAY[512] BUFFER — Datapuffer für Read/Write/Line-Operationen
-
-Gesamtgröße (empfohlen): 0x315 (789) Bytes
-
-Hinweise zur Nutzung
-- Manager füllt die Felder und setzt das COMMAND-Byte auf den gewünschten Wert; Treiber verarbeitet und schreibt Antwort in die gleichen Felder (z. B. COMMAND=255 für Return) und setzt D1/D2 bzw. Status-Felder.
-- Bei Pfad- oder Namenfeldern: Manager kopiert den Pfad in NAME und schreibt A0 so, dass Treiber weiß, dass NAME zu verwenden ist (z. B. A0 = 0x00000001 als Flag). Alternativ kann A0 als Offset in die Shared-Area (0x15) interpretiert werden.
-- Für Read/Write: Manager setzt D1 = Max-Länge / Anzahl-der-Bytes; Treiber schreibt tatsächliche gelesene/geschriebene Länge zurück in D1.
-- SetStat/GetStat: relevante Felder (z. B. Attribute in D2, weitere Werte im BUFFER) werden an vereinbarten Offsets serialisiert; Versionierung kann über ein spezielles Flag in D2 erfolgen.
-- Sicherheitsanforderung: Manager darf vor dem Setzen in den Shared-Area Pfad-Normalisierung und Confinement durchführen; Treiber muss zusätzliche Prüfung (realpath, symlink check) durchführen, bevor Host-Operationen ausgeführt werden.
-
-Zukünftige Schritte
-- Definition eines präzisen Binary-Serialisierungsformats für SetStat-Payloads (TLV), einschließlich Feld-IDs und Längen.
-- Mapping-Regeln (wie A0/A1 interpretiert werden) klar dokumentieren (Offset-vs-Flag vs. Pointer) und Version-Feld hinzufügen.
-- Implementierung eines SDK-Helper (C-Struct) zur Arbeit mit der Shared-Area.
-
+`Q9_DHF_DEBUG=1` in der Umgebung des Emulators: Jeder Open/Create wird mit aufgelöstem
+Host-Pfad und pd_fd/pd_dfd protokolliert.

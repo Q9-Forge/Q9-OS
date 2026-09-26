@@ -91,7 +91,7 @@ OptTbl
         dc.b    0               * PD_TOffs
         dc.b    0               * PD_SOffs
         dc.w    256             * PD_SSize Bytes/Sektor
-        dc.w    0               * PD_Cntl
+        dc.w    0             * PD_Cntl
         dc.b    0               * PD_Trys
         dc.b    0               * PD_LUN
         dc.w    0               * PD_WPC
@@ -106,10 +106,13 @@ OptTbl
         dc.l    0               * PD_PartSize
 OptLen  equ     *-OptTbl
 
-* DHF-eigene Tabelle (M$DevCon): ein Wort mit dem Offset des Basispfad-Strings, s.
-* driver/dhfdrv_68k.a Init (kein Vorbild in RBF/SCF, die kennen keinen Host-Pfad).
+* DHF-eigene Tabelle (M$DevCon), s. driver/dhfdrv_68k.a Init (kein Vorbild in RBF/SCF):
+*   Wort 0 = Offset des Basispfad-Strings
+*   Wort 1 = Laufwerks-Flags, Bit 0 = NUR LESBAR (der Simulator lehnt dann jede
+*            veraendernde Operation mit E$WP ab -- durchgesetzt auf der Host-Seite)
 DevCon
         dc.w    BasePath
+        dc.w    0               * Flags: beschreibbar
 
 * 2026-09-27: interne Modulnamen sind "dhfmgr"/"dhfdrv" (<=6 Zeichen), NICHT die
 * Dateinamen "dhfmgr_68k"/"dhfdrv_68k" -- I$Attach kuerzt laengere Namen intern auf 6
