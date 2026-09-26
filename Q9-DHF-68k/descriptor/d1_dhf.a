@@ -1,6 +1,9 @@
-        nam     d0
+        nam     d1
         ttl     Q9-DHF Geraetedeskriptor
         use     q9defs.d
+*
+* d1_dhf.a: ZWEITES DHF-Laufwerk "d1" -> Q9-Images/cf_images/OS9SYS, eigene Emulator-Instanz
+* an $FFFF4100 (2026-09-26, aus d0_dhf.a abgeleitet; die Historie unten gilt fuer beide).
 *
 * 2026-09-26: umbenannt von "dhf0" auf "d0" (Nutzervorgabe) -- Laufwerksname soll wie ein
 * gewoehnliches Massenspeichergeraet ("d0", analog zu RBF-Laufwerken) aussehen, nicht als
@@ -37,7 +40,7 @@ Edition         equ     1
 * q9_dhf.h uebereinstimmen (dortige Registrierung, nicht dieser Deskriptor, legt fest, WELCHE
 * Adresse das emulierte Geraet tatsaechlich bedient -- diese Zeile sagt dem TREIBER nur, wo
 * er suchen soll).
-DHF_PORT        equ     $FFFF4000
+DHF_PORT        equ     $FFFF4100       * zweite DHF-Instanz (Q9_BOARD_DHF1_BASE)
 
 * Mode-Bits (MWOS/OS9/SRC/DEFS/funcs.a "File Access Permissions and Mode values") -- wie
 * rbfdesc.a's "Descriptor Defaults" (Dir_+ISize_+Append_+Exec_+Updat_), aber ohne ISize_/
@@ -51,7 +54,7 @@ DHF_MODE        equ     Dir_+Exec_+Updat_
 
 * Reiner Datenmodul -- Sprache 0 (NICHT Q9Objct=1, s. rbfdesc.a/scfdesc.a: "TypeLang set
 * (Devic<<8)+0"), kein Code, deshalb static-size=0 und Einsprungpunkt=0.
-        psect   d0,(Q9Devic<<8)!0,(Q9ReEnt<<8)!0,Edition,0,0
+        psect   d1,(Q9Devic<<8)!0,(Q9ReEnt<<8)!0,Edition,0,0
 
         dc.l    DHF_PORT        * M$Port -- Hardware-/MMIO-Basisadresse
         dc.b    0               * M$Vector -- kein IRQ
@@ -77,11 +80,14 @@ OptLen  equ     *-OptTbl
 * Herleitung per Q9_TRAP_TRACE_ALL-Instrumentierung im echten Emulator).
 FileMgr dc.b    "dhfmgr",0
 DevDrv  dc.b    "dhfdrv",0
-* 2026-09-26: Basispfad = Wurzel des Laufwerks (der Simulator entfernt den Geraetenamen aus
+* 2026-09-26: d1 = zweites DHF-Laufwerk, direkt auf den ausgepackten Dateibaum des
+* Systemabbilds (Q9-Images/cf_images/OS9SYS). Eigene Emulator-Instanz an $FFFF4100, damit
+* d0 und d1 je einen eigenen Basispfad haben (ein gemeinsames Geraet haette nur einen).
+* Basispfad = Wurzel des Laufwerks (der Simulator entfernt den Geraetenamen aus
 * absoluten Pfaden wie RBF: "/d0/hello.txt" -> <BasePath>/hello.txt). Liegt dauerhaft in
 * Q9-Images/dhf_root/d0 (frueher /tmp, geht beim Mac-Neustart verloren) -- Teil der fertigen
 * Emulator-Konfiguration Q9-Images/emu_config/dhf_claude.q9.
-BasePath dc.b   "/Volumes/SSD1TB/projects/Q9-Forge/Q9-Images/dhf_root/d0",0
+BasePath dc.b   "/Volumes/SSD1TB/projects/Q9-Forge/Q9-Images/cf_images/OS9SYS",0
 
         endsect
         end

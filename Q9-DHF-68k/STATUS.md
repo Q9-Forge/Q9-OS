@@ -533,3 +533,63 @@ enthalten sind". Umgesetzt:
 **Achtung Namenskonflikt:** in der Standard-Konfig `Q9-Flux-68k/emu.q9` heisst ein RBF-CF-
 Laufwerk ebenfalls `d0` (hd1.hda). Im Claude-Image gibt es diesen CF-Deskriptor nicht, daher
 kein Konflikt hier -- wer DHF in ein Image mit echtem `d0` uebernimmt, muss umbenennen.
+
+## 2026-09-26, Nachtrag: umfassender Regressionstest -- und was er gefunden hat
+
+Nutzerauftrag: "erstelle bitte noch einen umfassenden Regressionstest mit allen Funktionen des
+DHF". Zwei Teile:
+
+- **`test/dhfregr_68k.a`** (Modul `dhfregr`, im Image `/CMDS/dhf/dhfregr`): 90 Pruefungen gegen
+  ein frisches `/d0/rt`, jede mit diskriminierendem Sollwert aus "OS-9 System Calls" Kap. 2 /
+  `68k_tech.pdf` / `MWOS/SRC/DEFS/errno.h`. Deckt alle 13 Manager-Einsprungpunkte ab (Create,
+  Open, MakDir, ChgDir, Delete, Seek, Read, Write, ReadLn, WritLn, GetStt, SetStt, Close), alle
+  GetStt-Codes (Ready/Size/Pos/EOF/DevNm/FD/FDInf/Free/unbekannt) und SetStt-Codes (Size/Attr/
+  Rename/unbekannt), dazu I$Dup, Verzeichnislesen inkl. Seek/Teillesen, relative Pfade nach
+  ChgDir und die Fehlerfaelle (E$CEF, E$PNNF, E$BPNum, E$BMode, E$UnkSvc, E$EOF, E$FNA,
+  E$BPNam fuer zwei Arten von Basispfad-Ausbruch). Ausgabe je Pruefung eine Zeile
+  `OK nn ...` / `FEHLER nn ... ist=$.. soll=$..`, am Ende `ERGEBNIS:` und Exit-Status.
+- **`test/run_dhfregr.sh`** (auf dem Mac): baut alle Module aus dem aktuellen Quellstand,
+  spielt sie in eine **APFS-Kopie** von `OS9SYS_Claude.hda` ein (das echte Image bleibt
+  unberuehrt; ein parallel laufender Emulator stoert nicht -- der zweite meldet nur, dass
+  Port 2000/2001 belegt ist), bootet ueber eine Kopie von `dhf_claude.q9`, laesst `dhfregr`
+  laufen, danach die ECHTEN Utilities (`list`, `attr`, `makdir`, `copy`, `echo >`, `del`,
+  `list /d1/...`) und prueft die Host-Seite (Verzeichnisrechte, Inhalte, keine Dateien
+  ausserhalb, `lsof`: keine offenen Host-Dateien nach allen Close). Aufruf:
+  `Q9_LOGIN_PASS=... test/run_dhfregr.sh [-k] [-i]` (`-i` spielt bei Gruen die Module ins
+  echte Image ein, aber nur wenn dort gerade kein Emulator laeuft).
+
+**Gefunden und behoben** (jeweils erst per Test rot, dann gruen):
+
+| Befund | Wirkung | Fix |
+|---|---|---|
+| Fehlercodes: nur E$EOF/E$PNNF stimmten | z.B. "existiert schon" kam als E$NES, "Platte voll" als E$FNA | `dhf_proto.h`: offizielle Werte aus errno.h; `errno_to_dhf()` um ENOTEMPTY/EROFS/EMFILE/ENAMETOOLONG/EBUSY/... erweitert |
+| Create/MakDir: OS-9-Attribute roh als Unix-Modus | `$3F` -> `077`: Besitzer ohne Rechte, jedes Create im neuen Verzeichnis E$FNA | `os9_attr_to_mode()`, gemeinsam mit SS_Attr; `fchmod`/`chmod` danach (umask umgehen) |
+| WritLn | ganzer Puffer + angehaengtes `\n` | bis einschliesslich CR, nichts anhaengen |
+| ReadLn | lieferte d1-1 Byte | genau bis d1 Byte |
+| Create auf bestehende Datei | Datei still GELEERT (O_TRUNC) | O_EXCL -> E$CEF (Shell: `>-` zum Ueberschreiben) |
+| Close nach I$Dup | Host-Datei sofort zu -> `echo hallo >/d0/x` blieb leer | `Mgr_Close` prueft PD_COUNT ($1A), schliesst erst beim letzten Abbild |
+| Verzeichnis: kein Seek/Pos/EOF | echte `dir`: 'can't seek past "." and ".."' | virtuelle RBF-Verzeichnisdatei mit Byteposition, "."/".." immer vorn, Teillesen |
+| Verzeichnis ohne Dir-Bit oeffnbar | `dir /d0` hielt /d0 fuer eine Datei (nur Name) | Open ohne `$80` auf Verzeichnis -> E$FNA wie RBF |
+| SS_FDInf fehlte, Sektornummer im Eintrag = 0 | `dir -e`/`dir -r`: "can't get FD informations" | Pseudo-Sektornummern je Host-Pfad (Byte 29-31), `DHF_CMD_FDINF=26` loest sie auf |
+| SS_FD: Byteanzahl als d2.l | Muell im oberen Wort -> bis 256 Byte in kleinen Puffer | nur d2.w |
+| Basispfad-Pruefung nur per Praefix | `/d1/../OS9SYS.hda` haette das Master-Image erreicht | hinter der Basis muss `/` oder Ende folgen |
+
+**Zweites Laufwerk `d1`** (Nutzerwunsch): `descriptor/d1_dhf.a`, Port `$FFFF4100`, Basis
+`Q9-Images/cf_images/OS9SYS`. Dafuer im Emulator eine zweite, unabhaengige DHF-Instanz
+(`Q9_BOARD_DHF1_BASE`, `m68krt.c`) -- eine gemeinsame haette nur EINEN Basispfad. Zugleich
+entfernt der Simulator jetzt wie RBF den Geraetenamen aus absoluten Pfaden (`/d1/CMDS/x` ->
+`<basis>/CMDS/x`); `d0`s Basispfad ist deshalb jetzt `dhf_root/d0` (Dateien unveraendert am
+selben Ort). `/SYS/startup` im Claude-Image laedt und haengt beide an.
+
+**Verifiziert** mit echten Utilities: `dir`, `dir /d0`, `dir -e`, `dir -r`, `dir -e /d1/SYS`,
+`attr`, `list`, `makdir`, `copy`, `del`, `echo >` -- s. Runner-Ausgabe.
+
+**Offen:** `deldir` fragt interaktiv (nicht im Runner); `dir -e` zeigt Besitzer immer `0.0`
+(Host-uid wird nicht abgebildet).
+
+**Runner-Laufzeit: 11 s statt >20 min.** Die fruehere "jeder Schritt dauert genau 2 Minuten"-
+Beobachtung war eine expect-Falle im Runner selbst: eine Musterliste in `{}` wird von expect
+NUR dann als Liste von Muster/Aktion-Paaren gelesen, wenn sie ueber mehrere Zeilen geht --
+einzeilig (`expect { -re $prompt {} timeout {...} }`) ist sie EIN Glob-Muster, das nie passt;
+expect kehrt dann nach dem Timeout still zurueck (ohne den timeout-Zweig!). Beide Stellen
+jetzt mehrzeilig. Drei Laeufe hintereinander: je 11 s, Gast 90/90, Host 13/13.
