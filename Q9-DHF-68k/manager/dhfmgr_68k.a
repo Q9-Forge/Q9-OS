@@ -57,8 +57,13 @@ DHF_CMD_CREATE  equ     1
 DHF_CMD_OPEN    equ     2
 DHF_CMD_READ    equ     4
 DHF_CMD_WRITE   equ     5
+DHF_CMD_GETSTT  equ     8
 DHF_CMD_CLOSE   equ     10
 DHF_CMD_DELETE  equ     11
+
+* I$GetStt-Funktionscodes (MWOS/OS9/SRC/DEFS/sg_codes.h, "OS-9 System Calls" Kap. 2)
+SS_Ready        equ     $01
+SS_Size         equ     $02
 
 * Devicetbl-Feldoffsets (MWOS/OS9/SRC/DEFS/sysio.h struct devicetbl)
 DT_DRIV         equ     0               * V_driv: Treiber-Modulzeiger
@@ -77,6 +82,7 @@ PD_DEV          equ     4               * Devicetbl*: Geraetetabelleneintrag
 * REGISTERS-Feldoffsets (reg.h): d[8] dann a[8], je 4 Byte
 REG_D0          equ     0
 REG_D1          equ     4
+REG_D2          equ     8
 REG_A0          equ     32
 
 * F$SRqMem/F$SRtMem -- nicht in q9defs.d vordefiniert, Callcodes aus MWOS/OS9/SRC/DEFS/
@@ -228,21 +234,88 @@ MgrRetOk:
 MgrAllocErr:
         rts
 
-* Sieben Aufrufe bleiben Stub (E$UnkSvc, $D0 aus MWOS/SRC/DEFS/errno.h): ihre Nutzlast passt
-* NICHT uniform (Seek braucht ein "whence" statt Modus/Attribute, GetStt/SetStt sind
-* funktionscode-abhaengig, MakDir/ChgDir-Registerkonventionen sind bislang nicht gegen ein
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Mgr_GetStt -- 2026-09-26, echt verdrahtet (nicht mehr Stub). Nutzlast ist laut "OS-9 System
+* Calls" Kap. 2 ("I$GetStt") funktionscode-abhaengig, passt NICHT auf MgrCommons uniformes
+* Schema -- deshalb eigene Routine statt Sprungbrett. Nur die zwei Funktionscodes, die "dir"/
+* "list" tatsaechlich brauchen, sind verdrahtet (SS_Ready, SS_Size); alles andere bleibt
+* E$UnkSvc wie zuvor (kein Rueckschritt, nur noch nicht implementiert).
+*
+* SS_Ready (Test for Data Ready, RBF/SCF/PIPE): "RBF devices always return carry clear,
+* d1.l=1" -- kein Treiberaufruf noetig, DHF verhaelt sich hier wie ein RBF-Geraet.
+*
+* SS_Size (Return Current File Size, RBF/PIPE): Ausgabe d2.l=Dateigroesse. Holt dafuer per
+* DHF_CMD_GETSTT (dhf_emu_device.c, bereits vorhanden) einen 16-Byte-Statusblock vom Treiber
+* (dhf_host_fs_getstat: [0]=Groesse,[1]=Mode,[2]=mtime,[3]=atime, je 4 Byte) und nimmt daraus
+* nur die Groesse. Braucht -- anders als SS_Ready -- den vollen F$SRqMem/CallDrv-Ablauf aus
+* MgrCommon, deshalb dieselbe Register-Rettung ueber d2/d4/d5 (s. dortiger Kommentar zum
+* Stack-Bug).
+*───────────────────────────────────────────────────────────────────────────────────────────
+Mgr_GetStt:
+        move.l  REG_D1(a5),d0
+        cmpi.l  #SS_Ready,d0
+        bne.s   MgrGst_TrySize
+        moveq   #1,d1
+        move.l  d1,REG_D1(a5)
+        andi    #$FE,ccr
+        rts
+
+MgrGst_TrySize:
+        cmpi.l  #SS_Size,d0
+        beq.s   MgrGst_Size
+        bra     MgrUnkSvc
+
+MgrGst_Size:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer (wie MgrCommon)
+        move.l  PD_DEV(a1),d5           * d5 = pd_dev (Devicetbl*) gerettet
+        move.l  #CMDBLK_SIZE,d0
+        OS9     F$SRqMem
+        bcs     MgrAllocErr
+        movea.l d5,a3                   * a3 = pd_dev (Devicetbl*) zurueck
+        movea.l a2,a1                   * a1 = frisch geholter Kommandoblock (dient hier
+                                         * zugleich als 16-Byte-Statuspuffer fuer den Treiber)
+        move.l  a1,SH_A1(a1)            * (a0) fuer den Treiber: Zielpuffer = derselbe Block
+        move.l  d2,SH_D0(a1)
+        move.b  #DHF_CMD_GETSTT,SH_COMMAND(a1)
+        bsr     CallDrv
+        move.l  d1,d2                   * Treiber-Ergebnis retten -- F$SRtMem clobbert d1
+        bcc.s   MgrGst_SizeOk
+        moveq   #1,d3
+        bra.s   MgrGst_SizeFree
+MgrGst_SizeOk:
+        moveq   #0,d3
+        move.l  (a1),REG_D2(a5)         * Statuspuffer-Offset 0 = Dateigroesse (dhf_host_fs_getstat)
+MgrGst_SizeFree:
+        movea.l a1,a2
+        move.l  #CMDBLK_SIZE,d0
+        OS9     F$SRtMem
+        move.l  d2,d1
+        tst.l   d3
+        beq.s   MgrGst_SizeDone
+        ori     #1,ccr
+        rts
+MgrGst_SizeDone:
+        andi    #$FE,ccr
+        rts
+
+MgrUnkSvc:
+        moveq   #0,d1
+        move.b  #E_UNKSVC,d1
+        ori     #1,ccr
+        rts
+
+* Sechs Aufrufe bleiben Stub (E$UnkSvc, $D0 aus MWOS/SRC/DEFS/errno.h): ihre Nutzlast passt
+* NICHT uniform (Seek braucht ein "whence" statt Modus/Attribute, SetStt ist funktionscode-
+* abhaengig wie GetStt, MakDir/ChgDir-Registerkonventionen sind bislang nicht gegen ein
 * echtes Handbuch verifiziert -- s. Kopfkommentar).
 Mgr_MakDir
 Mgr_ChgDir
 Mgr_Seek
 Mgr_ReadLn
 Mgr_WritLn
-Mgr_GetStt
 Mgr_SetStt
-        moveq   #0,d1
-        move.b  #E_UNKSVC,d1
-        ori     #1,ccr
-        rts
+        bra     MgrUnkSvc
 
         endsect
         end
