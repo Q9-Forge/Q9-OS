@@ -1,6 +1,11 @@
-        nam     dhf0
+        nam     d0
         ttl     Q9-DHF Geraetedeskriptor
         use     q9defs.d
+*
+* 2026-09-26: umbenannt von "dhf0" auf "d0" (Nutzervorgabe) -- Laufwerksname soll wie ein
+* gewoehnliches Massenspeichergeraet ("d0", analog zu RBF-Laufwerken) aussehen, nicht als
+* eigener Geraetetyp erkennbar sein. Datei entsprechend von descriptor/dhf0.a nach
+* descriptor/d0_dhf.a umbenannt (Konvention: "<Laufwerksname>_dhf.a").
 *
 * 2026-09-27: Geraetedeskriptor fuer DHF, nach dem Vorbild der echten Microware-Quellen
 * MWOS/OS9/SRC/IO/RBF/DESC/rbfdesc.a und .../SCF/DESC/scfdesc.a (Feldreihenfolge/-namen
@@ -13,8 +18,8 @@
 *      bevor Init aufgerufen wird -- verifiziert an MWOS/OS9/SRC/IO/SCF/DRVR/sc68681.a's
 *      echtem Init ("movea.l V_PORT(a2),a3"). driver/dhfdrv_68k.a (ab Edition 1.10) liest
 *      die Basis von dort, nicht mehr als einkompilierte Konstante.
-*   2. Der Name dieses Moduls selbst (aktuell "dhf0", s. "nam"-Zeile oben) -- das ist der
-*      Name, unter dem man das Geraet per "iniz dhf0" anspricht.
+*   2. Der Name dieses Moduls selbst (aktuell "d0", s. "nam"-Zeile oben) -- das ist der
+*      Name, unter dem man das Geraet per "iniz d0" anspricht.
 *   3. BASEPATH -- der Host-Dateisystem-Basispfad. driver/dhfdrv_68k.a's Init liest ihn aus
 *      der Options-Tabelle (M$DevCon) und loest damit DHF_CMD_INIT im Simulator aus
 *      (dessen Handler ruft dhf_host_fs_init() auf, s. dhf_emu_device.c) -- der Simulator
@@ -46,7 +51,7 @@ DHF_MODE        equ     Dir_+Exec_+Updat_
 
 * Reiner Datenmodul -- Sprache 0 (NICHT Q9Objct=1, s. rbfdesc.a/scfdesc.a: "TypeLang set
 * (Devic<<8)+0"), kein Code, deshalb static-size=0 und Einsprungpunkt=0.
-        psect   dhf0,(Q9Devic<<8)!0,(Q9ReEnt<<8)!0,Edition,0,0
+        psect   d0,(Q9Devic<<8)!0,(Q9ReEnt<<8)!0,Edition,0,0
 
         dc.l    DHF_PORT        * M$Port -- Hardware-/MMIO-Basisadresse
         dc.b    0               * M$Vector -- kein IRQ

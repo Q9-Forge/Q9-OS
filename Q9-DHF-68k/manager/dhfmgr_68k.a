@@ -55,11 +55,22 @@ SH_SIZE         equ     28
 * DHF-Kommandocodes (Q9-Flux-68k/src/devices/dhf/dhf_proto.h)
 DHF_CMD_CREATE  equ     1
 DHF_CMD_OPEN    equ     2
+DHF_CMD_SEEK    equ     3
 DHF_CMD_READ    equ     4
 DHF_CMD_WRITE   equ     5
+DHF_CMD_READLN  equ     6
+DHF_CMD_WRITELN equ     7
 DHF_CMD_GETSTT  equ     8
+DHF_CMD_SETSTT  equ     9
 DHF_CMD_CLOSE   equ     10
 DHF_CMD_DELETE  equ     11
+DHF_CMD_MKDIR   equ     12
+DHF_CMD_CHDIR   equ     13
+
+* I$Seek "whence" -- I$Seek ist laut "OS-9 System Calls" Kap. 2 IMMER eine absolute
+* Positionierung (kein relatives Unix-lseek), deshalb hier fest verdrahtet statt aus dem
+* Aufrufer uebernommen (s. Mgr_Seek).
+DHF_SEEK_SET    equ     0
 
 * I$GetStt-Funktionscodes (MWOS/OS9/SRC/DEFS/sg_codes.h, "OS-9 System Calls" Kap. 2)
 SS_Ready        equ     $01
@@ -70,10 +81,14 @@ DT_DRIV         equ     0               * V_driv: Treiber-Modulzeiger
 DT_STAT         equ     4               * V_stat: Treiber-eigener statischer Speicher
 
 * Treiber-Sprungtabelle: fester Offset ab Treiberbasis (module.h mod_driver, empirisch gegen
-* driver/dhfdrv_68k.a's eigenen Modulkopf bestaetigt, s. STATUS.md), D_READ aus sysio.h --
-* Read/Write/GetStat/SetStat sind im Treiber derselbe Code, D_READ stellvertretend fuer alle.
+* driver/dhfdrv_68k.a's eigenen Modulkopf bestaetigt, s. STATUS.md). D_WRIT aus sysio.h --
+* 2026-09-26 (Nutzervorgabe): der Manager gibt seinen Kommandoblock IMMER per "Write" an
+* den Treiber (Managerfunktion-Nummer + bis zu 5 Parameter in dhf_shared, s. MgrCommon) --
+* Read/Write/GetStat/SetStat sind im Treiber ohnehin derselbe Code (dhfdrv_68k.a), D_WRIT
+* ist nur die semantisch richtige, einheitliche Tuer dorthin (vorher stand hier D_READ,
+* ebenfalls funktionsgleich, aber begrifflich falsch -- s. STATUS.md).
 DRV_ENTTAB_OFF  equ     $3C
-D_READ          equ     2
+D_WRIT          equ     4
 
 * Pfaddeskriptor-Feldoffsets (path.h)
 PD_PD           equ     0               * u_short: eigene Pfadnummer
@@ -149,6 +164,62 @@ Mgr_Delete:
         moveq   #DHF_CMD_DELETE,d3
         bra     MgrCommon
 
+* 2026-09-26 (Nutzervorgabe, nachgezogen): MakDir/ChgDir/ReadLn/WritLn passen -- gegen die
+* echten Registertabellen aus "OS-9 System Calls" Kap. 2 geprueft ("OS-9 v2.4 Technical
+* Reference Manual") -- ebenfalls auf MgrCommons uniformes Schema:
+*   I$MakDir: d0.b=Modus (ungenutzt vom Simulator-Handler), d1.w=Zugriffsrechte (SH_D1 --
+*             genau das, was dhf_host_fs_mkdir() als Unix-Modus erwartet), a0=Pfadname.
+*   I$ChgDir: d0.b=Modus (vom Simulator-Handler ganz ignoriert), a0=Pfadname.
+*   I$ReadLn: d0.w=Pfadnummer, d1.l=Maximalbytes, a0=Puffer -- Register-fuer-Register
+*             identisch zu I$Read, nur der DHF-Kommandocode unterscheidet sich.
+*   I$WritLn: d0.w=Pfadnummer, d1.l=Bytezahl, a0=Puffer -- identisch zu I$Write.
+* Seek passt NICHT (s. eigene Routine unten): sein drittes Nutzlastfeld ("whence") muss
+* immer SEEK_SET sein, MgrCommon wuerde dort REG_D0(a5) (=Pfadnummer) hineinschreiben.
+Mgr_MakDir:
+        moveq   #DHF_CMD_MKDIR,d3
+        bra     MgrCommon
+
+Mgr_ChgDir:
+        moveq   #DHF_CMD_CHDIR,d3
+        bra     MgrCommon
+
+Mgr_ReadLn:
+        moveq   #DHF_CMD_READLN,d3
+        bra     MgrCommon
+
+Mgr_WritLn:
+        moveq   #DHF_CMD_WRITELN,d3
+        bra     MgrCommon
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Mgr_Seek -- passt nicht auf MgrCommons uniformes Schema (s. Kopfkommentar): d0.w=Pfad-
+* nummer und d1.l=neue Position stimmen mit MgrCommons SH_D0/SH_D1 ueberein, aber das
+* Simulator-Kommando DHF_CMD_SEEK erwartet in SH_D2 ein "whence" (0=SEEK_SET/1=SEEK_CUR/
+* 2=SEEK_END, s. dhf_host_fs_seek) -- MgrCommon wuerde dort REG_D0(a5) hineinschreiben, was
+* zufaellig die Pfadnummer ist und bei kleinen Pfadnummern (1 oder 2) mit SEEK_CUR/SEEK_END
+* verwechselt werden koennte. I$Seek ist laut "OS-9 System Calls" IMMER eine absolute
+* Positionierung, also fest SEEK_SET.
+*───────────────────────────────────────────────────────────────────────────────────────────
+Mgr_Seek:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer
+        movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*)
+        lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock
+
+        move.l  d2,SH_D0(a1)            * Pfadnummer
+        move.l  REG_D1(a5),SH_D1(a1)    * neue Position (d1.l des Aufrufers)
+        moveq   #DHF_SEEK_SET,d0
+        move.l  d0,SH_D2(a1)            * whence -- immer absolut, s. Kopfkommentar
+        move.b  #DHF_CMD_SEEK,SH_COMMAND(a1)
+
+        bsr     CallDrv
+        bcc.s   MgrSeekOk
+        rts
+MgrSeekOk:
+        move.l  SH_D1(a1),REG_D1(a5)
+        andi    #$FE,ccr
+        rts
+
 *───────────────────────────────────────────────────────────────────────────────────────────
 * Hilfsroutine CallDrv -- Eingabe a1=dhf_shared-Kommandoblock (wird direkt zu Treiber-a1),
 * a3=Devicetbl* (pd->pd_dev). Loest den Treiber-Aufruf ueber V_driv/V_stat aus (s.
@@ -162,7 +233,7 @@ CallDrv:
         move.l  a2,-(a7)
         movea.l DT_DRIV(a3),a0          * a0 = V_driv (Treiber-Modulbasis)
         movea.l DT_STAT(a3),a2          * a2 = V_stat (Treiber-eigener statischer Speicher)
-        move.w  DRV_ENTTAB_OFF+D_READ(a0),d0
+        move.w  DRV_ENTTAB_OFF+D_WRIT(a0),d0
         ext.l   d0
         adda.l  d0,a0                   * a0 = absolute Einsprungadresse im Treiber
         jsr     (a0)
@@ -272,15 +343,15 @@ MgrUnkSvc:
         ori     #1,ccr
         rts
 
-* Sechs Aufrufe bleiben Stub (E$UnkSvc, $D0 aus MWOS/SRC/DEFS/errno.h): ihre Nutzlast passt
-* NICHT uniform (Seek braucht ein "whence" statt Modus/Attribute, SetStt ist funktionscode-
-* abhaengig wie GetStt, MakDir/ChgDir-Registerkonventionen sind bislang nicht gegen ein
-* echtes Handbuch verifiziert -- s. Kopfkommentar).
-Mgr_MakDir
-Mgr_ChgDir
-Mgr_Seek
-Mgr_ReadLn
-Mgr_WritLn
+* Nur noch EIN Aufruf bleibt Stub (E$UnkSvc, $D0 aus MWOS/SRC/DEFS/errno.h) --
+* MakDir/ChgDir/Seek/ReadLn/WritLn sind jetzt oben verdrahtet (Nutzervorgabe, gegen die
+* echten Registertabellen aus "OS-9 System Calls" Kap. 2 geprueft). SetStt bleibt Stub:
+* das darunterliegende `dhf_host_fs_setstat()` (Q9-Flux-68k/src/devices/dhf/dhf_host_fs.c)
+* ist selbst noch ein reines No-Op (ignoriert statbuf) UND erwartet -- anders als das
+* inzwischen gefixte GetStt -- noch einen Pfadnamen statt einer Pfadnummer/eines Handles
+* (dieselbe Fallenklasse, die bei GetStt/SS_Size schon einmal den Host-Emulatorprozess
+* haengen liess, s. STATUS.md). Erst eine echte `dhf_host_fs_setstat_at()`-Variante bauen,
+* dann hier verdrahten -- nicht vorschnell mit MgrCommons Schema anschliessen.
 Mgr_SetStt
         bra     MgrUnkSvc
 

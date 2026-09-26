@@ -177,7 +177,7 @@ HexStore:
 * da M$Mem/_mdata fuer Programmmodule -- anders als bei Treibern, s. driver/
 * dhfdrv_68k.a's vsect-Fund -- hier keine Kernel-Pruefung mit "!=0" hat).
 *───────────────────────────────────────────────────────────────────────────
-MsgStart        dc.b    "=== dhftest: I$Open/I$Read/I$Close gegen /dhf0/hello.txt ===",$0D
+MsgStart        dc.b    "=== dhftest: I$Open/I$Read/I$Close gegen /d0/hello.txt ===",$0D
 MsgStartLen     equ     *-MsgStart
 
 MsgOpenOk       dc.b    "OPEN: ok",$0D
@@ -198,7 +198,7 @@ MsgCloseOkLen   equ     *-MsgCloseOk
 MsgCloseFail    dc.b    "CLOSE: FEHLER, Code:",$0D
 MsgCloseFailLen equ     *-MsgCloseFail
 
-PathName        dc.b    "/dhf0/hello.txt",0
+PathName        dc.b    "/d0/hello.txt",0
 
         align   2
 PathNum         ds.w    1
