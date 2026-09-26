@@ -72,6 +72,7 @@ DHF_CMD_GETPOS  equ     22              * I$GetStt SS_Pos
 DHF_CMD_ISEOF   equ     23              * I$GetStt SS_EOF
 DHF_CMD_RENAMEAT equ    24              * I$SetStt SS_Rename (Handle-basiert)
 DHF_CMD_GETFREE equ     25              * I$GetStt SS_Free
+DHF_CMD_FDINF   equ     26              * I$GetStt SS_FDInf (FD zu einer Sektornummer)
 
 * I$Seek "whence" -- I$Seek ist laut "OS-9 System Calls" Kap. 2 IMMER eine absolute
 * Positionierung (kein relatives Unix-lseek), deshalb hier fest verdrahtet statt aus dem
@@ -87,6 +88,7 @@ SS_FD           equ     $0F             * "Read File Descriptor Sector" (sg_code
                                          * genutzt u.a. von der echten "attr"-Utility.
 SS_DevNm        equ     $0E             * Geraetename zurueckgeben (32-Byte-Puffer)
 SS_Attr         equ     $1C             * Dateiattribute setzen (Gegenstueck zu SS_FD)
+SS_FDInf        equ     $20             * FD zu einer Sektornummer ("dir -e"/"dir -r")
 SS_Rename       equ     $42             * Datei umbenennen -- ACHTUNG: kein reales Utility
                                          * erreicht diesen Aufruf, s. dhf_proto.h/STATUS.md.
 SS_Free         equ     $43             * Freier Speicherplatz -- ACHTUNG: das reale "free"-
@@ -117,6 +119,8 @@ D_WRIT          equ     4
 * Pfaddeskriptor-Feldoffsets (path.h)
 PD_PD           equ     0               * u_short: eigene Pfadnummer
 PD_DEV          equ     4               * Devicetbl*: Geraetetabelleneintrag
+PD_COUNT        equ     $1A             * u_short: Anzahl Pfade auf diesem Deskriptor (I$Dup),
+                                         * von IOMan gepflegt (sysio.a / 68k_techio.pdf)
 
 * 2026-09-26: RBF-spezifisches Pfaddeskriptor-Feld (path.h/"OS-9 Technical Manual" Anhang
 * B, "RBF Definitions of the Path Descriptor", Offset $B5) -- eigentlich NUR von RBF
@@ -132,6 +136,7 @@ PD_ATT          equ     $B5
 REG_D0          equ     0
 REG_D1          equ     4
 REG_D2          equ     8
+REG_D3          equ     12
 REG_A0          equ     32
 
 * F$SRqMem/F$SRtMem -- nicht in q9defs.d vordefiniert, Callcodes aus MWOS/OS9/SRC/DEFS/
@@ -190,9 +195,21 @@ Mgr_Write:
         moveq   #DHF_CMD_WRITE,d3
         bra     MgrCommon
 
+* 2026-09-26: Close nur dann an den Host weiterreichen, wenn KEIN weiteres Abbild des Pfads
+* mehr existiert. IOMan zaehlt PD_COUNT bei I$Dup hoch und vor dem FileManager-Close wieder
+* herunter ("OS-9 for 68K Technical I/O Manual", RBF I$Close: "Checks the use count in the
+* path descriptor. If the use count is non-zero, no further action is taken."). Vorher schloss
+* jeder Close sofort die Host-Datei -- "echo hallo >/d0/x" hinterliess eine LEERE Datei, weil
+* die Shell ihre eigene Kopie des umgeleiteten Pfads schliesst, bevor das per Dup erbende echo
+* schreibt (gefunden mit dem Regressionstest, s. test/run_dhfregr.sh).
 Mgr_Close:
+        tst.w   PD_COUNT(a1)
+        bne.s   MgrCloseKeep
         moveq   #DHF_CMD_CLOSE,d3
         bra     MgrCommon
+MgrCloseKeep:
+        andi    #$FE,ccr
+        rts
 
 Mgr_Delete:
         moveq   #DHF_CMD_DELETE,d3
@@ -372,6 +389,8 @@ MgrGst_TrySize:
         beq.s   MgrGst_Size
         cmpi.l  #SS_FD,d0
         beq.s   MgrGst_FD
+        cmpi.l  #SS_FDInf,d0
+        beq.w   MgrGst_FDInf
         cmpi.l  #SS_Pos,d0
         beq.w   MgrGst_Pos
         cmpi.l  #SS_EOF,d0
@@ -414,12 +433,40 @@ MgrGst_FD:
 
         move.l  d2,SH_D0(a1)            * Pfadnummer (Handle)
         move.l  REG_A0(a5),SH_A1(a1)    * Zielpuffer des Aufrufers
-        move.l  REG_D2(a5),SH_D1(a1)    * gewuenschte Byteanzahl (d2.w des Aufrufers)
+        moveq   #0,d0
+        move.w  REG_D2+2(a5),d0         * gewuenschte Byteanzahl: NUR d2.w (2026-09-26 --
+        move.l  d0,SH_D1(a1)            * vorher d2.l, Muell im oberen Wort -> bis 256 Byte)
         move.b  #DHF_CMD_GETFD,SH_COMMAND(a1)
         bsr     CallDrv
         bcc.s   MgrGst_FDOk
         rts
 MgrGst_FDOk:
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* MgrGst_FDInf -- SS_FDInf ("Get Specified File Descriptor Sector", 68k_tech.pdf S. 559):
+* d2.w=Byteanzahl (<=256), d3.l=FD-Sektornummer, a0=Puffer. 2026-09-26: "dir -e"/"dir -r"
+* holen damit die Dateiinfos zu der Sektornummer aus Byte 29-31 jedes Verzeichniseintrags
+* ("can't get FD informations" ohne). DHF hat keine Sektoren -- der Simulator vergibt beim
+* Verzeichnislesen je Host-Datei eine Pseudo-Sektornummer und loest sie hier wieder auf.
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrGst_FDInf:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        lea     CmdBlk(pc),a1
+        move.l  d2,SH_D0(a1)            * Pfadnummer (nur zur Vollstaendigkeit)
+        move.l  REG_A0(a5),SH_A1(a1)    * Zielpuffer
+        moveq   #0,d0
+        move.w  REG_D2+2(a5),d0
+        move.l  d0,SH_D1(a1)            * Byteanzahl (d2.w)
+        move.l  REG_D3(a5),SH_D2(a1)    * Pseudo-Sektornummer (d3.l)
+        move.b  #DHF_CMD_FDINF,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrGst_FDInfOk
+        rts
+MgrGst_FDInfOk:
         andi    #$FE,ccr
         rts
 

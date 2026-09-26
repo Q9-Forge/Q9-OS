@@ -1,0 +1,921 @@
+*═══════════════════════════════════════════════════════════════════════════
+* File:   dhfregr_68k.a                                                Ver. 1.00
+* Owner:  Claude
+* Desc.:  Umfassender DHF-Regressionstest: ruft JEDE vom Manager verdrahtete
+*         Funktion (13 I$-Einsprungpunkte, alle GetStt/SetStt-Codes) gegen ein
+*         frisches Testverzeichnis /d0/rt auf und vergleicht Rueckgabecode UND
+*         Rueckgabewerte gegen das dokumentierte OS-9-Sollverhalten ("OS-9
+*         System Calls" Kap. 2, Fehlercodes aus MWOS/SRC/DEFS/errno.h).
+*
+*         Jede Pruefung druckt genau eine Zeile:
+*           "OK     nn Name"
+*           "FEHLER nn Name ist=$xxxxxxxx soll=$xxxxxxxx"
+*         Am Ende "ERGEBNIS: nnn OK, nnn FEHLER" und "DHFREGR-ENDE"; der
+*         Exit-Status ist 0 nur wenn alles OK war. Die Host-Seite (tatsaechliche
+*         Dateien unter Q9-Images/dhf_root/d0/rt) prueft test/run_dhfregr.sh.
+*
+*         Vorbedingung: /d0 ist angehaengt (iniz d0), /d0/rt existiert NICHT
+*         (der Runner raeumt es vorher weg), neben dem d0-Basisverzeichnis liegt
+*         d0_nachbar/geheim.txt (legt der Runner an; darf NICHT erreichbar sein).
+*
+* Edition History
+*─────────┬──────┬────────────────────────────────────────────────────────┬──────
+* Date    │ Ver. │ Description                                            │ By
+*─────────┼──────┼────────────────────────────────────────────────────────┼──────
+* 26-09-26│ 1.00 │ Erster Wurf                                            │ Cld
+*═════════╧══════╧════════════════════════════════════════════════════════╧══════
+        nam     dhfregr
+        ttl     Q9-DHF Regressionstest
+
+        use     q9defs.d
+
+Edition         equ     1
+
+I_CREATE        equ     $83
+I_OPEN          equ     $84
+I_MAKDIR        equ     $85
+I_CHGDIR        equ     $86
+I_DELETE        equ     $87
+I_SEEK          equ     $88
+I_READ          equ     $89
+I_WRITE         equ     $8a
+I_READLN        equ     $8b
+I_WRITLN        equ     $8c
+I_GETSTT        equ     $8d
+I_SETSTT        equ     $8e
+I_CLOSE         equ     $8f
+I_DUP           equ     $82
+
+SS_Ready        equ     $01
+SS_Size         equ     $02
+SS_Pos          equ     $05
+SS_EOF          equ     $06
+SS_DevNm        equ     $0E
+SS_FD           equ     $0F
+SS_Attr         equ     $1C
+SS_FDInf        equ     $20
+SS_Rename       equ     $42
+SS_Free         equ     $43
+SS_Bogus        equ     $7F             * kein definierter Code -> E$UnkSvc erwartet
+
+* Zugriffsmodi (OS-9 System Calls Kap. 2)
+M_READ          equ     $01
+M_WRITE         equ     $02
+M_UPDATE        equ     $03
+M_DIRREAD       equ     $81
+
+* Fehlercodes (MWOS/SRC/DEFS/errno.h)
+E_BPNUM         equ     $C9
+E_BMODE         equ     $CB
+E_UNKSVC        equ     $D0
+E_EOF           equ     $D3
+E_FNA           equ     $D6
+E_BPNAM         equ     $D7
+E_PNNF          equ     $D8
+E_CEF           equ     $DA
+
+STDOUT          equ     1
+BAD_PATH        equ     $7F             * nie vergebene Pfadnummer -> E$BPNum
+
+*───────────────────────────────────────────────────────────────────────────
+* CHK soll,Name -- Rueckgabecode des unmittelbar vorangehenden Systemaufrufs
+* (Carry ? d1.w : 0) gegen "soll" pruefen. Laesst d0-d5/a0-a5 unveraendert
+* (RC und Report retten alles ausser d6/d7), damit das Ergebnis (z.B. d0 =
+* neue Pfadnummer) danach noch benutzt werden kann. Danach gilt: Carry
+* gesetzt genau dann, wenn der Aufruf einen Fehlercode lieferte (d6<>0).
+*───────────────────────────────────────────────────────────────────────────
+CHK     macro
+        bsr     RC
+        move.l  #\1,d7
+        pea     \2(pc)
+        bsr     ReportSP
+        endm
+
+* VAL soll,Name -- d6 (vom Aufrufer gesetzt) gegen "soll" pruefen
+VAL     macro
+        move.l  #\1,d7
+        pea     \2(pc)
+        bsr     ReportSP
+        endm
+
+        psect   dhfregr,(Prgrm<<8)!Objct,0,Edition,2048,Start
+
+Start:
+        lea     MsgStart(pc),a0
+        move.l  #MsgStartLen,d1
+        bsr     PrintMsg
+
+*════════ Verzeichnis anlegen ════════════════════════════════════════════
+        lea     PDir(pc),a0
+        moveq   #M_UPDATE,d0
+        move.l  #$3F,d1                 * alle Rechte (r/w/e fuer Besitzer und oeffentlich)
+        OS9     I_MAKDIR
+        CHK     0,N01
+        lea     PDir(pc),a0
+        moveq   #M_UPDATE,d0
+        move.l  #$3F,d1
+        OS9     I_MAKDIR
+        CHK     E_CEF,N02
+
+*════════ Create + Write + WritLn ═══════════════════════════════════════
+        lea     PA(pc),a0
+        moveq   #M_WRITE,d0
+        move.l  #$1B,d1                 * Attribute: r,w,pr,pw
+        OS9     I_CREATE
+        CHK     0,N03
+        bsr     TakePath
+
+        move.w  d5,d0
+        lea     Data10(pc),a0
+        moveq   #10,d1
+        OS9     I_WRITE
+        CHK     0,N04
+        move.l  d1,d6
+        VAL     10,N05
+
+        move.w  d5,d0
+        lea     DataLn(pc),a0
+        moveq   #10,d1                  * Puffer "Zeile1",CR,"XYZ": WritLn muss am CR stoppen
+        OS9     I_WRITLN
+        CHK     0,N06
+        move.l  d1,d6
+        VAL     7,N07
+
+        move.w  d5,d0
+        OS9     I_CLOSE
+        CHK     0,N08
+
+*════════ Open(Read) + GetStt + Read/Seek/ReadLn ════════════════════════
+        lea     PA(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     0,N09
+        bsr     TakePath
+
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        CHK     0,N10
+        move.l  d2,d6
+        VAL     17,N11                  * 10 Byte Write + 7 Byte WritLn
+
+        bsr     ClearFD
+        move.w  d5,d0
+        moveq   #SS_FD,d1
+        moveq   #16,d2
+        lea     FDBuf(pc),a0
+        OS9     I_GETSTT
+        CHK     0,N12
+        moveq   #0,d6
+        move.b  FDBuf(pc),d6
+        andi.b  #$3F,d6
+        VAL     $1B,N13                 * FD_ATT = die beim Create gesetzten Attribute
+        bsr     FDSize
+        VAL     17,N14                  * FD_SIZ
+
+        move.w  d5,d0
+        moveq   #SS_Ready,d1
+        OS9     I_GETSTT
+        CHK     0,N15
+
+        move.w  d5,d0
+        moveq   #SS_EOF,d1
+        OS9     I_GETSTT
+        CHK     0,N16                   * am Anfang: nicht EOF
+
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #4,d1
+        OS9     I_READ
+        CHK     0,N17
+        move.l  d1,d6
+        VAL     4,N18
+        move.l  RBuf(pc),d6
+        VAL     $41424344,N19           * "ABCD"
+
+        move.w  d5,d0
+        moveq   #SS_Pos,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        CHK     0,N20
+        move.l  d2,d6
+        VAL     4,N21
+
+        move.w  d5,d0
+        moveq   #8,d1
+        OS9     I_SEEK
+        CHK     0,N22
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #2,d1
+        OS9     I_READ
+        CHK     0,N23
+        moveq   #0,d6
+        move.w  RBuf(pc),d6
+        VAL     $494A,N24               * "IJ" (Position 8)
+
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #40,d1
+        OS9     I_READLN
+        CHK     0,N25
+        move.l  d1,d6
+        VAL     7,N26                   * "Zeile1",CR
+        move.l  RBuf(pc),d6
+        VAL     $5A65696C,N27           * "Zeil"
+        moveq   #0,d6
+        move.b  RBuf+6(pc),d6
+        VAL     $0D,N28                 * Zeile endet mit CR (OS-9-Zeilenende)
+
+        move.w  d5,d0
+        moveq   #SS_EOF,d1
+        OS9     I_GETSTT
+        CHK     E_EOF,N29
+
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #4,d1
+        OS9     I_READ
+        CHK     E_EOF,N30
+
+        move.w  d5,d0
+        moveq   #0,d1
+        OS9     I_SEEK
+        CHK     0,N31
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #3,d1                   * ReadLn mit Grenze 3 (Zeile ist laenger)
+        OS9     I_READLN
+        CHK     0,N32
+        move.l  d1,d6
+        VAL     3,N33                   * genau d1 Byte, nicht d1-1
+
+        move.w  d5,d0
+        lea     Data10(pc),a0
+        moveq   #2,d1
+        OS9     I_WRITE                 * Schreiben auf einen Nur-Lese-Pfad
+        CHK     E_BMODE,N34
+
+        bsr     ClearRB
+        move.w  d5,d0
+        moveq   #SS_DevNm,d1
+        lea     RBuf(pc),a0
+        OS9     I_GETSTT
+        CHK     0,N35
+        move.l  RBuf(pc),d6
+        andi.l  #$FFFFFF00,d6
+        VAL     $64300000,N36           * "d0",0
+
+        move.w  d5,d0
+        moveq   #SS_Free,d1
+        OS9     I_GETSTT
+        CHK     0,N37
+        move.l  d0,d6                   * SS_Free: Ergebnis in d0.l
+        bcc.s   FreeRc
+        moveq   #0,d6                   * Aufruf gescheitert -> kein gueltiges Ergebnis
+FreeRc:
+        moveq   #1,d7
+        tst.l   d6
+        beq.s   FreeZero
+        move.l  d6,d7                   * ungleich 0 -> ok
+FreeZero:
+        pea     N38(pc)
+        bsr     ReportSP
+
+        move.w  d5,d0
+        moveq   #SS_Bogus,d1
+        OS9     I_GETSTT
+        CHK     E_UNKSVC,N39
+        move.w  d5,d0
+        moveq   #SS_Bogus,d1
+        OS9     I_SETSTT
+        CHK     E_UNKSVC,N40
+
+        move.w  d5,d0
+        OS9     I_CLOSE
+        CHK     0,N41
+        move.w  d5,d0
+        OS9     I_CLOSE
+        CHK     E_BPNUM,N42             * derselbe Pfad ein zweites Mal
+
+        lea     PNix(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     E_PNNF,N43
+
+*════════ Update-Pfad: SetStt Size/Attr/Rename ══════════════════════════
+        lea     PA(pc),a0
+        moveq   #M_UPDATE,d0
+        OS9     I_OPEN
+        CHK     0,N44
+        bsr     TakePath
+
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #5,d2
+        OS9     I_SETSTT
+        CHK     0,N45
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        move.l  d2,d6
+        VAL     5,N46
+
+        move.w  d5,d0
+        moveq   #SS_Attr,d1
+        moveq   #$01,d2
+        OS9     I_SETSTT
+        CHK     0,N47
+        bsr     ClearFD
+        move.w  d5,d0
+        moveq   #SS_FD,d1
+        moveq   #16,d2
+        lea     FDBuf(pc),a0
+        OS9     I_GETSTT
+        moveq   #0,d6
+        move.b  FDBuf(pc),d6
+        andi.b  #$3F,d6
+        VAL     $01,N48
+        move.w  d5,d0
+        moveq   #SS_Attr,d1
+        moveq   #$1B,d2
+        OS9     I_SETSTT
+        CHK     0,N49
+
+        move.w  d5,d0
+        move.l  #SS_Rename,d1
+        lea     PB(pc),a0
+        OS9     I_SETSTT
+        CHK     0,N50
+        move.w  d5,d0
+        OS9     I_CLOSE
+        CHK     0,N51
+
+        lea     PA(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     E_PNNF,N52              * alter Name ist weg
+
+        lea     PB(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     0,N53                   * neuer Name ist da
+        bsr     TakePath
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        move.l  d2,d6
+        VAL     5,N54
+        move.w  d5,d0
+        OS9     I_CLOSE
+
+*════════ Create auf bestehende Datei ════════════════════════════════════
+        lea     PB(pc),a0
+        moveq   #M_WRITE,d0
+        move.l  #$1B,d1
+        OS9     I_CREATE
+        CHK     E_CEF,N55
+        bcs.s   CefOk
+        OS9     I_CLOSE                 * (d0 = Pfadnummer, falls Create doch gelang)
+CefOk:
+        lea     PB(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        bsr     TakePath
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        move.l  d2,d6
+        VAL     5,N56                   * Inhalt darf nicht abgeschnitten worden sein
+        move.w  d5,d0
+        OS9     I_CLOSE
+
+*════════ Verzeichnis lesen ═════════════════════════════════════════════
+        lea     PDir(pc),a0
+        move.l  #M_DIRREAD,d0
+        OS9     I_OPEN
+        CHK     0,N57
+        bsr     TakePath
+        moveq   #0,d4                   * Anzahl Eintraege
+        moveq   #0,d3                   * b.txt gefunden?
+        moveq   #49,d2                  * Sicherung gegen Endlosschleife
+DirLoop:
+        move.w  d5,d0
+        lea     DirBuf(pc),a0
+        moveq   #32,d1
+        OS9     I_READ
+        bcs.s   DirEnd
+        addq.l  #1,d4
+        lea     DirBuf(pc),a2
+        cmpi.l  #$622E7478,(a2)         * "b.tx"
+        bne.s   DirNext
+        cmpi.b  #$F4,4(a2)              * "t" mit gesetztem Hochbit = Namensende
+        bne.s   DirNext
+        moveq   #1,d3
+DirNext:
+        dbra    d2,DirLoop
+        andi    #$FE,ccr                * Schleife erschoepft -> kein Fehlercode
+DirEnd:
+        CHK     E_EOF,N58
+        move.l  d4,d6
+        VAL     3,N59                   * ".", "..", "b.txt"
+        move.l  d3,d6
+        VAL     1,N60
+        move.w  d5,d0
+        OS9     I_CLOSE
+        CHK     0,N61
+
+* Verzeichnis als frei positionierbare Datei (so liest die echte "dir"-Utility:
+* erst "."/"..", dann Seek auf 64 und weiter)
+        lea     PDir(pc),a0
+        move.l  #M_DIRREAD,d0
+        OS9     I_OPEN
+        bsr     TakePath
+        move.w  d5,d0
+        moveq   #64,d1
+        OS9     I_SEEK
+        CHK     0,N77
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #32,d1
+        OS9     I_READ
+        CHK     0,N78
+        move.l  RBuf(pc),d6
+        VAL     $622E7478,N79           * Eintrag 2 = "b.tx..."
+* SS_FDInf: Sektornummer aus Byte 29-31 des Eintrags -> FD der Datei (so arbeitet "dir -e")
+        moveq   #0,d3
+        move.b  RBuf+29(pc),d3
+        lsl.l   #8,d3
+        move.b  RBuf+30(pc),d3
+        lsl.l   #8,d3
+        move.b  RBuf+31(pc),d3
+        move.l  d3,d6
+        moveq   #1,d7
+        tst.l   d6
+        beq.s   LsnZero
+        move.l  d6,d7                   * ungleich 0 -> ok
+LsnZero:
+        pea     N88(pc)
+        bsr     ReportSP
+        bsr     ClearFD
+        move.w  d5,d0
+        moveq   #SS_FDInf,d1
+        moveq   #16,d2
+        lea     FDBuf(pc),a0
+        OS9     I_GETSTT                * d3 = Sektornummer
+        CHK     0,N89
+        bsr     FDSize
+        VAL     5,N90                   * FD_SIZ von b.txt
+        move.w  d5,d0
+        moveq   #SS_Pos,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        CHK     0,N80
+        move.l  d2,d6
+        VAL     96,N81
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        move.l  d2,d6
+        VAL     96,N82                  * 3 Eintraege a 32 Byte
+        move.w  d5,d0
+        moveq   #SS_EOF,d1
+        OS9     I_GETSTT
+        CHK     E_EOF,N83
+        move.w  d5,d0
+        moveq   #1,d1
+        OS9     I_SEEK                  * mitten in Eintrag 0
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #33,d1
+        OS9     I_READ
+        move.l  d1,d6
+        VAL     33,N84                  * Stuecke ueber Eintragsgrenzen hinweg
+        moveq   #0,d6
+        move.b  RBuf+31(pc),d6
+        VAL     $2E,N85                 * Pos. 32 = erstes Byte von ".." ("." ohne Hochbit);
+                                         * ohne wirksamen Seek stuende hier 0 (Eintrag 0, Byte 31)
+        move.w  d5,d0
+        OS9     I_CLOSE
+
+*════════ ChgDir + relativer Pfad ═══════════════════════════════════════
+        lea     PDir(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_CHGDIR
+        CHK     0,N62
+        lea     PRelB(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     0,N63
+        bcs.s   RelNo
+        OS9     I_CLOSE
+RelNo:
+        lea     PD0(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_CHGDIR
+        CHK     0,N64
+
+*════════ I$Dup: Close eines Abbilds darf die Datei nicht schliessen ═════
+        lea     PDup(pc),a0
+        moveq   #M_WRITE,d0
+        move.l  #$1B,d1
+        OS9     I_CREATE
+        CHK     0,N70
+        bsr     TakePath
+        move.w  d5,d0
+        OS9     I_DUP
+        CHK     0,N71
+        move.w  d0,d4                   * d4 = Abbild
+        bcc.s   DupOk
+        move.w  #BAD_PATH,d4
+DupOk:
+        move.w  d5,d0
+        OS9     I_CLOSE                 * Original schliessen -- Abbild muss weiterleben
+        CHK     0,N72
+        move.w  d4,d0
+        lea     DataDup(pc),a0
+        moveq   #4,d1
+        OS9     I_WRITE
+        CHK     0,N73
+        move.w  d4,d0
+        OS9     I_CLOSE
+        CHK     0,N74
+        lea     PDup(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        bsr     TakePath
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        move.l  d2,d6
+        VAL     4,N75                   * die 4 Byte ueber das Abbild sind angekommen
+        move.w  d5,d0
+        OS9     I_CLOSE
+        lea     PDup(pc),a0
+        moveq   #M_WRITE,d0
+        OS9     I_DELETE
+        CHK     0,N76
+
+*════════ Delete + Fehlerfaelle ═════════════════════════════════════════
+        lea     PB(pc),a0
+        moveq   #M_WRITE,d0
+        OS9     I_DELETE
+        CHK     0,N65
+        lea     PB(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     E_PNNF,N66
+        lea     PNix(pc),a0
+        moveq   #M_WRITE,d0
+        OS9     I_DELETE
+        CHK     E_PNNF,N67
+        lea     PNoDir(pc),a0
+        moveq   #M_WRITE,d0
+        move.l  #$1B,d1
+        OS9     I_CREATE
+        CHK     E_PNNF,N68
+        lea     PEsc(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     E_BPNAM,N69             * Ausbruch aus dem Basisverzeichnis
+        lea     PSib(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     E_BPNAM,N86             * Nachbarverzeichnis mit gleichem Namensanfang
+        lea     PD0(pc),a0
+        moveq   #M_READ,d0              * Verzeichnis OHNE Dir-Bit oeffnen
+        OS9     I_OPEN
+        CHK     E_FNA,N87               * RBF-Verhalten, "dir <pfad>" erkennt daran Verzeichnisse
+        bcs.s   FnaNo
+        OS9     I_CLOSE
+FnaNo:
+        bcs.s   SibNo
+        OS9     I_CLOSE
+SibNo:
+
+*════════ Zusammenfassung ═══════════════════════════════════════════════
+        lea     LineBuf(pc),a1
+        lea     TxtErg(pc),a2
+        bsr     CopyStr
+        move.w  NOk(pc),d3
+        bsr     Dec3
+        lea     TxtErg2(pc),a2
+        bsr     CopyStr
+        move.w  NFail(pc),d3
+        bsr     Dec3
+        lea     TxtErg3(pc),a2
+        bsr     CopyStr
+        bsr     FlushLine
+        lea     MsgEnd(pc),a0
+        move.l  #MsgEndLen,d1
+        bsr     PrintMsg
+
+        moveq   #0,d1
+        move.w  NFail(pc),d0
+        beq.s   Exit
+        moveq   #1,d1
+Exit:
+        OS9     F$Exit
+
+*═══════════════════════════════════════════════════════════════════════════
+* TakePath -- nach I$Open/I$Create (oder nach CHK darauf): d5 = neue Pfad-
+* nummer, bei Carry dagegen die bewusst UNGUELTIGE Nummer BAD_PATH. Ohne das
+* arbeiteten die Folgeaufrufe mit dem Altwert von d0 weiter -- im ersten Lauf
+* war das Pfad 0/1 (Konsole): der Test schrieb auf den Bildschirm und wartete
+* beim Lesen auf die Tastatur.
+*═══════════════════════════════════════════════════════════════════════════
+TakePath:
+        bcs.s   TPBad
+        move.w  d0,d5
+        rts
+TPBad:
+        move.w  #BAD_PATH,d5
+        ori     #1,ccr
+        rts
+
+*═══════════════════════════════════════════════════════════════════════════
+* RC -- d6 = (Carry ? d1.w : 0). Veraendert nur d6 (moveq setzt C zurueck,
+* deshalb zuerst verzweigen).
+*═══════════════════════════════════════════════════════════════════════════
+RC:
+        bcs.s   RCErr
+        moveq   #0,d6
+        rts
+RCErr:
+        moveq   #0,d6
+        move.w  d1,d6
+        rts
+
+*═══════════════════════════════════════════════════════════════════════════
+* ReportSP -- Name (NUL-terminiert) als Langwort auf dem Stack (per pea),
+* d6 = ist, d7 = soll. Druckt eine OK-/FEHLER-Zeile, zaehlt mit, entfernt
+* den Namenszeiger vom Stack. Rettet alle Register; Carry beim Ruecksprung =
+* (d6<>0), damit nach CHK auf "Aufruf fehlgeschlagen" verzweigt werden kann.
+*═══════════════════════════════════════════════════════════════════════════
+ReportSP:
+        movem.l d0-d7/a0-a3,-(a7)
+        movea.l 48+4(a7),a3             * Namenszeiger (Register 48, Ruecksprung 4)
+        lea     LineBuf(pc),a1
+        cmp.l   d6,d7
+        bne.s   RepFail
+        lea     TxtOk(pc),a2
+        bsr     CopyStr
+        lea     NOk(pc),a2
+        addq.w  #1,(a2)
+        movea.l a3,a2
+        bsr     CopyStr
+        bra.s   RepOut
+RepFail:
+        lea     TxtFail(pc),a2
+        bsr     CopyStr
+        lea     NFail(pc),a2
+        addq.w  #1,(a2)
+        movea.l a3,a2
+        bsr     CopyStr
+        lea     TxtIst(pc),a2
+        bsr     CopyStr
+        move.l  d6,d3
+        bsr     Hex8
+        lea     TxtSoll(pc),a2
+        bsr     CopyStr
+        move.l  d7,d3
+        bsr     Hex8
+RepOut:
+        bsr     FlushLine
+        movem.l (a7)+,d0-d7/a0-a3
+        move.l  (a7)+,(a7)              * Ruecksprungadresse ueber den Namenszeiger schieben
+        tst.l   d6                      * Carry = "Aufruf lieferte Fehlercode" (s. CHK)
+        beq.s   RepNC
+        ori     #1,ccr
+        rts
+RepNC:
+        andi    #$FE,ccr
+        rts
+
+* CopyStr -- NUL-terminierten String (a2) nach (a1)+ kopieren (ohne NUL)
+CopyStr:
+        move.b  (a2)+,d0
+        beq.s   CSDone
+        move.b  d0,(a1)+
+        bra.s   CopyStr
+CSDone:
+        rts
+
+* Hex8 -- d3.l als 8 Hexziffern nach (a1)+
+Hex8:
+        moveq   #7,d1
+H8Loop:
+        rol.l   #4,d3
+        move.b  d3,d0
+        andi.b  #$0F,d0
+        cmpi.b  #10,d0
+        blt.s   H8Dig
+        addi.b  #'A'-10,d0
+        bra.s   H8Put
+H8Dig:
+        addi.b  #'0',d0
+H8Put:
+        move.b  d0,(a1)+
+        dbra    d1,H8Loop
+        rts
+
+* Dec3 -- d3.w (0..999) als drei Dezimalziffern nach (a1)+
+Dec3:
+        andi.l  #$FFFF,d3
+        divu    #100,d3
+        addi.b  #'0',d3
+        move.b  d3,(a1)+
+        clr.w   d3
+        swap    d3
+        divu    #10,d3
+        addi.b  #'0',d3
+        move.b  d3,(a1)+
+        swap    d3
+        addi.b  #'0',d3
+        move.b  d3,(a1)+
+        rts
+
+* FlushLine -- CR anhaengen, LineBuf bis (a1) ausgeben
+FlushLine:
+        move.b  #$0D,(a1)+
+        lea     LineBuf(pc),a0
+        move.l  a1,d1
+        sub.l   a0,d1
+        bsr     PrintMsg
+        rts
+
+PrintMsg:
+        moveq   #STDOUT,d0
+        OS9     I$WritLn
+        rts
+
+* ClearRB/ClearFD -- Lesepuffer vor jedem Lesen nullen, damit ein Aufruf, der
+* NICHTS schreibt, nicht zufaellig den erwarteten Altinhalt "bestaetigt"
+ClearRB:
+        lea     RBuf(pc),a2
+        moveq   #15,d0
+CRBLoop:
+        clr.l   (a2)+
+        dbra    d0,CRBLoop
+        rts
+ClearFD:
+        lea     FDBuf(pc),a2
+        moveq   #3,d0
+CFDLoop:
+        clr.l   (a2)+
+        dbra    d0,CFDLoop
+        rts
+
+* FDSize -- d6 = FD_SIZ (Offset 9, ungerade -> byteweise zusammensetzen)
+FDSize:
+        lea     FDBuf+9(pc),a2
+        moveq   #0,d6
+        moveq   #3,d0
+FDSLoop:
+        lsl.l   #8,d6
+        move.b  (a2)+,d6
+        dbra    d0,FDSLoop
+        rts
+
+*═══════════════════════════════════════════════════════════════════════════
+MsgStart        dc.b    "=== dhfregr: DHF-Regressionstest gegen /d0/rt ===",$0D
+MsgStartLen     equ     *-MsgStart
+MsgEnd          dc.b    "DHFREGR-ENDE",$0D
+MsgEndLen       equ     *-MsgEnd
+
+TxtOk           dc.b    "OK     ",0
+TxtFail         dc.b    "FEHLER ",0
+TxtIst          dc.b    " ist=$",0
+TxtSoll         dc.b    " soll=$",0
+TxtErg          dc.b    "ERGEBNIS: ",0
+TxtErg2         dc.b    " OK, ",0
+TxtErg3         dc.b    " FEHLER",0
+
+PDir            dc.b    "/d0/rt",0
+PA              dc.b    "/d0/rt/a.txt",0
+PB              dc.b    "/d0/rt/b.txt",0
+PNix            dc.b    "/d0/rt/nix",0
+PNoDir          dc.b    "/d0/rt/gibtsnicht/x.txt",0
+PRelB           dc.b    "b.txt",0
+PD0             dc.b    "/d0",0
+PDup            dc.b    "/d0/rt/dup.txt",0
+PSib            dc.b    "/d0/../d0_nachbar/geheim.txt",0
+PEsc            dc.b    "/d0/../../../../../../../../etc/hosts",0
+
+Data10          dc.b    "ABCDEFGHIJ"
+DataLn          dc.b    "Zeile1",$0D,"XYZ"
+DataDup         dc.b    "DUP!"
+
+N01     dc.b    "01 MakDir /d0/rt",0
+N02     dc.b    "02 MakDir doppelt -> E$CEF",0
+N03     dc.b    "03 Create a.txt (Attr $1B)",0
+N04     dc.b    "04 Write 10 Byte",0
+N05     dc.b    "05 Write liefert d1=10",0
+N06     dc.b    "06 WritLn",0
+N07     dc.b    "07 WritLn stoppt am CR (d1=7)",0
+N08     dc.b    "08 Close nach Schreiben",0
+N09     dc.b    "09 Open a.txt lesend",0
+N10     dc.b    "10 GetStt SS_Size",0
+N11     dc.b    "11 SS_Size = 17",0
+N12     dc.b    "12 GetStt SS_FD",0
+N13     dc.b    "13 FD_ATT = Create-Attribute $1B",0
+N14     dc.b    "14 FD_SIZ = 17",0
+N15     dc.b    "15 GetStt SS_Ready",0
+N16     dc.b    "16 SS_EOF am Anfang: kein EOF",0
+N17     dc.b    "17 Read 4",0
+N18     dc.b    "18 Read liefert d1=4",0
+N19     dc.b    "19 Read-Inhalt ABCD",0
+N20     dc.b    "20 GetStt SS_Pos",0
+N21     dc.b    "21 SS_Pos = 4",0
+N22     dc.b    "22 Seek 8",0
+N23     dc.b    "23 Read nach Seek",0
+N24     dc.b    "24 Inhalt ab Pos. 8 = IJ",0
+N25     dc.b    "25 ReadLn",0
+N26     dc.b    "26 ReadLn liefert d1=7",0
+N27     dc.b    "27 ReadLn-Inhalt Zeil...",0
+N28     dc.b    "28 ReadLn-Zeile endet mit CR",0
+N29     dc.b    "29 SS_EOF am Ende -> E$EOF",0
+N30     dc.b    "30 Read am Ende -> E$EOF",0
+N31     dc.b    "31 Seek 0",0
+N32     dc.b    "32 ReadLn mit Grenze 3",0
+N33     dc.b    "33 ReadLn liefert genau d1=3",0
+N34     dc.b    "34 Write auf Lesepfad -> E$BMode",0
+N35     dc.b    "35 GetStt SS_DevNm",0
+N36     dc.b    "36 SS_DevNm = d0",0
+N37     dc.b    "37 GetStt SS_Free",0
+N38     dc.b    "38 SS_Free liefert d0<>0",0
+N39     dc.b    "39 GetStt unbekannt -> E$UnkSvc",0
+N40     dc.b    "40 SetStt unbekannt -> E$UnkSvc",0
+N41     dc.b    "41 Close",0
+N42     dc.b    "42 Close doppelt -> E$BPNum",0
+N43     dc.b    "43 Open fehlt -> E$PNNF",0
+N44     dc.b    "44 Open a.txt Update",0
+N45     dc.b    "45 SetStt SS_Size 5",0
+N46     dc.b    "46 Groesse danach 5",0
+N47     dc.b    "47 SetStt SS_Attr $01",0
+N48     dc.b    "48 FD_ATT danach $01",0
+N49     dc.b    "49 SetStt SS_Attr $1B zurueck",0
+N50     dc.b    "50 SetStt SS_Rename -> b.txt",0
+N51     dc.b    "51 Close nach Rename",0
+N52     dc.b    "52 alter Name weg -> E$PNNF",0
+N53     dc.b    "53 Open b.txt",0
+N54     dc.b    "54 b.txt Groesse 5",0
+N55     dc.b    "55 Create bestehend -> E$CEF",0
+N56     dc.b    "56 b.txt danach unveraendert 5",0
+N57     dc.b    "57 Open Verzeichnis /d0/rt",0
+N58     dc.b    "58 Verzeichnis-Ende -> E$EOF",0
+N59     dc.b    "59 3 Eintraege (. .. b.txt)",0
+N60     dc.b    "60 Eintrag b.txt gefunden",0
+N61     dc.b    "61 Close Verzeichnis",0
+N62     dc.b    "62 ChgDir /d0/rt",0
+N63     dc.b    "63 Open relativ b.txt",0
+N64     dc.b    "64 ChgDir /d0 zurueck",0
+N65     dc.b    "65 Delete b.txt",0
+N66     dc.b    "66 b.txt weg -> E$PNNF",0
+N67     dc.b    "67 Delete fehlt -> E$PNNF",0
+N68     dc.b    "68 Create in fehlendem Verz. -> E$PNNF",0
+N69     dc.b    "69 Basispfad-Ausbruch -> E$BPNam",0
+N70     dc.b    "70 Create dup.txt",0
+N71     dc.b    "71 I$Dup",0
+N72     dc.b    "72 Close Original (Abbild offen)",0
+N73     dc.b    "73 Write ueber das Abbild",0
+N74     dc.b    "74 Close Abbild",0
+N75     dc.b    "75 dup.txt hat 4 Byte",0
+N76     dc.b    "76 Delete dup.txt",0
+N77     dc.b    "77 Seek Verzeichnis auf 64",0
+N78     dc.b    "78 Read nach Verzeichnis-Seek",0
+N79     dc.b    "79 dort steht Eintrag b.txt",0
+N80     dc.b    "80 SS_Pos auf Verzeichnis",0
+N81     dc.b    "81 Verzeichnis-Position 96",0
+N82     dc.b    "82 SS_Size Verzeichnis 96",0
+N83     dc.b    "83 SS_EOF Verzeichnis-Ende",0
+N84     dc.b    "84 Read 33 ab Pos. 1 -> 33 Byte",0
+N85     dc.b    "85 Byteposition 32 korrekt",0
+N86     dc.b    "86 Nachbarverz. d0_nachbar -> E$BPNam",0
+N87     dc.b    "87 Verzeichnis ohne Dir-Bit -> E$FNA",0
+N88     dc.b    "88 Eintrag traegt Sektornummer <>0",0
+N89     dc.b    "89 GetStt SS_FDInf",0
+N90     dc.b    "90 SS_FDInf: FD_SIZ b.txt = 5",0
+
+        align   2
+NOk             ds.w    1
+NFail           ds.w    1
+LineBuf         ds.b    96
+RBuf            ds.b    64
+FDBuf           ds.b    16
+DirBuf          ds.b    32
+
+        endsect
+        end
