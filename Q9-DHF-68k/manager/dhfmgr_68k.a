@@ -73,6 +73,7 @@ DHF_CMD_ISEOF   equ     23              * I$GetStt SS_EOF
 DHF_CMD_RENAMEAT equ    24              * I$SetStt SS_Rename (Handle-basiert)
 DHF_CMD_GETFREE equ     25              * I$GetStt SS_Free
 DHF_CMD_FDINF   equ     26              * I$GetStt SS_FDInf (FD zu einer Sektornummer)
+DHF_CMD_VOLSTORE equ    27              * I$GetStt SS_VolStore (Speicherstatistik)
 
 * I$Seek "whence" -- I$Seek ist laut "OS-9 System Calls" Kap. 2 IMMER eine absolute
 * Positionierung (kein relatives Unix-lseek), deshalb hier fest verdrahtet statt aus dem
@@ -91,6 +92,7 @@ SS_Attr         equ     $1C             * Dateiattribute setzen (Gegenstueck zu 
 SS_FDInf        equ     $20             * FD zu einer Sektornummer ("dir -e"/"dir -r")
 SS_Rename       equ     $42             * Datei umbenennen -- ACHTUNG: kein reales Utility
                                          * erreicht diesen Aufruf, s. dhf_proto.h/STATUS.md.
+SS_VolStore     equ     $45             * Speicherstatistik ("free", s. MgrGst_VolStore)
 SS_Free         equ     $43             * Freier Speicherplatz -- ACHTUNG: das reale "free"-
                                          * Kommando braucht rohen Physikalzugriff, erreicht
                                          * diesen Aufruf nie (s. dhf_proto.h/STATUS.md).
@@ -332,6 +334,13 @@ MgrCommon:
         move.l  d2,SH_D0(a1)
         move.l  REG_D1(a5),SH_D1(a1)
         move.l  REG_D0(a5),SH_D2(a1)
+* 2026-09-26: I$Create mit Modus-Bit ISize_ ($20): d2.l des Aufrufers = Anfangsgroesse. Wird
+* in SH_A1 mitgegeben (bei Create sonst ungenutzt, der Pfad kommt aus SH_A0). "copy" legt
+* Zieldateien so an, seit sich DHF als RBF-Geraet meldet.
+        cmpi.b  #DHF_CMD_CREATE,d3
+        bne.s   MgrCmnNoSize
+        move.l  REG_D2(a5),SH_A1(a1)
+MgrCmnNoSize:
         move.b  d3,SH_COMMAND(a1)
 
         bsr     CallDrv
@@ -398,6 +407,8 @@ MgrGst_TrySize:
         beq.s   MgrGst_FD
         cmpi.l  #SS_FDInf,d0
         beq.w   MgrGst_FDInf
+        cmpi.l  #SS_VolStore,d0
+        beq.w   MgrGst_VolStore
         cmpi.l  #SS_Pos,d0
         beq.w   MgrGst_Pos
         cmpi.l  #SS_EOF,d0
@@ -470,6 +481,27 @@ MgrGstOptLoop:
 * MgrSst_Opt -- SetStt SS_Opt: DHF hat keine veraenderbaren Pfadoptionen -> ohne Fehler
 * zurueck (so auch RBF laut 68k_techio.pdf: "Do nothing, but return without error").
 MgrSst_Opt:
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* MgrGst_VolStore -- SS_VolStore ($45): d2 -> 16-Byte-Puffer {Bytes/Sektor, Sektoren gesamt,
+* Sektoren frei, groesster freier Block}. Nicht dokumentiert; Aufbau 2026-09-26 aus /CMDS/free
+* ermittelt (das zuerst SS_VolStore fragt und nur bei Fehler LSN0/Bitmap liest -- dann mit
+* einer Sektorgroesse aus einem RBF-internen PD_OPT-Feld, sonst 256: daher vorher "4 GB").
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrGst_VolStore:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2
+        movea.l PD_DEV(a1),a3
+        lea     CmdBlk(pc),a1
+        move.l  d2,SH_D0(a1)
+        move.l  REG_D2(a5),SH_A1(a1)    * Zielpuffer (d2 des Aufrufers)
+        move.b  #DHF_CMD_VOLSTORE,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrGst_VolOk
+        rts
+MgrGst_VolOk:
         andi    #$FE,ccr
         rts
 
@@ -655,13 +687,12 @@ MgrSst_AttrOk:
         rts
 
 *───────────────────────────────────────────────────────────────────────────────────────────
-* MgrSst_Rename -- SS_Rename ("rename file"): Eingabe a0=Zeiger auf den neuen Namen (String,
-* REG_A0(a5)). ACHTUNG: die genaue Registerkonvention ist in "OS-9 System Calls" NICHT
-* dokumentiert (nur in sg_codes.h als "0x42 rename file" erwaehnt) -- diese Annahme (a0=
-* Namensstring, analog zu MakDir/ChgDir/Create/Open) ist NICHT gegen ein reales Utility
-* verifiziert, weil keines diesen Aufruf je erreicht (s. Kopfkommentar bei DHF_CMD_RENAMEAT/
-* STATUS.md: "rename" verweigert sich bei jedem Nicht-RBF-FileManager schon vor jedem
-* Syscall hart mit "pathname not RBF device"). Nur fuer eigene Werkzeuge gedacht.
+* MgrSst_Rename -- SS_Rename ($42), RBF-Konvention (2026-09-26 per Ablaufverfolgung der
+* echten /CMDS/rename ermittelt, in keinem Handbuch beschrieben): rename wechselt ins
+* Elternverzeichnis, oeffnet "." mit Modus $82 (Dir+Schreiben) und ruft SetStt auf DIESEM
+* Verzeichnispfad mit d2 -> alter Name, d3 -> neuer Name (je ein Name ohne '/'). Vorher
+* erwartete der Manager "Pfad = Datei, a0 = neuer Name" (geraten) -- die echte Utility
+* bekam damit keinen Fehler, benannte aber nichts um.
 *───────────────────────────────────────────────────────────────────────────────────────────
 MgrSst_Rename:
         moveq   #0,d2
@@ -669,8 +700,9 @@ MgrSst_Rename:
         movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*)
         lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock
 
-        move.l  d2,SH_D0(a1)            * Pfadnummer (Handle der alten Datei)
-        move.l  REG_A0(a5),SH_A1(a1)    * Zeiger auf neuen Namen (a0 des Aufrufers)
+        move.l  d2,SH_D0(a1)            * Pfadnummer des VERZEICHNISSES
+        move.l  REG_D2(a5),SH_A0(a1)    * d2 = alter Name (im Verzeichnis)
+        move.l  REG_D3(a5),SH_A1(a1)    * d3 = neuer Name
         move.b  #DHF_CMD_RENAMEAT,SH_COMMAND(a1)
         bsr     CallDrv
         bcc.s   MgrSst_RenameOk

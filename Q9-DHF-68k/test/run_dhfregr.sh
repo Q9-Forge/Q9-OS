@@ -9,7 +9,7 @@
 #         Q9-Images/emu_config/dhf_claude.q9 (dessen /SYS/startup haengt /d0 und /d1
 #         selbst an), laesst test/dhfregr_68k.a laufen, prueft danach die
 #         Host-Seite unter Q9-Images/dhf_root, laesst zusaetzlich die ECHTEN OS-9-Kommandos
-#         list/attr/makdir/copy/del/deldir -q und eine Shell-Umleitung (echo >) auf /d0 los und
+#         list/attr/makdir/copy/del/deldir -q/rename/free und eine Shell-Umleitung (echo >) auf /d0 los und
 #         fasst alles zusammen.
 #
 # Aufruf: Q9_LOGIN_PASS=<Passwort fuer "super"> test/run_dhfregr.sh [-k] [-i]
@@ -63,7 +63,8 @@ MODS="manager/dhfmgr_68k.a:dhfmgr:dhfmgr_68k
 driver/dhfdrv_68k.a:dhfdrv:dhfdrv_68k
 descriptor/d0_dhf.a:d0:d0
 descriptor/d1_dhf.a:d1:d1
-test/dhfregr_68k.a:dhfregr:dhfregr"
+test/dhfregr_68k.a:dhfregr:dhfregr
+test/dhfrenfree_68k.a:dhfrfr:dhfrenfree"
 cp "$DEFS" "$W/"
 echo "── Bauen"
 while IFS=: read -r src nam dst; do
@@ -93,6 +94,7 @@ done <<<"$MODS"
 #── 3. Host-Seite vorbereiten ──────────────────────────────────────────────────────────
 mkdir -p "$ROOT/d0"
 for d in rt ut dd; do chmod -R u+rwx "$ROOT/d0/$d" 2>/dev/null; rm -rf "$ROOT/d0/$d"; done
+rm -f "$ROOT/d0/rn2.txt"; cp "$ROOT/d0/hello.txt" "$ROOT/d0/rn.txt"   # fuer "rename"
 # Koeder fuer Fall 86: Nachbarverzeichnis, dessen Name mit dem d0-Basispfad BEGINNT
 mkdir -p "$ROOT/d0_nachbar"; echo geheim >"$ROOT/d0_nachbar/geheim.txt"
 D1ROOT=$FORGE/Q9-Images/cf_images/OS9SYS
@@ -151,6 +153,8 @@ run "makdir /d0/dd/unter"
 run "copy /d0/hello.txt /d0/dd/f.txt"
 run "copy /d0/hello.txt /d0/dd/unter/g.txt"
 run "deldir -q /d0/dd"
+run "rename /d0/rn.txt rn2.txt"
+run "free /d0"
 # Alle Pfade sind jetzt geschlossen -> der Emulator darf KEINE Datei unter dhf_root mehr
 # offen halten (Beleg dafuer, dass I\$Close den Host wirklich erreicht, s. Mgr_Close/PD_COUNT)
 catch {exec lsof -p [exp_pid] > $W/lsof.txt}
@@ -193,11 +197,13 @@ host "12 echo >/d0/ut/e.txt: Inhalt kommt an"     '[ "$(od -An -c "$ROOT/d0/ut/e
 host "13 d1: list /d1/cfboot_os9.bl = Host-Datei" 'grep -qx "/c0/CMDS/BOOTOBJS/cache030" "$W/emu.txt"'
 
 host "14 deldir -q /d0/dd loescht rekursiv"     '[ ! -e "$ROOT/d0/dd" ]'
+host "16 free /d0 meldet freien Platz"           'grep -q "free on media" "$W/emu.txt" && ! grep -q "free: can" "$W/emu.txt"'
+host "15 rename /d0/rn.txt rn2.txt"               '[ ! -e "$ROOT/d0/rn.txt" ] && [ -f "$ROOT/d0/rn2.txt" ]'
 
 TOTAL_FAIL=$((G_FAIL+H_FAIL))
 echo "══ ERGEBNIS: Gast $G_OK OK / $G_FAIL FEHLER, Host $H_OK OK / $H_FAIL FEHLER"
 for d in rt ut dd; do chmod -R u+rwx "$ROOT/d0/$d" 2>/dev/null; rm -rf "$ROOT/d0/$d"; done
-rm -rf "$ROOT/d0_nachbar"
+rm -rf "$ROOT/d0_nachbar"; rm -f "$ROOT/d0/rn.txt" "$ROOT/d0/rn2.txt"
 [ $TOTAL_FAIL = 0 ] || exit 1
 if [ $INSTALL = 1 ]; then
     if pgrep -f "q9.exe .*dhf_claude.q9" >/dev/null; then

@@ -55,6 +55,7 @@ SS_DevNm        equ     $0E
 SS_FD           equ     $0F
 SS_Attr         equ     $1C
 SS_FDInf        equ     $20
+SS_VolStore     equ     $45
 SS_Rename       equ     $42
 SS_Free         equ     $43
 SS_Bogus        equ     $7F             * kein definierter Code -> E$UnkSvc erwartet
@@ -64,6 +65,7 @@ M_READ          equ     $01
 M_WRITE         equ     $02
 M_UPDATE        equ     $03
 M_DIRREAD       equ     $81
+M_DIRUPD        equ     $82
 
 * Fehlercodes (MWOS/SRC/DEFS/errno.h)
 E_BPNUM         equ     $C9
@@ -74,6 +76,7 @@ E_FNA           equ     $D6
 E_BPNAM         equ     $D7
 E_PNNF          equ     $D8
 E_CEF           equ     $DA
+E_WP            equ     $F2
 
 STDOUT          equ     1
 BAD_PATH        equ     $7F             * nie vergebene Pfadnummer -> E$BPNum
@@ -350,13 +353,33 @@ FreeZero:
         CHK     0,N49
 
         move.w  d5,d0
-        move.l  #SS_Rename,d1
-        lea     PB(pc),a0
-        OS9     I_SETSTT
+        OS9     I_CLOSE
         CHK     0,N50
+
+* SS_Rename in der RBF-Konvention (so ruft es /CMDS/rename): SetStt auf dem mit $82
+* (Dir+Schreiben) geoeffneten VERZEICHNIS, d2 -> alter Name, d3 -> neuer Name
+        lea     PDir(pc),a0
+        move.l  #M_DIRUPD,d0
+        OS9     I_OPEN
+        bsr     TakePath
+        move.w  d5,d0
+        move.l  #SS_Rename,d1
+        lea     NameA(pc),a0
+        move.l  a0,d2
+        lea     NameB(pc),a0
+        move.l  a0,d3
+        OS9     I_SETSTT
+        CHK     0,N51
+        move.w  d5,d0
+        move.l  #SS_Rename,d1
+        lea     NameB(pc),a0
+        move.l  a0,d2
+        lea     NameEsc(pc),a0
+        move.l  a0,d3
+        OS9     I_SETSTT
+        CHK     E_BPNAM,N98             * neuer Name mit ".." -> abgelehnt
         move.w  d5,d0
         OS9     I_CLOSE
-        CHK     0,N51
 
         lea     PA(pc),a0
         moveq   #M_READ,d0
@@ -607,6 +630,85 @@ DupOk:
         OS9     I_DELETE
         CHK     0,N94                   * jetzt loeschbar (so arbeitet "deldir")
 
+*════════ Create mit Anfangsgroesse (Modus-Bit $20, so ruft "copy") ════════
+        lea     PSize(pc),a0
+        moveq   #$23,d0                 * Update + "Anfangsgroesse in d2"
+        moveq   #$03,d1
+        moveq   #32,d2
+        OS9     I_CREATE
+        CHK     0,N99
+        bsr     TakePath
+        move.w  d5,d0
+        moveq   #SS_Size,d1
+        moveq   #0,d2
+        OS9     I_GETSTT
+        move.l  d2,d6
+        VAL     32,N100                 * Datei hat die vorab angegebene Groesse
+        move.w  d5,d0
+        OS9     I_CLOSE
+        lea     PSize(pc),a0
+        moveq   #M_WRITE,d0
+        OS9     I_DELETE
+
+*════════ Rohgeraet /d0@ (so liest "free": LSN 0 + Bitmap) ═══════════════
+        lea     PRaw(pc),a0
+        moveq   #M_READ,d0
+        OS9     I_OPEN
+        CHK     0,N101
+        bsr     TakePath
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #64,d1
+        OS9     I_READ                  * erste 64 Byte von LSN 0
+        move.l  d1,d6
+        VAL     64,N102
+        move.w  d5,d0
+        move.l  #96,d1
+        OS9     I_SEEK
+        bsr     ClearRB
+        move.w  d5,d0
+        lea     RBuf(pc),a0
+        moveq   #12,d1
+        OS9     I_READ                  * dd_sync / dd_maplsn / dd_lsnsize
+        move.l  RBuf(pc),d6
+        VAL     $4372757A,N103          * dd_sync = "Cruz"
+        move.l  RBuf+4(pc),d6
+        VAL     1,N104                  * dd_maplsn = 1
+        move.w  d5,d0
+        lea     Data10(pc),a0
+        moveq   #2,d1
+        OS9     I_WRITE
+        CHK     E_BMODE,N105            * Lesepfad: IOMan weist Schreiben ab (E$BMode)
+        bsr     ClearRB
+        move.w  d5,d0
+        moveq   #SS_VolStore,d1
+        lea     RBuf(pc),a0
+        move.l  a0,d2
+        OS9     I_GETSTT
+        CHK     0,N107
+        move.l  RBuf(pc),d6
+        VAL     512,N108                * Bytes/Sektor
+        move.l  RBuf+8(pc),d6           * frei <= gesamt und gesamt > 0
+        moveq   #1,d7
+        move.l  RBuf+4(pc),d0
+        beq.s   VolBad
+        cmp.l   d0,d6
+        bhi.s   VolBad
+        move.l  d6,d7
+VolBad:
+        pea     N109(pc)
+        bsr     ReportSP
+        move.w  d5,d0
+        OS9     I_CLOSE
+        lea     PRaw(pc),a0
+        moveq   #M_UPDATE,d0
+        OS9     I_OPEN
+        CHK     E_WP,N106               * Rohgeraet nie schreibbar (z.B. "format")
+        bcs.s   RawWNo
+        OS9     I_CLOSE
+RawWNo:
+
 *════════ Delete + Fehlerfaelle ═════════════════════════════════════════
         lea     PB(pc),a0
         moveq   #M_WRITE,d0
@@ -851,6 +953,11 @@ PRelB           dc.b    "b.txt",0
 PD0             dc.b    "/d0",0
 PDup            dc.b    "/d0/rt/dup.txt",0
 PSib            dc.b    "/d0/../d0_nachbar/geheim.txt",0
+NameA           dc.b    "a.txt",0
+NameB           dc.b    "b.txt",0
+NameEsc         dc.b    "../raus.txt",0
+PSize           dc.b    "/d0/rt/gross.txt",0
+PRaw            dc.b    "/d0@",0
 PSub            dc.b    "/d0/rt/sub",0
 PEsc            dc.b    "/d0/../../../../../../../../etc/hosts",0
 
@@ -907,8 +1014,8 @@ N46     dc.b    "46 Groesse danach 5",0
 N47     dc.b    "47 SetStt SS_Attr $01",0
 N48     dc.b    "48 FD_ATT danach $01",0
 N49     dc.b    "49 SetStt SS_Attr $1B zurueck",0
-N50     dc.b    "50 SetStt SS_Rename -> b.txt",0
-N51     dc.b    "51 Close nach Rename",0
+N50     dc.b    "50 Close a.txt vor Rename",0
+N51     dc.b    "51 SetStt SS_Rename a.txt -> b.txt (Verz.-Pfad)",0
 N52     dc.b    "52 alter Name weg -> E$PNNF",0
 N53     dc.b    "53 Open b.txt",0
 N54     dc.b    "54 b.txt Groesse 5",0
@@ -955,6 +1062,18 @@ N94     dc.b    "94 Delete Verzeichnis danach",0
 N95     dc.b    "95 GetStt SS_Pos, d1.l=$ABCD0005",0
 N96     dc.b    "96 dabei Position 96",0
 N97     dc.b    "97 GetStt SS_Opt",0
+N98     dc.b    "98 SS_Rename auf ../raus.txt -> E$BPNam",0
+N99     dc.b    "99 Create Modus $23, d2=32 (wie copy)",0
+N100    dc.b    "100 Datei danach 32 Byte gross",0
+N101    dc.b    "101 Open Rohgeraet /d0@",0
+N102    dc.b    "102 Read LSN 0 liefert 64 Byte",0
+N103    dc.b    "103 LSN 0: dd_sync = Cruz",0
+N104    dc.b    "104 LSN 0: dd_maplsn = 1",0
+N105    dc.b    "105 Write auf Rohgeraet (Lesepfad) -> E$BMode",0
+N106    dc.b    "106 Open Rohgeraet zum Schreiben -> E$WP",0
+N107    dc.b    "107 GetStt SS_VolStore",0
+N108    dc.b    "108 VolStore: 512 Byte/Sektor",0
+N109    dc.b    "109 VolStore: 0 < frei <= gesamt",0
 
         align   2
 NOk             ds.w    1
