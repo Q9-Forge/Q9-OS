@@ -203,3 +203,82 @@ The driver (`driver/dhfdrv-68k.c`) and descriptor (`descriptor/`) are shared bet
 **Third layer, added 2026-09-25** (`Q9-Flux/Q9-Flux-68k/src/devices/dhf/`, separate repo): the Musashi-emulator-side device, reachable from real/emulated 68k code via ordinary MMIO reads/writes at `$FFFF4000`. Its protocol and internals actually come from the **`Q9-DHFDRV-68k`** sibling project (see below), not from this directory's `driver/dhfdrv-68k.c` -- nothing in *this* repo talks to it yet.
 
 **Sibling project, `Q9-OS/Q9-DHFDRV-68k`** (committed 2026-09-24, independently of this directory): a second, more complete DHF implementation with its own driver (`driver/dhfdrv.c`, A0/A1/D0-D2 zero-copy register protocol) and its own emulator-side device (`emulator/dhf_emu_device.c`) plus an optional TCP-forwarding backend for a remote host. It has **no manager component** -- it was presumably meant to plug into (or replace) this directory's driver layer underneath `manager/dhf_manager.c`, but that reconciliation was never done. The 2026-09-25 Musashi device above is built from `Q9-DHFDRV-68k`'s code, not this directory's.
+
+## 2026-09-26, Nachtrag: zwei Nutzervorgaben nachgezogen (Namenskonvention + Aufrufweg)
+
+1. **Laufwerksname `dhf0` -> `d0`, Datei `descriptor/dhf0.a` -> `descriptor/d0_dhf.a`**
+   (Nutzervorgabe: soll wie ein gewoehnliches Massenspeichergeraet aussehen). `nam`/`psect`
+   im Deskriptor entsprechend auf `d0` geaendert, `test/dhftest_68k.a`s Testpfad auf
+   `/d0/hello.txt`. Neu gebaut+deployed (`os9 del`+`os9 copy`+`os9 attr -e` fuer `d0` und
+   `dhftest` in `/CMDS/dhf/` von `OS9SYS_Claude.hda`), End-zu-Ende-Test (`iniz d0` +
+   `dhftest`) laeuft weiterhin komplett durch. Die historischen Bisektions-Testvarianten
+   (`dhftest_bisect_*`, `dhftest_rbf_*`, `dhftest_srqmem_*`) und Alt-Kommentare in
+   `driver/dhfdrv_68k.a`/`manager/dhfmgr_68k.a`, die noch woertlich "dhf0"/"iniz dhf0"
+   zitieren, bleiben bewusst unveraendert (Protokoll vergangener Sitzungen, nicht der
+   aktuelle Name).
+2. **`manager/dhfmgr_68k.a`s `CallDrv` rief den Treiber ueber dessen `D_READ`-Sprungtabellen-
+   eintrag auf** (Kommentar im Quelltext nannte das "stellvertretend fuer alle", eine
+   eigenmaechtige Wahl ohne Rueckfrage). Nutzervorgabe: der Manager soll IMMER ueber
+   `D_WRIT` gehen -- der Kommandoblock (Managerfunktion-Nummer in `SH_COMMAND` + bis zu 5
+   Parameter in `SH_A0/SH_A1/SH_D0/SH_D1/SH_D2`) wird dem Treiber grundsaetzlich als
+   "Write" uebergeben, unabhaengig davon, ob die urspruengliche I$-Operation selbst ein
+   Read/Write/Init/... war. Da `driver/dhfdrv_68k.a`s `Read:`/`Write:`/`GetStat:`/`SetStat:`
+   ohnehin alle auf denselben Code zeigen, aendert das aktuell nichts am Verhalten -- macht
+   aber den Aufrufweg begrifflich korrekt und zukunftssicher (falls die vier Treiber-
+   Sprungziele je auseinanderlaufen sollten). `D_READ` in `dc.w D_WRIT equ 4` umbenannt
+   (`sysio.h`: `D_INIT=0,D_READ=2,D_WRIT=4,D_GSTA=6,D_PSTA=8,D_TERM=10,D_TRAP=12`).
+   Neu gebaut+deployed, derselbe End-zu-Ende-Test (`OPEN`/`READ`/`CLOSE`: ok) bestaetigt
+   weiterhin fehlerfrei.
+
+## 2026-09-26, Nachtrag: MakDir/ChgDir/Seek/ReadLn/WritLn verdrahtet -- `list` laeuft jetzt
+
+Nutzerfrage: "fehlen die Funktionen in unserer Kette?" -- Antwort: NEIN, weder Treiber
+(generischer Rumpf, nimmt jedes Kommandobyte) noch Simulator (`dhf_emu_device.c`, alle 20
+`DHF_CMD_*`-Faelle inkl. Seek/ReadLn/WritLn/SetStt/ChgDir/MkDir/RmDir/Rename/OpenDir/
+ReadDir bereits implementiert). Die Luecke war ausschliesslich im Manager (6 von 13 echten
+I$-Aufrufen noch `E$UnkSvc`-Stubs).
+
+1. **MakDir/ChgDir/ReadLn/WritLn** -- gegen die echten Registertabellen aus "OS-9 System
+   Calls" Kap. 2 (`OS-9 v2.4 Technical Reference Manual`, lokal unter
+   `/Volumes/SSD1TB/Documents/`) geprueft: alle vier passen Register-fuer-Register exakt auf
+   `MgrCommon`s uniformes Schema (`I$MakDir`: `d1.w`=Rechte->`SH_D1`, `a0`=Pfadname-> `SH_A0`;
+   `I$ChgDir`: nur `a0`=Pfadname, vom Simulator-Handler ohnehin ignoriert; `I$ReadLn`/
+   `I$WritLn`: Register-fuer-Register identisch zu `I$Read`/`I$Write`). Vier neue 6-Byte-
+   Sprungbretter, genau wie die sechs bestehenden.
+2. **Seek passt NICHT auf das uniforme Schema** -- eigene Routine `Mgr_Seek`. Grund: das
+   dritte Nutzlastfeld (`SH_D2`) traegt beim Simulator-Kommando `DHF_CMD_SEEK` ein "whence"
+   (0=SEEK_SET/1=SEEK_CUR/2=SEEK_END), `MgrCommon` wuerde dort aber `REG_D0(a5)` (=Pfad-
+   nummer) hineinschreiben -- bei kleinen Pfadnummern (1 oder 2) waere das versehentlich
+   SEEK_CUR/SEEK_END statt SEEK_SET. `I$Seek` ist laut Handbuch aber IMMER eine absolute
+   Positionierung -- `Mgr_Seek` setzt `SH_D2` deshalb fest auf `DHF_SEEK_SET` (0).
+3. **SetStt bleibt bewusst Stub** -- das darunterliegende `dhf_host_fs_setstat()`
+   (`Q9-Flux-68k/src/devices/dhf/dhf_host_fs.c`) ist selbst noch ein reines No-Op (ignoriert
+   `statbuf`) UND nimmt -- anders als das bereits gefixte `GetStt`/`SS_Size` -- noch einen
+   Pfadnamen statt einer Pfadnummer/eines Handles entgegen: dieselbe Fallenklasse, die
+   `GetStt` frueher schon einmal den Host-Emulatorprozess haengen liess (s. weiter oben,
+   "Found+fixed a real host-hang bug along the way"). Erst eine echte
+   `dhf_host_fs_setstat_at()`-Variante bauen (Handle-basiert, analog `getstat_at`), dann
+   hier verdrahten.
+4. **Gefundener, unabhaengiger EOF-Bug (echter Haenger, nicht simuliert)**: mit ReadLn
+   verdrahtet, hing das ECHTE `list /d0/hello.txt`-Kommando nach korrekt ausgegebenem
+   Dateiinhalt (im Gegensatz zum eigenen `dhftest`, das nur EINMAL liest und daher nie EOF
+   erreicht). Ursache: `dhf_host_fs_read()`/`dhf_host_fs_readln()` (`Q9-Flux-68k`) meldeten
+   am echten Dateiende `status=DHF_ERR_OK` mit 0 gelesenen Bytes statt eines Fehlers --
+   "OS-9 System Calls" Kap. 2 verlangt aber ausdruecklich: "If there is no data available,
+   an EOF error is returned." Ohne diesen Fehler ruft ein Aufrufer wie `list` `I$Read`
+   endlos weiter (0 Bytes ohne Fehler ist fuer ihn kein Abbruchgrund). Fix: beide Funktionen
+   setzen jetzt `status=DHF_ERR_EOF` (Wert `211`/`$D3`, numerisch identisch mit dem echten
+   `E$EOF` aus `MWOS/SRC/DEFS/errno.h` -- die DHF-Fehlercodes sind absichtlich so gewaehlt,
+   dass keine Uebersetzungstabelle noetig ist) bei echtem Dateiende. **Ergebnis, verifiziert**:
+   `list /d0/hello.txt` gibt den Inhalt aus und kehrt sauber zur Shell zurueck, kein Haengen
+   mehr.
+5. **`dir /d0` haengt nicht mehr, liefert aber noch keine echte Verzeichnisliste** (nur der
+   Geraetename selbst als einzige Zeile) -- OS-9s "dir" liest bei Multi-File-Geraeten rohe,
+   fest formatierte Verzeichniseintrags-Records per gewoehnlichem `I$Open`+`I$Read` auf den
+   Verzeichnispfad selbst (KEIN eigener "I$OpenDir/I$ReadDir"-Aufruf existiert in OS-9 --
+   das ist ein Unix-Konzept). Die Simulator-Kommandos `DHF_CMD_OPENDIR`/`DHF_CMD_READDIR`
+   sind darum von KEINEM echten I$-Aufruf aus erreichbar; sie sind ein Relikt aus einer
+   frueheren, Unix-artigen Designphase. Eine echte Verzeichnisliste braeuchte ein eigenes,
+   DHF-spezifisches Verzeichniseintrags-Binaerformat (Host-Verzeichniseintraege in vom
+   Manager per `I$Read` konsumierbare Records serialisiert) -- noch nicht entworfen, naechster
+   groesserer Entwurfsschritt, falls gewuenscht.
