@@ -66,6 +66,7 @@ DHF_CMD_CLOSE   equ     10
 DHF_CMD_DELETE  equ     11
 DHF_CMD_MKDIR   equ     12
 DHF_CMD_CHDIR   equ     13
+DHF_CMD_GETFD   equ     20              * I$GetStt SS_FD, s. dhf_proto.h/Mgr_GetStt
 
 * I$Seek "whence" -- I$Seek ist laut "OS-9 System Calls" Kap. 2 IMMER eine absolute
 * Positionierung (kein relatives Unix-lseek), deshalb hier fest verdrahtet statt aus dem
@@ -75,6 +76,8 @@ DHF_SEEK_SET    equ     0
 * I$GetStt-Funktionscodes (MWOS/OS9/SRC/DEFS/sg_codes.h, "OS-9 System Calls" Kap. 2)
 SS_Ready        equ     $01
 SS_Size         equ     $02
+SS_FD           equ     $0F             * "Read File Descriptor Sector" (sg_codes.h) --
+                                         * genutzt u.a. von der echten "attr"-Utility.
 
 * Devicetbl-Feldoffsets (MWOS/OS9/SRC/DEFS/sysio.h struct devicetbl)
 DT_DRIV         equ     0               * V_driv: Treiber-Modulzeiger
@@ -342,6 +345,8 @@ Mgr_GetStt:
 MgrGst_TrySize:
         cmpi.l  #SS_Size,d0
         beq.s   MgrGst_Size
+        cmpi.l  #SS_FD,d0
+        beq.s   MgrGst_FD
         bra     MgrUnkSvc
 
 MgrGst_Size:
@@ -358,6 +363,30 @@ MgrGst_Size:
         rts
 MgrGst_SizeOk:
         move.l  (a1),REG_D2(a5)         * Statuspuffer-Offset 0 = Dateigroesse (dhf_host_fs_getstat)
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* MgrGst_FD -- SS_FD ("Read File Descriptor Sector", "OS-9 System Calls" Kap. 2): Eingabe
+* d2.w=gewuenschte Byteanzahl (REG_D2(a5)), a0=Zielpuffer des Aufrufers (REG_A0(a5)) --
+* anders als SS_Size schreibt der Simulator hier NICHT in CmdBlk selbst, sondern direkt in
+* den vom Aufrufer bereitgestellten Puffer (bis zu 256 Byte, zu gross fuer CmdBlk), deshalb
+* SH_A1 = REG_A0(a5) statt CmdBlk-Adresse.
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrGst_FD:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer
+        movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*)
+        lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock
+
+        move.l  d2,SH_D0(a1)            * Pfadnummer (Handle)
+        move.l  REG_A0(a5),SH_A1(a1)    * Zielpuffer des Aufrufers
+        move.l  REG_D2(a5),SH_D1(a1)    * gewuenschte Byteanzahl (d2.w des Aufrufers)
+        move.b  #DHF_CMD_GETFD,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrGst_FDOk
+        rts
+MgrGst_FDOk:
         andi    #$FE,ccr
         rts
 
