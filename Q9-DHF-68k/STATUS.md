@@ -58,6 +58,61 @@ Continued bisecting (all via temporary, throwaway edits to `manager/dhfmgr_68k.a
 
 **Result, verified**: the full `dhftest` (`I$Open`+`I$Read`+`I$Close`, no bisection variant, the real thing) run from a genuinely forked process now completes end-to-end with **no hang and no crash** for the first time ever: `OPEN: ok`, then `I$Read` itself now fails with a *new, ordinary, single-call* error (`E$ILLINS`, `$68`, "illegal instruction TRAP 4 occurred" -- a real CPU-exception-turned-syscall-error, not a hang) and `CLOSE: ok`. This is real, forward progress: a mundane, single-call bug to chase next (likely somewhere in the driver's `Read`-specific MMIO handling or the emulator's `DHF_CMD_READ` case, given `Open`/`Close`/`GetStt` all work through the identical shared driver body), not a system-wide corruption issue anymore.
 
+**UPDATE, same session -- `E$ILLINS` on `I$Read` further bisected (all via temporary,
+reverted edits -- nothing below is committed except this note itself):**
+
+1. **Confirmed fully deterministic**: ran the unmodified `dhftest` three times in a row,
+   identical result every time (`OPEN: ok`, `READ: FEHLER, Code: $0068`, `CLOSE: ok`) -- not
+   a residual instance of the timing-dependent corruption fixed above; a real, reproducible
+   bug.
+2. **Decoded the exception path precisely** (disassembly, `kernel.mod`, addresses `$78be`-
+   `$78f2`): this is the kernel's generic **hardware-exception-to-errno converter** -- checks
+   a saved "intercept" context (`a4+$140`/`a4+$144`, the same slots the generic trap-dispatch
+   preamble sets up for every syscall) and computes `errno = (vector_number*4)>>2 + $64`;
+   vector 4 (illegal instruction) -> exactly `$68`. This is **not** a DHF-specific error code
+   invented anywhere in our own code -- a real 68k CPU exception (illegal instruction) fired
+   somewhere during this call, and the kernel's own safety net turned it into a returned
+   error instead of crashing the system. Confirms this is a genuine bug (in our code or the
+   kernel's `I$Read` dispatch), not a red herring.
+3. **Temporarily made `MgrCommon` skip `CallDrv` entirely** (simulate success unconditionally,
+   never touch the driver/emulator at all) for `Open`/`Read`/`Close` alike -- `I$Read` **still**
+   fails with the identical `$68`, proving the bug is NOT in `CallDrv`, the driver's shared
+   MMIO body, or the emulator's `DHF_CMD_READ` handler (all three already independently
+   verified correct via `test-dhf-driver` and by working for `Open`). Side observation: with
+   `CallDrv` skipped, `I$Close` **also** started failing with `$68` afterward (it did not fail
+   in earlier runs where `CallDrv` ran for real) -- most likely a knock-on effect of `I$Read`'s
+   own exception leaving some kernel-internal state (process nesting depth, interrupt mask)
+   not fully restored, not an independent `I$Close` bug; not pursued further since `I$Read`
+   failing is the actual, primary issue.
+4. **Verified the compiled module itself is correct byte-for-byte**: dumped `dhfmgr_68k.mod`'s
+   header (`M$Exec`) and 13-entry jump table directly (no live emulator needed, just parsing
+   the `.mod` file) and disassembled the six wired thunks + `MgrCommon` with capstone --
+   `Mgr_Read`'s table entry (`$62`) lands exactly where the six sequential 6-byte thunks
+   (`Create`@`$56`, `Open`@`$5c`, `Read`@`$62`, `Write`@`$68`, `Close`@`$6e`, `Delete`@`$74`)
+   place it, and every thunk + `MgrCommon` disassembles to exactly the expected instructions
+   matching the source 1:1. **Rules out a `qr68k`/`ql68k` jump-table-generation bug** (a real
+   possibility given this session already found two other real toolchain quirks) -- the
+   compiled code is exactly what the source says.
+
+**Net conclusion so far**: the illegal instruction fires somewhere during `I$Read`'s
+processing that is independent of anything our own manager code does with the call's
+payload (proven by the no-op `CallDrv` test) and independent of the compiled module being
+correct (proven by the byte-level disassembly check) -- pointing at IOMan's own `I$Read`-
+specific dispatch/pre- or post-processing having a bug or edge case when calling a third-
+party (non-RBF/SCF/PIPE) FileManager from a forked process, distinct from (but same general
+flavor as) the `F$SRqMem` bug fixed above. Not yet located precisely -- would need the same
+kind of kernel disassembly work that found the `F$SRqMem`/`E$NORAM` issues, this time
+targeting IOMan's `I$Read`-specific code path (likely reachable the same way: arm
+`Q9_ITRACE_PATH` on the *`I$Open`* call as before since `I$Read` isn't itself path-logged,
+then look for where PC diverges between an `I$Open` trace and this same run's continuation
+into the `I$Read` trap -- attempted this session but got lost in interleaved multi-process
+trace noise before finding the exact divergence point; a cleaner approach for next time might
+be a **minimal C-level bisection test in `Q9-Flux-68k/test/`** that calls IOMan's I$Read path
+against a trivial always-resident FileManager (if one can be improvised) to isolate IOMan's
+own behavior from ours entirely, or extending `m68krt.c`'s existing "path"-logging
+(`callcode == 0x80/0x83/0x84/0x86/0x87`) to also cover `0x89` (`I$Read`) so `Q9_ITRACE_PATH`
+can arm on it directly instead of needing the `I$Open`-then-continue workaround).
+
 > Legend: ❌ Not started, 🟡 Partially/rudimentary, ✅ Done
 
 ## Architecture note
