@@ -48,7 +48,7 @@ Host-Verzeichnis und Schreibschutz: am einfachsten per `[dhf0]`/`[dhf1]` in der 
 
 **Q9SYS** (`Q9-Images/emu_config/q9sys.q9`): bootet aus `cf_images/Q9SYS` (Kopie von
 `OS9SYS`); das DHF-Systemlaufwerk heißt `/dd` und zusätzlich `/c0`, das CF-Image
-`OS9SYS.hda` hängt als `/d0` daran. Aufgesetzt mit
+`Q9SYS.hda` (Kopie von `OS9SYS.hda`) hängt als `/d0` daran. Aufgesetzt mit
 `boot/mk_dhfboot.sh -a c0 -f d0 ../../Q9-Images/cf_images/Q9SYS`, getestet mit
 `test/run_dhfboot.sh -q`.
 

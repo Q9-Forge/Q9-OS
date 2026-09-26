@@ -12,7 +12,7 @@
 # Aufruf: Q9_LOGIN_PASS=<Passwort fuer "super"> test/run_dhfboot.sh [-k] [-v] [-q]
 #   -k  Arbeitsverzeichnis behalten   -v  Emulator-Ausgabe live zeigen
 #   -q  Aufbau Q9SYS (q9sys.q9): Bootbaum cf_images/Q9SYS mit /c0 == /dd (DHF) und
-#       /d0 = CF-Image OS9SYS.hda (s. boot/mk_dhfboot.sh -a c0 -f d0); prueft zusaetzlich
+#       /d0 = CF-Image Q9SYS.hda (s. boot/mk_dhfboot.sh -a c0 -f d0); prueft zusaetzlich
 #       beide Laufwerke. Auch hier nur auf Klonen.
 # Ergebnis: Zeile "DHF-Boot: n/m OK", Exitcode 0 nur wenn alles gruen.
 #═════════╤══════╤═══════════════════════════════════════════════════════════╤══════
@@ -34,7 +34,7 @@ BAUM=$FORGE/Q9-Images/dhf_root/boot
 IMG=$FORGE/Q9-Images/cf_images/OS9SYS_Claude.hda
 if [ $Q9SYS = 1 ]; then
     BAUM=$FORGE/Q9-Images/cf_images/Q9SYS
-    IMG=$FORGE/Q9-Images/cf_images/OS9SYS.hda
+    IMG=$FORGE/Q9-Images/cf_images/Q9SYS.hda
 fi
 USER_=${Q9_LOGIN_USER:-super}
 TMO=${Q9_TIMEOUT:-120}
