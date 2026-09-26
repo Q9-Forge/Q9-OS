@@ -747,3 +747,10 @@ Boottest `test/run_dhfboot.sh`: Lauf 1 bootet von einem Klon des Bootbaums (Boot
 Host, Netz und xterms starten), Lauf 2 bootet denselben ROM ohne `[dhf0]` von CF.
 
 **Stand: Gast 125/125, Host 26/26; Boottest 13/13.**
+
+**Nachtrag Q9SYS:** `mk_dhfboot.sh -a NAME` baut einen zweiten DHF-Deskriptor auf demselben
+Port wie `dd` (IOMan teilt das Gerät, `devs` zeigt denselben Data Ptr), `-f NAME` übernimmt das
+cfide-`c0` aus OS9SYS unter neuem Namen (gleich lang, Modul-CRC neu berechnet -- CRC-24, Polynom
+$800063, an allen 35 OS9Boot-Modulen geprüft). `cf_images/Q9SYS` = Kopie von OS9SYS mit
+`/dd`=`/c0` (DHF) und `/d0` = `OS9SYS.hda` (CF), Config `q9sys.q9`. Boottest `-q` 16/16,
+Standard 13/13.

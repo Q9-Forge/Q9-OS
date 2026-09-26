@@ -9,17 +9,21 @@
 # Gebootet wird von einem APFS-KLON des Bootbaums (Q9-Images/dhf_root/boot, s.
 # boot/mk_dhfboot.sh), das CF-Image fuer den Rueckfall ist ebenfalls ein Klon.
 #
-# Aufruf: Q9_LOGIN_PASS=<Passwort fuer "super"> test/run_dhfboot.sh [-k] [-v]
+# Aufruf: Q9_LOGIN_PASS=<Passwort fuer "super"> test/run_dhfboot.sh [-k] [-v] [-q]
 #   -k  Arbeitsverzeichnis behalten   -v  Emulator-Ausgabe live zeigen
+#   -q  Aufbau Q9SYS (q9sys.q9): Bootbaum cf_images/Q9SYS mit /c0 == /dd (DHF) und
+#       /d0 = CF-Image OS9SYS.hda (s. boot/mk_dhfboot.sh -a c0 -f d0); prueft zusaetzlich
+#       beide Laufwerke. Auch hier nur auf Klonen.
 # Ergebnis: Zeile "DHF-Boot: n/m OK", Exitcode 0 nur wenn alles gruen.
 #═════════╤══════╤═══════════════════════════════════════════════════════════╤══════
 # Datum   │ Ver. │ Aenderung                                                 │ Wer
 #─────────┼──────┼───────────────────────────────────────────────────────────┼──────
 # 26-09-26│ 1.00 │ Erster Wurf                                               │ Cld
+# 26-09-26│ 1.01 │ -q: Q9SYS mit /c0 (DHF) und /d0 (CF)                       │ Cld
 #═════════╧══════╧═══════════════════════════════════════════════════════════╧══════
 set -u
-KEEP=0; VERBOSE=0
-for a in "$@"; do case "$a" in -k) KEEP=1;; -v) VERBOSE=1;; *) echo "unbekannte Option $a" >&2; exit 2;; esac; done
+KEEP=0; VERBOSE=0; Q9SYS=0
+for a in "$@"; do case "$a" in -k) KEEP=1;; -v) VERBOSE=1;; -q) Q9SYS=1;; *) echo "unbekannte Option $a" >&2; exit 2;; esac; done
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 DHF=$(cd "$HERE/.." && pwd)
@@ -28,6 +32,10 @@ EMU=$FORGE/Q9-Flux/Q9-Flux-68k
 ROM=$FORGE/Q9-Images/rom_images/Claude_cb030_DHF_BIOS.BIN
 BAUM=$FORGE/Q9-Images/dhf_root/boot
 IMG=$FORGE/Q9-Images/cf_images/OS9SYS_Claude.hda
+if [ $Q9SYS = 1 ]; then
+    BAUM=$FORGE/Q9-Images/cf_images/Q9SYS
+    IMG=$FORGE/Q9-Images/cf_images/OS9SYS.hda
+fi
 USER_=${Q9_LOGIN_USER:-super}
 TMO=${Q9_TIMEOUT:-120}
 
@@ -44,6 +52,15 @@ cp -cRp "$BAUM" "$W/boot" 2>/dev/null || cp -Rp "$BAUM" "$W/boot" || die "Klon B
 cp -c "$IMG" "$W/cf.hda" 2>/dev/null || cp "$IMG" "$W/cf.hda" || die "Klon CF-Image"
 rm -f "$W/boot/dhfboot.txt"
 
+CFSEC="[c0]
+type = rbf
+bus = onboard
+unit = master
+base = 0xFFFFE000
+start_sector = 0
+length_sectors = 0x800000
+descriptor_lsn = 0
+image = $W/cf.hda"
 cat >"$W/boot.q9" <<EOF
 [board]
 name = DHF-Boottest
@@ -53,20 +70,13 @@ net  = nat
 hostpath = $W/boot
 readonly = no
 EOF
+[ $Q9SYS = 1 ] && echo "$CFSEC" >>"$W/boot.q9"
 cat >"$W/cf.q9" <<EOF
 [board]
 name = DHF-ROM Rueckfall CF
 rom  = $ROM
 net  = nat
-[c0]
-type = rbf
-bus = onboard
-unit = master
-base = 0xFFFFE000
-start_sector = 0
-length_sectors = 0x800000
-descriptor_lsn = 0
-image = $W/cf.hda
+$CFSEC
 EOF
 
 # $1 = Config, $2 = Log, weitere = Befehle nach dem Login
@@ -122,15 +132,10 @@ check() {   # $1 Name, $2 Bedingung (bash)
 
 echo "── Lauf 1: Boot von DHF ($W/boot)"
 L1=$W/boot.log
-emu_run "$W/boot.q9" "$L1" \
-    "mdir dhfmgr dhfdrv dd" \
-    "devs" \
-    "pd" \
-    "dir /dd/SYS" \
-    "list /dd/SYS/motd" \
-    "echo dhfboot >/dd/dhfboot.txt" \
-    "list /dd/dhfboot.txt" \
-    "dir -e /dd/CMDS/dir"
+CMDS=("mdir dhfmgr dhfdrv dd" "devs" "pd" "dir /dd/SYS" "list /dd/SYS/motd"
+      "echo dhfboot >/dd/dhfboot.txt" "list /dd/dhfboot.txt" "dir -e /dd/CMDS/dir")
+[ $Q9SYS = 1 ] && CMDS+=("dir /c0" "list /c0/dhfboot.txt" "dir /d0" "list /d0/SYS/motd")
+emu_run "$W/boot.q9" "$L1" "${CMDS[@]}"
 rc=$?
 check "Emulator/Login (expect rc=$rc)"          "[ $rc = 0 ]"
 check "ROM-Booter bootet von DHF"               "grep -q 'boot from DHF' '$L1'"
@@ -141,6 +146,11 @@ check "devs zeigt dd mit dhfmgr"                "grep -A40 'RUNNER devs' '$L1' |
 check "pd = /dd..."                             "grep -A3 'RUNNER pd' '$L1' | grep -q '^/dd'"
 check "dir /dd/SYS zeigt startup"               "grep -A12 'RUNNER dir /dd/SYS' '$L1' | grep -q startup"
 check "Schreiben auf /dd landet auf dem Host"   "[ \"\$(tr '\r' '\n' <'$W/boot/dhfboot.txt' 2>/dev/null)\" = dhfboot ]"
+if [ $Q9SYS = 1 ]; then
+    check "/c0 = /dd (DHF): Datei von /dd sichtbar" "grep -A3 'RUNNER list /c0/dhfboot.txt' '$L1' | grep -q '^dhfboot'"
+    check "devs: c0 mit dhfdrv, d0 mit cfide"       "grep -A40 'RUNNER devs' '$L1' | grep -q '^c0 .*dhfdrv' && grep -A40 'RUNNER devs' '$L1' | grep -q '^d0 .*cfide'"
+    check "/d0 = CF-Image: dir und list gehen"      "grep -A12 'RUNNER dir /d0' '$L1' | grep -q 'Directory of /d0' && grep -A14 'RUNNER list /d0/SYS/motd' '$L1' | grep -q 'OS-9\\|[*][*][*][*]'"
+fi
 check "keine Fehlermeldungen"                   "! grep -A2 'RUNNER' '$L1' | grep -qi 'error #\|can.t'"
 
 echo "── Lauf 2: gleicher ROM ohne [dhf0] -> CF"

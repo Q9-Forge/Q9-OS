@@ -46,7 +46,13 @@ Host-Verzeichnis und Schreibschutz: am einfachsten per `[dhf0]`/`[dhf1]` in der 
    (statt des cfide-`dd`); `init` nennt `/dd` als Systemlaufwerk, also ist `/dd` wieder das
    Host-Verzeichnis. `SYS/startup` hängt nur noch `dd r0` an (keine CF).
 
-Neu bauen: `boot/mk_dhfrom.sh` (ROM, Wine-Toolchain des SDK) und `boot/mk_dhfboot.sh [-n]`
+**Q9SYS** (`Q9-Images/emu_config/q9sys.q9`): bootet aus `cf_images/Q9SYS` (Kopie von
+`OS9SYS`); das DHF-Systemlaufwerk heißt `/dd` und zusätzlich `/c0`, das CF-Image
+`OS9SYS.hda` hängt als `/d0` daran. Aufgesetzt mit
+`boot/mk_dhfboot.sh -a c0 -f d0 ../../Q9-Images/cf_images/Q9SYS`, getestet mit
+`test/run_dhfboot.sh -q`.
+
+Neu bauen: `boot/mk_dhfrom.sh` (ROM, Wine-Toolchain des SDK) und `boot/mk_dhfboot.sh [-n] [-a NAME] [-f NAME]`
 (Bootbaum als APFS-Klon von `cf_images/OS9SYS`, OS9Boot, startup). Testen:
 `Q9_LOGIN_PASS=… test/run_dhfboot.sh [-k] [-v]`.
 
