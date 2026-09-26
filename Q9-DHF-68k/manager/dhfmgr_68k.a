@@ -343,17 +343,40 @@ MgrUnkSvc:
         ori     #1,ccr
         rts
 
-* Nur noch EIN Aufruf bleibt Stub (E$UnkSvc, $D0 aus MWOS/SRC/DEFS/errno.h) --
-* MakDir/ChgDir/Seek/ReadLn/WritLn sind jetzt oben verdrahtet (Nutzervorgabe, gegen die
-* echten Registertabellen aus "OS-9 System Calls" Kap. 2 geprueft). SetStt bleibt Stub:
-* das darunterliegende `dhf_host_fs_setstat()` (Q9-Flux-68k/src/devices/dhf/dhf_host_fs.c)
-* ist selbst noch ein reines No-Op (ignoriert statbuf) UND erwartet -- anders als das
-* inzwischen gefixte GetStt -- noch einen Pfadnamen statt einer Pfadnummer/eines Handles
-* (dieselbe Fallenklasse, die bei GetStt/SS_Size schon einmal den Host-Emulatorprozess
-* haengen liess, s. STATUS.md). Erst eine echte `dhf_host_fs_setstat_at()`-Variante bauen,
-* dann hier verdrahten -- nicht vorschnell mit MgrCommons Schema anschliessen.
-Mgr_SetStt
+*───────────────────────────────────────────────────────────────────────────────────────────
+* Mgr_SetStt -- 2026-09-26, echt verdrahtet (nicht mehr Stub). Wie GetStt funktionscode-
+* abhaengig (d1.w), passt NICHT auf MgrCommons Schema. Nur SS_Size (Dateigroesse setzen)
+* verdrahtet -- die einzige SetStt-Funktion, die gegen ein reines Host-Passthrough-
+* Dateisystem sinnvoll 1:1 abbildbar ist (SS_Attr/SS_Reset/SS_RFM/... haben dort kein
+* Aequivalent). Neue Simulator-Gegenseite `dhf_host_fs_setsize_at()` (Q9-Flux-68k/src/
+* devices/dhf/dhf_host_fs.c, per ftruncate() auf dem gespeicherten Handle-fd) vermeidet
+* die Pfadnamen-statt-Handle-Falle, die GetStt frueher den Host-Emulatorprozess haengen
+* liess (s. STATUS.md) -- SetStt hatte dieselbe Falle im alten, jetzt ersetzten
+* `dhf_host_fs_setstat()` (pfadbasiert, dort weiterhin vorhanden, aber nicht mehr verwendet).
+*
+* SS_Size (Set File Size, RBF/PIPE): Eingabe d2.l=gewuenschte Groesse (REG_D2(a5)).
+*───────────────────────────────────────────────────────────────────────────────────────────
+Mgr_SetStt:
+        move.l  REG_D1(a5),d0
+        cmpi.l  #SS_Size,d0
+        beq.s   MgrSst_Size
         bra     MgrUnkSvc
+
+MgrSst_Size:
+        moveq   #0,d2
+        move.w  PD_PD(a1),d2            * d2 = eigene Pfadnummer (wie MgrCommon)
+        movea.l PD_DEV(a1),a3           * a3 = pd_dev (Devicetbl*)
+        lea     CmdBlk(pc),a1           * a1 = eigener statischer Kommandoblock
+
+        move.l  d2,SH_D0(a1)            * Pfadnummer (Handle)
+        move.l  REG_D2(a5),SH_D1(a1)    * gewuenschte Groesse (d2.l des Aufrufers)
+        move.b  #DHF_CMD_SETSTT,SH_COMMAND(a1)
+        bsr     CallDrv
+        bcc.s   MgrSst_Ok
+        rts
+MgrSst_Ok:
+        andi    #$FE,ccr
+        rts
 
 *───────────────────────────────────────────────────────────────────────────────────────────
 * CmdBlk -- statischer, gemeinsam genutzter Kommandoblock (ersetzt seit 2026-09-26 die
