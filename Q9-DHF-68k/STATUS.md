@@ -282,3 +282,37 @@ I$-Aufrufen noch `E$UnkSvc`-Stubs).
    DHF-spezifisches Verzeichniseintrags-Binaerformat (Host-Verzeichniseintraege in vom
    Manager per `I$Read` konsumierbare Records serialisiert) -- noch nicht entworfen, naechster
    groesserer Entwurfsschritt, falls gewuenscht.
+
+## 2026-09-26, Nachtrag: SetStt (SS_Size) fertig verdrahtet
+
+Nutzerauftrag: "Bau erst mal SetStt nach". Umgesetzt:
+
+1. **Neue Simulator-Gegenseite** `dhf_host_fs_setsize_at()` (`Q9-Flux-68k/src/devices/dhf/
+   dhf_host_fs.c`/`.h`) -- Handle-basiert (`ftruncate()` auf dem gespeicherten fd), analog
+   zum bereits vorhandenen `dhf_host_fs_getstat_at()`. Vermeidet dieselbe Pfadnamen-statt-
+   Handle-Falle, die `GetStt` frueher den Host-Emulatorprozess haengen liess. `dhf_emu_
+   device.c`s `DHF_CMD_SETSTT`-Fall auf `d0`=Pfadnummer/`d1`=gewuenschte Groesse umgestellt
+   (vorher: pfadbasiert + 16-Byte-Blob ueber `a1`, an das alte, nie fertig implementierte
+   `dhf_host_fs_setstat()` -- diese Funktion bleibt fuer sich bestehen, wird aber von hier
+   aus nicht mehr aufgerufen).
+2. **`Mgr_SetStt`** (Manager) -- wie `Mgr_GetStt` funktionscode-abhaengig (`d1.w`), passt
+   nicht auf `MgrCommon`s uniformes Schema, eigene Routine. Nur `SS_Size` verdrahtet (Set
+   File Size, "OS-9 System Calls" Kap. 2: `d0.w`=Pfadnummer, `d1.w`=Funktionscode, `d2.l`=
+   gewuenschte Groesse) -- die einzige SetStt-Funktion mit sinnvollem 1:1-Aequivalent gegen
+   ein reines Host-Verzeichnis (SS_Attr/SS_Reset/SS_RFM/... haben dort keins). Alles andere
+   faellt weiterhin auf `MgrUnkSvc`/`E$UnkSvc` zurueck.
+3. **Neuer Test** `test/dhfsetstt_68k.a` (Vorbild `dhftest_68k.a`): `I$Open`(Update-Modus)
+   + `I$SetStt(SS_Size=5)` + `I$Close` gegen `/d0/hello.txt`. **Verifiziert**: `OPEN: ok` /
+   `SETSTT: ok` / `CLOSE: ok`, echte Host-Datei danach auf 5 Byte gekuerzt (`ls -la` vorher/
+   nachher verglichen). Einziger Stolperstein beim ersten Testlauf: ein zu kurz gewaehltes
+   `expect`-Timeout (15s) liess es wie einen Haenger aussehen -- war keiner, mit 60s lief
+   derselbe Test beim naechsten Versuch sauber durch (frisch gebooteter Emulator + Netzwerk-
+   Multiterminal-Verbindung brauchen hier merklich laenger als bei bereits eingespielten
+   Modulen).
+
+**Damit sind jetzt alle 13 Sprungtabellen-Eintraege echt verdrahtet** (keiner zeigt mehr
+direkt auf `MgrUnkSvc`) -- `GetStt`/`SetStt` faellt lediglich fuer Funktionscodes ausserhalb
+ihrer jeweils EINEN verdrahteten Funktion (`SS_Ready`/`SS_Size` bzw. `SS_Size`) weiterhin auf
+`E$UnkSvc` zurueck, das ist aber jetzt eine bewusste Fallunterscheidung innerhalb einer
+echten Routine, kein pauschaler Stub mehr. Einzige verbleibende groessere Luecke ist die
+echte Verzeichnislistung (`dir`, s. vorheriger Abschnitt).
