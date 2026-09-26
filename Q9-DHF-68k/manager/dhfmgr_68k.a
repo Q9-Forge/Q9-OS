@@ -119,6 +119,7 @@ D_WRIT          equ     4
 * Pfaddeskriptor-Feldoffsets (path.h)
 PD_PD           equ     0               * u_short: eigene Pfadnummer
 PD_DEV          equ     4               * Devicetbl*: Geraetetabelleneintrag
+PD_OPT          equ     $80             * Optionsteil des Pfaddeskriptors (128 Byte, sysio.a)
 PD_COUNT        equ     $1A             * u_short: Anzahl Pfade auf diesem Deskriptor (I$Dup),
                                          * von IOMan gepflegt (sysio.a / 68k_techio.pdf)
 
@@ -371,8 +372,14 @@ MgrCommonDone:
 * MgrCommon, deshalb dieselbe Register-Rettung ueber d2/d4/d5 (s. dortiger Kommentar zum
 * Stack-Bug).
 *───────────────────────────────────────────────────────────────────────────────────────────
+* 2026-09-26: Funktionscode ist NUR d1.w ("OS-9 System Calls") -- vorher wurde d1.l
+* verglichen; "deldir" ruft SS_Pos mit Muell im oberen Wort ($00E50005), bekam E$UnkSvc,
+* merkte sich Position -1 und uebersprang danach Eintraege (Regressionstest dhfregr 95-97).
 Mgr_GetStt:
-        move.l  REG_D1(a5),d0
+        moveq   #0,d0
+        move.w  REG_D1+2(a5),d0
+        tst.l   d0
+        beq.w   MgrGst_Opt
         cmpi.l  #SS_Ready,d0
         bne.s   MgrGst_TrySize
         moveq   #1,d1
@@ -441,6 +448,28 @@ MgrGst_FD:
         bcc.s   MgrGst_FDOk
         rts
 MgrGst_FDOk:
+        andi    #$FE,ccr
+        rts
+
+*───────────────────────────────────────────────────────────────────────────────────────────
+* MgrGst_Opt -- SS_Opt (Code 0, "Read PD_OPT", 68k_tech.pdf S. 561): die 128 Byte ab PD_OPT
+* ($80) des Pfaddeskriptors nach (a0) des Aufrufers. Kein Treiberaufruf -- IOMan hat den
+* Optionsteil beim Open aus dem Geraetedeskriptor gefuellt. Byteweise (Puffer darf ungerade
+* liegen). "deldir"/"dir" fragen das ab.
+*───────────────────────────────────────────────────────────────────────────────────────────
+MgrGst_Opt:
+        lea     PD_OPT(a1),a3
+        movea.l REG_A0(a5),a2
+        move.w  #127,d0
+MgrGstOptLoop:
+        move.b  (a3)+,(a2)+
+        dbra    d0,MgrGstOptLoop
+        andi    #$FE,ccr
+        rts
+
+* MgrSst_Opt -- SetStt SS_Opt: DHF hat keine veraenderbaren Pfadoptionen -> ohne Fehler
+* zurueck (so auch RBF laut 68k_techio.pdf: "Do nothing, but return without error").
+MgrSst_Opt:
         andi    #$FE,ccr
         rts
 
@@ -577,7 +606,10 @@ MgrUnkSvc:
 * SS_Size (Set File Size, RBF/PIPE): Eingabe d2.l=gewuenschte Groesse (REG_D2(a5)).
 *───────────────────────────────────────────────────────────────────────────────────────────
 Mgr_SetStt:
-        move.l  REG_D1(a5),d0
+        moveq   #0,d0                   * nur d1.w, s. Mgr_GetStt
+        move.w  REG_D1+2(a5),d0
+        tst.l   d0
+        beq.w   MgrSst_Opt
         cmpi.l  #SS_Size,d0
         beq.s   MgrSst_Size
         cmpi.l  #SS_Attr,d0
