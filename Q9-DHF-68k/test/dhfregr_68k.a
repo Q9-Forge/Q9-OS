@@ -46,6 +46,7 @@ I_SETSTT        equ     $8e
 I_CLOSE         equ     $8f
 I_DUP           equ     $82
 
+SS_Opt          equ     $00
 SS_Ready        equ     $01
 SS_Size         equ     $02
 SS_Pos          equ     $05
@@ -483,6 +484,18 @@ LsnZero:
         move.l  d2,d6
         VAL     96,N81
         move.w  d5,d0
+        move.l  #$ABCD0000+SS_Pos,d1    * Muell im oberen Wort: nur d1.w zaehlt
+        moveq   #0,d2
+        OS9     I_GETSTT
+        CHK     0,N95
+        move.l  d2,d6
+        VAL     96,N96
+        move.w  d5,d0
+        moveq   #SS_Opt,d1
+        lea     RBuf(pc),a0
+        OS9     I_GETSTT
+        CHK     0,N97
+        move.w  d5,d0
         moveq   #SS_Size,d1
         moveq   #0,d2
         OS9     I_GETSTT
@@ -567,6 +580,32 @@ DupOk:
         moveq   #M_WRITE,d0
         OS9     I_DELETE
         CHK     0,N76
+
+*════════ Verzeichnis loeschen wie RBF/deldir ═══════════════════════════
+        lea     PSub(pc),a0
+        moveq   #M_UPDATE,d0
+        move.l  #$3F,d1
+        OS9     I_MAKDIR
+        CHK     0,N91
+        lea     PSub(pc),a0
+        moveq   #M_WRITE,d0
+        OS9     I_DELETE
+        CHK     E_FNA,N92               * Dir-Bit noch gesetzt -> nicht loeschbar
+        lea     PSub(pc),a0
+        move.l  #M_DIRREAD,d0
+        OS9     I_OPEN
+        bsr     TakePath
+        move.w  d5,d0
+        moveq   #SS_Attr,d1
+        moveq   #$3F,d2                 * Attribute ohne Dir-Bit ($80)
+        OS9     I_SETSTT
+        CHK     0,N93
+        move.w  d5,d0
+        OS9     I_CLOSE
+        lea     PSub(pc),a0
+        moveq   #M_WRITE,d0
+        OS9     I_DELETE
+        CHK     0,N94                   * jetzt loeschbar (so arbeitet "deldir")
 
 *════════ Delete + Fehlerfaelle ═════════════════════════════════════════
         lea     PB(pc),a0
@@ -812,6 +851,7 @@ PRelB           dc.b    "b.txt",0
 PD0             dc.b    "/d0",0
 PDup            dc.b    "/d0/rt/dup.txt",0
 PSib            dc.b    "/d0/../d0_nachbar/geheim.txt",0
+PSub            dc.b    "/d0/rt/sub",0
 PEsc            dc.b    "/d0/../../../../../../../../etc/hosts",0
 
 Data10          dc.b    "ABCDEFGHIJ"
@@ -908,6 +948,13 @@ N87     dc.b    "87 Verzeichnis ohne Dir-Bit -> E$FNA",0
 N88     dc.b    "88 Eintrag traegt Sektornummer <>0",0
 N89     dc.b    "89 GetStt SS_FDInf",0
 N90     dc.b    "90 SS_FDInf: FD_SIZ b.txt = 5",0
+N91     dc.b    "91 MakDir /d0/rt/sub",0
+N92     dc.b    "92 Delete Verzeichnis mit Dir-Bit -> E$FNA",0
+N93     dc.b    "93 SS_Attr: Dir-Bit entfernen",0
+N94     dc.b    "94 Delete Verzeichnis danach",0
+N95     dc.b    "95 GetStt SS_Pos, d1.l=$ABCD0005",0
+N96     dc.b    "96 dabei Position 96",0
+N97     dc.b    "97 GetStt SS_Opt",0
 
         align   2
 NOk             ds.w    1

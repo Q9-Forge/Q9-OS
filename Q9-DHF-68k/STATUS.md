@@ -593,3 +593,29 @@ NUR dann als Liste von Muster/Aktion-Paaren gelesen, wenn sie ueber mehrere Zeil
 einzeilig (`expect { -re $prompt {} timeout {...} }`) ist sie EIN Glob-Muster, das nie passt;
 expect kehrt dann nach dem Timeout still zurueck (ohne den timeout-Zweig!). Beide Stellen
 jetzt mehrzeilig. Drei Laeufe hintereinander: je 11 s, Gast 90/90, Host 13/13.
+
+## 2026-09-26, Nachtrag: `deldir -q` funktioniert -- vier weitere Befunde
+
+Nutzerfrage: "gibt es keine Option bei deldir, die es ohne Nachfrage macht?" -- ja, `-q`
+("delete directories without asking questions"). Im Runner aufgenommen (`makdir /d0/dd`,
+`/d0/dd/unter`, je eine Datei, `deldir -q /d0/dd`, Host-Pruefung H14) -- scheiterte zunaechst
+an vier Stellen, alle per `Q9_TRAP_TRACE_ALL` auf einer Image-Kopie eingegrenzt:
+
+1. **I$Delete auf ein Verzeichnis** ging nie (`unlink()`). Jetzt wie RBF: erst loeschbar,
+   nachdem das Dir-Bit per `SS_Attr` entfernt wurde (genau so arbeitet `deldir`), dann per
+   `rmdir()` (nicht leer -> E$DNE); ein Verzeichnis MIT Dir-Bit -> E$FNA. Nach entferntem
+   Dir-Bit darf es auch ohne `$80` geoeffnet werden (RBF sieht es dann als Datei).
+2. **cwd nach `chd unter` + `chd ..`** blieb als Text `dd/unter/..` stehen -- nach dem
+   Loeschen von `unter` zeigte er ins Leere. `dhf_host_fs_chdir()` speichert jetzt `realpath`.
+3. **Eintragspositionen** rueckten nach jedem Delete vor, auch ueber Opens hinweg. `deldir`
+   oeffnet ein Verzeichnis nach dem Abarbeiten eines Unterverzeichnisses NEU und seekt auf die
+   gemerkte Position -- ein Eintrag wurde uebersprungen. Jetzt eine Platztabelle je
+   Verzeichnis (`dircache`, 32 Verzeichnisse LRU): geloeschte Eintraege bleiben freie Plaetze
+   (Byte 0 = 0), neue fuellen den ersten freien Platz -- wie die Verzeichnisdatei auf RBF.
+4. **Manager werteten GetStt/SetStt-Codes als d1.l aus** -- laut Handbuch zaehlt nur d1.w.
+   `deldir` ruft SS_Pos mit `d1=$00E50005`, bekam E$UnkSvc und merkte sich Position -1.
+   Beide Verteiler jetzt `d1.w`. Dazu **SS_Opt** (GetStt: 128 Byte PD_OPT ab `$80` des
+   Pfaddeskriptors; SetStt: ohne Fehler zurueck).
+
+Neue Gast-Pruefungen 91-97 (Verzeichnis-Delete mit/ohne Dir-Bit, SS_Pos mit Muell im oberen
+Wort, SS_Opt). **Stand: Gast 97/97, Host 14/14**, zweimal hintereinander, je ~11 s.
