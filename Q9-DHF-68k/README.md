@@ -52,7 +52,13 @@ Host-Verzeichnis und Schreibschutz: am einfachsten per `[dhf0]`/`[dhf1]` in der 
 `boot/mk_dhfboot.sh -a c0 -f d0 ../../Q9-Images/cf_images/Q9SYS`, getestet mit
 `test/run_dhfboot.sh -q`.
 
-Neu bauen: `boot/mk_dhfrom.sh` (ROM, Wine-Toolchain des SDK) und `boot/mk_dhfboot.sh [-n] [-a NAME] [-f NAME]`
+**64 MB RAM** (27.09.2026): `q9sys.q9` setzt `[board] ram = 64`. Der DHF-ROM sucht RAM bis
+64 MB (`_RAMMax` im Q9-Port, bei 16 MB findet er eben nur 16), das `init` im OS9Boot kommt
+von `boot/mk_init.sh 64` und beschreibt zwei Bereiche: 0–16 MB mit Vorrang (die bash 1.12
+ist nicht 32-Bit-sauber und stirbt oberhalb von 16 MB), 16–64 MB danach. Einsetzen mit
+`boot/mk_dhfboot.sh ... -i <init>`.
+
+Neu bauen: `boot/mk_dhfrom.sh` (ROM, Wine-Toolchain des SDK), `boot/mk_init.sh orig|64` und `boot/mk_dhfboot.sh [-n] [-a NAME] [-f NAME] [-i DATEI]`
 (Bootbaum als APFS-Klon von `cf_images/OS9SYS`, OS9Boot, startup). Testen:
 `Q9_LOGIN_PASS=… test/run_dhfboot.sh [-k] [-v]`.
 

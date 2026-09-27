@@ -20,11 +20,13 @@
 # Optionen fuer die Laufwerksnamen (Standard: nur dd, keine CF):
 #   -a NAME  zweiter Name fuer das DHF-Systemlaufwerk (gleicher Port wie dd, IOMan teilt das
 #            Geraet), z.B. -a c0 -> /c0 == /dd
+#   -i DATEI init-Modul aus DATEI statt des init aus OS9SYS, z.B. das von boot/mk_init.sh
+#            gebaute (64 MB, zwei Speicherbereiche) fuer "[board] ram = 64"
 #   -f NAME  CF-Laufwerk (Master, cfide) unter diesem Namen, z.B. -f d0 -> /d0 = CF-Image aus
 #            [c0] der .q9. Die cfide-Deskriptoren c0/c0_fmt fallen weg; der Deskriptor ist
 #            das cfide-"c0" aus OS9SYS mit neuem Namen und neu berechneter Modul-CRC.
 #
-# Aufruf: boot/mk_dhfboot.sh [-n] [-a NAME] [-f NAME] [bootbaum]
+# Aufruf: boot/mk_dhfboot.sh [-n] [-a NAME] [-f NAME] [-i DATEI] [bootbaum]
 #         (Standard-Bootbaum: Q9-Images/dhf_root/boot)
 # Beispiel Q9SYS: boot/mk_dhfboot.sh -a c0 -f d0 ../../Q9-Images/cf_images/Q9SYS
 #═════════╤══════╤═══════════════════════════════════════════════════════════╤══════
@@ -32,14 +34,16 @@
 #─────────┼──────┼───────────────────────────────────────────────────────────┼──────
 # 26-09-26│ 1.00 │ Erster Wurf                                               │ Cld
 # 26-09-26│ 1.01 │ -a (DHF-Zweitname) und -f (CF-Laufwerk umbenannt)          │ Cld
+# 27-09-26│ 1.02 │ -i (init aus Datei, z.B. 64-MB-init von mk_init.sh)         │ Cld
 #═════════╧══════╧═══════════════════════════════════════════════════════════╧══════
 set -u
-NEU=0; ALIAS=; CFNAME=
+NEU=0; ALIAS=; CFNAME=; INITF=
 while [ $# -gt 0 ]; do
     case "$1" in
         -n) NEU=1; shift;;
         -a) ALIAS=$2; shift 2;;
         -f) CFNAME=$2; shift 2;;
+        -i) INITF=$2; shift 2;;
         -*) echo "unbekannte Option $1" >&2; exit 2;;
         *) break;;
     esac
@@ -55,7 +59,7 @@ SRC=$FORGE/Q9-Images/cf_images/OS9SYS
 BAUM=${1:-$FORGE/Q9-Images/dhf_root/boot}
 
 die() { echo "mk_dhfboot: $*" >&2; exit 2; }
-for f in "$QR68K" "$QL68K" "$DEFS" "$SRC/OS9Boot"; do [ -e "$f" ] || die "fehlt: $f"; done
+for f in "$QR68K" "$QL68K" "$DEFS" "$SRC/OS9Boot" ${INITF:+"$INITF"}; do [ -e "$f" ] || die "fehlt: $f"; done
 for n in "$ALIAS" "$CFNAME"; do
     [ -z "$n" ] || [[ "$n" =~ ^[a-z][a-z0-9]?$ ]] || die "Laufwerksname '$n': 1-2 Zeichen (Deskriptor wird im Modul umbenannt)"
 done
@@ -90,9 +94,9 @@ if [ ! -d "$BAUM" ]; then
 fi
 
 #── 3. OS9Boot ─────────────────────────────────────────────────────────────────────────
-python3 - "$SRC/OS9Boot" "$W" "$BAUM/OS9Boot" "$ALIAS" "$CFNAME" <<'EOF' || die "OS9Boot zusammensetzen"
-import struct, sys
-src, w, out, alias, cfname = sys.argv[1:]
+python3 - "$SRC/OS9Boot" "$W" "$BAUM/OS9Boot" "$ALIAS" "$CFNAME" "$INITF" <<'EOF' || die "OS9Boot zusammensetzen"
+import os, struct, sys
+src, w, out, alias, cfname, initf = sys.argv[1:]
 d = open(src, "rb").read()
 
 def crc24(data):                       # OS-9-Modul-CRC (an allen OS9Boot-Modulen geprueft)
@@ -137,6 +141,11 @@ for n, m in mods(d):
         res += [new[x] for x in names]
         if cfname:
             res.append(None)           # Platz fuer das CF-Laufwerk
+    elif n == "init" and initf:
+        im = open(initf, "rb").read()
+        if im[:2] != b"\x4a\xfc" or list(mods(im))[0][0] != "init":
+            sys.exit("-i: kein init-Modul: " + initf)
+        res.append(im)
     else:
         res.append(m)
 if "dd" not in seen:
@@ -150,7 +159,7 @@ for n, m in mods(b):                   # Kontrolle: jede CRC stimmt
     if crc24(m[:-3]) ^ 0xFFFFFF != int.from_bytes(m[-3:], "big"):
         sys.exit(f"CRC falsch in {n}")
 open(out, "wb").write(b)
-extra = (f", {alias} = DHF-Zweitname" if alias else "") + (f", {cfname} = CF (cfide)" if cfname else "")
+extra = (f", {alias} = DHF-Zweitname" if alias else "") + (f", {cfname} = CF (cfide)" if cfname else "") + (f", init aus {os.path.basename(initf)}" if initf else "")
 print(f"OS9Boot: {len(b)} Byte, {len(res)} Module (dd -> DHF{extra})")
 EOF
 
