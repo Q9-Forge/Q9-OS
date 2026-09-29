@@ -162,6 +162,7 @@ typedef unsigned char  Q9_u8;
 #endif
 #define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. q9kernel_firstproc.c Kopfkommentar */
 #define Q9K_PROCDESC_STATE_SLEEPING 's'  /* s. q9kernel_procsleep.c -- dort gesetzt */
+#define Q9K_PROCDESC_STATE_ZOMBIE 'z'   /* s. q9kernel_procend.c -- dort gesetzt */
 #define Q9K_SLEEP_INFINITE 0xFFFFFFFFUL   /* Sentinel fuer Sleep(0), s. q9kernel_procsleep.c */
 #ifndef Q9K_READYQ_NEXT_OFF
 #define Q9K_READYQ_NEXT_OFF 0x30UL
@@ -486,7 +487,30 @@ Q9_u32 Q9K_SchedReschedule(void)
             return 0; /* kein anderer Prozess bereit -- derselbe laeuft einfach weiter,
                         * eigene Zeitscheibe oben schon neu aufgeladen */
 
-        if (current != 0)
+        /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-29, per gezieltem Concurrency-
+         * Stresstest, s. tools/nestedtrap_stress.sh): "current" war hier
+         * IMMER bedingungslos zurueck in die Ready-Queue gelegt worden --
+         * auch dann, wenn es sich zwischen dem Setzen von Q9_D_Proc und
+         * diesem Tick per F$Exit bereits selbst beendet hatte (State auf
+         * ZOMBIE gesetzt, Deskriptor aber laut Kopfkommentar bei
+         * Q9K_ProcExit bewusst NICHT freigegeben, solange kein F$Wait ihn
+         * abgeholt hat). Das kann passieren, weil Q9K_SysFExit/Q9K_SysFWait
+         * bei leerer Ready-Queue jetzt NICHT mehr sofort in K$Idle
+         * panicken (s. Q9K_SchedFirstPickOrIdle, q9kernel_entry.a),
+         * sondern mit freigegebenen Interrupts auf den naechsten Tick
+         * warten, waehrend Q9_D_Proc noch auf den soeben beendeten
+         * Deskriptor zeigt. Ohne diese Pruefung wuerde ein bereits
+         * beendeter Prozess hier wieder lebendig -- ein zombie-resurrection-
+         * Bug, live gefunden beim Nachbau genau dieses Ablaufs (forkchild
+         * F$Exit waehrend sein Elternprozess per F$Sleep schlief).
+         * Bewusst NUR gegen ZOMBIE geprueft (nicht auf ACTIVE verengt):
+         * "current" kann hier legitim auch andere Zwischenzustaende tragen
+         * (der bestehende Host-Test test_q9kernel_sched.c laesst sein
+         * current-Mock z. B. ohne explizit gesetztes State-Byte) -- die
+         * einzige Zustandsart, die niemals zurueck in die Queue darf, ist
+         * ein bereits beendeter Prozess. */
+        if (current != 0 &&
+            Q9K_GetU8(current + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_ZOMBIE)
             Q9K_SchedInsert(current); /* zurueck in die Ready-Queue, Age=Prioritaet */
 
         Q9K_SetU32(Q9_D_PROC, next);

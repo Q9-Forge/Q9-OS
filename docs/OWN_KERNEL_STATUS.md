@@ -8881,3 +8881,136 @@ Sitzung gebunden zu sein.
 
 Kein Code-Fix an der Trap-Dispatch-Assembly selbst in dieser Fortsetzung --
 nur der unabhaengige Host-Test-Stub-Fund.
+
+
+## Fortsetzung 93: echter Concurrency-Stresstest gebaut, ein echter Scheduler-Bug gefunden (F$Exit/F$Wait verwechseln leere Bereit-Queue mit K$Idle) -- ein Fixversuch als unsicher erkannt und bewusst zurueckgenommen (2026-09-29, direkte Fortsetzung derselben Sitzung)
+
+**Auftrag (Andreas, nach Fortsetzung 92):** "geh das noch durch" -- den in
+Fortsetzung 92 zurueckgestellten Teil jetzt fertigstellen: einen echten,
+im Emulator laufenden, geskripteten Concurrency-Stresstest fuer
+verschachtelte externe Traps/Registerabbild-Ownership bauen, sorgfaeltig,
+lieber gruendlich als schnell.
+
+### Der Stresstest
+
+Eigenes, minimales Referenz-Bootfile aus den bereits vorhandenen Bausteinen
+zusammengesetzt (kein neues Testabbild noetig, alles bereits im Repo/aus
+`Q9-Flux/OS9Boot.noprot.test` extrahierbar): frisch gebauter `q9kernel`,
+das vendor-`init`-Modul, `forkchild`, `ioman`, `rbf`, `cfide`, `dd`, `c0`,
+`scf`, `sc68681`, `term` -- alle per Byteoffset aus `OS9Boot.noprot.test`
+extrahiert (dessen Modulkette per kleinem Python-Parser gelesen). Ohne
+echte Dateien auf der Disk scheitern `echo`/`date`/`mshell`-Forkversuche
+zwar weiterhin sauber (kein `/CMDS/echo` vorhanden), das ist fuer diesen
+Test irrelevant -- IOMan/RBF/CF laufen trotzdem vollstaendig hoch
+(`F$Link("ioman")` gelingt, `CompactFlash driver build 42`, IOMans
+`M$Exec`-Einsprung kehrt zurueck).
+
+**Neuer Codebaustein in `Q9K_TestProcA`** (gated hinter
+`Q9K_TestNestedTrapStress equ 0`, Standard AUS -- s. u. warum): direkt
+nach IOMans Rueckkehr (`'R'`-Marke) `F$Fork("forkchild")`, dann
+`F$Sleep(50)` (~0,5 s bei 10 ms/Tick). `forkchild` laeuft parallel, druckt
+dreimal `'F'`, beendet sich per `F$Exit`. Erwartung: der Zeitplaner
+wechselt waehrend der Sleep-Dauer mehrfach zwischen `forkchild` und dem
+schlafenden Elternprozess, `forkchild`s `F$Exit` trifft auf einen
+Elternprozess, der NICHT per `F$Wait` wartet (schlaeft nur) -- genau die
+im Roadmap-Punkt 1 geforderte Ueberlappung aus Blockieren und aktivem
+externem Aufrufpfad.
+
+### Der gefundene Bug
+
+**`Q9K_SysFExit`/`Q9K_SysFWait` verwechseln "gerade niemand in der
+BEREIT-Queue" mit der realen K$Idle-Semantik ("last 'official' process has
+exited") und rufen `Q9K_KernelPanic` -- unwiderruflich, weil
+`Q9K_KernelPanic`/`Q9K_HaltLoop` mit der von `Q9K_TrapDispatch` gesetzten
+Interrupt-Sperre enden.** Live reproduziert: `forkchild`s `F$Exit` findet
+den Elternprozess (schlaeft, NICHT in der Bereit-Queue) -- `forkchild`
+selbst wird Zombie (Elternprozess hat kein `F$Wait` ausgefuehrt), die
+Bereit-Queue ist jetzt LEER, `Q9K_SchedFirstPick` liefert 0,
+`Q9K_SysFExit` haelt das faelschlich fuer K$Idle. Konsolenausgabe endet
+zuverlaessig bei `...M F r=...\nP00000001H` -- `'P'` + Panic-Code
+`K_IDLE`=1, `'H'` = `Q9K_HaltLoop` erreicht. Der schlafende Elternprozess
+WAERE nach seinen 50 Ticks laengst wieder bereit gewesen; der Timer-Tick,
+der ihn geweckt haette, kann nach der Sperre aber nie mehr feuern.
+
+### Fixversuch, gebaut, verifiziert UNSICHER, bewusst zurueckgenommen
+
+**Erster Ansatz:** `Q9K_SchedFirstPickOrIdle` -- ein gemeinsamer Ersatz
+fuer `bsr Q9K_SchedFirstPick` an beiden Aufrufstellen, der bei leerer
+Bereit-Queue NICHT sofort panickt, sondern die Interrupt-Sperre aufhebt
+und (an echte Zeit ueber `Q9K_TickCount` gebunden, nicht an eine
+CPU-geschwindigkeitsabhaengige Zaehlschleife) auf den naechsten Tick
+wartet, der den Schlaefer zurueck in die Bereit-Queue legt.
+
+**Zwei echte, nacheinander gefundene Gefahren dabei:**
+1. **Zombie-Resurrection:** `Q9K_SchedReschedule` fuegte `current`
+   (`Q9_D_Proc`) bei jedem eigenen Wechsel bedingungslos wieder in die
+   Bereit-Queue ein. Waehrend der Wartezeit oben zeigt `Q9_D_Proc` aber
+   noch auf den GERADE ERST BEENDETEN (Zombie-)Prozess -- ohne Gegenmittel
+   waere er wieder lebendig geworden. **Gefixt und verifiziert:**
+   `Q9K_SchedReschedule` prueft jetzt `Q9K_PROCDESC_STATE_OFF != ZOMBIE`,
+   bevor es `current` erneut einfuegt (bewusst NICHT auf `== ACTIVE`
+   verengt, das haette den bestehenden Host-Test
+   `test_q9kernel_sched.c` Fall 6 gebrochen, dessen Mock-`current` kein
+   State-Byte setzt). Dieser Teil-Fix ist unabhaengig sinnvoll und bleibt
+   stehen.
+2. **Echter Absturz, per Debug-Dump bestaetigt:** ein erster Versuch der
+   Wartefunktion gab die Interrupts VOR jedem `Q9K_SchedFirstPick`-Aufruf
+   frei (statt nur zwischen den Aufrufen) -- die verketteten Ready-/
+   Sleep-Queue-Listen sind NICHT reentrant, ein waehrenddessen
+   eintreffender Timer-Tick liess `Q9K_TimerIRQHandler`s eigenen
+   `Q9K_SchedReschedule`-Aufruf gleichzeitig durch dieselben Listen laufen
+   wie den eigenen -- Datenwettlauf. Symptom: `'E'` (Q9K_ExcTrap) nach
+   `forkchild`s Exit. Eine zweite, sorgfaeltigere Fassung sperrte die
+   Interrupts wieder waehrend jedes `Q9K_SchedFirstPick`-Aufrufs und gab
+   sie nur zwischen den Aufrufen frei (Warten per Tick-Aenderung statt
+   fester Instruktionszahl) -- **trotzdem erneut `'E'`.** Per
+   `Q9_DIS_DUMP`/lokalem Kernel-Zusatzdump (`local_images/q9dbg_dump.txt`,
+   das Schreiben scheiterte zunaechst am falschen Arbeitsverzeichnis des
+   Emulators, `cd` ins Q9-Flux-Verzeichnis behoben) bestaetigt: **Vektor=4
+   (Illegal Instruction), PC in der Boot-ROM-Region (`0xfe00007e`), mitten
+   in einer Datentabelle statt echtem Code** -- ein klassisches Symptom
+   eines uebersprungenen/falschen Sprungziels. Wahrscheinlichste,
+   NICHT abschliessend bewiesene Ursache: die Wartefunktion hielt die
+   "Startzeit" in `D1` ueber den `bsr Q9K_SchedFirstPick`-Aufruf hinweg --
+   reale C-ABI-Konvention (auch an anderer Stelle in dieser Datei so
+   dokumentiert) garantiert nur `D2-D7`/`A2-A6` ueber einen C-Aufruf
+   hinweg, NICHT `D0`/`D1`. Ein per C compilierter `Q9K_SchedFirstPick`
+   darf `D1` also als Arbeitsregister benutzen -- genau das haette die
+   "Startzeit" mit Muell ueberschrieben.
+
+**Bewusst NICHT weiterverfolgt, stattdessen sauber zurueckgenommen:**
+"ein falsches Ergebnis ist schlimmer als keins" (s. bereits Fortsetzung
+92). Ein dritter Reparaturversuch unter Zeitdruck haette das Risiko eines
+WEITEREN, noch nicht verstandenen Fehlers getragen. `Q9K_SysFExit`/
+`Q9K_SysFWait` sind deshalb wieder exakt auf ihr urspruengliches Verhalten
+zurueckgesetzt (sofortiger K$Idle-Panic bei leerer Bereit-Queue); der
+Stresstest selbst (Fork+Sleep-Baustein) bleibt im Quelltext, aber hinter
+`Q9K_TestNestedTrapStress equ 0` (Standard AUS) verborgen -- bei 1
+reproduziert er den Hang zuverlaessig (`P00000001H`, KEINE Exception, per
+erneutem Debug-Dump mit `Vektor=0` bestaetigt), bei 0 (eingecheckter
+Standard) bleibt der normale Boot-Testablauf unveraendert (verifiziert:
+Bootet bis zur gewohnten `Q9K_TestProcA`-Idle-Ausgabe, kein Hang).
+
+### Sauberer Loesungsweg fuer eine Folgesitzung (skizziert, nicht gebaut)
+
+Ein dediziertes, permanent vorhandenes IDLE-Prozessdeskriptor-Objekt
+(eigener echter Deskriptor, eigener Stack), auf das `Q9_D_Proc` umschaltet,
+WENN die Bereit-Queue leer ist -- statt den soeben beendeten
+(Zombie-)Deskriptor dort haengen zu lassen. Der IDLE-Prozess selbst laeuft
+mit freigegebenen Interrupts in einer Schleife, die NUR `Q9K_TickCount`
+liest (kein eigener Aufruf in die verketteten Listen); das eigentliche
+Umschalten bleibt vollstaendig bei `Q9K_TimerIRQHandler`s bereits
+funktionierendem `Q9K_SchedReschedule`-Aufruf, der die Listen ohnehin nur
+EINMAL, unter der Hardware-eigenen Interrupt-Prioritaetssperre, anfasst --
+keine zweite, potenziell konkurrierende Beruehrung von aussen mehr noetig.
+
+### Verifikation
+
+Alle 28 aktuellen `test_q9kernel_*.c`-Host-Suiten gruen (inkl. des
+gehaerteten `test_q9kernel_sched.c` Fall 6, das den Zombie-Schutz indirekt
+mitprueft, da es weiterhin ein reines State-0-Mock verwendet). Emulator:
+Standardboot (`Q9K_TestNestedTrapStress=0`) unveraendert, Stresstest-Boot
+(`=1`) reproduziert den bekannten, verstandenen Hang ohne neue Exception.
+Kein Codefix an `Q9K_SysFExit`/`Q9K_SysFWait` selbst in dieser
+Fortsetzung -- nur der bereits genannte, unabhaengig verifizierte
+Zombie-Schutz in `Q9K_SchedReschedule`.

@@ -918,6 +918,16 @@ Q9K_TestCslManualLink equ 0
 * skips the shell/date/echo sequence and forks iattachsvc immediately after
 * IOMan returns.  The checked-in default keeps the normal boot test.
 Q9K_TestDirectAttach equ 0
+* Optionaler Concurrency-Stresstest (F$Fork "forkchild" + F$Sleep im
+* Elternprozess direkt neben IOMans Init-Aufruf, s. 'Z'/'z'/'w' bei
+* Q9K_TestProcA weiter unten). Deckt einen ECHTEN, gefundenen und noch
+* NICHT gefixten Scheduler-Bug auf (F$Exit haelt eine leere BEREIT-Queue
+* faelschlich fuer K$Idle, obwohl der Elternprozess nur schlaeft -- s.
+* den ausfuehrlichen Kommentar bei Q9K_KernelPanic und
+* docs/OWN_KERNEL_STATUS.md). Deshalb Standard AUS: bei 1 haengt der
+* Boot-Test dauerhaft (Diagnose 'H'), das darf nicht der eingecheckte
+* Normalfall sein, solange der Bug offen ist.
+Q9K_TestNestedTrapStress equ 0
 Q9K_ModuleStart:
 
 * ===== Assembler-Einstieg =====
@@ -1504,6 +1514,63 @@ Q9K_NoRomDebugger:
 * interner Sprung statt eines zweiten TRAP-#0-Umwegs -- wir sind an
 * diesen Aufrufstellen bereits im Kernel-Kontext, ein echter TRAP-
 * Ruecksprung waere ohnehin sinnlos (F$Panic kehrt nicht zurueck).
+* NICHT UMGESETZT -- ECHTER, VERSTANDENER BUG, ABSICHTLICH OHNE FIX HIER
+* (2026-09-29): Q9K_SysFWait/Q9K_SysFExit springen unten nach
+* Q9K_KernelPanic (K$Idle), sobald Q9K_SchedFirstPick 0 liefert -- aber
+* eine leere BEREIT-Warteschlange bedeutet NICHT "kein Prozess mehr da".
+* Ein per F$Sleep blockierter Prozess steht in der SCHLAF-Warteschlange
+* und wuerde vom naechsten Timer-Tick zurueck in die Bereit-Queue gelegt
+* -- er wird hier trotzdem als K$Idle behandelt, was den KOMPLETTEN
+* Kernel dauerhaft (und unwiderruflich) lahmlegt, weil Q9K_KernelPanic/
+* Q9K_HaltLoop mit der von Q9K_TrapDispatch gesetzten Interrupt-Sperre
+* endet und diese nie wieder aufgehoben wird -- der Timer-Tick, der den
+* Schlaefer geweckt haette, kann danach nie mehr feuern.
+*
+* GEFUNDEN durch einen gezielten Concurrency-Stresstest (F$Fork
+* "forkchild" gefolgt von F$Sleep im Elternprozess, s. die 'Z'/'z'/'w'-
+* Diagnose bei Q9K_TestProcA weiter oben und
+* tools/nestedtrap_stress.md) -- reproduzierbar: der Kernel haengt nach
+* forkchilds F$Exit bei der Diagnoseausgabe 'H' (Q9K_HaltLoop) fest,
+* obwohl der Elternprozess nur schlief und laengst wieder bereit gewesen
+* waere.
+*
+* EIN ECHTER FIX WURDE HIER VERSUCHT UND WIEDER ZURUECKGENOMMEN: die
+* Interrupts vor einem Wiederholungsversuch freizugeben, ist selbst
+* gefaehrlich -- die verketteten Ready-/Sleep-Queue-Listen sind NICHT
+* reentrant, ein waehrenddessen eintreffender Timer-Tick liefe
+* gleichzeitig mit dem eigenen Q9K_SchedFirstPick-Aufruf durch dieselben
+* Listen. Ein erster Versuch, der das per manuellem "andi.w #$f8ff,sr"/
+* "ori.w #$0700,sr" um jeden einzelnen Aufruf herum absichern wollte,
+* erzeugte einen NEUEN, schlimmeren Fehler (Illegal Instruction in der
+* Boot-ROM-Region, per Q9K_ExcTrap-Marker 'E' gefangen und per
+* Q9K_DIS_DUMP/lokalem Debug-Dump bestaetigt) -- vermutlich, weil ein
+* ueber den bsr in Q9K_SchedFirstPick hinweg gehaltenes Datenregister
+* (D0/D1 sind ueber einen C-Aufruf NICHT garantiert erhalten, anders als
+* D2-D7/A2-A6) nicht sauber gerettet war. Ein falsches Ergebnis ist
+* schlimmer als keins -- deshalb bewusst NICHT gefixt, sondern hier
+* praezise fuer eine eigene Folgesitzung dokumentiert.
+*
+* SAUBERER LOESUNGSWEG fuer die Folgesitzung (skizziert, nicht gebaut):
+* ein dediziertes, permanent vorhandenes IDLE-Prozessdeskriptor-Objekt
+* (eigener, echter Deskriptor mit eigenem Stack), auf das Q9_D_Proc
+* umschaltet, WENN die Bereit-Queue leer ist, statt den soeben
+* beendeten (Zombie-)Deskriptor als "current" dort haengen zu lassen.
+* Der IDLE-Prozess selbst laeuft mit freigegebenen Interrupts in einer
+* Schleife, die NUR Q9K_TickCount liest (kein Aufruf in die verketteten
+* Listen), und ueberlaesst Q9K_TimerIRQHandlers eigenem, bereits
+* funktionierendem Q9K_SchedReschedule-Aufruf das eigentliche Umschalten,
+* sobald ein Schlaefer wieder bereit ist -- dann bleibt jede Beruehrung
+* der Listen dort, wo sie bereits nachweislich sicher ist (der Timer-
+* IRQ selbst), statt sie ein zweites Mal, von hier aus, anzufassen.
+*
+* Q9K_SchedReschedule (q9kernel_sched.c) hat trotzdem bereits einen
+* eigenstaendigen, unabhaengig sinnvollen Haertungs-Fix bekommen: es
+* fuegte "current" bisher bedingungslos zurueck in die Bereit-Queue ein,
+* auch wenn es sich in der Zwischenzeit per F$Exit selbst beendet hatte
+* (State=ZOMBIE) -- ein zombie-resurrection-Bug, der bei JEDER kuenftigen
+* Loesung dieses Idle-Problems sonst sofort wieder aufgetreten waere.
+* Dieser Teil-Fix ist unabhaengig verifiziert (host-getestet) und bleibt
+* stehen, auch ohne den eigentlichen Idle-Fix.
 Q9K_KernelPanic:
         moveq   #'P',d7                * DIAGNOSE: F$Panic ausgeloest
         bsr     Q9K_DiagWriteD7
@@ -2006,6 +2073,47 @@ Q9K_TestProcA:
 
         moveq   #'R',d7                     * DIAGNOSE: aus IOMans Einsprungpunkt zurueckgekehrt
         bsr     Q9K_DiagWriteD7
+
+        ifne    Q9K_TestNestedTrapStress
+* STRESSTEST-BAUSTEIN (2026-09-29, Q9-KERNEL/STATUS.md Punkt 1 "Trap and
+* context lifetime" -- "stress-test arbitrary nested external traps,
+* register-frame ownership"): forkt forkchild (laeuft parallel, druckt
+* dreimal 'F' und beendet sich per F$Exit) und legt sich selbst per
+* F$Sleep schlafen -- deckt denselben InTrapPath-Clear-Pfad ab wie
+* F$Wait/F$Sema/Ev$Wait, hier aber bewusst UNMITTELBAR NEBEN IOMans
+* eigener Init-Aktivitaet (s. 'R' oben) und den nachfolgenden echo/date-
+* Forkversuchen platziert, die beide durch Q9K_TrapCallExternal echte
+* externe RBF/CF-Aufrufe ausloesen. Der Zeitplaner-Tick (10 ms, s.
+* Q9K_TimerIRQHandler) feuert dutzende Male waehrend der Sleep-Dauer und
+* wechselt dabei zwangslaeufig zwischen forkchild und dem schlafenden
+* Elternprozess -- genau die geforderte Ueberlappung aus Blockieren UND
+* aktivem externem Aufrufpfad.
+* 'Z' = Fork gelungen, geht jetzt schlafen. 'z' = aufgewacht, macht mit
+* der unveraenderten Sequenz weiter. 'w' = Fork fehlgeschlagen (kein
+* Blocker, Sequenz laeuft trotzdem weiter -- reine Bonusabdeckung, kein
+* Testabbruch wert).
+        clr.w   d0
+        clr.l   d1
+        clr.l   d2
+        clr.w   d3
+        clr.w   d4
+        lea     Q9K_TestForkChildName(pc),a0
+        trap    #0
+        dc.w    3                             * F$Fork forkchild
+        bcs     Q9K_TestForkChildForkFail
+        moveq   #'Z',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  #50,d0                        * ~0,5 s bei 10 ms/Tick
+        trap    #0
+        dc.w    10                            * F$Sleep
+        moveq   #'z',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestForkChildStressDone
+Q9K_TestForkChildForkFail:
+        moveq   #'w',d7
+        bsr     Q9K_DiagWriteD7
+Q9K_TestForkChildStressDone:
+        endc
 
         ifne    Q9K_TestDirectAttach
         clr.w   d0
@@ -2635,6 +2743,9 @@ Q9K_TestHelloName:
 Q9K_TestAttachName:
         dc.b    "iattachsvc",0
         dc.b    0                      * Fuellbyte -- haelt das Folgende wortausgerichtet
+
+Q9K_TestForkChildName:
+        dc.b    "forkchild",0             * 10 Byte, bereits wortausgerichtet -- kein Fuellbyte noetig
 
 * NUR FUER DIESEN BOOT-TEST TEMPORAER (2026-08-31, Abschnitt "IOMan-
 * Einbindung", DRITTER Versuch) -- Minimale "Ausgabe-Vtable" fuer IOMans

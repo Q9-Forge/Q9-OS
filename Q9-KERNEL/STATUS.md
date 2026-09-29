@@ -1540,9 +1540,30 @@ listed below.
 The SysCall tables above are not the complete kernel roadmap. The following
 areas remain open independently of individual call-code implementations:
 
-1. **Trap and context lifetime** — the process-handoff flag leak is fixed;
-   stress-test arbitrary nested external traps, register-frame ownership, and
-   all return paths through IOMan, file managers, and drivers.
+1. **Trap and context lifetime** — the process-handoff flag leak is fixed. A
+   first concurrency stress test (2026-09-29, gated behind
+   `Q9K_TestNestedTrapStress`, default off — `F$Fork("forkchild")` followed
+   by `F$Sleep` in the parent, placed right next to IOMan's own init call)
+   found a real, reproducible scheduler bug: `F$Exit`/`F$Wait` treat an
+   empty ready queue as real K$Idle ("last official process has exited")
+   even when another process is merely asleep and would become ready on
+   the next timer tick — this halts the entire kernel permanently, because
+   `Q9K_KernelPanic`/`Q9K_HaltLoop` end with `Q9K_TrapDispatch`'s interrupt
+   mask still set, so the tick that would have woken the sleeper can never
+   fire again. A first fix attempt (retry with interrupts re-enabled around
+   `Q9K_SchedFirstPick`) was built, found to be unsafe in its own right
+   (the ready/sleep-queue linked lists are not reentrant against the timer
+   ISR's own `Q9K_SchedReschedule`, and caused a real Illegal Instruction
+   crash), and was deliberately reverted rather than shipped broken — see
+   `docs/OWN_KERNEL_STATUS.md` for the full account and a concrete design
+   sketch (a dedicated idle-process descriptor) for the real fix. One
+   narrower, independently-useful hardening did land and is verified:
+   `Q9K_SchedReschedule` no longer re-queues a process whose state has
+   become `ZOMBIE` in the meantime — a zombie-resurrection hazard that any
+   future fix along these lines would otherwise reintroduce immediately.
+   Register-frame ownership across nested external traps and all return
+   paths through IOMan/file managers/drivers otherwise remains to be
+   stress-tested.
 2. **Scheduler** — stress simultaneous IRQ arrival during queue/context handoff
    and complete hardware-specific IRQ coverage; priority preemption and the
    ordinary process-switch paths are implemented. F$DExec trace stops are
