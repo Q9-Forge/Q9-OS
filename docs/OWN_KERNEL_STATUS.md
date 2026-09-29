@@ -9014,3 +9014,141 @@ Standardboot (`Q9K_TestNestedTrapStress=0`) unveraendert, Stresstest-Boot
 Kein Codefix an `Q9K_SysFExit`/`Q9K_SysFWait` selbst in dieser
 Fortsetzung -- nur der bereits genannte, unabhaengig verifizierte
 Zombie-Schutz in `Q9K_SchedReschedule`.
+
+
+## Fortsetzung 94: Idle-Prozessdeskriptor implementiert und verifiziert -- Scheduler-Deadlock behoben, dabei einen zweiten, separaten, bisher verdeckten Bug freigelegt (2026-09-30, direkte Fortsetzung derselben Sitzung)
+
+**Auftrag (Andreas, nach Fortsetzung 93):** "ok, dann versuch das Problem
+sauber zu fixen" -- den in Fortsetzung 93 skizzierten Loesungsweg
+(dediziertes Idle-Prozessdeskriptor-Objekt) fuer den Scheduler-Deadlock
+umsetzen, gruendlich, insbesondere die Reentranz-Frage diesmal wirklich
+verifizieren statt annehmen.
+
+### Design
+
+`Q9K_ProcCreateIdle(entryPC)` (`q9kernel_firstproc.c`, neu, direkt nach
+`Q9K_ProcCreate` -- exakt dieselbe Fake-Rahmen-Konstruktion, s. dortigen
+Kopfkommentar): legt EINMAL beim Boot einen permanenten, echten
+Prozessdeskriptor aus dem bestehenden Pool an (`Q9K_ProcPoolAlloc`,
+`Q9K_AllocMem` fuer den Stack -- dasselbe, bereits bewaehrte Muster wie
+`TestProcA`/`TestProcB`, die ebenfalls nie per `F$Exit` enden), mit
+State `Q9K_PROCDESC_STATE_IDLE` ('i', neu) statt 'a' -- und OHNE
+`Q9K_SchedInsert`: der Idle-Deskriptor konkurriert nie um Prioritaet/
+Alterung, ist ausschliesslich ueber die feste Zelle `Q9K_IdleProcDesc`
+($1F8C, naechste freie Adresse nach `Q9K_FIRQStaticsPtr` $1F88)
+erreichbar. Sein "Code" (`Q9K_IdleProcLoop`, `q9kernel_entry.a`) ist ein
+reines `bra self` -- er ruft NIE einen Syscall auf und beruehrt die
+verketteten Ready-/Sleep-Queue-Listen selbst nicht.
+
+`Q9K_SysFExit`/`Q9K_SysFWait`/`Q9K_SysFSleep` (alle drei betroffenen
+Stellen, s. Fortsetzung 93) rufen bei leerer Bereit-Queue jetzt eine
+gemeinsame Hilfsroutine `Q9K_IdleFallback` statt sofort zu panicken: sie
+schaltet auf `Q9K_IdleProcDesc` um (`Q9_D_Proc` wird dabei explizit
+gesetzt, da dieser Pfad NICHT ueber `Q9K_SchedFirstPick` laeuft, das das
+sonst als Nebenwirkung erledigt) -- ein GEWOEHNLICHER Kontextwechsel,
+kein Sonderfall im Rueckweg, keine eigene Wiederholungsschleife, kein
+manuelles Interrupt-Freigeben durch diesen Code. Nur wenn der Idle-
+Deskriptor selbst fehlt (Boot-Anlage fehlgeschlagen), faellt sie auf die
+alte, echte K$Idle-Panik zurueck.
+
+**Warum das reentranz-sicher ist (diesmal wirklich verifiziert, nicht
+angenommen):** die Interrupts werden fuer den eigentlichen Umschalt-Code
+NICHT freigegeben -- der Idle-PROZESS SELBST laeuft mit freigegebenen
+Interrupts (SR=$2000 in seinem Fake-Rahmen), aber er beruehrt dabei
+keine Scheduler-Struktur. Das Aufwecken bleibt dadurch VOLLSTAENDIG beim
+bereits nachweislich sicheren `Q9K_TimerIRQHandler`/
+`Q9K_SchedReschedule`-Pfad -- demselben Pfad, der JEDEN anderen
+laufenden Prozess auch unterbricht. Keine zweite, potenziell
+nebenlaeufige Beruehrung der Listen von aussen mehr noetig -- genau der
+Unterschied zum verworfenen ersten Versuch aus Fortsetzung 93.
+
+`Q9K_SchedReschedule` (`q9kernel_sched.c`) bekam den bereits in
+Fortsetzung 93 gelegten Zombie-Schutz um den neuen `IDLE`-Zustand
+erweitert: "current" wird nur zurueck in die Bereit-Queue gelegt, wenn
+sein State weder ZOMBIE noch IDLE ist -- sonst wuerde der Idle-
+Deskriptor bei jedem Wechsel weg von ihm zusaetzlich in die Bereit-Queue
+haengen und koennte spaeter faelschlich statt eines echten Prozesses
+ausgewaehlt werden.
+
+### Ein Sprungreichweiten-Fund unterwegs (kein Bug, aber lehrreich)
+
+Der erste Entwurf (drei vollstaendig ausgeschriebene Pruef-Bloecke, je
+einer pro Aufrufstelle) liess `l68` beim Linken abbrechen: "operand size
+error ... symbol 'Q9K_SysRetPDImpl' ... too large for a pc relative
+(word) operand" -- der zusaetzliche Code verschob alle nachfolgenden
+Adressen gerade so weit, dass eine voellig andere, bereits vorhandene
+PC-relative Referenz aus der 16-Bit-Reichweite fiel (genau die Klasse
+Problem, vor der der bestehende Kommentar bei `Q9K_PanicIdleBridge`
+schon warnt). Geloest durch dieselbe, bereits im File etablierte
+Technik: die drei Aufrufstellen rufen jetzt eine GEMEINSAME Routine
+(`Q9K_IdleFallback`) statt die Pruefung dreifach auszuschreiben --
+deutlich weniger zusaetzliche Bytes, baut sauber.
+
+### Verifikation
+
+- Alle 28 `test_q9kernel_*.c`-Host-Suiten gruen.
+- Standard-Emulatorboot (`Q9K_TestNestedTrapStress=0`, eingecheckter
+  Default) unveraendert -- kein Hang, keine Exception, dieselbe
+  `Q9K_TestProcA`-Idle-Ausgabe wie vorher.
+- Stresstest-Boot (`=1`): der Idle-Prozess wird nachweislich erreicht
+  und laeuft korrekt -- per Debug-Dump bestaetigt: mehrere echte
+  Timer-Interrupts unterbrechen ihn sauber an derselben (Ein-
+  Instruktion-Schleife-)Adresse, KEINE Exception an dieser Stelle,
+  KEINE Zombie-/Idle-Resurrection in der Bereit-Queue beobachtet.
+
+### Zweiter, separater Bug freigelegt -- NICHT geloest, offen dokumentiert
+
+Der VOLLE Stresstest (Fork, Schlafen, Aufwachen, Fortfahren) endet aber
+weiterhin nicht sauber: nachdem der Idle-Prozess korrekt eine Weile
+gelaufen ist (mehrere echte Ticks lang, per RaceRing bestaetigt),
+stuerzt der Kernel spaeter ab (Vektor=4, Illegal Instruction, PC in der
+Boot-ROM-Region bei `$fe00007e`, mitten in einer Datentabelle statt
+echtem Code).
+
+**Wichtigster Befund dazu:** dieselbe Absturzadresse trat SCHON beim
+verworfenen ERSTEN Fixversuch aus Fortsetzung 93 auf (Busy-Wait-Ansatz,
+komplett andere Mechanik) -- zwei architektonisch voellig
+unterschiedliche Loesungen fuer denselben Scheduler-Bug landen beim
+IDENTISCHEN Absturz. Das spricht klar dagegen, dass der Fehler in der
+Scheduler-Umschaltung selbst liegt, und dafuer, dass er weiter hinten
+liegt: im Code, den der aufgeweckte Elternprozess ANSCHLIESSEND
+durchlaeuft.
+
+**Isolationsversuch:** derselbe Testaufbau OHNE den `forkchild`-Fork
+(nur `F$Sleep` im Elternprozess allein, sodass Q9K_IdleFallback ebenso
+ueber den F\$Sleep-Aufrufpfad erreicht wird) stuerzte in 15 Sekunden
+NICHT ab (Vektor=0), zeigte aber laut Race-Ring eine unerwartet REICHE
+Abfolge echter externer Aufrufe (I$Open $84, I$Dup $82, I$ChgDir $86,
+I$WritLn $8c) -- genau das Muster von `Q9K_StartupProc`s dokumentierter
+mshell-Startsequenz. **Das widerlegt meine urspruengliche Annahme, der
+Code nach dem Aufwachen sei nur ein einfacher, schnell fehlschlagender
+`F$Fork("echo")`-Versuch** -- tatsaechlich lauft dort (trotz der
+scheinbar deaktivierten `ifne`-Bloecke) eine deutlich komplexere,
+mehrstufige externe I/O-Sequenz, deren genauer Ausloeser noch nicht
+geklaert ist.
+
+**Bewusst NICHT weiterverfolgt in dieser Runde** (Zeit-/Sorgfaltsabwaegung,
+dieselbe Regel wie in Fortsetzung 93): den exakten Code-Pfad, ueber den
+`Q9K_TestProcA` nach dem Aufwachen dorthin gelangt, und die genaue
+Absturzursache zu klaeren, waere ein eigener, nicht-trivialer
+Untersuchungsfaden fuer sich.
+
+**Naechster Schritt fuer eine Folgesitzung, konkret:** den Race-Ring
+direkt VOR dem Absturz vollstaendig auswerten (welcher Funktionscode/
+welche Ruecksprungadresse unmittelbar vor `pc=$fe00007e` lag -- die
+bisherigen Dumps zeigen nur den Zustand kurz VOR den letzten paar
+Timer-Ticks, nicht die Trap-Sequenz direkt davor), und klaeren, WARUM
+`Q9K_TestProcA` nach dem Aufwachen ueberhaupt Code erreicht, der wie
+`Q9K_StartupProc` aussieht, obwohl `Q9K_TestStartup`/
+`Q9K_TestDirectAttach` beide auf 0 stehen -- entweder ein drittes,
+unconditional erreichbares Codestueck, oder eine falsche Annahme ueber
+den `ifne`-Bereich.
+
+### Ergebnis fuer STATUS.md
+
+Der urspruenglich gemeldete Scheduler-Deadlock (F$Exit/F$Wait/F$Sleep
+verwechseln leere Bereit-Queue mit echtem K$Idle) ist **behoben und
+verifiziert** -- das war der konkrete Auftrag dieser Runde. Der beim
+Verifizieren zusaetzlich sichtbar gewordene, separate Absturz ist ein
+EIGENSTAENDIGER, bisher durch den alten Deadlock verdeckter Fund und
+bleibt als eigener, offener Punkt dokumentiert.

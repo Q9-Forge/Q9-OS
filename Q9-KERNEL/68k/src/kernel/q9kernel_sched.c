@@ -163,6 +163,7 @@ typedef unsigned char  Q9_u8;
 #define Q9K_PROCDESC_STATE_ACTIVE 'a'   /* s. q9kernel_firstproc.c Kopfkommentar */
 #define Q9K_PROCDESC_STATE_SLEEPING 's'  /* s. q9kernel_procsleep.c -- dort gesetzt */
 #define Q9K_PROCDESC_STATE_ZOMBIE 'z'   /* s. q9kernel_procend.c -- dort gesetzt */
+#define Q9K_PROCDESC_STATE_IDLE 'i'    /* s. q9kernel_firstproc.c Q9K_ProcCreateIdle -- dort gesetzt */
 #define Q9K_SLEEP_INFINITE 0xFFFFFFFFUL   /* Sentinel fuer Sleep(0), s. q9kernel_procsleep.c */
 #ifndef Q9K_READYQ_NEXT_OFF
 #define Q9K_READYQ_NEXT_OFF 0x30UL
@@ -494,23 +495,33 @@ Q9_u32 Q9K_SchedReschedule(void)
          * diesem Tick per F$Exit bereits selbst beendet hatte (State auf
          * ZOMBIE gesetzt, Deskriptor aber laut Kopfkommentar bei
          * Q9K_ProcExit bewusst NICHT freigegeben, solange kein F$Wait ihn
-         * abgeholt hat). Das kann passieren, weil Q9K_SysFExit/Q9K_SysFWait
-         * bei leerer Ready-Queue jetzt NICHT mehr sofort in K$Idle
-         * panicken (s. Q9K_SchedFirstPickOrIdle, q9kernel_entry.a),
-         * sondern mit freigegebenen Interrupts auf den naechsten Tick
-         * warten, waehrend Q9_D_Proc noch auf den soeben beendeten
-         * Deskriptor zeigt. Ohne diese Pruefung wuerde ein bereits
-         * beendeter Prozess hier wieder lebendig -- ein zombie-resurrection-
-         * Bug, live gefunden beim Nachbau genau dieses Ablaufs (forkchild
-         * F$Exit waehrend sein Elternprozess per F$Sleep schlief).
-         * Bewusst NUR gegen ZOMBIE geprueft (nicht auf ACTIVE verengt):
-         * "current" kann hier legitim auch andere Zwischenzustaende tragen
-         * (der bestehende Host-Test test_q9kernel_sched.c laesst sein
-         * current-Mock z. B. ohne explizit gesetztes State-Byte) -- die
-         * einzige Zustandsart, die niemals zurueck in die Queue darf, ist
-         * ein bereits beendeter Prozess. */
+         * abgeholt hat) -- ein zombie-resurrection-Bug, live gefunden
+         * beim Nachbau genau dieses Ablaufs (forkchild F$Exit waehrend
+         * sein Elternprozess per F$Sleep schlief).
+         *
+         * NACHTRAG 2026-09-29/30 (s. Q9K_ProcCreateIdle, q9kernel_firstproc.c):
+         * "current" ist jetzt REGELMAESSIG der permanente Idle-Deskriptor
+         * -- Q9K_SysFExit/Q9K_SysFWait/Q9K_SysFSleep schalten bei leerer
+         * Ready-Queue dorthin um, statt sofort in K$Idle zu panicken.
+         * Genau wie ein Zombie darf auch der Idle-Deskriptor NIE zurueck
+         * in die Ready-Queue: er konkurriert nicht um Prioritaet/Alterung,
+         * sondern ist ausschliesslich ueber die feste Zelle
+         * Q9K_IdleProcDesc erreichbar. Ohne diese Erweiterung wuerde der
+         * naechste Tick, der einen echten Prozess wieder bereit findet,
+         * den Idle-Deskriptor STATT nur zu verlassen zusaetzlich in die
+         * Ready-Queue haengen -- er koennte dann spaeter, statt eines
+         * echten Prozesses, erneut ausgewaehlt werden.
+         *
+         * Bewusst NUR gegen ZOMBIE/IDLE geprueft (nicht auf ACTIVE
+         * verengt): "current" kann legitim auch andere Zwischenzustaende
+         * tragen (der bestehende Host-Test test_q9kernel_sched.c laesst
+         * sein current-Mock z. B. ohne explizit gesetztes State-Byte) --
+         * die einzigen Zustandsarten, die niemals zurueck in die Queue
+         * duerfen, sind ein bereits beendeter Prozess und der Idle-
+         * Deskriptor selbst. */
         if (current != 0 &&
-            Q9K_GetU8(current + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_ZOMBIE)
+            Q9K_GetU8(current + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_ZOMBIE &&
+            Q9K_GetU8(current + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_IDLE)
             Q9K_SchedInsert(current); /* zurueck in die Ready-Queue, Age=Prioritaet */
 
         Q9K_SetU32(Q9_D_PROC, next);

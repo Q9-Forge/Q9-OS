@@ -205,6 +205,16 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_PROCDESC_STATE_ZOMBIE 'z'   /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_WAITING 'w'  /* NACHTRAG 2026-08-22, s. Kopfkommentar */
 #define Q9K_PROCDESC_STATE_SLEEPING 's' /* NACHTRAG 2026-08-30, s. Kopfkommentar */
+#define Q9K_PROCDESC_STATE_IDLE 'i'     /* NACHTRAG 2026-09-29, s. Q9K_ProcCreateIdle */
+/* Feste Speicherzelle fuer den Idle-Deskriptor (Q9_u32-Zeiger), gelesen
+ * von Q9K_SysFExit/Q9K_SysFWait/Q9K_SysFSleep in q9kernel_entry.a
+ * (dortselbe Adresse als "Q9K_IdleProcDesc equ $1F8C" gefuehrt --
+ * gleiches Kreuz-Sprachen-Konventionsmuster wie Q9_D_PROC). Adresse
+ * geprueft frei: hoechste bisher belegte eigene Kernel-Global-Zelle war
+ * Q9K_FIRQStaticsPtr bei $1F88 (4 Byte, endet also bei $1F8C). */
+#ifndef Q9K_IDLEPROCDESC_ADDR
+#define Q9K_IDLEPROCDESC_ADDR 0x1F8CUL
+#endif
 
 /* F$DFork keeps the child allocated but outside the ready queue.  The
  * register image uses the same 68-byte layout as the child's initial fake
@@ -595,6 +605,105 @@ Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority)
     Q9K_SetU32(desc + Q9K_PROCDESC_ENTRYPC_OFF, entryPC);
 
     Q9K_SchedInsert(desc);
+
+    return desc;
+}
+
+/* Q9K_ProcCreateIdle -- permanenter Idle-Prozessdeskriptor (2026-09-29,
+ * Abschnitt "Trap and context lifetime", direkte Folge des per
+ * Concurrency-Stresstest gefundenen Scheduler-Bugs, s.
+ * docs/OWN_KERNEL_STATUS.md Fortsetzung 93).
+ *
+ * PROBLEM, das dieser Deskriptor loest: Q9K_SysFExit/Q9K_SysFWait/
+ * Q9K_SysFSleep hielten eine LEERE Bereit-Queue bisher faelschlich fuer
+ * die reale K$Idle-Semantik ("last 'official' process has exited") und
+ * riefen sofort Q9K_KernelPanic -- auch dann, wenn der einzige
+ * verbleibende Prozess nur schlief (F$Sleep) oder per F$Wait/F$Sema auf
+ * ein spaeteres Ereignis wartet und laengst wieder bereit gewesen waere.
+ * Da Q9K_KernelPanic/Q9K_HaltLoop mit der von Q9K_TrapDispatch gesetzten
+ * Interrupt-Sperre enden, war das UNWIDERRUFLICH: der Timer-Tick, der
+ * den Schlaefer geweckt haette, konnte danach nie mehr feuern.
+ *
+ * LOESUNG: statt bei leerer Bereit-Queue sofort zu panicken, schalten
+ * die betroffenen Stellen auf DIESEN staendig vorhandenen, echten
+ * Prozess um -- ein GEWOEHNLICHER Kontextwechsel wie zu jedem anderen
+ * "naechsten" Prozess, kein Sonderfall im Rueckweg. Sein Code
+ * (Q9K_IdleProcLoop, q9kernel_entry.a) ist ein reines "bra self" und
+ * ruft NIE einen Syscall auf; sein Fake-Rahmen traegt SR=$2000 (IPL=0),
+ * die Interrupts sind also ab dem ersten "rte" hinein sofort wieder
+ * frei. Das eigentliche Aufwecken bleibt DADURCH vollstaendig beim
+ * bereits nachweislich sicheren Weg: Q9K_TimerIRQHandler laeuft mit der
+ * vom 68k-Autovektor-Mechanismus selbst gesetzten Interrupt-Ebene (kein
+ * manuelles Sperren/Freigeben durch diesen Code noetig) und ruft wie bei
+ * JEDEM anderen laufenden Prozess auch Q9K_SchedReschedule auf; sobald
+ * ein Schlaefer wieder bereit ist, schaltet DIESER, bereits etablierte
+ * Pfad um -- KEINE zweite, potenziell nebenlaeufige Beruehrung der
+ * verketteten Ready-/Sleep-Queue-Listen von aussen mehr noetig. Genau
+ * das war die Schwachstelle eines fruehereren, hier bewusst verworfenen
+ * Fixversuchs (manuelles Interrupt-Freigeben um einen eigenen
+ * Wiederholungsaufruf herum, s. Fortsetzung 92/93): der Timer-Tick lief
+ * dabei potenziell GLEICHZEITIG mit dem eigenen Q9K_SchedFirstPick-
+ * Aufruf durch dieselben, nicht reentranten Listen.
+ *
+ * Der Idle-Deskriptor wird NIE per Q9K_SchedInsert in die Bereit-Queue
+ * eingereiht -- er ist nicht "ein Prozess unter vielen", der um
+ * Priorisierung/Alterung konkurriert, sondern ausschliesslich ueber die
+ * feste Speicherzelle Q9K_IdleProcDesc (q9kernel_entry.a) erreichbar,
+ * fuer genau den Fall, dass Q9K_SchedFirstPick 0 liefert. Sein State
+ * (Q9K_PROCDESC_STATE_IDLE) ist deshalb auch keiner der vier realen
+ * Prozesszustaende -- Q9K_SchedReschedule prueft diesen State bereits
+ * (zusammen mit ZOMBIE) explizit, bevor es "current" beim naechsten
+ * eigenen Wechsel zurueck in die Bereit-Queue legen wuerde (s.
+ * q9kernel_sched.c) -- der Idle-Deskriptor darf niemals dort landen.
+ *
+ * Bewusst NICHT aus dem Deskriptor-Pool ausgenommen (Q9K_ProcPoolAlloc
+ * wie bei jedem echten Prozess): TestProcA/TestProcB sind seit Langem
+ * dasselbe Muster (permanent angelegt, nie per F$Exit beendet) --
+ * dieselbe, bereits bewaehrte Infrastruktur, kein Sonderfall im
+ * Pool-Layout. */
+Q9_u32 Q9K_ProcCreateIdle(Q9_u32 entryPC)
+{
+    Q9_u32 desc = Q9K_ProcPoolAlloc();
+    Q9_u32 stackBase;
+    Q9_u32 frameBase;
+    Q9_u32 i;
+
+    if (desc == 0)
+        return 0;
+
+    stackBase = Q9K_AllocMem(Q9K_PROC_STACK_SIZE);
+    if (stackBase == 0) {
+        Q9K_ProcPoolAbortAlloc(desc);
+        return 0;
+    }
+
+    frameBase = stackBase + Q9K_PROC_STACK_SIZE - Q9K_FAKEFRAME_SIZE;
+
+    for (i = 0; i < Q9K_PROCDESC_REGSAVE_SIZE; i += 4)
+        Q9K_SetU32(frameBase + i, 0);
+    Q9K_SetU32(frameBase + Q9K_REGSAVE_A6_OFF, Q9K_GetA6());
+
+    Q9K_SetU16(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_SR_OFF, Q9K_INITIAL_SR);
+    Q9K_SetU32(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_PC_OFF, entryPC);
+    Q9K_SetU16(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_FMTVEC_OFF, 0);
+
+    Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_IDLE);
+    Q9K_SetU16(desc + Q9K_PROCDESC_ID_OFF, Q9K_ProcIdForDesc(desc));
+    Q9K_SetU8(desc + Q9K_PROCDESC_PRIORITY_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_USER_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, stackBase);
+    Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCSIZE_OFF, Q9K_PROC_STACK_SIZE);
+    Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
+    Q9K_SetU32(desc + Q9K_PROCDESC_ENTRYPC_OFF, entryPC);
+
+    /* Bewusst KEIN Q9K_SchedInsert(desc) -- s. Kopfkommentar. */
+
+    /* Selbstspeichernd: Q9K_SysFExit/Q9K_SysFWait/Q9K_SysFSleep lesen den
+     * Deskriptor direkt aus dieser festen Zelle, kein Umweg ueber den
+     * Rueckgabewert im Aufrufer (q9kernel_cinit.c) noetig. */
+    Q9K_SetU32(Q9K_IDLEPROCDESC_ADDR, desc);
 
     return desc;
 }

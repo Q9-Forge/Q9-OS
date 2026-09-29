@@ -80,9 +80,11 @@ extern Q9_u32 Q9K_BuildExcTable(void);
 extern int Q9K_MmuInit(void); /* q9kernel_mmu.c -- explicit flat/MMU gate */
 extern Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod);
 extern Q9_u32 Q9K_ProcCreate(Q9_u32 entryPC, Q9_u8 priority);  /* q9kernel_firstproc.c */
+extern Q9_u32 Q9K_ProcCreateIdle(Q9_u32 entryPC);  /* q9kernel_firstproc.c -- permanenter Idle-Deskriptor, s. dort */
 extern Q9_u32 Q9K_SchedFirstPick(void);    /* q9kernel_sched.c -- waehlt+setzt Q9_D_PROC, 0 = keiner angelegt */
 extern void   Q9K_SchedRun(void);          /* q9kernel_entry.a, kein Ruecksprung vorgesehen */
 extern void   Q9K_TimerActivate(void);     /* q9kernel_entry.a -- aktiviert den Board-Timer (Level 6, Autovector 30) */
+extern void   Q9K_IdleProcLoop(void);      /* q9kernel_entry.a -- reines "bra self", Ziel von Q9K_ProcCreateIdle */
 extern void   Q9K_TestProcA(void);         /* q9kernel_entry.a -- Test-"Prozess" A, s. dortigen Kommentar */
 extern void   Q9K_TestProcB(void);         /* q9kernel_entry.a -- Test-"Prozess" B, s. dortigen Kommentar */
 extern void   Q9K_StartupProc(void);       /* q9kernel_entry.a -- minimal sysgo-style startup test */
@@ -809,6 +811,18 @@ void Q9K_CInit(void)
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcB, 3);
 #endif
+
+        /* Permanenter Idle-Deskriptor (2026-09-29, s. Q9K_ProcCreateIdle
+         * Kopfkommentar) -- muss existieren, BEVOR irgendein echter
+         * Prozess je F$Exit/F$Wait/F$Sleep bei leerer Bereit-Queue
+         * dorthin umschalten koennte. Selbstspeichernd (schreibt seine
+         * eigene Adresse nach Q9K_IdleProcDesc), Rueckgabewert hier
+         * deshalb ungenutzt -- ein Fehlschlag (Pool/Arena erschoepft)
+         * liesse die Zelle bei 0 stehen; der Aufrufer in
+         * q9kernel_entry.a prueft das und faellt in diesem Fall auf den
+         * alten Panic-Pfad zurueck statt auf eine Null-Adresse
+         * umzuschalten. */
+        Q9K_ProcCreateIdle((Q9_u32)(unsigned long)Q9K_IdleProcLoop);
 
         picked = Q9K_SchedFirstPick();
 

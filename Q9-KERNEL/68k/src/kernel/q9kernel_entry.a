@@ -555,6 +555,7 @@ Q9K_IReadManagerRoutine   equ $1F78      * IOMan I$Read shadow; paths carry mana
 Q9K_ICloseManagerRoutine  equ $1F7C      * IOMan I$Close shadow; paths carry manager tag
 Q9K_FIRQHandlersPtr       equ $1F84      * C-init-relocated Q9K_FIRQHandlers VSECT base
 Q9K_FIRQStaticsPtr        equ $1F88      * C-init-relocated Q9K_FIRQStatics VSECT base
+Q9K_IdleProcDesc          equ $1F8C      * Q9_u32, permanenter Idle-Prozessdeskriptor (s. Q9K_ProcCreateIdle, q9kernel_firstproc.c) -- naechste freie Adresse $1F90
 
 * Eigene Kernel-Global-Erweiterungen fuer F$GProcP/F$ID (Abschnitt
 * "Prozess-API", 2026-09-01). Direkt hinter I$Open; $1370/$1374 bleiben
@@ -1514,63 +1515,38 @@ Q9K_NoRomDebugger:
 * interner Sprung statt eines zweiten TRAP-#0-Umwegs -- wir sind an
 * diesen Aufrufstellen bereits im Kernel-Kontext, ein echter TRAP-
 * Ruecksprung waere ohnehin sinnlos (F$Panic kehrt nicht zurueck).
-* NICHT UMGESETZT -- ECHTER, VERSTANDENER BUG, ABSICHTLICH OHNE FIX HIER
-* (2026-09-29): Q9K_SysFWait/Q9K_SysFExit springen unten nach
-* Q9K_KernelPanic (K$Idle), sobald Q9K_SchedFirstPick 0 liefert -- aber
-* eine leere BEREIT-Warteschlange bedeutet NICHT "kein Prozess mehr da".
-* Ein per F$Sleep blockierter Prozess steht in der SCHLAF-Warteschlange
-* und wuerde vom naechsten Timer-Tick zurueck in die Bereit-Queue gelegt
-* -- er wird hier trotzdem als K$Idle behandelt, was den KOMPLETTEN
-* Kernel dauerhaft (und unwiderruflich) lahmlegt, weil Q9K_KernelPanic/
-* Q9K_HaltLoop mit der von Q9K_TrapDispatch gesetzten Interrupt-Sperre
-* endet und diese nie wieder aufgehoben wird -- der Timer-Tick, der den
-* Schlaefer geweckt haette, kann danach nie mehr feuern.
-*
-* GEFUNDEN durch einen gezielten Concurrency-Stresstest (F$Fork
-* "forkchild" gefolgt von F$Sleep im Elternprozess, s. die 'Z'/'z'/'w'-
-* Diagnose bei Q9K_TestProcA weiter oben und
-* tools/nestedtrap_stress.md) -- reproduzierbar: der Kernel haengt nach
-* forkchilds F$Exit bei der Diagnoseausgabe 'H' (Q9K_HaltLoop) fest,
-* obwohl der Elternprozess nur schlief und laengst wieder bereit gewesen
-* waere.
-*
-* EIN ECHTER FIX WURDE HIER VERSUCHT UND WIEDER ZURUECKGENOMMEN: die
-* Interrupts vor einem Wiederholungsversuch freizugeben, ist selbst
-* gefaehrlich -- die verketteten Ready-/Sleep-Queue-Listen sind NICHT
-* reentrant, ein waehrenddessen eintreffender Timer-Tick liefe
-* gleichzeitig mit dem eigenen Q9K_SchedFirstPick-Aufruf durch dieselben
-* Listen. Ein erster Versuch, der das per manuellem "andi.w #$f8ff,sr"/
-* "ori.w #$0700,sr" um jeden einzelnen Aufruf herum absichern wollte,
-* erzeugte einen NEUEN, schlimmeren Fehler (Illegal Instruction in der
-* Boot-ROM-Region, per Q9K_ExcTrap-Marker 'E' gefangen und per
-* Q9K_DIS_DUMP/lokalem Debug-Dump bestaetigt) -- vermutlich, weil ein
-* ueber den bsr in Q9K_SchedFirstPick hinweg gehaltenes Datenregister
-* (D0/D1 sind ueber einen C-Aufruf NICHT garantiert erhalten, anders als
-* D2-D7/A2-A6) nicht sauber gerettet war. Ein falsches Ergebnis ist
-* schlimmer als keins -- deshalb bewusst NICHT gefixt, sondern hier
-* praezise fuer eine eigene Folgesitzung dokumentiert.
-*
-* SAUBERER LOESUNGSWEG fuer die Folgesitzung (skizziert, nicht gebaut):
-* ein dediziertes, permanent vorhandenes IDLE-Prozessdeskriptor-Objekt
-* (eigener, echter Deskriptor mit eigenem Stack), auf das Q9_D_Proc
-* umschaltet, WENN die Bereit-Queue leer ist, statt den soeben
-* beendeten (Zombie-)Deskriptor als "current" dort haengen zu lassen.
-* Der IDLE-Prozess selbst laeuft mit freigegebenen Interrupts in einer
-* Schleife, die NUR Q9K_TickCount liest (kein Aufruf in die verketteten
-* Listen), und ueberlaesst Q9K_TimerIRQHandlers eigenem, bereits
-* funktionierendem Q9K_SchedReschedule-Aufruf das eigentliche Umschalten,
-* sobald ein Schlaefer wieder bereit ist -- dann bleibt jede Beruehrung
-* der Listen dort, wo sie bereits nachweislich sicher ist (der Timer-
-* IRQ selbst), statt sie ein zweites Mal, von hier aus, anzufassen.
-*
-* Q9K_SchedReschedule (q9kernel_sched.c) hat trotzdem bereits einen
-* eigenstaendigen, unabhaengig sinnvollen Haertungs-Fix bekommen: es
-* fuegte "current" bisher bedingungslos zurueck in die Bereit-Queue ein,
-* auch wenn es sich in der Zwischenzeit per F$Exit selbst beendet hatte
-* (State=ZOMBIE) -- ein zombie-resurrection-Bug, der bei JEDER kuenftigen
-* Loesung dieses Idle-Problems sonst sofort wieder aufgetreten waere.
-* Dieser Teil-Fix ist unabhaengig verifiziert (host-getestet) und bleibt
-* stehen, auch ohne den eigentlichen Idle-Fix.
+* Q9K_IdleFallback -- gemeinsame Hilfsroutine fuer Q9K_SysFWait/
+* Q9K_SysFExit/Q9K_SysFSleep (2026-09-29/30, Fortsetzung 93/94 in
+* docs/OWN_KERNEL_STATUS.md): eine leere Bereit-Queue bedeutet NICHT die
+* reale K$Idle-Semantik ("last 'official' process has exited") -- ein per
+* F$Sleep/F$Wait blockierter Prozess waere spaeter wieder bereit. Schaltet
+* stattdessen auf den staendig vorhandenen Idle-Prozess um (s.
+* Q9K_ProcCreateIdle, q9kernel_firstproc.c, dort das volle Design). Bewusst
+* als GEMEINSAME Routine (nicht dreifach kopiert) -- Datei ist ohnehin nah an
+* der 16-Bit-PC-relativen Sprungreichweite (s. Q9K_PanicIdleBridge-Kommentar
+* oben). Kehrt normal zurueck (D0 = Idle-Deskriptor, Q9_D_Proc bereits
+* gesetzt), AUSSER der Idle-Deskriptor fehlt selbst (Boot-Anlage
+* fehlgeschlagen -- sollte real nie vorkommen) -- dann faellt sie direkt auf
+* die alte, echte K$Idle-Panik durch und kehrt NICHT zurueck.
+Q9K_IdleFallback:
+        move.l  Q9K_IdleProcDesc,d0
+        tst.l   d0
+        beq     Q9K_IdleFallback_RealIdle
+        move.l  d0,Q9_D_Proc
+        rts
+Q9K_IdleFallback_RealIdle:
+        moveq   #K_IDLE,d0
+        bra     Q9K_KernelPanic
+
+* Q9K_IdleProcLoop -- der komplette "Code" des permanenten Idle-Prozesses.
+* Bewusst NUR ein "bra self": ruft nie einen Syscall auf, beruehrt die
+* verketteten Ready-/Sleep-Queue-Listen selbst nicht. Sein Fake-Rahmen
+* traegt SR=$2000 (IPL=0), die Interrupts sind ab dem ersten Eintritt frei
+* -- das Aufwecken bleibt dadurch vollstaendig beim bereits nachweislich
+* sicheren Q9K_TimerIRQHandler/Q9K_SchedReschedule-Pfad.
+Q9K_IdleProcLoop:
+        bra     Q9K_IdleProcLoop
+
 Q9K_KernelPanic:
         moveq   #'P',d7                * DIAGNOSE: F$Panic ausgeloest
         bsr     Q9K_DiagWriteD7
@@ -4263,11 +4239,10 @@ Q9K_SysFWait:
 
         tst.l   d0
         bne     Q9K_SysFWait_SwitchTo
-* Kein Prozess mehr bereit -- reale K$Idle-Semantik ("last 'official'
-* process has exited"), s. ausfuehrlichen Kopfkommentar bei
-* Q9K_KernelPanic weiter unten im File.
-        moveq   #K_IDLE,d0
-        bra     Q9K_KernelPanic
+* Kein Prozess mehr bereit -- nicht mehr automatisch K$Idle, s.
+* Q9K_IdleFallback-Kopfkommentar weiter unten im File.
+        bsr     Q9K_IdleFallback
+        bra     Q9K_SysFWait_SwitchTo
 
 Q9K_SysFWait_SwitchTo:
         movea.l d0,a0
@@ -4329,10 +4304,10 @@ Q9K_SysFExit:
 
         tst.l   d0
         bne     Q9K_SysFExit_SwitchTo
-* Kein Prozess mehr bereit -- reale K$Idle-Semantik, s. Kopfkommentar
-* bei Q9K_KernelPanic.
-        moveq   #K_IDLE,d0
-        bra     Q9K_KernelPanic
+* Kein Prozess mehr bereit -- nicht mehr automatisch K$Idle, s.
+* Q9K_IdleFallback-Kopfkommentar weiter unten im File.
+        bsr     Q9K_IdleFallback
+        bra     Q9K_SysFExit_SwitchTo
 
 Q9K_SysFExit_SwitchTo:
         movea.l d0,a0
@@ -4443,10 +4418,10 @@ Q9K_SysFSleep_Block:
         move.l  Q9K_SleepScratch_Next,d0
         tst.l   d0
         bne     Q9K_SysFSleep_SwitchTo
-* Kein Prozess mehr bereit -- reale K$Idle-Semantik, s. Kopfkommentar
-* bei Q9K_KernelPanic.
-        moveq   #K_IDLE,d0
-        bra     Q9K_KernelPanic
+* Kein Prozess mehr bereit -- nicht mehr automatisch K$Idle, s.
+* Q9K_IdleFallback-Kopfkommentar weiter unten im File.
+        bsr     Q9K_IdleFallback
+        bra     Q9K_SysFSleep_SwitchTo
 
 Q9K_SysFSleep_SwitchTo:
         movea.l d0,a0

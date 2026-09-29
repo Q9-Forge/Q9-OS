@@ -1541,29 +1541,43 @@ The SysCall tables above are not the complete kernel roadmap. The following
 areas remain open independently of individual call-code implementations:
 
 1. **Trap and context lifetime** — the process-handoff flag leak is fixed. A
-   first concurrency stress test (2026-09-29, gated behind
+   concurrency stress test (2026-09-29, gated behind
    `Q9K_TestNestedTrapStress`, default off — `F$Fork("forkchild")` followed
    by `F$Sleep` in the parent, placed right next to IOMan's own init call)
-   found a real, reproducible scheduler bug: `F$Exit`/`F$Wait` treat an
-   empty ready queue as real K$Idle ("last official process has exited")
-   even when another process is merely asleep and would become ready on
-   the next timer tick — this halts the entire kernel permanently, because
-   `Q9K_KernelPanic`/`Q9K_HaltLoop` end with `Q9K_TrapDispatch`'s interrupt
-   mask still set, so the tick that would have woken the sleeper can never
-   fire again. A first fix attempt (retry with interrupts re-enabled around
-   `Q9K_SchedFirstPick`) was built, found to be unsafe in its own right
-   (the ready/sleep-queue linked lists are not reentrant against the timer
-   ISR's own `Q9K_SchedReschedule`, and caused a real Illegal Instruction
-   crash), and was deliberately reverted rather than shipped broken — see
-   `docs/OWN_KERNEL_STATUS.md` for the full account and a concrete design
-   sketch (a dedicated idle-process descriptor) for the real fix. One
-   narrower, independently-useful hardening did land and is verified:
-   `Q9K_SchedReschedule` no longer re-queues a process whose state has
-   become `ZOMBIE` in the meantime — a zombie-resurrection hazard that any
-   future fix along these lines would otherwise reintroduce immediately.
-   Register-frame ownership across nested external traps and all return
-   paths through IOMan/file managers/drivers otherwise remains to be
-   stress-tested.
+   found a real, reproducible scheduler bug: `F$Exit`/`F$Wait`/`F$Sleep`
+   treated an empty ready queue as real K$Idle ("last official process has
+   exited") even when another process was merely asleep and would become
+   ready on the next timer tick — this halted the entire kernel
+   permanently, because `Q9K_KernelPanic`/`Q9K_HaltLoop` end with
+   `Q9K_TrapDispatch`'s interrupt mask still set, so the tick that would
+   have woken the sleeper could never fire again.
+   **Fixed (2026-09-30) for the scheduler side specifically:** a permanent
+   idle-process descriptor (`Q9K_ProcCreateIdle`, `q9kernel_firstproc.c`)
+   that `F$Exit`/`F$Wait`/`F$Sleep` switch to instead of panicking when the
+   ready queue is empty — an ordinary context switch, not a busy-wait; the
+   idle process itself is just `bra self` with interrupts enabled, so
+   waking it back up stays entirely on the already-safe
+   `Q9K_TimerIRQHandler`/`Q9K_SchedReschedule` path (no second, competing
+   touch of the non-reentrant ready/sleep-queue lists). Verified: the idle
+   process runs and survives multiple real timer interrupts cleanly, is
+   never re-queued (`Q9K_SchedReschedule` now excludes both `ZOMBIE` and
+   the new `IDLE` state), all 28 host suites and the default emulator boot
+   are unaffected. **A first, different fix attempt (retry with interrupts
+   re-enabled around `Q9K_SchedFirstPick`) was built, found unsafe in its
+   own right, and deliberately reverted** — full account in
+   `docs/OWN_KERNEL_STATUS.md`, Fortsetzung 93.
+   **Still open:** running the full stress scenario end-to-end (fork,
+   sleep, wake, continue) surfaces a *separate*, previously-masked crash
+   once the woken process resumes and reaches later code — reproduced
+   identically across two independently-designed scheduler fixes, which
+   points away from the scheduler change itself and toward the external-
+   trap/I-O path the process continues into after its first sleep/wake
+   cycle (richer than initially assumed — real `I$Open`/`I$Dup`/`I$ChgDir`
+   activity, not just a simple failed fork). Root cause not yet found;
+   see `docs/OWN_KERNEL_STATUS.md`, Fortsetzung 94, for the evidence and
+   the concrete next diagnostic step. Register-frame ownership across
+   nested external traps and all return paths through IOMan/file
+   managers/drivers otherwise remains to be stress-tested end-to-end.
 2. **Scheduler** — stress simultaneous IRQ arrival during queue/context handoff
    and complete hardware-specific IRQ coverage; priority preemption and the
    ordinary process-switch paths are implemented. F$DExec trace stops are
