@@ -8809,3 +8809,75 @@ Allgemeine native Namespace-/Metadatenauflösung und der anschließende
 `I$Read`/`I$Close`-Lebenszyklus für diese an IOMan delegierten Pfade sind
 separat zu integrieren und zu testen. Die Implementierung liegt derzeit
 uncommitted auf `main`.
+
+
+## Fortsetzung 92: Trap/Context-Lifetime-Stresstest-Auftrag -- Architektur verifiziert (kein Bug gefunden), ein unabhaengiger Host-Test-Regressionsfund behoben, echte Emulator-Stresstest-Abdeckung bleibt offen (2026-09-29)
+
+**Auftrag (STATUS.md, "Remaining kernel work outside the SysCalls", Punkt 1
+"Trap and context lifetime"):** verschachtelte externe Traps, Registerrahmen-
+Eigentumsfragen und alle Rueckwege durch IOMan/File-Manager/Treiber unter
+Lastbedingungen pruefen, nicht nur einzeln wie bisher.
+
+**Architekturanalyse (rein per Quelltextlektuere, kein Emulatorlauf):**
+`Q9K_InTrapPath` ($13E4) ist eine EINZIGE globale Zelle, kein Prozess-
+lokales Feld. Das Muster haelt sich als Invariante konsequent durch: die
+Zelle ist NUR waehrend eines Fensters 1, in dem Interrupts per `ori.w
+#$0700,sr` gesperrt sind (`Q9K_TrapDispatch`s allererste Instruktion, VOR
+dem Setzen der Zelle). Das einzige Fenster, in dem die Zelle waehrend
+freigegebener Interrupts 0 ist, ist der externe Aufrufpfad
+(`Q9K_TrapCallExternal`), der die Zelle VOR dem Fremdaufruf explizit
+loescht und beim Rueckweg VOR dem naechsten `move`, das das CCR loeschen
+wuerde, wieder auf 1 setzt. Folge: der Timer-IRQ-Handler
+(`Q9K_TimerIRQHandler`) kann `Q9K_InTrapPath` NIE bei gesetztem Wert 1
+antreffen und muss die Zelle deshalb auch nicht selbst sichern/
+wiederherstellen -- das ist keine Luecke, sondern folgt zwingend aus der
+Sperr-Disziplin. Dieselbe Frage fuer den zweiten, neueren Trap-Einsprung
+`Q9K_TCallDispatch` (TRAP #1-15, M$Init-Mechanismus fuer F$TLink) gestellt:
+der sperrt gar keine Interrupts und ruehrt `Q9K_InTrapPath` nicht an --
+korrekt, weil er ausserhalb der F$/I$-Syscall-Tabelle liegt und die
+aufrufende Umgebung beim `trap #1..15` bereits ausserhalb eines aktiven
+Q9K_TrapDispatch-Fensters sein muss (dieselbe Sperr-Invariante schliesst
+eine Verschachtelung aus). **Kein Bug gefunden** -- ein negatives, aber
+echtes Ergebnis.
+
+**Unabhaengiger Fund beim Host-Test-Sanity-Check (alle 28 aktuellen
+`test_q9kernel_*.c`-Suiten neu gebaut/gelaufen, nicht nur die zuletzt
+dokumentierten 26):** `test_q9kernel_chain.c` baute nicht mehr --
+`Q9K_SysChainReleaseImpl` (q9kernel_chain.c:335) ruft seit der nativen
+F$UAcct-Alarmaufraeumung inzwischen `Q9K_AlarmCleanupProcess` auf, dessen
+Stub in diesem Test fehlte (derselbe Fehlerfall, der `test_q9kernel_procend.c`
+schon einmal traf und dort per No-op-Stub geloest wurde). Gleicher Fix hier
+uebernommen (mitzaehlender No-op-Stub `g_alarmCleanupCalls`). Alle 51
+Testfaelle in `test_q9kernel_chain.c` bestehen, alle 28 Host-Suiten insgesamt
+gruen.
+
+**Der eigentliche Auftrag bleibt NICHT abgeschlossen:** eine echte, im Emulator
+laufende, geskriptete Stresssituation (mehrere Prozesse, die gleichzeitig
+blockierende Aufrufe -- F$Sleep/F$Sema/Ev$Wait -- UND echte externe I$Open/
+I$Read/I$Write-Aufrufe durch IOMan/RBF/CF ueberlappend durchlaufen) existiert
+weiterhin NICHT als eingecheckter Regressionstest. Der bestehende
+Boot-Testablauf (`Q9K_TestProcA`/`Q9K_TestProcB`/`forkchild` plus, seit
+Fortsetzung 91, `Q9K_StartupProc`s echtem `/dd/startup`-Open durch IOMan)
+kommt dem nahe, ist aber nirgends als eigenstaendiges, wiederholbares
+Skript (`tools/mkbootfile.sh` + `tools/run_kernel_test.exp`) mit einem klar
+benannten Erfolgsmarker fuer GENAU diese Verschachtelungsfrage festgehalten.
+
+**Warum hier bewusst gestoppt statt improvisiert weitergebaut:** das in
+frueheren Fortsetzungen wiederholt dokumentierte Boot-Image-Rezept (Format
+OHNE `-e`, `mkbootfile.sh --disk` NUR auf dem noch leeren Abbild, danach
+erst `os9 makdir`/`copy`) ist fragil und hat mehrere Sitzungen gebraucht,
+um zuverlaessig zu werden. Ein neuer, unter Zeitdruck selbst zusammengebauter
+Testfall haette ein reales Risiko getragen, ein falsches Gruen oder ein
+falsches Rot zu liefern, statt eines belastbaren Befunds.
+
+**Fuer eine Folgesitzung, konkret:** einen neuen, eigenstaendigen
+Stresstest bauen, der `forkchild.a` (F\$Fork/F\$Exit) um eine zweite Kopie
+mit F\$Sleep VOR dem Exit erweitert (oder ein neues, kleines drittes
+Testmodul), waehrend `Q9K_StartupProc`s echter `/dd/startup`-Pfad parallel
+laeuft -- und das als eigenstaendiges Skript unter `tools/` mit
+`run_kernel_test.exp` und einem eigenen Erfolgsmarker fest einchecken,
+damit der Beleg wiederholbar bleibt statt an eine einmalige manuelle
+Sitzung gebunden zu sein.
+
+Kein Code-Fix an der Trap-Dispatch-Assembly selbst in dieser Fortsetzung --
+nur der unabhaengige Host-Test-Stub-Fund.

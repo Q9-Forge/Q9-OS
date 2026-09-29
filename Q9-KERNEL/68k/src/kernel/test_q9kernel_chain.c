@@ -121,6 +121,15 @@ void Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 index, Q9_u32 value)
 
 Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc) { (void)desc; return 7; }
 
+/* Q9K_AlarmCleanupProcess (q9kernel_alarm.c) -- native F$UAcct-Lebenszyklus,
+ * seitdem Q9K_SysChainReleaseImpl ihn aufruft (q9kernel_chain.c:335). Dieser
+ * Test prueft nur den Chain-Freigabepfad selbst; die Alarm-Aufraeumlogik ist
+ * separat in test_q9kernel_alarm.c abgedeckt. Mitzaehlender No-op-Stub,
+ * gleiches Muster wie schon in test_q9kernel_procend.c fuer denselben
+ * Aufruf angelegt. */
+static int g_alarmCleanupCalls;
+void Q9K_AlarmCleanupProcess(Q9_u32 desc) { (void)desc; g_alarmCleanupCalls++; }
+
 #include "q9kernel_chain.c"
 
 static int failures;
