@@ -9973,3 +9973,151 @@ nur `q9kernel_entry.a`). Standard-Emulatorboot erreicht weiterhin seinen
 Marker, `Vektor=0` (keine Exception). Q9-Flux-Aenderungen (vergroesserter
 Schreib-Watch-Ring 64->65536 Eintraege, erweiterter RaceRing-Filter)
 sind rein additiv, bestehende Diagnosen unveraendert funktionsfaehig.
+
+
+## Fortsetzung 103: Validierungstreffer um Tick/Deskriptor/Rahmenadresse ergaenzt -- vollstaendige Lebensgeschichte des betroffenen Zeigerfelds rekonstruiert, exakte Schreibinstruktion weiterhin offen (2026-10-02, direkte Fortsetzung der 102)
+
+### Validierungstreffer erweitert
+
+Der in Fortsetzung 102 ergaenzte Rahmen-Validierungs-Check in
+`Q9K_TimerIRQHandler` loggt jetzt bei einem Fund zusaetzlich zum
+faulen PC-Wert: `Q9K_TickCount`, `Q9_D_Proc` (betroffener Deskriptor)
+und die Rahmenadresse (`sp`) selbst -- als gemeinsame Subroutine
+`Q9K_RaceRingLog30` herausgezogen (sonst wieder "branch out of range",
+dasselbe Muster wie beim Idle-Fallback in Fortsetzung 94). Ein neues
+Einmal-Flag (`Q9K_FrameLoggedOnce`, $1F90) begrenzt die AUSFUEHRLICHE
+Protokollierung auf den ERSTEN Fund -- sonst erschoepft die
+Dauerschleife des bereits kaputten Zustands (jeder weitere Tick haette
+sonst erneut 4 Eintraege geschrieben) den 8192-Slot-RaceRing binnen
+ca. 1600 Ticks und ueberschreibt den eigentlich gesuchten Uebergang.
+Mit dem Einmal-Flag bleibt die GESAMTE Vorgeschichte ab Boot erhalten
+(dieser Lauf: nur 6026 Gesamteintraege, passt komplett in den Ring).
+
+### Befund: der betroffene Deskriptor ist zweifelsfrei `Q9K_TestProcA`, nicht Idle
+
+Fund beim ersten Treffer: `Tick=52`, `Q9_D_Proc=$0001b8f0`,
+Rahmenadresse=`$000378a8`. Per gezieltem `Q9_WATCH_ADDR=0x1F8C`
+(Idle-Deskriptor-Zeigerzelle) zweifelsfrei verifiziert: Idles ECHTER
+Deskriptor ist `$0001bcf0` (= `$1b8f0 + $400`, ein Pool-Slot weiter) --
+`$1b8f0` ist also wirklich `Q9K_TestProcA` selbst, nicht Idle.
+
+### Vollstaendige Lebensgeschichte von `Q9_D_Proc` rekonstruiert
+
+Per `Q9_WATCH_ADDR=0x4C` (die feste Zelle `Q9_D_Proc`) ueber den
+GESAMTEN Lauf: nur 6 Schreibzugriffe insgesamt im gesamten 60-Sekunden-Testlauf:
+
+```
+#9843    pc=fe00062a -> $4aa        (ROM-Bootstrap, vor unserem Kernel)
+#112305  pc=0000740c -> 0          (Kernel-Init, BSS-Nullung)
+#664452  pc=0000ee0a -> $1b8f0      (TestProcA wird beim allerersten Start aktuell)
+#751199  pc=0000ee0a -> $1c0f0      (GLEICHE Instruktion -- ein dritter Deskriptor wird aktuell)
+#752010  pc=00007502 -> $1bcf0      (Idle wird aktuell -- dies IST Q9K_IdleFallback)
+#757687  pc=0000edd0 -> $1b8f0      (TestProcA wird WIEDER aktuell -- Q9K_SchedReschedules
+                                      regulaerer Tick-Wechsel, s. q9kernel_sched.c)
+```
+
+`pc=$ee0a` traegt zwei Bedeutungen (zweimal getroffen): vermutlich
+`Q9K_SchedFirstPick`s eigene `Q9K_SetU32(Q9_D_PROC, picked)`-Zeile --
+einmal beim allerersten Prozessstart (Boot), einmal spaeter (z. B.
+ausgeloest durch einen blockierenden `F$Wait`, der ebenfalls
+`Q9K_SchedFirstPick` aufruft). `pc=$7502` liegt in
+`Q9K_IdleFallback` (`q9kernel_entry.a`) -- bestaetigt live, dass dieser
+Pfad korrekt funktioniert. `pc=$edd0` ist nicht `Q9K_SchedFirstPick`
+(andere Adresse) -- passt zu `Q9K_SchedReschedule`s eigener,
+SEPARATER `Q9K_SetU32(Q9_D_PROC, next)`-Zeile (`q9kernel_sched.c`) --
+der GEWOEHNLICHE, bereits mehrfach als gesund verifizierte
+Tick-Wechsel-Pfad.
+
+### Befund: `Q9K_TestProcA`s `SavedSP`-ZEIGERFELD wurde vor dem Fund nur EINMAL mit einem Nutzwert beschrieben -- nicht durch `F$Sleep`
+
+Per `Q9_WATCH_ADDR` auf `Q9K_TestProcA`s Deskriptor+8 (`$1b8f8`) ueber
+den GESAMTEN Lauf: nur 4 DISTINKTE Schreiber-PCs insgesamt (ueber
+5943 Einzelschreibungen):
+
+```
+pc=0000c96c:    1x   (Boot-Init, Nullung)
+pc=0000d030:    1x   (noch nicht zweifelsfrei einer Quelltextzeile
+                       zugeordnet -- vermutlich ein frueherer, bereits
+                       abgeschlossener Block-/Wechsel-Vorgang auf
+                       demselben Pool-Slot)
+pc=00009294:    1x, schreibt $378a8  (disassembliert: "movea.l
+                       Q9_D_Proc,a0 / move.l sp,8(a0)" -- exakt das
+                       Instruktionspaar, das sowohl Q9K_SysFWait als
+                       auch mehrere andere Blockier-Stellen benutzen;
+                       welche GENAU, ist noch nicht zweifelsfrei
+                       zugeordnet, da mehrere Stellen im Quelltext
+                       denselben generischen Bytecode erzeugen)
+pc=0000897e: 5938x, schreibt $378a8 UNVERAENDERT jedes Mal (= Q9K_TimerIRQHandlers
+                       eigene, bedingungslose Pro-Tick-Sicherung --
+                       bestaetigt NUR, dass Q9_D_Proc beim Grossteil
+                       der Ticks auf TestProcA zeigte, veraendert den
+                       Zeigerwert selbst aber nie)
+```
+
+**Entscheidend:** Es gibt KEINE einzige, von `pc=$9294` verschiedene
+Schreibung in diesem Feld danach -- insbesondere keine erkennbar
+EIGENE `F$Sleep`-Blockier-Sicherung mit einem FRISCHEN Wert. Das
+bedeutet: der Rahmen, den `Q9K_TestProcA` beim Wiederaufwachen (Tick
+52) tatsaechlich zurueckerhaelt, ist NICHT der erwartete, frische
+`F$Sleep`-Rahmen, sondern der ALTE, von der Stelle `pc=$9294` einmalig
+gesicherte Rahmen bei `$378a8` -- ob dieser je gueltig war (und
+zwischenzeitlich durch legitime weitere Stack-Nutzung UNBEOBACHTET
+ueberschrieben wurde, da nur das ZEIGERFELD beobachtet wurde, nicht
+der Rahmeninhalt selbst durchgehend) oder ob `Q9K_TestProcA`s
+tatsaechlicher `F$Sleep`-Aufruf aus einem noch unverstandenen Grund NIE
+eine eigene, frische Sicherung erzeugt hat, ist die zentrale offene
+Frage fuer die naechste Runde.
+
+### Was das nahelegt (Hypothese, NICHT verifiziert)
+
+Zwei moegliche Erklaerungen, beide noch zu pruefen:
+
+1. **Zeiger-Wiederverwendung ueber mehrere Blockier-Zyklen hinweg:**
+   `Q9K_TestProcA`s Testcode blockiert im Verlauf seines Testablaufs
+   mehrfach (laut Quelltext mindestens zweimal `F$Wait`, s. Zeilen 2157/
+   2605 in `q9kernel_entry.a`, sowie spaeter `F$Fork(forkchild)` +
+   `F$Sleep`). Wenn die CPU-Stacktiefe bei JEDEM dieser Blockierpunkte
+   zufaellig identisch ist (gleiche Aufrufebene in geradlinigem
+   Testcode), wuerden ALLE Blockier-Sicherungen DENSELBEN `sp`-Wert
+   erzeugen -- ein `F$Sleep`-Aufruf an derselben Stacktiefe wie ein
+   fruehes `F$Wait` wuerde dann GAR KEINEN "neuen" Schreibwert
+   erzeugen (schreibt denselben Zahlenwert, aber eben doch MIT einer
+   eigenen, frischen Instruktion -- die hier aber nicht auftaucht).
+   Das spricht eher GEGEN diese Erklaerung, da wir dann eine FUENFTE
+   PC fuer den `F$Sleep`-eigenen Schreibzugriff erwarten wuerden, auch
+   bei identischem Resultatwert.
+2. **`F$Sleep` nimmt in diesem Testlauf einen anderen Pfad als
+   angenommen** -- z. B. weil `Q9K_SysSleepImpl` sofort einen bereits
+   bereiten Prozess findet (den frisch geforkten `forkchild`) und
+   `Q9K_TestProcA` dadurch GAR NICHT ueber den erwarteten
+   "Block"-Pfad laeuft, sondern einen aelteren, zuvor etablierten
+   Blockierzustand (den `F$Wait` von Zeile 2605) foertsetzt, der nie
+   sauber aufgeloest wurde, bevor der naechste Blockiervorgang
+   begann -- ein moeglicher Deskriptor-Zustands-Bug (z. B. ein
+   `F$Wait`, das nicht vollstaendig/sauber reaktiviert wurde, bevor
+   der Test mit `F$Fork(forkchild)` + `F$Sleep` fortfuhr).
+
+### Naechster konkreter Schritt
+
+Die Quelltextzuordnung von `pc=$9294` (und `pc=$d030`) muss zweifelsfrei
+geklaert werden -- am sichersten per einer gezielten, EINMALIGEN
+RaceRing-Markierung DIREKT an jeder der infrage kommenden Quelltextstellen
+(`Q9K_SysFWait`s Block-Pfad, `Q9K_SysFSleep`s beide Bloecke, `Q9K_TraceHandler`),
+statt weiter aus rohem Maschinencode zurueckzuschliessen. Danach: den
+FRAME-INHALT selbst (nicht nur das Zeigerfeld) bei `$378a8` ab dem
+Zeitpunkt seiner letzten Sicherung beobachten, um zu sehen, ob er
+zwischen Sicherung und Wiederaufwachen unveraendert (und damit von
+Anfang an falsch) bleibt, oder ob und wodurch er sich aendert.
+
+### Kein Fix in dieser Runde
+
+Weiterhin kein Fix versucht -- die Beleglage reicht noch nicht fuer
+eine zweifelsfreie Ursachenbestimmung, nur fuer eine stark eingegrenzte
+Hypothese. Die Validierungs- und Protokollier-Erweiterungen bleiben
+als dauerhafte, kostenguenstige Diagnose im Kernel eingebaut.
+
+### Verifikation
+
+Alle 28 `test_q9kernel_*.c`-Host-Suiten gruen (keine C-Quelltextaenderung,
+nur `q9kernel_entry.a`). Standard-Emulatorboot erreicht weiterhin seinen
+Marker, `Vektor=0` (keine Exception).

@@ -556,6 +556,7 @@ Q9K_ICloseManagerRoutine  equ $1F7C      * IOMan I$Close shadow; paths carry man
 Q9K_FIRQHandlersPtr       equ $1F84      * C-init-relocated Q9K_FIRQHandlers VSECT base
 Q9K_FIRQStaticsPtr        equ $1F88      * C-init-relocated Q9K_FIRQStatics VSECT base
 Q9K_IdleProcDesc          equ $1F8C      * Q9_u32, permanenter Idle-Prozessdeskriptor (s. Q9K_ProcCreateIdle, q9kernel_firstproc.c) -- naechste freie Adresse $1F90
+Q9K_FrameLoggedOnce       equ $1F90      * TEMPORAER (2026-10-02, Fortsetzung 102): Q9_u8, begrenzt die erweiterte Rahmen-Validierungs-Protokollierung auf den ERSTEN Fund -- sonst erschoepft die Dauerschleife des bereits kaputten Zustands den RaceRing binnen ca. 1600 Ticks und ueberschreibt den eigentlich gesuchten Uebergang -- naechste freie Adresse $1F91
 
 * Eigene Kernel-Global-Erweiterungen fuer F$GProcP/F$ID (Abschnitt
 * "Prozess-API", 2026-09-01). Direkt hinter I$Open; $1370/$1374 bleiben
@@ -2890,6 +2891,25 @@ Q9K_TimerActivate:
 * einen frisch per Q9K_ProcCreate erzeugten Prozess genauso wie fuer
 * einen zuvor selbst unterbrochenen (s. Kopfkommentar bei Q9K_SchedRun
 * oben zum gemeinsamen Fake-Rahmen-Mechanismus).
+* Q9K_RaceRingLog30 -- TEMPORAER (2026-10-02, Fortsetzung 102): schreibt
+* IN d1 einen RaceRing-Eintrag mit Marker 30 (wiederverwendet, s.
+* Kopfkommentar bei Q9K_TimerIRQHandler -- nur per "Timer-IRQ" erkannte
+* Markerwerte landen ueberhaupt im gefilterten Dump). Herausgezogen statt
+* viermal inline wiederholt, sonst sprengt es wieder die 16-Bit-
+* Sprungreichweite (s. Q9K_PanicIdleBridge-Kommentar, derselbe Fund wie
+* beim Idle-Fallback in Fortsetzung 94). Clobbert d0/d2/a0.
+Q9K_RaceRingLog30:
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        moveq   #30,d0
+        move.l  d0,(a0)
+        move.l  d1,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
+        rts
+
 Q9K_TimerIRQHandler:
         addq.l  #1,Q9K_TickCount               * eigener Zaehler, s. dort
         movem.l d0-d7/a0-a6,-(sp)              * kompletten Registersatz des unterbrochenen Prozesses sichern
@@ -2917,27 +2937,32 @@ Q9K_TimerIRQHandler:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp      * auf den Stack des NEUEN Prozesses umschalten
 Q9K_TimerIRQ_Resume:
-* TEMPORAERE Rahmen-Validierung (2026-10-02, Fortsetzung-101-Folge, s.
-* docs/OWN_KERNEL_STATUS.md): prueft den GLEICH per movem/rte benutzten
-* Rahmen, BEVOR movem ihn verzehrt -- SR liegt unverzehrt bei sp+$3C
-* (60 Byte Registerbereich, s. Q9K_PROCDESC_REGSAVE_SIZE), PC bei
-* sp+$3E (Q9K_EXCFRAME_PC_OFF). Fehlt das Supervisor-Bit ($2000), ist
-* das der direkte Beleg der vermuteten Rahmenkorruption -- RaceRing-
-* Log statt Kernelpanic, damit der Testlauf bis zum echten Absturz
-* weiterlaeuft und beide Zustaende im selben Dump sichtbar werden.
+* TEMPORAERE Rahmen-Validierung (2026-10-02, Fortsetzung-101/102-Folge,
+* s. docs/OWN_KERNEL_STATUS.md): prueft den GLEICH per movem/rte
+* benutzten Rahmen, BEVOR movem ihn verzehrt -- SR liegt unverzehrt bei
+* sp+$3C (60 Byte Registerbereich, s. Q9K_PROCDESC_REGSAVE_SIZE), PC
+* bei sp+$3E (Q9K_EXCFRAME_PC_OFF). Fehlt das Supervisor-Bit ($2000),
+* ist das der direkte Beleg der vermuteten Rahmenkorruption --
+* RaceRing-Log statt Kernelpanic, damit der Testlauf bis zum echten
+* Absturz weiterlaeuft und beide Zustaende im selben Dump sichtbar
+* werden. NACHTRAG (Fortsetzung 102): zusaetzlich Tickzahl, betroffener
+* Deskriptor (Q9_D_Proc) und die Rahmenadresse (sp) selbst mitloggen --
+* genug, um in einer Folgerunde GEZIELT nur noch dieses eine
+* Tickfenster zu beobachten, statt den gesamten Lauf.
         move.w  $3c(sp),d7
         andi.w  #$2000,d7
         bne.s   Q9K_TimerIRQ_FrameOK
-        move.l  Q9K_RaceRingIdx,d2
-        andi.l  #$1fff,d2
-        movea.l #Q9K_RaceRingBase,a0
-        lsl.l   #3,d2
-        adda.l  d2,a0
-        moveq   #30,d0
-        move.l  d0,(a0)
-        move.l  $3e(sp),d0                          * PC des faulen Rahmens
-        move.l  d0,4(a0)
-        addq.l  #1,Q9K_RaceRingIdx
+        tst.b   Q9K_FrameLoggedOnce
+        bne.s   Q9K_TimerIRQ_FrameOK           * schon einmal (ausfuehrlich) geloggt -- Ring schonen
+        move.b  #1,Q9K_FrameLoggedOnce
+        move.l  $3e(sp),d1                          * PC des faulen Rahmens
+        bsr     Q9K_RaceRingLog30
+        move.l  Q9K_TickCount,d1                    * Tickzahl zum Zeitpunkt des Fundes
+        bsr     Q9K_RaceRingLog30
+        move.l  Q9_D_Proc,d1                         * betroffener Deskriptor
+        bsr     Q9K_RaceRingLog30
+        move.l  sp,d1                                * Rahmenadresse (= betroffene Speicheradresse)
+        bsr     Q9K_RaceRingLog30
 Q9K_TimerIRQ_FrameOK:
         movem.l (sp)+,d0-d7/a0-a6               * (eigenen oder neuen) Registersatz zurueckholen
         rte

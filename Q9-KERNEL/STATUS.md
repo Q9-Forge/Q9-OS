@@ -1645,6 +1645,25 @@ areas remain open independently of individual call-code implementations:
    No fix attempted — only the diagnostic check itself was added to
    `q9kernel_entry.a`; Q9-Flux tooling also extended (enlarged write-
    watch ring, RaceRing filter, commit `ad0ddac`).
+   **Further narrowed (2026-10-02, Fortsetzung 103):** the validation
+   hit now also logs the tick count, the affected descriptor, and the
+   frame address. The affected descriptor is confirmed to be
+   `Q9K_TestProcA` itself (not idle — idle's real descriptor was
+   independently verified at a different address). Watching
+   `Q9_D_Proc` for the entire run shows only 6 writes total, tracing a
+   clean TestProcA → (another descriptor) → idle → TestProcA
+   lifecycle. Watching TestProcA's own `SavedSP` pointer field for the
+   entire run shows only 4 distinct writer instructions — critically,
+   no write after the single blocking-save that produced the bad
+   address, and no distinct `F$Sleep`-specific save at all before the
+   corrupted wake. This points at either pointer reuse across multiple
+   blocking cycles or `F$Sleep` taking an unexpected path in this
+   scenario, rather than a classic stray overwrite — still a
+   hypothesis, not yet confirmed. See `docs/OWN_KERNEL_STATUS.md`,
+   Fortsetzung 103, for the full evidence trail and the concrete next
+   step (attribute the exact blocking-save instruction to a specific
+   source line, then watch the frame *contents*, not just the
+   pointer). No fix attempted this round either.
    Register-frame
    ownership across nested external traps and all return paths through
    IOMan/file
