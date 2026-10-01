@@ -1620,11 +1620,31 @@ areas remain open independently of individual call-code implementations:
    with `Q9K_TimerIRQHandler`'s own long-standing header comment
    flagging "Q9K_TimerIRQHandler/Q9K_IRQDispatch" as an acknowledged,
    never-fully-resolved general race (see the Fortsetzung-33 history).
-   The single concrete corrupting write has not yet been caught live;
-   see `docs/OWN_KERNEL_STATUS.md`, Fortsetzung 101, for the full
-   evidence trail and the concrete next diagnostic step. No kernel
-   source was changed this round — the new tooling lives entirely in
-   Q9-Flux (commit `ad0ddac`).
+   **Caught live (2026-10-02, Fortsetzung 102):** a reentrancy-flag
+   probe in `Q9K_TimerIRQHandler` (two independent crash-reproducing
+   runs, never triggered) rules out a nested timer tick re-entering
+   the handler itself. A permanent, always-on frame-validation check
+   was added right before the handler's final `movem`/`rte`
+   (peeks at the about-to-be-restored frame's `SR`, non-destructively,
+   before `movem` consumes it; logs to the RaceRing instead of
+   RTE-ing into garbage if the Supervisor bit is missing — zero
+   behavioral change on the healthy path). It pinned the corruption to
+   a single, specific tick boundary: idle runs cleanly for several
+   ticks, then the very next tick's frame is already corrupted — the
+   damage happens in one 10ms window, not gradually. Cross-checked
+   against `Q9K_ProcExit`'s parent-reactivation logic and ruled that
+   out too: it only fires when the parent's state is `WAITING`, and
+   the parent here is `SLEEPING`, so that path provably cannot be the
+   cause for this scenario. The exact corrupting write is still not
+   caught — address-based memory watches land on addresses that get
+   reused as ordinary live stack space by whichever process happens to
+   be current, so a fixed-address watch cannot distinguish "the saved
+   frame" from "normal stack traffic" without already knowing the
+   exact tick. See `docs/OWN_KERNEL_STATUS.md`, Fortsetzungen 101–102,
+   for the full evidence trail and the concrete next diagnostic step.
+   No fix attempted — only the diagnostic check itself was added to
+   `q9kernel_entry.a`; Q9-Flux tooling also extended (enlarged write-
+   watch ring, RaceRing filter, commit `ad0ddac`).
    Register-frame
    ownership across nested external traps and all return paths through
    IOMan/file

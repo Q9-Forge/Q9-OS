@@ -9824,3 +9824,152 @@ und Standard-Emulatorboot unberuehrt. Q9-Flux-Aenderung (`ad0ddac`)
 ist rein additiv (ein neuer, per Default inaktiver Env-Var-Trigger),
 bestehende Diagnosen (`Q9_FREEZE_PC`, `Q9_WATCH_ADDR` etc.) unveraendert
 funktionsfaehig.
+
+
+## Fortsetzung 102: Rahmenkorruption live gefangen, Ursache weiterhin offen (2026-10-02, direkte Fortsetzung der 101)
+
+### Reentranz-Hypothese per Flag-Probe widerlegt
+
+Erster Versuch (Vorschlag des Koordinators): ein Q9_u8-Flag ($1F90,
+direkt neben `Q9K_IdleProcDesc`), das `Q9K_TimerIRQHandler` bei Eintritt
+setzt und kurz vor `rte` wieder loescht -- wird der Handler reentrant
+(waehrend ein erster Durchlauf noch zwischen "SavedSP sichern" und dem
+Stack-Wechsel auf den neuen Prozess steckt, also waehrend
+`Q9K_SchedReschedule` noch auf dem Stack des unterbrochenen Prozesses
+laeuft) ein zweites Mal betreten, haette das Flag das beim zweiten
+Eintritt bereits gesetzt vorgefunden und einen eindeutig markierten
+RaceRing-Eintrag ('REN!') geschrieben.
+
+Zwei unabhaengige, jeweils bis zum Absturz (Vektor=4) durchgelaufene
+Testlaeufe: KEIN einziger 'REN!'-Treffer. **Reentranter Eintritt in
+Q9K_TimerIRQHandler ist damit als Ursache ausgeschlossen** -- die
+Flag-Pruefung wieder entfernt (ihr Zweck ist erfuellt, Befund negativ).
+
+### Robusterer Detektor: Rahmen-Validierung statt Adress-Raten
+
+Adressbasierte `Q9_WATCH_ADDR`-Versuche auf die vermutete Rahmenlage
+(`savedsp+0x34`, also die 8 Byte Format/SR/PC direkt vor dem
+abschliessenden `rte`) liefen mehrfach ins Leere: dieselbe Adresse wird
+im normalen Betrieb staendig als GEWOEHNLICHER Live-Stack-Speicher von
+JEDEM gerade laufenden Prozess wiederverwendet (z. B. durch
+`Q9K_TimerIRQHandler`s eigenes `movem.l d0-d7/a0-a6,-(sp)` bei JEDEM
+Tick, mit voellig legitimen, staendig wechselnden Werten) -- ein reiner
+Adress-Trigger kann "der gesuchte gespeicherte Rahmen" nicht von
+"gewoehnlicher Stack-Aktivitaet an derselben Adresse" unterscheiden,
+ohne den exakten Tick bereits zu kennen.
+
+Stattdessen ein inhaltsbasierter Pruefpunkt direkt im Kernel ergaenzt:
+in `Q9K_TimerIRQHandler`, unmittelbar vor `movem.l (sp)+,d0-d7/a0-a6`
+(Label `Q9K_TimerIRQ_Resume`), wird das SR-Wort des GLEICH benutzten
+Rahmens zerstoerungsfrei bei `sp+$3C` gelesen (60 Byte
+Registerbereich, s. `Q9K_PROCDESC_REGSAVE_SIZE`, DAVOR liegt also noch
+nichts geholt) und auf das Supervisor-Bit (`$2000`) geprueft. Fehlt
+es, ist das der direkte, inhaltliche Beweis der Rahmenkorruption --
+RaceRing-Log (Marker 30, PC-Feld = der faule PC-Wert aus `sp+$3E`)
+statt Kernelpanic, damit der Testlauf bis zum eigentlichen Absturz
+weiterlaeuft und beide Zustaende im selben Dump sichtbar werden. Keine
+Verhaltensaenderung auf dem gesunden Pfad (ein Vergleich, ein bedingter
+Sprung pro Tick).
+
+**Werkzeug-Nachtrag (Q9-Flux):** der `Q9K_RaceRing`-Dump-Renderer
+zeigt normalerweise NUR Eintraege nahe einem X/A-Marker (±3,
+s. Kopfkommentar in `q9boardrun.c` -- sonst waeren alle 5900+
+Timer-Ticks unlesbar viel Text). Ein neuer Treffer dieser
+Rahmen-Validierung (Marker 30 mit einem implausibel grossen PC-Wert,
+> `$01000000`) wurde als weiteres Sichtbarkeits-Kriterium ergaenzt,
+sonst waere der eigene neue Befund im gefilterten Dump unsichtbar
+geblieben.
+
+### Fund: die Korruption passiert an einer EINZELNEN, identifizierbaren Taktgrenze
+
+Im RaceRing, direkt lesbar:
+
+```
+#76  marker=30 pc=00007510 (Timer-IRQ)   <- gesund, Idle laeuft normal
+#77  marker=30 pc=00007510 (Timer-IRQ)   <- gesund
+#78  marker=30 pc=00007510 (Timer-IRQ)   <- gesund, letzter gute Tick
+#79  marker=30 pc=b8c02000 (Timer-IRQ)   <- BEREITS korrupt
+#80  marker=30 pc=b8cbab4c (Timer-IRQ)   <- bleibt korrupt (Folgetick)
+#81  marker=30 pc=b8cbab4c (Timer-IRQ)
+#82  marker=30 pc=b8d601a0 (Timer-IRQ)
+...
+```
+
+Drei Beobachtungen daraus:
+
+1. **Die Korruption ist ein EINMALIGES Ereignis, kein schleichender
+   Prozess** -- Tick #78 ist noch komplett gesund, #79 bereits
+   vollstaendig kaputt. Dazwischen liegt GENAU eine Tick-Periode (10ms).
+2. **Der korrumpierte PC-Wert bleibt NICHT konstant** -- er steigt von
+   Tick zu Tick (b8c02000 -> b8cbab4c -> b8d601a0 -> ...), genau das
+   Muster der aus Fortsetzung 98/101 bekannten monotonen
+   "Ausfuehrung-von-genulltem-Speicher"-Drift. Das bedeutet: AB Tick
+   #79 wird der eigentliche, jetzt wild gewordene Code tatsaechlich
+   AUSGEFUEHRT (nicht nur einmal falsch gesprungen und dann sofort
+   wieder abgefangen) -- die Rahmen-Validierung in
+   `Q9K_TimerIRQHandler` erkennt es erst beim naechsten regulaeren
+   Tick, nachdem der Schaden laengst angerichtet ist.
+3. **Tick #79 ist bereits der ERSTE Versuch, den geweckten Prozess
+   zurueckzuholen** -- die vorhergehenden Ticks (#76-78) zeigen
+   durchgehend Idle (`pc=00007510` = `Q9K_IdleProcLoop`), das heisst
+   `Q9K_SchedReschedule` gibt bei #79 zum ersten Mal einen
+   Wechsel-Deskriptor zurueck (vermutlich der durch `F$Sleep`
+   aufgewachte `Q9K_TestProcA`). Der gelesene Rahmen ist zu diesem
+   Zeitpunkt SCHON korrupt -- die Korruption geschah also VOR diesem
+   Umschaltversuch, nicht WAEHREND ihm.
+
+### Was das ausschliesst
+
+- **Reentranz in `Q9K_TimerIRQHandler` selbst**: ausgeschlossen (s. o.).
+- **`Q9K_ProcExit`s Eltern-Reaktivierung** (wenn `forkchild` per
+  `F$Exit` endet): per Quelltext-Pruefung ausgeschlossen --
+  `Q9K_ProcExit` reaktiviert den Elternprozess NUR, wenn dessen State
+  exakt `Q9K_PROCDESC_STATE_WAITING` ('w') ist (`q9kernel_procend.c`,
+  `Q9K_ProcExit`). `Q9K_TestProcA` steht zu diesem Zeitpunkt aber auf
+  `Q9K_PROCDESC_STATE_SLEEPING` ('s', per `F$Sleep`) -- die
+  Bedingung kann fuer dieses Testszenario also gar nicht zutreffen,
+  dieser Code-Pfad wird fuer unseren Fall nicht einmal betreten.
+- **`forkchild.a` selbst**: Quelltext komplett gelesen -- benutzt
+  ausschliesslich seinen EIGENEN, per `movem.l a0/d6,-(sp)`/`(sp)+`
+  balancierten Stack und zwei feste DUART-Hardware-Adressen; keine
+  berechnete oder fremde Speicheradresse irgendwo im Modul.
+
+### Noch offen
+
+Die EINZELNE schreibende Instruktion, die den Rahmen zwischen Tick #78
+und #79 korrumpiert, wurde noch nicht gefangen -- adressbasiertes
+Beobachten scheitert an der Wiederverwendung derselben Adressen als
+gewoehnlicher Stack (s. o.). **Konkreter naechster Schritt:** den
+Rahmen-Validierungs-Treffer selbst um den von `Q9K_SchedReschedule`
+zurueckgegebenen Deskriptorzeiger UND den `Q9K_TickCount`-Stand
+ergaenzen, damit der exakte Tick UND der betroffene Prozess
+(voraussichtlich `Q9K_TestProcA`, aber noch nicht zweifelsfrei
+bestaetigt) feststehen -- danach EXAKT in diesem einen Tickfenster
+(nicht ueber den gesamten Lauf) die Speicheradresse beobachten, in der
+Gewissheit, dass JEDE Schreibung in diesem schmalen Fenster verdaechtig
+ist. Alternativ: `forkchild`s Laufzeit (3x 0x4000-Warteschleife) grob
+mit der Tickzahl bei #79 korrelieren, um zu pruefen, ob die Korruption
+zeitlich mit `forkchild`s drittem 'F'-Druck oder seinem `F$Exit`-Aufruf
+zusammenfaellt (naheliegendster Verdaechtiger trotz des oben
+ausgeschlossenen direkten Pfads -- ein ANDERER, noch nicht gelesener
+Teil von `Q9K_ProcExit`/`Q9K_ProcReleaseMemory`/
+`Q9K_ProcExitFreeDeadChildren` koennte dennoch indirekt betroffen
+sein).
+
+### Kein Fix in dieser Runde
+
+Bewusst kein Fix versucht -- die genaue Ursache ist noch nicht
+bekannt, nur der Zeitpunkt und zwei ausgeschlossene Erklaerungen. Die
+neue Rahmen-Validierung bleibt als dauerhafter, ueberschaubar billiger
+(ein Vergleich pro Tick) Regressions-Detektor im Kernel eingebaut --
+sie aendert nichts am Verhalten, solange der Rahmen gesund ist, und
+faengt kuenftig jeden Wiederauftritt dieses spezifischen
+Korruptionsmusters sofort und live.
+
+### Verifikation
+
+Alle 28 `test_q9kernel_*.c`-Host-Suiten gruen (keine C-Quelltextaenderung,
+nur `q9kernel_entry.a`). Standard-Emulatorboot erreicht weiterhin seinen
+Marker, `Vektor=0` (keine Exception). Q9-Flux-Aenderungen (vergroesserter
+Schreib-Watch-Ring 64->65536 Eintraege, erweiterter RaceRing-Filter)
+sind rein additiv, bestehende Diagnosen unveraendert funktionsfaehig.

@@ -2917,6 +2917,28 @@ Q9K_TimerIRQHandler:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp      * auf den Stack des NEUEN Prozesses umschalten
 Q9K_TimerIRQ_Resume:
+* TEMPORAERE Rahmen-Validierung (2026-10-02, Fortsetzung-101-Folge, s.
+* docs/OWN_KERNEL_STATUS.md): prueft den GLEICH per movem/rte benutzten
+* Rahmen, BEVOR movem ihn verzehrt -- SR liegt unverzehrt bei sp+$3C
+* (60 Byte Registerbereich, s. Q9K_PROCDESC_REGSAVE_SIZE), PC bei
+* sp+$3E (Q9K_EXCFRAME_PC_OFF). Fehlt das Supervisor-Bit ($2000), ist
+* das der direkte Beleg der vermuteten Rahmenkorruption -- RaceRing-
+* Log statt Kernelpanic, damit der Testlauf bis zum echten Absturz
+* weiterlaeuft und beide Zustaende im selben Dump sichtbar werden.
+        move.w  $3c(sp),d7
+        andi.w  #$2000,d7
+        bne.s   Q9K_TimerIRQ_FrameOK
+        move.l  Q9K_RaceRingIdx,d2
+        andi.l  #$1fff,d2
+        movea.l #Q9K_RaceRingBase,a0
+        lsl.l   #3,d2
+        adda.l  d2,a0
+        moveq   #30,d0
+        move.l  d0,(a0)
+        move.l  $3e(sp),d0                          * PC des faulen Rahmens
+        move.l  d0,4(a0)
+        addq.l  #1,Q9K_RaceRingIdx
+Q9K_TimerIRQ_FrameOK:
         movem.l (sp)+,d0-d7/a0-a6               * (eigenen oder neuen) Registersatz zurueckholen
         rte
 
