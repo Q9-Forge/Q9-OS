@@ -1611,8 +1611,18 @@ areas remain open independently of individual call-code implementations:
    mappings, cache controls, and other processor-specific services.
 6. **Boot and integration hardening** — normal multi-module boot, memory-arena
    exhaustion handling, module-directory setup, init-parameter validation, and
-   a 75-second application run are covered; malformed-image negative emulator
-   tests and still longer stress runs remain.
+   a 75-second application run are covered. **Malformed-image negative
+   emulator tests: a first pair now implemented and checked in**
+   (2026-10-01, `tools/malformed_boot_test.sh`) — a corrupted sync word and
+   a corrupted 24-word-XOR checksum, each injected into a real module
+   (`rbf`, `cfide`) sitting in the middle of the boot module list.
+   `Q9K_ModDirPopulateFromBootList`'s scan (`q9kernel_moddir.c`) handles
+   both cleanly: the corrupted module is skipped byte-by-byte (never
+   trusting its unvalidated size field to jump forward), scanning
+   continues correctly past it, every other module — including those
+   listed *after* the corrupted one — is still found, and no exception is
+   raised. Verified via a live emulator boot + module-directory dump for
+   each case. Still longer stress runs remain.
 7. **Status and regression hygiene** — keep `STATUS.md` and the historical
    `docs/OWN_KERNEL_STATUS.md` synchronized and require every status change to
    name the exact host or emulator evidence behind it.

@@ -9483,3 +9483,108 @@ Kernel-Debug-Iteration dieser Sitzung.
 Alle Trace-Umgebungsvariablen waren rein lauf-zeit-gesteuert, keine
 Quelltextaenderung an Q9-KERNEL. `Q9K_TestNestedTrapStress` wurde nach
 der Untersuchung wieder auf den eingecheckten Standard (0) zurueckgesetzt.
+
+
+### Nachtrag (2026-10-01, direkte Fortsetzung): Q9-Flux ist bis auf Weiteres GESPERRT, nicht nur "noch nicht angefasst"
+
+Beim Versuch, den in Fortsetzung 98 vorgeschlagenen Schritt (`Q9_DBG_TR_SIZE`
+vergroessern, Emulator neu bauen) nach ausdruecklicher Freigabe umzusetzen,
+zeigte `git fetch` in `Q9-Flux/Q9-Flux-68k` eine **erzwungene
+Aktualisierung** von `origin/main` und eine **massive Divergenz**:
+**381 Commits nur lokal, 388 Commits nur auf `origin`**, ausgehend von
+einem weit zurueckliegenden gemeinsamen Vorfahren -- beide Seiten mit
+Commits von praktisch demselben Zeitpunkt (30.09., lokal 10:14 Uhr,
+origin 11:03 Uhr). Das sieht nach zwei unabhaengig gewachsenen
+Entwicklungslinien aus (moeglicherweise zwei parallele Maschinen/
+Checkouts), nicht nach einer einfachen Korrektur.
+
+Die peer-Sitzung, die zuvor "Q9-Flux main ist sauber" gemeldet hatte, ist
+inzwischen **vollstaendig beendet** (nicht nur idle) und nicht mehr
+erreichbar -- ein Querchecken war nicht moeglich.
+
+**Konsequenz: `Q9-Flux` bleibt bis auf Weiteres vollstaendig TABU** --
+nichts anfassen, nichts bauen, nichts committen, nichts pushen, bis
+Andreas die Divergenz selbst aufgeloest hat (vermutlich muss er
+entscheiden, welche der beiden Linien die gueltige ist). Der in
+Fortsetzung 98 vorgeschlagene naechste Schritt bleibt inhaltlich richtig
+und wartet nur auf diese Klaerung -- NICHT auf eine technische
+Umsetzungsfrage.
+
+Diese Sitzung wechselt deshalb zu einem von Q9-Flux unabhaengigen,
+offenen Punkt in `Q9-KERNEL/STATUS.md` ("Remaining kernel work outside
+the SysCalls") -- s. die folgende Fortsetzung.
+
+
+## Fortsetzung 99: malformed-image negative emulator tests -- erster Satz implementiert und verifiziert (2026-10-01, direkte Fortsetzung derselben Sitzung)
+
+**Kontext:** Q9-Flux bleibt wegen der in Fortsetzung 98 gefundenen
+380+-Commits-Divergenz vollstaendig GESPERRT (s. Nachtrag dort). Diese
+Sitzung wechselt deshalb auf Andreas' Vorschlag zu einem von Q9-Flux
+unabhaengigen, offenen Punkt aus `Q9-KERNEL/STATUS.md`, Abschnitt
+"Remaining kernel work outside the SysCalls" -- gewaehlt: Punkt 6
+(Boot and integration hardening), konkret "malformed-image negative
+emulator tests", als am konkretesten spezifizierter, mit vorhandenen
+Werkzeugen (kein Q9-Flux-Rebuild) umsetzbarer Kandidat.
+
+### Vorarbeit: die bestehende Validierung gelesen
+
+`Q9K_ValidModuleHeader`/`Q9K_CheckSyncWord` (`q9kernel_modcheck.c`,
+schon seit 2026-08-18 vorhanden, empirisch gegen echte 68K-Kernel-
+Binaries verifiziert) pruefen Sync-Wort ($4AFC) und eine 24-Word-XOR-
+Pruefsumme (muss 0xFFFF ergeben) ueber die ersten 0x30 Byte jedes
+Kandidaten. `Q9K_ModDirPopulateFromBootList` (`q9kernel_moddir.c`)
+nutzt das beim Scannen der Boot-Zeit-Regionen: bei JEDEM Fehlschlag
+(Sync-Wort ODER Pruefsumme ODER Groesse=0) wird der Scan-Offset nur um
+2 Byte vorgerueckt (byteweise Suche nach dem naechsten plausiblen
+Kandidaten) -- NUR bei vollstaendig validiertem Header wird die
+Modulgroesse benutzt, um den naechsten Kandidaten zu ueberspringen. Beim
+Lesen sah das bereits solide aus; diese Runde bestaetigt das EMPIRISCH
+statt es nur anzunehmen.
+
+### Test 1: korrumpiertes Sync-Wort
+
+Modul `rbf` (liegt in der Mitte der Bootliste: kernel, init, forkchild,
+ioman, **rbf**, cfide, dd, c0, scf, sc68681, term) per Byte-Patch
+korrumpiert (erstes Sync-Byte auf 0x00 gesetzt). Emulator-Boot:
+**`rbf` fehlt sauber aus der Moduldirectory-Kette, ALLE anderen zehn
+Module (insbesondere die NACH `rbf` liegenden cfide/dd/c0/scf/sc68681/
+term) weiterhin korrekt gefunden, keine Exception (Vektor=0).**
+
+### Test 2: korrumpierte Pruefsumme (Sync-Wort intakt)
+
+Modul `cfide` per Byte-Patch korrumpiert (ein Byte bei Offset 0x10,
+innerhalb der 0x00-0x2F-Pruefsummenregion, XOR mit 0xFF -- Sync-Wort
+bleibt unveraendert gueltig). Emulator-Boot: **`cfide` fehlt sauber,
+alle anderen zehn Module weiterhin korrekt gefunden, keine Exception.**
+Bestaetigt, dass die ZWEITE, teurere Pruefebene (volle Pruefsumme, nicht
+nur das billige Sync-Wort) tatsaechlich unabhaengig greift.
+
+### Werkzeug, fuer eine Folgesitzung wiederverwendbar
+
+`tools/malformed_boot_test.sh` (neu, eingecheckt): baut beide
+Testfaelle automatisch (aus den bereits per Fortsetzung 94 etablierten
+`/tmp/vendor_*.mod`-Extrakten und dem jeweils aktuellen Kernel-Build),
+bootet jeden im Emulator, prueft per Debug-Dump, dass GENAU das
+korrumpierte Modul fehlt, dass ein NACH ihm liegendes Modul (`term`)
+weiterhin gefunden wird (Beweis, dass der Scan nicht einfach aufgab
+oder falsch vorsprang), und dass keine Exception auftrat.
+
+**Eigener Fund waehrend des Testaufbaus (kein Kernel-Bug, ein Fehler in
+der eigenen Pruef-Logik):** der erste Entwurf nutzte `grep -q
+"Name=\"cfide\""` gegen den Debug-Dump -- das traf faelschlich AUCH auf
+die Zeile `InputName="cfide"` aus einem voelllig anderen
+Diagnoseabschnitt ("Letzte Modulsuche"), weil "InputName=" ebenfalls
+auf "Name=" endet. Der zweite Testfall schlug dadurch zunaechst
+(scheinbar) fehl, obwohl der Kernel korrekt arbeitete -- durch
+Isolations-Lauf (derselbe Testfall einzeln, nicht direkt nach dem
+ersten) und direkten Blick in den Dump aufgeklaert, dann das Grep-Muster
+auf " Name=\"..." (mit fuehrendem Leerzeichen, wie es nur in der
+Moduldirectory-Zeile selbst vorkommt) praezisiert. Lehrreich: bei einem
+unerwarteten Testfehlschlag erst die eigene Pruef-Logik verdaechtigen,
+nicht sofort den Kernel.
+
+### Verifikation
+
+Beide Faelle `ok` (`tools/malformed_boot_test.sh`, "ALLE TESTS OK").
+Alle 28 `test_q9kernel_*.c`-Host-Suiten weiterhin gruen (keine
+Kernel-Quelltextaenderung in dieser Runde, nur das neue Testskript).
