@@ -9588,3 +9588,68 @@ nicht sofort den Kernel.
 Beide Faelle `ok` (`tools/malformed_boot_test.sh`, "ALLE TESTS OK").
 Alle 28 `test_q9kernel_*.c`-Host-Suiten weiterhin gruen (keine
 Kernel-Quelltextaenderung in dieser Runde, nur das neue Testskript).
+
+
+## Fortsetzung 100: Status-evidence-Audit -- STATUS.md-Zeilen ohne nachvollziehbaren Beleg nachgebessert (2026-10-01)
+
+Gewaehlt aus `STATUS.md` "Remaining kernel work outside the SysCalls",
+Punkt 7 (Status and regression hygiene), als konkretester der
+verbleibenden Q9-Flux-unabhaengigen Kandidaten (Punkt 2 wuerde den
+offenen zweiten Absturz wieder beruehren, Punkte 3/5 sind groessere,
+offene Feature-Baustellen statt einer abgrenzbaren Pruefung).
+
+### Methode
+
+`grep -nE '^\| (✅|🔷) \|' STATUS.md` liefert 76 Zeilen in der F$/I$-
+Syscall-Tabelle. Zeilenlaenge als Proxy fuer "wahrscheinlich ohne
+konkreten Beleg" (reine Floskel wie "implemented"/"implemented and
+tested" ohne Testname, Kommando, Markerfolge oder Zahl) --
+die 12 kuerzesten Zeilen (<100 Zeichen) identifiziert. Eine davon war
+die generische Status-Legende selbst (kein echter Tabelleneintrag),
+die restlichen 11 echten Kandidaten: `F$Link`, `F$UnLink`, `F$Fork`,
+`F$Wait`, `F$Exit`, `F$Send`, `F$ID`, `F$PrsNam`, `F$SRqMem`,
+`F$SRtMem`, `F$Move`.
+
+### Ergebnis
+
+Fuer alle 11 Kandidaten existiert tatsaechlich solider Beleg --
+ueberwiegend echte, in dieser Datei bereits dokumentierte Bugfunde
+(nicht nur "implementiert"), nur bisher nicht in die STATUS.md-Zeile
+selbst hineingeschrieben:
+
+- **F$Link/F$UnLink**: Dreiklang-Testblock gegen echtes Modulverzeichnis
+  (`dd`/`rbf`/`cfide`, Fortsetzung 27/28); bei F$UnLink zwei echte Bugs
+  gefunden+gefixt (CCR-Clobber durch `move.l (sp)+,d7` zwischen `tst.l`
+  und `beq`, 2026-08-21; fehlender A6-Trampolin-Schutz, 2026-08-31).
+- **F$Fork/F$Wait/F$Exit**: Fortsetzung 49 (`M$IData`/`M$IRefs` live
+  verifiziert) sowie der 2026-09-29-Concurrency-Stresstest, der den
+  echten Scheduler-Deadlock fand und fixte (Commit `2b74e30`).
+- **F$Send**: echter Bug gefunden+gefixt (nur `a6` wurde ueber den
+  Signal-Rahmen gerettet, Registerabbild des geweckten Prozesses
+  korrumpiert).
+- **F$ID**: direkte `iattachsvc`-Emulatorregression ruft `F$ID`
+  (Callcode `$000c`) auf, prueft eigene PID-Erhaltung UND die nach
+  `F$SUser` aktualisierte Gruppe/User-ID (`$00030007`).
+- **F$PrsNam**: echter Kettenkonventions-Bug gefunden+gefixt
+  (Fortsetzung 7, 2026-09-08) per Live-Ground-Truth-Tracing durch RBFs
+  echten Verzeichnisscan.
+- **F$SRqMem/F$SRtMem**: zwei echte Registerabbild-Bugs gefunden+gefixt
+  (Rahmenerkennung ueber `sp+8`, `D0`/`A2`-Ruecksprung); die dabei
+  entstandene Rahmenerkennung wird von F$AllPD mitgenutzt.
+- **F$Move**: fehlte komplett, per Ruecksprungadressen-Forensik auf
+  einer `Q9K_SysUnimplemented`-Sonde gefunden (Fortsetzung 28,
+  2026-09-10), live gegen das echte `/CMDS/echo`-Kommandomodul per
+  `F$Load` verifiziert; dabei zusaetzlich einen echten Bug in
+  `Q9K_ModDirValidateAndAdd` gefunden+gefixt (liest jetzt die validierte
+  Modulgroesse aus dem Header-Feld `M$Size` statt einer von IOMan
+  teils um 2 Byte zu grossen uebergebenen Groesse zu vertrauen).
+
+Kein Statusmarker musste auf 🟡 herabgestuft werden -- fuer alle 11
+Kandidaten liess sich echter Beleg finden, nur die STATUS.md-Zeile
+selbst war zu knapp formuliert.
+
+### Verifikation
+
+Reine Dokumentationsaenderung, keine Kernel-Quelltextaenderung in
+dieser Runde -- alle 28 `test_q9kernel_*.c`-Host-Suiten unveraendert
+gruen, Standard-Emulatorboot unveraendert.

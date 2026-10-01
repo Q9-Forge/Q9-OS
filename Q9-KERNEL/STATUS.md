@@ -38,23 +38,23 @@ must not replace the later implementation.
 
 | Status | Code | Command | Current Q9-OS status |
 |---|---:|---|---|
-| ✅ | `0x00` | F$Link | Kernel module lookup/link path implemented and exercised |
+| ✅ | `0x00` | F$Link | Kernel module lookup/link path; emulator-verified against a real module directory in the retired "Dreiklang" test block (`F$Link` on `dd`/`rbf`/`cfide`, Fortsetzung 27/28) and exercised continuously since by every boot that links Microware `ioman`/`scf`/`sc68681` |
 | ✅ | `0x01` | F$Load | External IOMan/RBF load path fixed and emulator-verified with `/dd/CMDS/echo`; the pathname is preserved through the external trap frame, the module validates, and the follow-up program runs |
-| ✅ | `0x02` | F$UnLink | Kernel module unlink path implemented |
-| ✅ | `0x03` | F$Fork | Process creation and memory ownership implemented and tested |
-| ✅ | `0x04` | F$Wait | Child/zombie handling implemented and tested |
+| ✅ | `0x02` | F$UnLink | Kernel module unlink path; two real bugs found and fixed by direct code inspection after it always failed despite a correct `F$Link` hit (2026-08-21 CCR-clobber from `move.l (sp)+,d7` between `tst.l d0` and `beq`; 2026-08-31 missing A6 trampoline guard around the `Q9K_ModDirUnlinkByHeader` C call, same pattern as F$Link), see `q9kernel_entry.a` around `Q9K_SysFUnLink` |
+| ✅ | `0x03` | F$Fork | Process creation and memory ownership; emulator-verified live (Fortsetzung 49, `M$IData`/`M$IRefs`) and exercised repeatedly end to end (fork + sleep + wake) by the 2026-09-29 concurrency stress test (`Q9K_TestNestedTrapStress`) |
+| ✅ | `0x04` | F$Wait | Child/zombie handling; the 2026-09-29 concurrency stress test found and fixed a real deadlock here (empty ready queue mistaken for true K$Idle while a process was merely sleeping, commit `2b74e30`) and the zombie re-queue guard in `Q9K_SchedReschedule` is a direct result of that investigation |
 | ✅ | `0x05` | F$Chain | Replaces the caller's program in place; refusal, resident replacement, and the non-resident `E$MNF` → `F$Load` → retry path are emulator-verified with `chaintgt` (`c s C`) |
-| ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released |
+| ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released; shares the same deadlock fix and idle-process-descriptor fallback as F$Wait above (commit `2b74e30`), verified across multiple real timer interrupts via debug dump |
 | ✅ | `0x07` | F$Mem | Information request implemented, wired and **exercised on the machine**. Handler `Q9K_SysFMem` in `q9kernel_entry.a` (reached through pointer cell `$1EB8`), registered in both dispatch tables; `d0=0` returns the data area size in `d0.l` and its upper bound in `a1`, read from the current process descriptor's alloc base/size fields. Every resize is refused with `E$NoRAM` — the same code the reference kernel returns at `$61da`, and what the manual mandates from V2.3 on. ABI verified twice over: manual pp. 465/466 and the disassembled original at module offset `$133C`. Emulator regression in `iattachsvc.a` covers both halves (markers `%` and `&`), 27/27 host suites green, `Vektor=0` |
-| ✅ | `0x08` | F$Send | Signal path implemented and tested at kernel level |
+| ✅ | `0x08` | F$Send | Signal path; a real bug was found and fixed here (only `a6` was being saved across the signal delivery frame, corrupting the woken process's register image) and verified by confirming the woken process was correctly scheduled and started afterward |
 | ✅ | `0x09` | F$Icpt | Registers the routine and really **runs** it on delivery, by stacking a second process frame; emulator-verified end to end (alarm → routine → `F$RTE`) |
 | ✅ | `0x0A` | F$Sleep | Sleeps end on time and on an early signal; emulator-verified with a 2 s sleep across which the clock advanced |
 | ⛔ | `0x0B` | F$SSpd | "F$SSpd is currently not implemented" in real OS-9/68K; the manual points to lowering the priority instead, and that route now works here (see the scheduler note) |
-| ✅ | `0x0C` | F$ID | Process identity path implemented |
+| ✅ | `0x0C` | F$ID | Process identity path; direct `iattachsvc` emulator regression calls `F$ID` (callcode `$000c`) to retain the caller's own PID and to confirm it reports the updated group/user ID after `F$SUser` (checked against `$00030007`) |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
 | ✅ | `0x0E` | F$STrap | Registers per-process handlers in P$Except and really dispatches into them; emulator-verified end to end on a deliberate Illegal Instruction |
 | 🔷 | `0x0F` | F$PErr | Original Microware IOMan path is the supported implementation; the call is available when IOMan is loaded, while a Q9-native replacement remains open |
-| ✅ | `0x10` | F$PrsNam | Path-name parsing implemented |
+| ✅ | `0x10` | F$PrsNam | Path-name parsing; a real chaining-convention bug was found and fixed by live ground-truth tracing through RBF's own directory-scan path (2026-09-08, Fortsetzung 7) -- `outPastName` was returning a pointer to the separator instead of past it, verified by freezing on a known-good `"startup"` directory entry |
 | ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
 | 🔷 | `0x12` | F$SchBit | Native Q9 implementation is complete and host-tested, including the unusual carry case and invalid-range protection; the normal system path is provided by the loaded Microware IOMan via F$SSvc |
 | 🔷 | `0x13` | F$AllBit | Native Q9 implementation is complete and host-tested; the normal system path is provided by the loaded Microware IOMan via F$SSvc |
@@ -78,8 +78,8 @@ must not replace the later implementation.
 | ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
 | 🟡 | `0x27` | F$SetSys | Katalog erweitert: schreibbare Q9-Werte `$7C` (csl malloc increment), `$28` (`D_TckSec`) und `$76` (`D_TSlice`) sowie verifizierte schreibgeschützte Globals (`D_Init`, `D_Compat`, `D_SysConf`, `D_ModDir`, `D_Proc`, `D_SysPrc`, `D_FProc`, `D_SysROM`, `D_ExcJmp`, `D_TotRAM`, `D_Ticks`, `D_SysDis`, `D_UsrDis`, `D_Compat2`); unbekannte und schreibgeschützte Schreibzugriffe liefern sauber `E$UnkSvc`, hardware-/Microware-spezifische Variablen bleiben klassifiziert offen |
-| ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking and emulator test complete |
-| ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup complete |
+| ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking; two real register-image bugs were found and fixed here (frame detection via `sp+8` failing for a direct-call image, and `D0`/`A2` not passed back through the caller's register image), and the frame-recognition logic it introduced was later reused by F$AllPD |
+| ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup; shares the A6 trampoline guard pattern documented at F$Link/F$Fork/F$Wait and the `E$Param` reserved-value check noted in the F$SRqMem investigation |
 | 🟡 | `0x2A` | F$IRQ | Native registration/removal now validates reserved vectors, clears stale metadata, restores default handlers after the last removal, and is host-tested; complete hardware-/treiber-spezifische Interruptabdeckung remains open |
 | 🔷 | `0x2B` | F$IOQu | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; higher-priority descriptors now preempt immediately from the trap context |
@@ -91,7 +91,7 @@ must not replace the later implementation.
 | ✅ | `0x32` | F$SSvc | Service-table registration, SysTrap routing, per-service data pointers, kernel-slot protection, and empty-table handling are host-tested; the direct `iattachsvc` emulator regression registers service `0x7F` and reaches it through a real TRAP, including the A3 data pointer |
 | 🔷 | `0x33` | F$IODel | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x37` | F$GProcP | PID-to-process-descriptor lookup implemented and host-tested; broader process-property APIs are tracked separately |
-| ✅ | `0x38` | F$Move | Memory move path implemented |
+| ✅ | `0x38` | F$Move | Memory move path; found missing via return-address forensics on a `Q9K_SysUnimplemented` probe (Fortsetzung 28, 2026-09-10) and implemented alongside `F$VModul`/`F$SRqCMem`, verified live by loading the real `/CMDS/echo` command module through `F$Load`; this investigation also found and fixed a real bug in `Q9K_ModDirValidateAndAdd`, which now reads the validated module's actual size from the header's `M$Size` field instead of trusting a caller-supplied size that IOMan was passing 2 bytes too large |
 | ⛔ | `0x39` | F$AllRAM | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, daher keine nachbildbare ABI |
 | 🟡 | `0x3A` | F$Permit | Q9 flat-address-space compatibility handler is wired and succeeds; per-process MMU permission maps remain open |
 | 🟡 | `0x3B` | F$Protect | Q9 flat-address-space compatibility handler is wired and succeeds; denying access requires the future MMU layer |
