@@ -1589,12 +1589,42 @@ areas remain open independently of individual call-code implementations:
    `$fe000000` finally decode as an invalid instruction). The 24576-
    entry ring (`Q9_DBG_TR_SIZE`) is entirely consumed by this already-
    wild state and does not reach back far enough to show where the
-   jump actually originated. Root cause still not found; see
-   `docs/OWN_KERNEL_STATUS.md`, Fortsetzungen 94–98, for the full
-   evidence trail. The concrete next step (enlarging `Q9_DBG_TR_SIZE`
-   and rebuilding the emulator) was deliberately **not** done in this
-   round, since it would modify and rebuild the separate Q9-Flux
-   repository rather than Q9-KERNEL — left for an explicit decision.
+   jump actually originated.
+   **Narrowed further (2026-10-02, Fortsetzung 101, after Andreas
+   resolved the Q9-Flux divergence — see the note below):**
+   `Q9_DBG_TR_SIZE` enlarged 42x (24576 → 1048576 entries) in Q9-Flux;
+   even that much larger ring was still entirely consumed by the same
+   monotonic climb, so the real jump origin lies further back still
+   than a instruction-count ring buffer can practically reach. A new
+   `Q9_FREEZE_SP` trigger (added to Q9-Flux's `m68krt.c`, freezes the
+   ring the instant SP first reaches a chosen value, the SP-side
+   counterpart to the existing `Q9_FREEZE_PC`) pinned down the *exact*
+   crash mechanism instead: the wild jump is not a stray pointer
+   dereference in application code, but **`Q9K_TimerIRQHandler`'s own
+   process-switch-in sequence executing `rte` against a corrupted
+   saved register frame** (`movea.l d0,a0` / `movea.l
+   Q9K_PROCDESC_SAVEDSP_OFF(a0),sp` / `movem.l (sp)+,d0-d7/a0-a6` /
+   `rte`, kernel offset `0x1874`) — the popped `SR` ends up with the
+   Supervisor bit cleared (switching to `USP`, which reads back as the
+   `$400` seen throughout the trace) and the popped `PC` is garbage.
+   Targeted `Q9_WATCH_ADDR`/`Q9_WATCH_FREEZE` runs across the *entire*
+   stress scenario ruled out the obvious suspects: neither the idle
+   descriptor's nor the woken `TestProcA` descriptor's own
+   `SavedSP` *pointer* field is ever corrupted (both verified stable
+   across every single timer tick) — the corruption must be in the
+   *stacked frame contents* at the target address at the moment of the
+   race, not in the pointer to it. The crash point is **not
+   deterministic in tick count** across repeated runs (2503 / 5914 /
+   other values observed), which is itself evidence of a genuine
+   timing-dependent race rather than a fixed logic bug, and lines up
+   with `Q9K_TimerIRQHandler`'s own long-standing header comment
+   flagging "Q9K_TimerIRQHandler/Q9K_IRQDispatch" as an acknowledged,
+   never-fully-resolved general race (see the Fortsetzung-33 history).
+   The single concrete corrupting write has not yet been caught live;
+   see `docs/OWN_KERNEL_STATUS.md`, Fortsetzung 101, for the full
+   evidence trail and the concrete next diagnostic step. No kernel
+   source was changed this round — the new tooling lives entirely in
+   Q9-Flux (commit `ad0ddac`).
    Register-frame
    ownership across nested external traps and all return paths through
    IOMan/file

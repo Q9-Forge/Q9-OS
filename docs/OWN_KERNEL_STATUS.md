@@ -9653,3 +9653,174 @@ selbst war zu knapp formuliert.
 Reine Dokumentationsaenderung, keine Kernel-Quelltextaenderung in
 dieser Runde -- alle 28 `test_q9kernel_*.c`-Host-Suiten unveraendert
 gruen, Standard-Emulatorboot unveraendert.
+
+
+## Fortsetzung 101: Q9-Flux-Divergenz von Andreas aufgeloest, zweiter Absturz deutlich weiter eingegrenzt -- echte RTE-Rahmenkorruption in Q9K_TimerIRQHandler lokalisiert, noch nicht auf die einzelne schreibende Instruktion zurueckgefuehrt (2026-10-02)
+
+### Vorgeschichte: Q9-Flux-Sperre aufgehoben
+
+Andreas hat die in Fortsetzung 98-Nachtrag gemeldete 381/388-Commits-
+Divergenz aufgeklaert: bewusste Historienbereinigung (Ghidra-/RE-
+Erwaehnungen vor Veroeffentlichung entfernt), `origin/main` war die
+korrekte Fassung. Ein erster Versuch, dies per `git reset --hard
+origin/main` nachzuziehen, griff auf dem hier benutzten Checkout NICHT
+(Reflog zeigte keinen `reset`-Eintrag, Divergenz unveraendert) -- nach
+Rueckfrage ein zweiter, diesmal per Reflog-Eintrag ("reset: moving to
+origin/main") zweifelsfrei bestaetigter Reset auf `ead060e`. Alter
+Stand als Sicherheitsnetz unter `safety/pre-flux-realign-2026-10-02`
+(`fa932d8`) erhalten. Submodul `third_party/qemu` und die
+`q9makefile`-Dateien (fremde, unversionierte Arbeit) unberuehrt.
+Die vorherige Referenz-Bootdatei `OS9Boot.noprot.test` existiert im
+neuen Stand nicht mehr am alten Pfad (der Commit an der Spitze
+entfernt sie bewusst aus dem Repo) -- liegt jetzt unter `.hide/
+OS9Boot.noprot.test` (per `.gitignore`-Nachtrag "ignore .hide/"
+bewusst ausserhalb der Versionierung gehalten, selbes Prinzip wie
+"kein proprietaeres Material im Repo"). Die bereits aus einer
+frueheren Sitzung extrahierten `/tmp/vendor_*.mod`-Dateien (29.09.)
+waren noch vorhanden und wurden weiterverwendet.
+
+### Neue, eigene Emulator-Instanz
+
+`make BUILD=build_dbgtrace host` in `Q9-Flux/Q9-Flux-68k` -- eigenes
+Build-Verzeichnis, um die laufende tmux-Session 5:7 und deren
+`build/macos/q9.exe` nicht anzufassen. Kurz geprueft, ob der inzwischen
+aktuellere `origin/main`-Stand (u.a. QUICC->NIC-Umbenennung,
+`src/devices/nic/q9nic.c`) etwas am bisherigen Testaufbau aendert --
+nein: reine interne Umbenennung, Boardadressen/CLI-Flags/Testpfade
+unveraendert, Build lief sauber durch.
+
+### `Q9_DBG_TR_SIZE` 42x vergroessert -- immer noch nicht weit genug
+
+`Q9_DBG_TR_SIZE` in `m68krt.h` von 24576 auf 1048576 Eintraege erhoeht
+(42x). Eigenes Referenz-Bootfile wie in Fortsetzung 94 zusammengebaut
+(`build/q9kernel`+`build/forkchild` + vendor-init/ioman/rbf/cfide/dd/
+c0/scf/sc68681/term), `Q9K_TestNestedTrapStress equ 1` gesetzt, Kernel
+neu gebaut, Testabbild per `os9 format` + `mkbootfile.sh` erzeugt.
+
+Lauf mit `Q9_TRACE_INSTR=1 Q9_FREEZE_PC=0xfe00007e`: **der gesamte,
+jetzt 42x groessere Ring ist UEBERHAUPT NICHT weiter zurueckgekommen**
+als vorher -- durchgehend dieselbe monotone PC+4-Steigung durch
+genullten Speicher, jetzt beginnend bei `$fdc00fd0` statt `$fdfe8090`
+(exakt um die Puffergroessendifferenz verschoben). Erklaerung: Speicher
+mit lauter Nullbytes dekodiert als endlose Folge von `ori.b #0,d0`
+(ein gueltiger 4-Byte-Befehl, der D0 unveraendert laesst) -- ein reiner
+Artefakt-Zustand, der beliebig lange laufen kann, nicht ein kurzer
+Uebergang. Die reine Puffergroesse ist damit erschoepft als
+Diagnosemittel fuer DIESEN Absturz -- der echte Sprungursprung liegt
+mutmasslich viel weiter zurueck, als ein Ringpuffer wirtschaftlich
+abdecken kann.
+
+### Neues Werkzeug: `Q9_FREEZE_SP`
+
+Analog zu `Q9_FREEZE_PC` (friert auf einen gewaehlten PC-Wert ein)
+einen neuen Trigger `Q9_FREEZE_SP=<wert>` in `q9_dbg_instr_hook`
+ergaenzt: friert den Ring ein, sobald der AKTUELLE Stackpointer
+(`m68k_get_reg(M68K_REG_SP)`) erstmals exakt den gewaehlten Wert
+erreicht -- beantwortet "welche Instruktion hat A7 zuerst auf diesen
+verdaechtigen Wert gesetzt", was ein reiner PC-Trigger nicht kann, wenn
+der verdaechtige Zustand selbst schon lange vor dem Absturz-PC beginnt.
+
+Lauf mit `Q9_TRACE_INSTR=1 Q9_FREEZE_SP=0x400`: fand die GENAUE
+uebergangsstelle. Letzte gesunde Instruktion `pc=00008974 sp=00037884`
+(TestProcA-Kontext, a0 vorher durch den Idle-Deskriptor $1bc90/$1bcad
+und dann auf TestProcA $1b890 gesetzt -- klar erkennbares Muster des
+Scheduler-Umschaltens), DANACH sofort `pc=b8902000 sp=00000400` --
+ein voelliger Genickbruch in einem einzigen Schritt.
+
+### Mechanismus lokalisiert: `Q9K_TimerIRQHandler`s RTE liest einen korrumpierten Rahmen
+
+Datei-Offset `0x1874` im gebauten `q9kernel` (= Ladeadresse `$8974`
+minus Kernelbasis `$7100`) disassembliert zu exakt der bekannten
+Umschalt-Sequenz in `Q9K_TimerIRQHandler` (q9kernel_entry.a):
+
+```
+movea.l d0,a0
+movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp   * = "movea.l 8(a0),sp" (2e68 0008)
+Q9K_TimerIRQ_Resume:
+movem.l (sp)+,d0-d7/a0-a6                 * (4cdf 7fff)
+rte                                        * (4e73) <- hier, PC=$8974
+```
+
+`a0` = `d0` = der von `Q9K_SchedReschedule` zurueckgegebene neue
+Deskriptor (hier: TestProcA `$1b890`, da es gerade aus `F$Sleep`
+aufgewacht ist). `sp` wird aus `TestProcA+$08` (SavedSP) geladen,
+13 Register zurueckgeholt, dann `rte`. Das danach gepoppte `SR`/`PC`
+ist Muell: `SR` verliert offenbar das Supervisor-Bit (daher der
+Wechsel auf `USP`, der als `$400` zurueckgelesen wird -- vermutlich
+schlicht der nie benutzte, von Musashi defaultinitialisierte
+User-Stack-Pointer dieses reinen Supervisor-Kernels), `PC` wird
+`$b8902000`.
+
+### Was NICHT die Ursache ist (per gezieltem `Q9_WATCH_ADDR`/`_FREEZE` ausgeschlossen)
+
+Ueber den GESAMTEN Testlauf beobachtet (nicht nur den letzten
+Augenblick):
+
+- **Idle-Deskriptors `SavedSP`-Feld** (`$1bc90+8`): 53 Schreibzugriffe
+  insgesamt, JEDER EINZELNE schreibt denselben Wert `$0003f84c`. Nie
+  korrumpiert.
+- **TestProcAs eigenes `SavedSP`-Feld** (`$1b890+8`): durchgehend
+  `$00037840`, ebenfalls nie veraendert.
+- **TestProcAs gespeicherter Rahmen selbst** (`$3787c`, 8 Byte
+  Format/SR/PC): jeder beobachtete Tick-Schreibzugriff legt denselben
+  gesunden Wert ab (`SR=$2000 PC=$84b4` -- TestProcA wird offenbar
+  jedes Mal an derselben Stelle unterbrochen). Der konkrete,
+  korrumpierende Schreibzugriff wurde in diesem Lauf NICHT gefangen --
+  entweder traf er eine andere Adresse/einen anderen Zeitpunkt als in
+  DIESEM bestimmten Lauf, oder das Timing dieses speziellen Laufs
+  erreichte den Fehlerfall ueberhaupt nicht auf demselben Weg.
+
+Damit ist die Zeigerebene (welche Deskriptor-Adresse, welche
+SavedSP-Adresse) durchgehend korrekt -- die Korruption muss im
+INHALT des Zielrahmens an irgendeiner Adresse im Augenblick der
+eigentlichen Rennbedingung passieren, nicht an einer falschen Adresse.
+
+### Indiz fuer eine echte Rennbedingung, keinen deterministischen Logikfehler
+
+Die Tickzahl bis zum Absturz variiert zwischen Laeufen (2503 in
+Fortsetzung 97, 5914 in diesem Lauf, weitere unterschiedliche Werte in
+den `Q9_WATCH_ADDR`-Laeufen) -- bei identischem Kernel-Build und
+identischem Testabbild. Das ist ein klares Rennbedingungssymptom, kein
+fester Logikfehler. Passt zum bereits bestehenden Kopfkommentar bei
+`Q9K_TrapDispatch` (2026-09-04-Fund, Datei `q9kernel_entry.a` um Zeile
+2309): "Echtes TODO bleibt die generelle Ursache in
+Q9K_TimerIRQHandler/Q9K_IRQDispatch" -- ein seit Laengerem bekanntes,
+nie kernelweit behobenes, nur punktuell (Diagnose-Testcode) entschaerftes
+Problem.
+
+### Kein Codefix in dieser Runde
+
+Bewusst KEIN Fix versucht -- die genaue korrumpierende Schreibstelle
+ist noch nicht gefangen, ein Fix auf dieser Beleglage waere Raten statt
+Beheben (s. eigene Regel "ein falsches Ergebnis ist schlimmer als
+keins", [[feedback-verify-handover]]). Kernel-Quelltext in dieser
+Runde unveraendert; alle Aenderungen liegen in Q9-Flux
+(`m68krt.c`/`m68krt.h`, Commit `ad0ddac`, gepusht nach `main`).
+
+### Naechster konkreter Schritt (fuer eine Folgesitzung)
+
+`Q9K_SchedReschedule` wird aus `Q9K_TimerIRQHandler` per `bsr`
+aufgerufen, WAEHREND die CPU noch auf dem Stack des GERADE unterbrochenen
+Prozesses laeuft (der Wechsel auf den NEUEN Stack passiert erst NACH
+dem Ruecksprung aus dem C-Aufruf). Zu pruefen: kann ein zweiter
+Timer-Tick (oder ein anderer Interrupt) WAEHREND dieses C-Aufrufs
+feiern und selbst wieder in denselben Pfad eintreten, BEVOR der erste
+Durchlauf fertig ist? Falls ja, waere das exakt die Art von
+Verschachtelung, die den Zielrahmen korrumpieren koennte (zwei
+gleichzeitige "wer schreibt gerade wessen SavedSP/Rahmen"-Zugriffe).
+Konkret zu pruefen: welchen Interrupt-Pegel setzt der 68k-
+Autovektor-Mechanismus beim Eintritt in Level-6-IRQs automatisch, und
+ob irgendetwas in `Q9K_SchedReschedule` (C-Code!) oder einer von ihm
+aufgerufenen Funktion das SR absenkt, bevor der Stack-Wechsel
+abgeschlossen ist. Ein `Q9_WATCH_ADDR` auf das Zielrahmen-Fenster MIT
+`Q9_WATCH_FREEZE=1` ueber mehrere Laeufe hinweg (da die Rennbedingung
+nicht deterministisch ist) sollte irgendwann den tatsaechlich
+korrumpierenden Schreibzugriff fangen.
+
+### Verifikation
+
+Reine Diagnoserunde. Kein Kernel-Quelltext geaendert -- 28 Host-Suiten
+und Standard-Emulatorboot unberuehrt. Q9-Flux-Aenderung (`ad0ddac`)
+ist rein additiv (ein neuer, per Default inaktiver Env-Var-Trigger),
+bestehende Diagnosen (`Q9_FREEZE_PC`, `Q9_WATCH_ADDR` etc.) unveraendert
+funktionsfaehig.
