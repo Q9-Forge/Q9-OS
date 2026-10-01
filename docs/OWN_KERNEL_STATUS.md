@@ -9152,3 +9152,91 @@ verifiziert** -- das war der konkrete Auftrag dieser Runde. Der beim
 Verifizieren zusaetzlich sichtbar gewordene, separate Absturz ist ein
 EIGENSTAENDIGER, bisher durch den alten Deadlock verdeckter Fund und
 bleibt als eigener, offener Punkt dokumentiert.
+
+
+## Fortsetzung 95: zweiter Absturz (Fortsetzung 94) weiter eingegrenzt -- eine Fruehannahme korrigiert, Ursache weiterhin NICHT gefunden (2026-10-01, direkte Fortsetzung derselben Sitzung)
+
+**Auftrag (Andreas):** "hol dir erst den aktuellen Stand und schaue was zu
+tun ist" -- danach den in Fortsetzung 94 dokumentierten zweiten Absturz
+mit den dort hinterlegten Repro-Schritten weiter untersuchen.
+
+**Vorab:** `main`/`origin/main` standen exakt bei `2b74e30`, keine fremden
+Pushes. Eine FREMDE, nicht committete lokale Aenderung an
+`q9kernel_entry.a` (`Q9K_TestIOManLinkFail_Halt` faellt jetzt in
+`Q9K_TestProcA_Loop` statt separat zu halten) lag im Arbeitsbaum --
+vermutlich von der inzwischen beendeten "Andere KI-Session"; unberuehrt
+gelassen (nicht meine Aenderung, `git stash` wurde vom Auto-Mode-
+Classifier blockiert, also schlicht ignoriert statt verworfen).
+
+### Korrektur einer Fruehannahme aus Fortsetzung 94
+
+Die dort beschriebene "reichere externe I/O-Aktivitaet" (I\$Open/I\$Dup/
+I\$ChgDir/I\$WritLn, scheinbar `Q9K_StartupProc`-aehnlich) ist **NICHT**
+Code, den `Q9K_TestProcA` nach dem Aufwachen unerwartet erreicht --
+beim genauen Nachvollziehen der RaceRing-Reihenfolge stammt diese
+Sequenz aus **IOMans EIGENER interner Initialisierung**, die waehrend
+des `jsr (a1)`-Einsprungs in Fortsetzung 93 selbst (also VOR der 'R'-
+Marke, vor jedem eigenen Testcode) laeuft. Die `ifne Q9K_TestStartup`/
+`Q9K_TestDirectAttach`-Bloecke sind also tatsaechlich wirkungslos,
+genau wie ihr `equ 0` nahelegt -- kein drittes, unconditional
+erreichbares Codestueck. Diese Spur war ein Irrweg.
+
+### Neuer, gezielter Befund: der Absturz passiert NICHT beim Umschalten weg vom Idle-Prozess
+
+Temporaere Diagnose (nicht eingecheckt, nach der Untersuchung wieder
+vollstaendig entfernt): ein zusaetzlicher RaceRing-Eintrag direkt in
+`Q9K_TimerIRQHandler`, NUR wenn tatsaechlich ein Wechsel stattfindet
+(`d0<>0` nach `Q9K_SchedReschedule`). Ergebnis: **dieser Eintrag
+erscheint im Dump vor dem Absturz KEIN EINZIGES MAL** -- die letzten
+drei erfassten Timer-Ticks (#28-30) sind allesamt reine "kein Wechsel"-
+Ticks (derselbe unterbrochene PC dreimal, die Idle-Schleife laeuft
+weiter).
+
+**Das grenzt den Verdaechtigenkreis deutlich ein:** der Fehler liegt
+NICHT in der Umschalt-/Pick-Logik selbst (`Q9K_SchedFirstPick`,
+`Q9K_SchedPickHighestAge`, mein `Q9K_IdleFallback`/`Q9K_ProcCreateIdle`),
+sondern entweder (a) in den UNBEDINGTEN, jeden Tick laufenden Aufrufen
+innerhalb `Q9K_SchedReschedule` selbst, BEVOR die Pick-Entscheidung
+ueberhaupt faellt (`Q9K_SchedAgeAll`, `Q9K_SleepQDecrementAll`,
+`Q9K_AlarmTick`, `Q9K_ClockTick` -- die letzten beiden geben einen
+`Q9_u32`-Rueckgabewert zurueck, der an dieser Aufrufstelle bisher
+ungenutzt verworfen wird, noch nicht naeher untersucht), oder (b) in
+etwas, das zeitlich zufaellig in dasselbe Fenster faellt (ein
+Hardware-IRQ unabhaengig vom Scheduler, vgl. die in Fortsetzung 33
+bereits dokumentierte, nie global behobene Interrupt-Verschachtelungs-
+Race zwischen Timer und `Q9K_IRQDispatch`).
+
+**Bewusst NICHT weiterverfolgt in dieser Runde:** `Q9K_AlarmTick`/
+`Q9K_ClockTick` im Detail durchzugehen und/oder die Fortsetzung-33-Race
+gezielt gegen dieses Szenario zu pruefen, waere der naechste, noch
+nicht begonnene Schritt -- Zeit-/Sorgfaltsabwaegung, dieselbe Regel wie
+in Fortsetzung 93/94.
+
+### Kein Codefix in dieser Runde
+
+Alle temporaeren Diagnose-Aenderungen (Testflag, Race-Ring-Logging)
+wurden nach der Untersuchung wieder vollstaendig entfernt -- der
+Arbeitsbaum entspricht wieder exakt dem Stand von Commit `2b74e30`
+(bis auf die oben genannte, fremde, unberuehrt gelassene Aenderung).
+Kein Commit dieser Runde ausser dieser Dokumentation.
+
+### Konkreter naechster Schritt fuer eine Folgesitzung
+
+1. `Q9K_AlarmTick`/`Q9K_ClockTick` (`q9kernel_alarm.c`/`q9kernel_clock.c`)
+   im Detail lesen -- insbesondere, ob sie bei einer Alarm-/Uhr-Queue,
+   die seit sehr vielen Ticks nie durchlaufen wurde (weil der Kernel
+   bisher nach kurzer Zeit immer abstuerzte/haengte, bevor der
+   Idle-Fix existierte), irgendeine Grenze/einen Zaehler ueberschreiten
+   koennten.
+2. Dieselbe RaceRing-Diagnosetechnik (dieses Mal: Marker DIREKT an
+   Anfang/Ende von `Q9K_AlarmTick`/`Q9K_ClockTick`/`Q9K_SchedAgeAll`/
+   `Q9K_SleepQDecrementAll`) einsetzen, um zu sehen, ob ALLE VIER noch
+   vollstaendig durchlaufen, bevor der Absturz eintritt -- diesmal mit
+   dem bereits gefundenen, korrekt sichtbaren Marker-Format (`moveq
+   #30,d1` statt eines neu erfundenen Markerwerts, der vom
+   Dump-Renderer sonst stillschweigend gefiltert wird, s. o.).
+3. Parallel: die Fortsetzung-33-Race (Timer vs. `Q9K_IRQDispatch`) als
+   unabhaengige Hypothese im selben Szenario ausschliessen oder
+   bestaetigen -- ggF. das dort beschriebene, enge Interrupt-Sperr-
+   Fenster EXPERIMENTELL auf den Idle-Spin-Bereich ausdehnen (nur als
+   Diagnose, nicht als Fix, solange die Ursache nicht verstanden ist).

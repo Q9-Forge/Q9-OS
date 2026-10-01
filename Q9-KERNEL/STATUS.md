@@ -1568,15 +1568,24 @@ areas remain open independently of individual call-code implementations:
    `docs/OWN_KERNEL_STATUS.md`, Fortsetzung 93.
    **Still open:** running the full stress scenario end-to-end (fork,
    sleep, wake, continue) surfaces a *separate*, previously-masked crash
-   once the woken process resumes and reaches later code — reproduced
-   identically across two independently-designed scheduler fixes, which
-   points away from the scheduler change itself and toward the external-
-   trap/I-O path the process continues into after its first sleep/wake
-   cycle (richer than initially assumed — real `I$Open`/`I$Dup`/`I$ChgDir`
-   activity, not just a simple failed fork). Root cause not yet found;
-   see `docs/OWN_KERNEL_STATUS.md`, Fortsetzung 94, for the evidence and
-   the concrete next diagnostic step. Register-frame ownership across
-   nested external traps and all return paths through IOMan/file
+   — reproduced identically across two independently-designed scheduler
+   fixes, which points away from the scheduler change itself. A first
+   hypothesis (2026-09-30) that the woken process reaches unexpectedly
+   rich external I/O activity turned out to be a misreading — that
+   `I$Open`/`I$Dup`/`I$ChgDir` sequence belongs to IOMan's own internal
+   initialization during its earlier, unrelated init call, not to any
+   code the woken process newly reaches. A targeted diagnostic
+   (2026-10-01) instead shows the crash is **not** in the scheduler's
+   switch-away-from-idle decision itself (never logged before the
+   crash) — current suspects are the unconditional per-tick work inside
+   `Q9K_SchedReschedule` (`Q9K_AlarmTick`/`Q9K_ClockTick` specifically,
+   not yet inspected in detail) or the separate, long-known, never
+   globally fixed timer/`Q9K_IRQDispatch` interrupt-nesting race from
+   Fortsetzung 33. Root cause still not found; see
+   `docs/OWN_KERNEL_STATUS.md`, Fortsetzungen 94–95, for the full
+   evidence trail and the concrete next diagnostic step. Register-frame
+   ownership across nested external traps and all return paths through
+   IOMan/file
    managers/drivers otherwise remains to be stress-tested end-to-end.
 2. **Scheduler** — stress simultaneous IRQ arrival during queue/context handoff
    and complete hardware-specific IRQ coverage; priority preemption and the
