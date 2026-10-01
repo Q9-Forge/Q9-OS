@@ -9383,3 +9383,103 @@ Budget (deutlich mehr als die ueblichen paar Tausend Instruktionen, da
 hier ueber 2500 Ticks hinweg gesucht wird) liesse sich die exakte
 Instruktion VOR dem Sprung nach `$fe00007e` finden, statt wie bisher nur
 den Zustand einige Ticks davor zu sehen.
+
+
+## Fortsetzung 98: voller Instruktions-Trace eingesetzt -- der Absturz ist ein wilder Sprung in nicht gemappten Speicher, nicht ein Scheduler-Logikfehler (2026-10-01, direkte Fortsetzung derselben Sitzung)
+
+**Auftrag (Andreas, freigegeben):** den vorgeschlagenen Methodenwechsel
+umsetzen -- vollen Instruktions-Trace statt weiterer Einzel-Verdaechtiger.
+
+### Werkzeug
+
+`Q9_TRACE_INSTR=1` (Q9-Flux-eigener Ringpuffer, `Q9_DBG_TR_SIZE`=24576
+Eintraege, aeltester wird ueberschrieben) kombiniert mit
+`Q9_FREEZE_PC=0xfe00007e` (genau die bekannte Absturzadresse) --
+friert den Ring genau dann ein, wenn der PC diesen Wert erreicht, und
+haelt damit automatisch die letzten 24576 ausgefuehrten Instruktionen
+fest, OHNE dass man wissen muss, WANN das passiert (anders als der
+vorherige `Q9_ITRACE_CALLCODE`-Versuch, der ab `F$Sleep` vorwaerts
+tracen wollte und nach 2 Mio. Instruktionen am Budget scheiterte, ohne
+den Absturz zu erreichen -- die Idle-Schleife laeuft offenbar mit
+voller Emulator-Geschwindigkeit zwischen den Ticks, nicht
+echtzeitgedrosselt, was Vorwaerts-Tracing fuer dieses Szenario
+unpraktikabel macht).
+
+### Befund: EXAKT derselbe wilde Sprung, schon am Anfang des gesamten erfassbaren Fensters
+
+Das Ergebnis ist eindeutig -- und deutlich schwerwiegender als erwartet:
+
+- **Der GESAMTE 24576-Instruktionen-Ring** (vom aeltesten bis zum
+  Absturz) zeigt **durchgehend einen monoton um exakt 4 Byte
+  steigenden PC** -- von `$fdfe8090` (aeltester erfasster Eintrag) bis
+  `$fe00007e` (Absturz). Kein einziger Eintrag zeigt Kernel-Code,
+  TestProcA, die Idle-Schleife oder irgendeinen bekannten Programmteil.
+- **Das ist KEINE echte Instruktionsausfuehrung, sondern ein
+  Durchlaufen von LEEREM, NICHT GEMAPPTEM Speicher** -- der Adressraum
+  `$fd000000`-`$fe000000` taucht in KEINER bekannten Boot-Region auf
+  (bekannt sind nur `$400`-`$5a00`, `$7100`-`$1a3a4` und
+  `$fe000000`-`$fe080000` als ROM). Uninitialisierter/nicht
+  gemappter Emulator-Speicher liest typischerweise als Nullen, und ein
+  Nullwort dekodiert als (meist wirkungsloser) 68k-Befehl -- genau das
+  erklaert die durchgehend konstanten D0/A0/D1/D3/D4-Werte ueber
+  Zehntausende Eintraege hinweg. Erst beim Erreichen der ECHTEN
+  ROM-Daten bei `$fe000000`+ aendern sich D0/A0 (die geschriebenen
+  Tabellenbytes werden jetzt tatsaechlich als Operanden gelesen), bis
+  bei `$fe00007e` ein Bitmuster auftritt, das keine gueltige
+  Instruktion mehr ist.
+- **`SP` bleibt ueber alle 24576 Eintraege hinweg EXAKT `$00000400`**
+  -- auffaellig: `$400` ist genau die Basisadresse der ERSTEN
+  Boot-List-Region. Keine einzige Stack-Operation laesst sich in der
+  erfassten Spur erkennen (konsistent mit reiner "Nullen als Befehle"-
+  Ausfuehrung, die den Stack nicht beruehrt).
+- **Der tatsaechliche UEBERGANGSPUNKT -- WARUM/WOHER der PC ueberhaupt
+  in diesen leeren Bereich gelangt ist -- liegt noch VOR dem erfassten
+  Fenster.** Der Ring (24576 Eintraege) ist dafuer schlicht zu klein;
+  die Entfernung von `$fdfe8090` bis `$fe00007e` entspricht fast exakt
+  der vollen Ringgroesse.
+
+### Einordnung: das ist eine andere, schwerwiegendere Fehlerklasse als angenommen
+
+Die urspruengliche Annahme (ein Scheduler-Logikfehler in der
+Fork/Sleep/Wake-Sequenz) ist damit widerlegt -- bereits durch die
+Fortsetzungen 95-97 stark eingegrenzt, jetzt endgueltig: der PC verlaesst
+den bekannten Programmbereich VOLLSTAENDIG und laeuft durch kompletten
+Leerraum. Das ist das Muster eines **wilden Sprungs ueber eine
+korrumpierte Ruecksprungadresse oder einen korrumpierten Zeiger** --
+vermutlich (nicht bewiesen) irgendwo deutlich frueher als die letzten
+24576 Instruktionen vor dem sichtbaren Absturz.
+
+### Bewusst NICHT selbst umgesetzt: Repository-Grenze
+
+Der naheliegende naechste Schritt -- `Q9_DBG_TR_SIZE` in
+`Q9-Flux/Q9-Flux-68k/src/kernel/m68krt.h` (aktuell 24576) vergroessern
+und den Emulator neu bauen, um den tatsaechlichen Uebergangspunkt
+sichtbar zu machen -- wuerde ein ANDERES Repository (Q9-Flux, nicht
+Q9-KERNEL) aendern und neu bauen. Dort liegen bereits eigene, nicht von
+dieser Untersuchung stammende Aenderungen (ein veraenderter
+QEMU-Submodule-Stand unter `Q9-Flux-68kQEMU/third_party/qemu`, dazu
+weitere `q9makefile`-Dateien desselben separaten Buildsystem-Vorhabens
+wie in Q9-OS). Bewusst NICHT eigenmaechtig angefasst -- das ist die
+Art Entscheidung, die eine bewusste Freigabe verdient, nicht die
+Kernel-Debug-Iteration dieser Sitzung.
+
+**Konkreter naechster Schritt (sobald freigegeben):**
+1. `Q9_DBG_TR_SIZE` in `m68krt.h` auf z. B. 200000-500000 erhoehen
+   (reine Pufferzeile, keine Verhaltensaenderung bei normalem Betrieb).
+2. Emulator neu bauen (`Q9-Flux-68k`, Build-Details noch nicht
+   recherchiert -- eigener erster Schritt der Folgesitzung).
+3. Denselben Testlauf mit `Q9_TRACE_INSTR=1 Q9_FREEZE_PC=0xfe00007e`
+   wiederholen -- der vergroesserte Ring sollte dann den tatsaechlichen
+   Uebergangspunkt (wo/wann der PC erstmals den bekannten Programm-
+   bereich verlaesst) zeigen, nicht nur die bereits laufende Verirrung.
+4. Alternative, falls (1)-(3) zu aufwendig: gezielt `Q9_FREEZE_PC` auf
+   eine Adresse IM UEBERGANGSBEREICH setzen (z. B. irgendwo zwischen
+   `$fc000000` und `$fdfe8090`) und iterativ nach vorne tasten, bis der
+   Ring den echten Sprung zeigt -- mehrere kleinere Laeufe statt eines
+   grossen Ringpuffers.
+
+### Kein Codefix, keine Kernel-Aenderung in dieser Runde
+
+Alle Trace-Umgebungsvariablen waren rein lauf-zeit-gesteuert, keine
+Quelltextaenderung an Q9-KERNEL. `Q9K_TestNestedTrapStress` wurde nach
+der Untersuchung wieder auf den eingecheckten Standard (0) zurueckgesetzt.

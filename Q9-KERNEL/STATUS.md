@@ -1577,20 +1577,25 @@ areas remain open independently of individual call-code implementations:
    code the woken process newly reaches. A targeted diagnostic
    (2026-10-01) instead shows the crash is **not** in the scheduler's
    switch-away-from-idle decision itself (never logged before the
-   crash) — `Q9K_AlarmTick`/`Q9K_ClockTick` were inspected and ruled
-   unlikely (both behave identically every tick, cannot accumulate a
-   fault), and no second interrupt source is ever active in this
-   scenario (only level-6/timer acknowledges logged), making the
-   Fortsetzung-33 two-source IRQ-nesting race unlikely here too. A
-   targeted instrumentation of `Q9K_SleepQDecrementAll`'s wake branch
-   shows it is *also* never reached before the crash — total timer
-   ticks logged (2503) are far more than the ~50–60 the test scenario
-   itself needs, pointing toward a time-accumulating cause rather than
-   an immediate fork/sleep/wake logic bug. Root cause still not found;
-   see `docs/OWN_KERNEL_STATUS.md`, Fortsetzungen 94–97, for the full
-   evidence trail — Fortsetzung 97 proposes a full instruction trace
-   (`Q9_ITRACE_CALLCODE`) as the next method, rather than instrumenting
-   further individual suspects one at a time. Register-frame
+   crash), nor the wake-from-sleep transition, nor `Q9K_AlarmTick`/
+   `Q9K_ClockTick`, nor a second-interrupt-source IRQ-nesting race.
+   **A full instruction-trace capture (2026-10-01, Fortsetzung 98,
+   Q9-Flux's `Q9_TRACE_INSTR`/`Q9_FREEZE_PC` tooling) now shows this is
+   not a scheduler logic bug at all: the crash is the tail end of a
+   wild jump into completely unmapped memory** (PC increases by a
+   uniform 4 bytes per step through `$fd000000`–`$fe000000`, a range
+   that appears in no known boot region, with `SP` frozen at the
+   suspicious constant `$400` throughout; real ROM bytes starting at
+   `$fe000000` finally decode as an invalid instruction). The 24576-
+   entry ring (`Q9_DBG_TR_SIZE`) is entirely consumed by this already-
+   wild state and does not reach back far enough to show where the
+   jump actually originated. Root cause still not found; see
+   `docs/OWN_KERNEL_STATUS.md`, Fortsetzungen 94–98, for the full
+   evidence trail. The concrete next step (enlarging `Q9_DBG_TR_SIZE`
+   and rebuilding the emulator) was deliberately **not** done in this
+   round, since it would modify and rebuild the separate Q9-Flux
+   repository rather than Q9-KERNEL — left for an explicit decision.
+   Register-frame
    ownership across nested external traps and all return paths through
    IOMan/file
    managers/drivers otherwise remains to be stress-tested end-to-end.
