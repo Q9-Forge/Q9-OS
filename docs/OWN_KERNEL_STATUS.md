@@ -10121,3 +10121,128 @@ als dauerhafte, kostenguenstige Diagnose im Kernel eingebaut.
 Alle 28 `test_q9kernel_*.c`-Host-Suiten gruen (keine C-Quelltextaenderung,
 nur `q9kernel_entry.a`). Standard-Emulatorboot erreicht weiterhin seinen
 Marker, `Vektor=0` (keine Exception).
+
+
+## Fortsetzung 104: Site-Tagging-Versuch gescheitert (zurueckgenommen) -- per Aufrufgraph-Ausschluss stattdessen stark dafuer spricht, dass die Blockier-Sicherung von F$Wait stammt, nicht F$Sleep (2026-10-02, direkte Fortsetzung der 103)
+
+### Versuch: eindeutige Site-Markierung an allen 7 Kandidatenstellen
+
+Alle Stellen identifiziert, die "movea.l Q9_D_Proc,a0" unmittelbar
+gefolgt von "move.l sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)" ausfuehren (per
+`awk`-Suche ueber den kompletten Quelltext): `Q9K_TimerIRQHandler`
+(bekannt), `Q9K_TraceHandler`, `Q9K_SysFWait`, `Q9K_SysFSleep_Block`,
+`Q9K_SysFSema_Wait`, `Q9K_SysFEvent_Wait`, `Q9K_SysFNProc`,
+`Q9K_SysFAProc` -- sieben Stellen ausserhalb des Timer-Handlers.
+
+Erster Versuch, alle sieben mit einer eindeutigen Markierung zu
+versehen: sofort "branch out of range" beim Linken (dieselbe,
+wiederkehrende 16-Bit-Sprungreichweiten-Falle). Auf eine gemeinsame
+Hilfsroutine `Q9K_RaceRingLogSite` reduziert (2 Zeilen pro Stelle statt
+7) -- linkt immer noch nicht, auf nur die zwei plausibelsten Stellen
+(`Q9K_SysFWait`, `Q9K_SysFSleep_Block`) weiter reduziert -- linkt
+diesmal sauber.
+
+### Ergebnis: reproduziert den Absturz nicht mehr -- stattdessen eine andere, unerwartete Endlosschleife
+
+Zwei Testlaeufe mit dieser (minimalen, nur zwei Stellen betreffenden)
+Instrumentierung: KEIN Absturz (`Vektor=0`), stattdessen eine
+identische (deterministische, kein Zufallsartefakt) Endlosschleife mit
+massenhaftem `'A'`-Zeichen auf der Konsole, deutlich VOR Erreichen des
+eigentlichen Stresstest-Abschnitts. Die eingefuegte Diagnose (sichert
+d0/a0 per `movem` um den eigenen Unterprogrammaufruf) ist nach
+sorgfaeltiger Pruefung augenscheinlich korrekt -- dennoch aendert sie
+sichtbar das Verhalten an einer Stelle, die eigentlich nur protokollieren
+sollte. Statt dieses neue, unerklaerte Symptom seinerseits zu verfolgen
+(weiterer, nicht eingeplanter Zeitaufwand ohne Garantie auf Erfolg),
+wurde die Instrumentierung komplett zurueckgenommen (`git checkout --`)
+-- Arbeitsbaum wieder exakt auf Commit `1ed7f91`, per `git status`
+bestaetigt.
+
+**Lehre:** Live-Instrumentierung an mehreren, eng benachbarten
+Blockier-Pfaden gleichzeitig ist bei einer bereits bekanntermassen
+zeitkritischen Rennbedingung selbst riskant -- genau das Verhalten,
+das untersucht wird, kann sich durch die zusaetzliche Diagnose selbst
+verschieben oder maskieren. Fuer diese Art Fund ist EINZELNE,
+minimalinvasive Instrumentierung (wie die Rahmen-Validierung aus
+Fortsetzung 102, die nur LIEST) deutlich sicherer als mehrere neue
+Schreib-/Sprungpfade gleichzeitig einzufuehren.
+
+### Stattdessen: Zuordnung per Aufrufgraph-Ausschluss (statische Analyse, keine Codeaenderung)
+
+Ohne weitere Codeaenderung laesst sich die Herkunft von `pc=$9294`
+(der einen relevanten Blockier-Sicherung aus Fortsetzung 103) deutlich
+eingrenzen, allein durch Lesen der jeweils UNMITTELBAR FOLGENDEN
+Quelltextzeilen jeder Kandidatenstelle:
+
+- **`Q9K_SysFExit` (F$Exit) scheidet aus:** `F$Exit` kehrt laut Manual
+  nie zum Aufrufer zurueck -- `Q9K_ProcExit` sichert deshalb NIE den
+  eigenen Rahmen des beendeten Prozesses (dafuer gibt es keinen
+  Rueckkehrpunkt). Kann also nicht die Quelle von `pc=$9294` sein.
+- **`Q9K_SysFSleep` ruft `Q9K_SchedFirstPick` NICHT direkt auf:** sein
+  Idle-Fallback-Zweig geht ueber `Q9K_IdleFallback` (eine ANDERE
+  Funktion, kein `Q9K_SchedFirstPick`-Aufruf); sein Haupt-Pfad nutzt
+  das von `Q9K_SysSleepImpl` (C) bereits bestimmte Ergebnis.
+- **`Q9K_SysFWait`s Blockier-Pfad dagegen TUT GENAU DAS**, was per
+  `Q9_WATCH_ADDR` auf `Q9_D_Proc` unabhaengig beobachtet wurde:
+  sichert den eigenen Rahmen (`movea.l Q9_D_Proc,a0` / `move.l
+  sp,SAVEDSP_OFF(a0)`), setzt State `'w'`, und ruft DANACH
+  `Q9K_SchedFirstPick` auf (`q9kernel_entry.a`, Kopfkommentar bei
+  `Q9K_SysFWait` bestaetigt das Manual-Zitat). Genau diese Abfolge
+  wurde beobachtet: die Sicherung bei `pc=$9294` (#751111) wird nur
+  88 Schreibzugriffe spaeter von einem Wechsel ueber `pc=$ee0a`
+  gefolgt (#751199) -- `$ee0a` ist dieselbe Instruktion, die bereits
+  beim allerersten Prozessstart (Boot, #664452) Q9_D_Proc gesetzt hat,
+  also hoechstwahrscheinlich `Q9K_SchedFirstPick`s eigene
+  `Q9K_SetU32(Q9_D_PROC, picked)`-Zeile.
+
+**Schlussfolgerung (Aufrufgraph-Ausschluss, nicht live bestaetigt):**
+`pc=$9294` ist mit hoher Wahrscheinlichkeit `Q9K_SysFWait`s Blockier-
+Sicherung, NICHT `Q9K_SysFSleep`s. `Q9K_TestProcA` ruft laut
+Quelltext an zwei Stellen `F$Wait` auf (Zeilen um 2157 "F$Wait for
+startup shell" und 2605 "F$Wait"), BEVOR der `F$Fork(forkchild)`+
+Stresstest-Block ueberhaupt beginnt -- die hier beobachtete Blockierung
+duerfte also auf einen DIESER FRUEHEREN Testkinder warten, nicht auf
+`forkchild`. Der Pool-Slot `$1c0f0`, der kurz danach aktuell wird, ist
+damit vermutlich NICHT `forkchild` selbst, sondern ein frueheres,
+bereits abgeschlossenes Testkind (Pool-Slots werden nach Freigabe
+wiederverwendet) -- die bisherige Annahme "Deskriptor = forkchild" aus
+Fortsetzung 101-103 war an dieser Stelle wahrscheinlich ungenau.
+
+### Was das fuer die Hypothese aus Fortsetzung 103 bedeutet
+
+Stimmt diese Zuordnung, aendert sich die Hypothese leicht: nicht
+"Zeiger-Wiederverwendung zwischen `F$Wait` und `F$Sleep`", sondern
+moeglicherweise: `Q9K_TestProcA` wird nach diesem `F$Wait` per
+`Q9K_ProcExit`s regulaerem `'w'`-Reaktivierungspfad (schreibt
+`D0`/`D1` sicher IN den bestehenden Rahmen, s. Q9K_SetFrameReg,
+q9kernel_procend.c) korrekt reaktiviert -- und erreicht DANACH,
+chronologisch spaeter, den eigentlichen `F$Fork(forkchild)`+
+`F$Sleep`-Block. Die entscheidende, weiterhin offene Frage ist, OB
+`Q9K_TestProcA`s spaeterer `F$Sleep`-Aufruf dann tatsaechlich eine
+EIGENE, frische Sicherung erzeugt (die laut Fortsetzung 103 im
+beobachteten Zeigerfeld NICHT auftaucht) -- und wenn nicht, warum nicht.
+
+### Naechster, risikoaermerer Schritt
+
+Statt weiterer Inline-Instrumentierung an mehreren Stellen
+gleichzeitig: `Q9K_TestProcA`s EINEN der beiden fruehen `F$Wait`-Aufrufe
+(Zeile ~2157 ODER ~2605) testweise per Flag auskommentieren/umgehen und
+pruefen, ob der Absturz dann ausbleibt -- bestaetigt oder widerlegt die
+obige Call-Graph-Zuordnung EMPIRISCH, ohne das Risiko einer neuen,
+selbst eingefuehrten Nebenwirkung wie in diesem Versuch. Danach, falls
+bestaetigt: NUR an der tatsaechlichen `F$Sleep`-Blockier-Stelle (ein
+einzelner, minimaler, rein LESENDER Pruefpunkt wie die bereits
+etablierte Rahmen-Validierung) ansetzen, nicht mehrere Stellen
+gleichzeitig.
+
+### Kein Fix in dieser Runde
+
+Kein Fix versucht -- die Call-Graph-Zuordnung ist eine plausible,
+gut begruendete, aber NICHT live verifizierte Hypothese.
+
+### Verifikation
+
+Arbeitsbaum nach dem Zuruecknehmen exakt wieder auf Commit `1ed7f91`
+(per `git status` bestaetigt, keine Aenderung verblieben) -- keine
+neue Codeaenderung in dieser Runde, daher kein erneuter Host-Suiten-
+oder Standardboot-Lauf noetig.

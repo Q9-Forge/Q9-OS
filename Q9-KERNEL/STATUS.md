@@ -1664,6 +1664,26 @@ areas remain open independently of individual call-code implementations:
    step (attribute the exact blocking-save instruction to a specific
    source line, then watch the frame *contents*, not just the
    pointer). No fix attempted this round either.
+   **Fortsetzung 104:** a live site-tagging attempt across the two most
+   likely candidate handlers (`F$Wait`, `F$Sleep`) was reverted after
+   it stopped the crash from reproducing and produced an unrelated
+   infinite-print symptom instead — simultaneous instrumentation of
+   multiple closely-timed blocking paths is itself risky for a known
+   timing-sensitive race. Working tree confirmed back to exactly the
+   prior commit. Instead, a call-graph exclusion argument (no code
+   change) makes a strong case that the one relevant blocking-save
+   instruction belongs to `F$Wait`, not `F$Sleep`: `F$Exit` never
+   saves its own frame (it never returns), and `F$Sleep`'s empty-queue
+   branch goes through `Q9K_IdleFallback`, not `Q9K_SchedFirstPick` —
+   only `F$Wait`'s blocking path does both (saves its frame, then
+   calls `Q9K_SchedFirstPick`), matching the observed sequence
+   exactly. `Q9K_TestProcA` calls `F$Wait` twice earlier in its own
+   test sequence, before ever reaching the `F$Fork`+`F$Sleep` stress
+   block — so the reused pool-slot descriptor seen switching in right
+   after is likely an earlier test child, not `forkchild` itself,
+   revising a prior assumption. Not live-verified. See
+   `docs/OWN_KERNEL_STATUS.md`, Fortsetzung 104, for the full
+   reasoning and a lower-risk next diagnostic step.
    Register-frame
    ownership across nested external traps and all return paths through
    IOMan/file
