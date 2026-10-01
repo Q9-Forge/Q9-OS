@@ -33,8 +33,8 @@
 # Datum   │ Ver. │ Aenderung                                                 │ Wer
 #─────────┼──────┼───────────────────────────────────────────────────────────┼──────
 # 26-09-26│ 1.00 │ Erster Wurf                                               │ Cld
-# 26-09-26│ 1.01 │ -a (DHF-Zweitname) und -f (CF-Laufwerk umbenannt)          │ Cld
-# 27-09-26│ 1.02 │ -i (init aus Datei, z.B. 64-MB-init von mk_init.sh)         │ Cld
+# 26-09-26│ 1.01 │ -a (DHF-Zweitname) und -f (CF-Laufwerk umbenannt)         │ Cld
+# 27-09-26│ 1.02 │ -i (init aus Datei, z.B. 64-MB-init von mk_init.sh)       │ Cld
 #═════════╧══════╧═══════════════════════════════════════════════════════════╧══════
 set -u
 NEU=0; ALIAS=; CFNAME=; INITF=
