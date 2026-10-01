@@ -1577,13 +1577,20 @@ areas remain open independently of individual call-code implementations:
    code the woken process newly reaches. A targeted diagnostic
    (2026-10-01) instead shows the crash is **not** in the scheduler's
    switch-away-from-idle decision itself (never logged before the
-   crash) — current suspects are the unconditional per-tick work inside
-   `Q9K_SchedReschedule` (`Q9K_AlarmTick`/`Q9K_ClockTick` specifically,
-   not yet inspected in detail) or the separate, long-known, never
-   globally fixed timer/`Q9K_IRQDispatch` interrupt-nesting race from
-   Fortsetzung 33. Root cause still not found; see
-   `docs/OWN_KERNEL_STATUS.md`, Fortsetzungen 94–95, for the full
-   evidence trail and the concrete next diagnostic step. Register-frame
+   crash) — `Q9K_AlarmTick`/`Q9K_ClockTick` were inspected and ruled
+   unlikely (both behave identically every tick, cannot accumulate a
+   fault), and no second interrupt source is ever active in this
+   scenario (only level-6/timer acknowledges logged), making the
+   Fortsetzung-33 two-source IRQ-nesting race unlikely here too. A
+   targeted instrumentation of `Q9K_SleepQDecrementAll`'s wake branch
+   shows it is *also* never reached before the crash — total timer
+   ticks logged (2503) are far more than the ~50–60 the test scenario
+   itself needs, pointing toward a time-accumulating cause rather than
+   an immediate fork/sleep/wake logic bug. Root cause still not found;
+   see `docs/OWN_KERNEL_STATUS.md`, Fortsetzungen 94–97, for the full
+   evidence trail — Fortsetzung 97 proposes a full instruction trace
+   (`Q9_ITRACE_CALLCODE`) as the next method, rather than instrumenting
+   further individual suspects one at a time. Register-frame
    ownership across nested external traps and all return paths through
    IOMan/file
    managers/drivers otherwise remains to be stress-tested end-to-end.

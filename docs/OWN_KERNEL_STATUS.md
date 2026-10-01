@@ -9312,3 +9312,74 @@ Fortsetzung 95 vorgeschlagene RaceRing-Instrumentierung (diesmal direkt
 um `Q9K_SleepQDecrementAll`s `Q9K_ListUnlink`/`Q9K_SchedInsert`-Aufruf,
 nicht erst beim Timer-Handler-Wechsel) ist der konkrete naechste
 Schritt.
+
+
+## Fortsetzung 97: Q9K_SleepQDecrementAll instrumentiert -- Aufwachen feuert NIE vor dem Absturz, Verdacht verschiebt sich weiter nach vorne (2026-10-01, direkte Fortsetzung derselben Sitzung)
+
+**Auftrag:** den in Fortsetzung 96 benannten naechsten Verdaechtigen
+(`Q9K_SleepQDecrementAll`) gezielt mit einem RaceRing-Marker
+instrumentieren (eigener Vorschlag aus Fortsetzung 95/96).
+
+**Instrumentierung (temporaer, nach der Untersuchung wieder vollstaendig
+entfernt):** ein zusaetzlicher RaceRing-Eintrag direkt im
+`ticks==0`-Zweig von `Q9K_SleepQDecrementAll` (`q9kernel_sched.c`,
+C-seitig per direktem `Q9K_SetU32` auf dieselben Pufferadressen, die
+die Assembler-Seite schon benutzt -- Marker=30, zweites Wort = der
+geweckte Deskriptor statt eines PC, gleicher bereits als sichtbar
+bestaetigter Marker-Trick wie in Fortsetzung 95).
+
+**Ergebnis: dieser Eintrag erscheint im Dump VOR dem Absturz EBENFALLS
+KEIN EINZIGES MAL.** Die letzten drei erfassten Timer-Ticks (#28-30)
+zeigen weiterhin ausschliesslich die reine Idle-Schleife (identischer
+unterbrochener PC `$7510`, keine Aenderung) -- TestProcAs
+Schlaf-Countdown erreicht die 0 in den erfassten Daten nicht.
+
+**Das verschiebt den Verdacht nochmals weiter nach vorne:** weder die
+Umschalt-/Pick-Logik (Fortsetzung 95) NOCH das Aufwachen selbst
+(`Q9K_SleepQDecrementAll`s `ticks==0`-Zweig, diese Runde) werden vor dem
+Absturz erreicht. Der Fehler liegt damit entweder (a) schon waehrend des
+REINEN Idle-Spinnens selbst (ohne jeden Bezug zum Scheduler-Zustand --
+z. B. ein allgemeiner, zeitakkumulierender Fehler, der einfach "genug
+Ticks" braucht, unabhaengig vom konkreten Testszenario), oder (b) an
+einer Stelle, die der gefilterte RaceRing-Ausschnitt (letzte ~30 von
+8192 Eintraegen, "gefiltert: X/A ±3") schlicht nicht mehr zeigt, weil
+zwischen dem letzten erfassten Tick und dem tatsaechlichen Absturz noch
+unerfasste Aktivitaet liegt.
+
+**Gestuetzt durch die IRQ-Statistik:** `Level 6: 2503 mal` im finalen
+Dump -- deutlich mehr als die fuer `F$Sleep(50)` erwarteten rund 50-60
+Ticks. Der Absturz tritt also erst nach SEHR VIEL mehr Zeit auf als der
+eigentliche Testablauf (Fork+Sleep+erwartetes Aufwachen) bräuchte --
+passt eher zu einer zeit-/tick-akkumulierenden Ursache als zu einem
+unmittelbaren Logikfehler in der Fork/Sleep/Wake-Sequenz selbst.
+
+### Kein Codefix in dieser Runde
+
+Diagnose vollstaendig entfernt (`git checkout --` auf
+`q9kernel_sched.c`/`q9kernel_entry.a`), Arbeitsbaum entspricht wieder
+exakt `097e4a6`. Host-Suite nicht erneut separat gelaufen (keine
+inhaltliche Aenderung gegenueber dem letzten gruenen Stand).
+
+### Einordnung nach vier Untersuchungsrunden (Fortsetzungen 94-97)
+
+Die Fehlersuche hat die urspruengliche Hypothese (ein einfacher,
+lokalisierbarer Logikfehler in F$Exit/F$Wait/F$Sleep oder deren
+unmittelbarer Umgebung) inzwischen mehrfach widerlegt. Das Muster --
+reproduzierbar, aber immer weiter von der naheliegenden Erklaerung
+wegruekend, je genauer hingeschaut wird -- aehnelt den langwierigsten
+bisherigen Faeden dieses Projekts (vgl. die elf Sitzungen fuer die
+Fortsetzung-33-Timer/IRQ-Race). Fuer eine Folgesitzung wird deshalb KEIN
+weiterer "einen Verdaechtigen nach dem anderen instrumentieren"-Versuch
+mehr vorgeschlagen, sondern ein Methodenwechsel:
+
+**Konkreter Vorschlag fuer die naechste Sitzung:** einen VOLLSTAENDIGEN
+Instruktions-Trace (nicht den gefilterten RaceRing) ueber das gesamte
+Idle-Fenster aufzeichnen -- der Emulator hat laut frueheren
+Fortsetzungen (33/41/42) bereits ein Werkzeug dafuer
+(`Q9_ITRACE_LINK`/`Q9_ITRACE_CALLCODE`/`Q9_ITRACE_N`,
+`tools/annotate_trace.py`). Mit `Q9_ITRACE_CALLCODE` auf den
+`F$Sleep`-Callcode ($0a) scharfgeschaltet und einem grosszuegigen
+Budget (deutlich mehr als die ueblichen paar Tausend Instruktionen, da
+hier ueber 2500 Ticks hinweg gesucht wird) liesse sich die exakte
+Instruktion VOR dem Sprung nach `$fe00007e` finden, statt wie bisher nur
+den Zustand einige Ticks davor zu sehen.
