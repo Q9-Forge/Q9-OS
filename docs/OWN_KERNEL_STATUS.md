@@ -9240,3 +9240,75 @@ Kein Commit dieser Runde ausser dieser Dokumentation.
    bestaetigen -- ggF. das dort beschriebene, enge Interrupt-Sperr-
    Fenster EXPERIMENTELL auf den Idle-Spin-Bereich ausdehnen (nur als
    Diagnose, nicht als Fix, solange die Ursache nicht verstanden ist).
+
+
+## Fortsetzung 96: Q9K_AlarmTick/Q9K_ClockTick gelesen -- beide unverdaechtig, Fortsetzung-33-Race durch IRQ-Statistik unwahrscheinlicher gemacht, Ursache weiterhin offen (2026-10-01, direkte Fortsetzung derselben Sitzung)
+
+**Vorab, auf Nachfrage von Andreas geklaert:** die bei Sitzungsbeginn
+vorgefundene, nicht committete Aenderung an `q9kernel_entry.a`
+(`Q9K_TestIOManLinkFail_Halt` -> `Q9K_TestProcA_Loop`) laesst sich nach
+Pruefung von `git reflog`, `git stash list` und allen Branches NICHT
+zurueckverfolgen -- keine Spur in der Historie, keiner meiner eigenen
+Patch-Anker hat je diese Stelle beruehrt, die zeitgleich vorgefundenen
+`q9makefile`-Dateien gehoeren nachweislich (frueherer Zeitstempel) zu
+einem separaten Buildsystem-Vorhaben. Herkunft bleibt ungeklaert; der
+Arbeitsbaum wurde auf `fe8fe20` zurueckgesetzt (`git checkout --`), da
+die Aenderung unbestaetigt, nicht verifiziert und nicht Teil irgendeiner
+dokumentierten Arbeit war.
+
+### Die beiden in Fortsetzung 95 benannten Verdaechtigen geprueft (per Lesen, keine neue Instrumentierung)
+
+- **`Q9K_ClockTick`:** kehrt sofort mit 0 zurueck, solange
+  `Q9K_CLOCK_VALID` ($1B2C) 0 ist ("nie gestellt") -- in diesem
+  Testszenario wird die Uhr nie per `F$STime` gestellt, der Zweig ist
+  also bei JEDEM Tick ein einziges `Q9K_GetU32`+Vergleich+`return 0`.
+  Kein Zaehler, kein Array, keine Moeglichkeit fuer einen Fehler nach
+  vielen Ticks, die hier nicht schon nach dem ERSTEN Tick aufgetreten
+  waere.
+- **`Q9K_AlarmTick`:** iteriert ueber genau `Q9K_ALARM_SLOTS` (=8) feste
+  Eintraege, ueberspringt jeden mit `ID==0` -- in diesem Szenario wird
+  nie `F$Alarm` aufgerufen, alle acht Slots sind leer, die Schleife ist
+  acht simple Vergleiche ohne Seiteneffekt. Ebenfalls unverdaechtig.
+- **Beide damit unwahrscheinliche Ursache** fuer einen erst nach vielen
+  Ticks auftretenden Fehler -- ihr Verhalten ist pro Tick IDENTISCH,
+  unabhaengig davon, wie viele Ticks zuvor schon liefen.
+
+### Fortsetzung-33-Race (Timer vs. Q9K_IRQDispatch) durch vorhandene Messdaten unwahrscheinlicher
+
+Alle bisherigen Debug-Dumps dieser Untersuchung (Fortsetzung 94-96)
+zeigen im Abschnitt "DUART/IRQ-Zustand" durchgehend **ausschliesslich
+Level-6-(Timer)-Interrupt-Acknowledges** ("... nach Pegel: Level 6:
+1502/2470 mal", keine andere Ebene genannt) -- in diesem minimalen
+Testaufbau (kein `/dd/startup`, keine echte Konsolenein-/ausgabe nach
+dem einen `I$Write`) feuert schlicht KEIN zweiter Interrupt, der mit dem
+Timer verschachteln koennte. Die urspruengliche Fortsetzung-33-Race
+brauchte explizit ZWEI Quellen (Timer UND DUART). Ohne eine zweite
+aktive Quelle ist diese konkrete Erklaerung fuer DIESES Szenario
+unwahrscheinlich -- auch wenn das allgemeine, nie global behobene
+Interrupt-Verschachtelungsproblem als solches natuerlich weiterhin
+besteht und fuer ANDERE Szenarien (mit echter Konsole/Disk-I/O)
+weiterhin relevant bleibt.
+
+### Stand nach drei Untersuchungsrunden (Fortsetzungen 94-96)
+
+Ausgeschlossen bzw. unwahrscheinlich gemacht: die Scheduler-Umschalt-/
+Pick-Logik selbst (kein Wechsel wird vor dem Absturz geloggt),
+`Q9K_AlarmTick`/`Q9K_ClockTick` (beide pro Tick identisch, keine
+Akkumulation moeglich), die klassische Fortsetzung-33-Zwei-Quellen-Race
+(keine zweite IRQ-Quelle aktiv). **Was als UNBEKANNT bleibt:** was
+genau in den Ticks zwischen `Q9K_SchedAgeAll`/`Q9K_SleepQDecrementAll`
+und dem tatsaechlichen Wechsel passiert -- diese beiden wurden noch
+NICHT im Detail inspiziert (anders als in Fortsetzung 95 angekuendigt,
+aus Zeitgruenden in dieser Runde nicht mehr geschafft).
+
+**Naechster Schritt fuer eine Folgesitzung, przisiert:** `Q9K_SchedAgeAll`
+und `Q9K_SleepQDecrementAll` selbst im Detail pruefen (beide noch nicht
+gelesen) -- `Q9K_SleepQDecrementAll` ist der wahrscheinlichste
+verbleibende Kandidat, da es (anders als Alarm/Clock) in DIESEM Szenario
+tatsaechlich aktiv etwas tut (zaehlt TestProcAs Schlafzeit herunter) und
+am Ende der 50 Ticks eine State-Aenderung + Listenoperation ausloest --
+GENAU der Moment, der zeitlich mit dem Absturz zusammenfaellt. Die in
+Fortsetzung 95 vorgeschlagene RaceRing-Instrumentierung (diesmal direkt
+um `Q9K_SleepQDecrementAll`s `Q9K_ListUnlink`/`Q9K_SchedInsert`-Aufruf,
+nicht erst beim Timer-Handler-Wechsel) ist der konkrete naechste
+Schritt.
