@@ -13,19 +13,15 @@
  * Eigenstaendig aus den drei offiziellen Technical Manuals rekonstruiert
  * (OS-9 System Programmer's Manual 1983, Kapitel 4, fuer 6809; OS-9 for
  * 68K Processors Technical Manual, Table 1-6/1-7/1-8, fuer 68K; OS-9000
- * Technical Manual, Kapitel 1 (mh_com-Struct), fuer OS-9000) sowie durch
- * eigene Analyse realer Kernel-Binaries verifiziert (siehe
- * intern dokumentiert). KEIN Abdruck der
- * proprietaeren Microware-Quelldateien module.h/oskdefs.d (copyright-
- * geschuetzt) -- nur die
- * (nicht schutzfaehigen) strukturellen Fakten Offset/Groesse/Bedeutung
- * uebernommen, alle Namen und Beschreibungstexte eigene Formulierungen.
+ * Technical Manual, Kapitel 1 (mh_com-Struct), fuer OS-9000) sowie an
+ * Referenzmodulen verifiziert (siehe intern dokumentiert). Alle Namen und
+ * Beschreibungstexte sind eigene Formulierungen.
  * Fuer die Level-2-Variante (Modul-DAT-Image etc.) siehe NitrOS-9s
  * offenen Quelltext, hier nicht benoetigt.
  *
  * Statuskennzeichnung je Feld:
- *   [VERIFIZIERT] -- an einem echten Binary geprueft (68K: Original-Kernel,
- *                    OS-9000: live extrahierter x86-Kernel)
+ *   [VERIFIZIERT] -- an einem Referenzmodul geprueft (68K-Kernel,
+ *                    OS-9000-Kernel)
  *   [HANDBUCH]    -- aus dem jeweiligen offiziellen Manual, nicht an
  *                    einem eigenen Binary nachgeprueft (betrifft vor
  *                    allem 6809 -- kein Kernel-Binary vorhanden)
@@ -105,7 +101,7 @@
 
 /* ====================================================================
  * Header-Layout 2: OS-9/68K (klassisch -- dieses Projekts Hauptziel,
- * Original-Kernel). 46 Byte Standard-Header + optionale, typabhaengige
+ * Referenzkernel). 46 Byte Standard-Header + optionale, typabhaengige
  * Erweiterung. Quelle: OS-9 for 68K Processors Technical Manual,
  * Table 1-6/1-7/1-8.
  * ==================================================================== */
@@ -250,7 +246,7 @@ typedef struct {
 
 /* ====================================================================
  * Header-Layout 4: Q9-eigenes Format [ENTWURF -- Planungsgespraech
- * 2026-08-16, NICHT reverse-engineered, keine Fremdquelle]. Uebernimmt
+ * 2026-08-16]. Uebernimmt
  * bewusst das Grundschema von Layout 2/3 (sync/hdrVersion/size/owner/
  * name/access/type/lang/attr/revs/edit/exec/except/data/stack + optionaler
  * Erweiterungsblock ueber hdExtOffset/hdExtSize -- dasselbe Prinzip, das

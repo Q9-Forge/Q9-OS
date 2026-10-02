@@ -331,8 +331,7 @@ int main(void)
     /* F$CRC (Callcode 0x17). Staerkster verfuegbarer Nachweis: der CRC
      * ueber ein ECHTES, von der Microware-Toolchain gebautes Modul --
      * einschliesslich seiner drei eigenen CRC-Bytes -- muss exakt die
-     * dokumentierte Konstante CRCCon ($00800FE3, 68k_tech.pdf S.391 und
-     * MWOS/OS9/SRC/DEFS/module.a) ergeben. Die Bytes unten sind eine
+     * dokumentierte Konstante CRCCon ($00800FE3, 68k_tech.pdf S.391) ergeben. Die Bytes unten sind eine
      * Momentaufnahme eines gebauten Moduls; sie muessen nicht aktuell
      * gehalten werden, da die Aussage fuer genau diese Bytes gilt. */
     {

@@ -429,7 +429,7 @@ Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList)
  * "0 = beliebig". Vorher stand hier ein exakter WORT-Vergleich
  * ("desiredTyLang == 0 || tyLang == desiredTyLang") -- der war falsch und
  * haette den Dreiklang (Descriptor->Driver->File-Manager) sofort brechen
- * lassen. Beleg, empirisch an den ECHTEN Modulen aus dem Original-Image
+ * lassen. Beleg, empirisch an den Referenzmodulen aus dem Referenz-Image
  * (CMDS/BOOTOBJS) nachgemessen, gegen die real verwendeten Filterwerte
  * $F00/$E00/$D00 (s. intern dokumentiert):
  *
@@ -763,10 +763,10 @@ Q9_u32 Q9K_ModDirValidateAndAdd(const Q9_u8 *hdr, Q9_u32 size, Q9_u16 *outError)
     /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, zweite Runde, per
      * Instruktionsspur/Registerfreeze in IOMans F$Load-Wrapper): weder
      * unser eigener 16-Byte-Slot NOCH der rohe Modulkopfzeiger sind das
-     * richtige (a2). IOMans Wrapper (ioman+$8f8 ff.) inkrementiert/
+     * richtige (a2). IOMans Wrapper inkrementiert/
      * dekrementiert `+$0C(a2)` als Link-Zaehler (live gemessen: ADDQ.W
      * dann spaeter SUBQ.W) und liest `+$12(a2)` als Typ/Sprache-Wort --
-     * das sind FESTE Offsets eines ECHTEN Microware-Verzeichniseintrags,
+     * das sind FESTE Offsets eines Referenz-Verzeichniseintrags,
      * die weder mit unserem 16-Byte-Slot (endet bei $0E) noch mit dem
      * Modulheader (dessen $0C/$12 M$Name/M$TypLang sind -- Schreiben
      * DORT haette den Header selbst beschaedigt, live bestaetigt: `+$0C`
@@ -941,9 +941,9 @@ void Q9K_SysCrcImpl(void)
 }
 
 /* Modulkopf: 48 Byte, das letzte Wort ($2E) ist M$Parity; die drei
- * letzten Modulbytes sind der CRC. Beides aus den realen Definitionen
- * (MWOS/OS9/SRC/DEFS/module.a, M$Parity) und der im Projekt gegen echte
- * Module erprobten Werkzeugfassung. */
+ * letzten Modulbytes sind der CRC. Beides aus den dokumentierten Definitionen
+ * (M$Parity) und der im Projekt gegen Referenzmodule erprobten
+ * Werkzeugfassung. */
 #define Q9K_MH_HEADER_SIZE 0x30UL
 #define Q9K_MH_PARITY      0x2EUL
 #define Q9K_MH_CRC_SIZE    3UL

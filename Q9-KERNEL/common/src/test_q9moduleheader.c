@@ -84,7 +84,7 @@ static void testChecksum68K(const char *repoRoot, const char *relPath)
     snprintf(fullPath, sizeof(fullPath), "%s/%s", repoRoot, relPath);
     f = fopen(fullPath, "rb");
     if (!f) {
-        printf("[SKIP] %s nicht gefunden -- Vendor-Datei fehlt lokal?\n", relPath);
+        printf("[SKIP] %s nicht gefunden -- Referenzmodul fehlt lokal?\n", relPath);
         return;
     }
     n = fread(buf, 1, sizeof(buf), f);
@@ -115,8 +115,8 @@ static int testRealFile(const char *repoRoot, const char *relPath,
     snprintf(fullPath, sizeof(fullPath), "%s/%s", repoRoot, relPath);
     f = fopen(fullPath, "rb");
     if (!f) {
-        printf("[SKIP] %s nicht gefunden (%s) -- Vendor-Datei fehlt lokal?\n", relPath, fullPath);
-        return 0; /* kein harter Fehler -- Vendor-Dateien sind bewusst nicht ueberall verfuegbar */
+        printf("[SKIP] %s nicht gefunden (%s) -- Referenzmodul fehlt lokal?\n", relPath, fullPath);
+        return 0; /* kein harter Fehler -- Referenzmodule sind bewusst nicht ueberall verfuegbar */
     }
     n = fread(buf, 1, sizeof(buf), f);
     fclose(f);
@@ -139,27 +139,28 @@ static int testRealFile(const char *repoRoot, const char *relPath,
 
 int main(int argc, char *argv[])
 {
-    const char *repoRoot = (argc > 1) ? argv[1] : "..";
+    const char *refEnv = getenv("Q9_REFERENCE_MODULES");
+    const char *repoRoot = (argc > 1) ? argv[1] : (refEnv ? refEnv : "..");
 
-    printf("== Echte Vendor-Dateien ==\n");
-    testRealFile(repoRoot, "vendor/68020/dker030s", Q9_MHFMT_68K, "kernel",
+    printf("== Referenzmodule (optional) ==\n");
+    testRealFile(repoRoot, "68020/dker030s", Q9_MHFMT_68K, "kernel",
                  0, Q9_MH68K_NAME);
-    testRealFile(repoRoot, "modules/os9000-x86/vendor-live/kernel", Q9_MHFMT_OS9000_LE, "kernel",
+    testRealFile(repoRoot, "os9000-x86/kernel", Q9_MHFMT_OS9000_LE, "kernel",
                  1, Q9_MH9K_NAME);
-    testRealFile(repoRoot, "modules/os9000-x86/vendor-live/ioman", Q9_MHFMT_OS9000_LE, "ioman",
+    testRealFile(repoRoot, "os9000-x86/ioman", Q9_MHFMT_OS9000_LE, "ioman",
                  1, Q9_MH9K_NAME);
-    testRealFile(repoRoot, "modules/os9000-x86/vendor-live/rbf", Q9_MHFMT_OS9000_LE, "rbf",
+    testRealFile(repoRoot, "os9000-x86/rbf", Q9_MHFMT_OS9000_LE, "rbf",
                  1, Q9_MH9K_NAME);
-    testRealFile(repoRoot, "modules/os9000-x86/vendor-live/ssm", Q9_MHFMT_OS9000_LE, "ssm",
+    testRealFile(repoRoot, "os9000-x86/ssm", Q9_MHFMT_OS9000_LE, "ssm",
                  1, Q9_MH9K_NAME);
 
     printf("\n== Pruefsummen (alle acht echten 68K-Kernel-Varianten) ==\n");
     {
         static const char *kernelVariants[] = {
-            "vendor/68020/dker020s", "vendor/68020/dker020b",
-            "vendor/68020/dker030s", "vendor/68020/dker030b",
-            "vendor/68020/aker020s", "vendor/68020/aker020b",
-            "vendor/68020/aker030s", "vendor/68020/aker030b",
+            "68020/dker020s", "68020/dker020b",
+            "68020/dker030s", "68020/dker030b",
+            "68020/aker020s", "68020/aker020b",
+            "68020/aker030s", "68020/aker030b",
         };
         size_t i;
         for (i = 0; i < sizeof(kernelVariants) / sizeof(kernelVariants[0]); i++)

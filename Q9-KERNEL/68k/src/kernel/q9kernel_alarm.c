@@ -3,8 +3,8 @@
  *                     2026-09-18).
  *
  * Verifizierte ABI (68k_tech.pdf, Appendix D). F$Alarm ist ein Aufruf mit
- * Funktionscode in d1.w; die Codes sind aus der realen Tabelle in
- * MWOS/OS9/SRC/DEFS/funcs.a gezaehlt, nicht geraten:
+ * Funktionscode in d1.w; die Codes sind aus der realen Tabelle
+ * gezaehlt, nicht geraten:
  *
  *   A$Delete = 0  d0.l = Alarm-ID (0 = alle), keine Ausgabe
  *   A$Set    = 1  d0.l = 0, d2.w = Signalcode, d3.l = Intervall
@@ -24,7 +24,7 @@
  * Q9K_SysFTime liest einen echten RTC72421 bei $FFFFD000), dann mit der
  * richtigen: F$Time und F$Julian widersprachen sich im Datumsformat, und
  * ein absoluter Alarm haette deshalb still zum falschen Zeitpunkt
- * gefeuert. Der Widerspruch ist inzwischen am Originalkernel entschieden
+ * gefeuert. Der Widerspruch ist inzwischen am Referenzsystem entschieden
  * (s. Q9K_SysFTime in q9kernel_entry.a: "yyyymmdd" meint FELDER) und
  * F$Time entsprechend korrigiert. Damit stehen beide Seiten auf
  * demselben Format, und die absoluten Varianten sind das, was sie sein
@@ -40,9 +40,8 @@
  * und nicht stillschweigend geraten.
  *
  * WARUM EIGENE TABELLE: Der Q9-Header kennt die beiden Warteschlangen des
- * Originals (Q9_D_ALMQ1/ALMQ2), und q9kernel_cinit.c legt sie beim Boot
- * als leere Ringlisten an. Deren INNERES Knotenformat ist aber nur aus
- * der Disassemblierung des Originalkernels bekannt und fuer uns ohne
+ * Referenzkernels (Q9_D_ALMQ1/ALMQ2), und q9kernel_cinit.c legt sie beim Boot
+ * als leere Ringlisten an. Deren INNERES Knotenformat ist fuer uns ohne
  * Nutzen -- kein fremdes Modul liest unsere Alarmknoten. Diese Fassung
  * fuehrt deshalb eine eigene, feste Tabelle, genauso wie der Kernel es
  * bei Prozess-, Pfad- und Speicherverwaltung schon haelt. Die beiden
@@ -557,7 +556,7 @@ void Q9K_SysAlarmImpl(void)
         {
             /* Kalenderdatum in derselben Feldkodierung wie ueberall --
              * Jahr im oberen Wort, dann je ein Byte Monat und Tag (am
-             * Originalkernel belegt, s. Q9K_SysFTime). */
+             * Referenzsystem belegt, s. Q9K_SysFTime). */
             Q9_u32 packed = Q9K_GetU32(Q9K_ALARM_SCRATCH_DATE);
             Q9_u32 clock  = Q9K_GetU32(Q9K_ALARM_SCRATCH_TICKS);
             Q9_u32 jd = Q9K_JulianFromDate((packed >> 16) & 0xFFFFUL,

@@ -71,7 +71,7 @@ extern int Q9K_ValidModuleHeader(const Q9_u8 *addr, Q9_u32 availableLen);
 /* Defensive Obergrenze fuer die Anzahl Regionen -- Q9K_BootList
  * (q9kernel_entry.a) ist nullterminiert, diese Grenze greift nur als
  * zusaetzliche Absicherung, falls der Terminator fehlt/beschaedigt ist
- * (kein Original-Kernel-Verhalten, eigene Vorsicht, gleiches Muster wie
+ * (kein Referenzkernel-Verhalten, eigene Vorsicht, gleiches Muster wie
  * Q9K_BootListMax dort -- hier bewusst als eigene, lokale Konstante
  * dupliziert statt ueber die Assembler-Datei referenziert, da equ-
  * Konstanten aus .a-Dateien in dieser Toolchain nicht als C-Symbole

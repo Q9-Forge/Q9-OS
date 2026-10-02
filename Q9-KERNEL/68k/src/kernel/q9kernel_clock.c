@@ -9,7 +9,7 @@
  *
  * Beide Angaben sind FELDKODIERT -- je ein Byte pro Feld, Jahr im oberen
  * Wort. Dass "yyyymmdd" Felder und keine Dezimalzahl meint, ist am
- * Originalkernel bewiesen (s. Q9K_SysFTime in q9kernel_entry.a).
+ * Referenzsystem belegt (s. Q9K_SysFTime in q9kernel_entry.a).
  *
  * WARUM ES DIESE DATEI GIBT -- eine Uhr statt eines Hardwarelesers:
  *

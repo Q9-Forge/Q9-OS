@@ -12,7 +12,7 @@
  * indizierbare Tabelle expandiert.
  *
  * Die Gruppierung selbst ist KEINE Q9-Erfindung, sondern die reale
- * MC68030-Standard-Exception-Vektortabelle (per Skript gegen den echten Original-Kernel
+ * MC68030-Standard-Exception-Vektortabelle (per Skript gegen den Referenzkernel
  * verifiziert, s. o.) -- deshalb hier unveraendert uebernommen, inkl.
  * der beiden reservierten Reset-Vektoren (0/1: initialer SSP/PC), die
  * NICHT Teil der Quelltabelle sind (der echte Kernel startet seinen
@@ -383,7 +383,7 @@ void Q9K_SysIRQImpl(void)
     Q9K_IRQSet(Q9K_IRQ_SCRATCH_SUCCESS, ok ? 1UL : 0UL);
 }
 
-/* Recovered F$FIRQ ABI (reference kernel 0x2718): D0 is the vector, D1.b
+/* F$FIRQ ABI (observed on the reference kernel): D0 is the vector, D1.b
  * is reserved and must be zero, A0 is the fast service routine, and A2 is
  * its static data pointer.  Valid vectors are the autovectors 25..31 or
  * external vectors 64..255.  Q9 keeps vector 30 for its board timer. */

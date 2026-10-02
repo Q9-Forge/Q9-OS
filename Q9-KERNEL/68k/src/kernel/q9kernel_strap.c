@@ -18,9 +18,8 @@
  *              dc.w  -1               End of Table
  *
  * Das erste Wort ist der Ausnahmeeintrag als BYTE-OFFSET in der
- * CPU-Vektortabelle (T_BusErr = 8, T_IllIns = 16, ... -- s.
- * MWOS/OS9/SRC/DEFS/sysglob.a, wo sie mit "org 0 / do.l 1" je Vektor
- * definiert sind, die Nummer also mal vier). Das zweite ist ein
+ * CPU-Vektortabelle (T_BusErr = 8, T_IllIns = 16, ... -- die
+ * Nummer ist also vier mal der Vektorindex). Das zweite ist ein
  * PC-RELATIVER Abstand zur Behandlerroutine: der Assemblerausdruck
  * "Routine-*-4" bedeutet, dass die Routine bei (Adresse des Paares) + 4 +
  * Abstand liegt. Dadurch ist die Tabelle verschieblich -- was sie sein

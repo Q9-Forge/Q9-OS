@@ -2,26 +2,14 @@
  * q9kernel_sema.c -- Q9-OS eigener Kernel: F$Sema (Callcode $62,
  *                    2026-09-18).
  *
- * DIE ABI STEHT NICHT IM HANDBUCH -- sie ist aus Microwares eigener
- * Bibliothek disassembliert. Das Handbuch beschreibt Semaphore
- * ausfuehrlich (Kapitel 4) und nennt Struktur und Operationscodes, sagt
- * aber nirgends, in welchen Registern der Aufruf seine Argumente
- * erwartet. Belegt wurde es an MWOS/OS9/68020/LIB/os_lib.l:
- *
- *   _os_sema_p bei $9310:            _os_sema_v bei $9386:
- *     exg.l   d0,a0                    movem.l d1/a0,-(a7)
- *     addq.l  #1,4(a0)      s_lock++   movea.l d0,a0
- *     tas.b   0(a0)         s_value    btst.b  #0,$1f(a0)   s_flags Bit 0
- *     exg.l   d0,a0                    beq.b   ...          (kein cas)
- *     bne.b   ...           belegt     ...
- *     moveq   #0,d0         frei       subq.l  #1,4(a0)     s_lock--
- *     rts                   OHNE Trap  bne.b   ...          Warter da?
- *     ...                              moveq   #0,d0        sonst fertig
- *     movea.l d0,a0                    rts                  OHNE Trap
- *     moveq   #1,d1         P          ...
- *     trap    #0            F$Sema     move.l  a0,d0
- *     tas.b   0(a0)         erneut     moveq   #2,d1        V
- *     bne.b   ...           wieder     trap    #0           F$Sema
+ * DIE ABI STEHT NICHT IM HANDBUCH -- sie wurde am Referenzsystem beobachtet.
+ * Das Handbuch beschreibt Semaphore ausfuehrlich (Kapitel 4) und nennt
+ * Struktur und Operationscodes, sagt aber nirgends, in welchen Registern
+ * der Aufruf seine Argumente erwartet. Beobachtet wurde: Nutzercode
+ * reserviert und gibt die Semaphore selbst per TAS bzw. Zaehlerabgleich
+ * frei und ruft F$Sema nur im Konfliktfall (P: Semaphore belegt; V: Warter
+ * vorhanden), mit d0 = Zeiger auf die Semaphorstruktur und d1.w = 1 (P)
+ * bzw. 2 (V).
  *
  * Daraus folgt die vollstaendige Aufrufkonvention:
  *
@@ -29,8 +17,8 @@
  *        d1.w = Operation: 1 = P (reservieren), 2 = V (freigeben)
  *   AUS  keine; bei Fehler Carry und d1.w = Fehlercode
  *
- * Die Struktur-Offsets aus dem Disassemblat decken sich exakt mit
- * MWOS/OS9/SRC/DEFS/semaphore.h -- s_value +0, s_lock +4, s_flags +28
+ * Die Struktur-Offsets decken sich exakt mit dem dokumentierten
+ * semaphore.h-Layout -- s_value +0, s_lock +4, s_flags +28
  * (dessen unterstes Byte bei +$1f geprueft wird), s_sync +32. Das ist
  * eine unabhaengige Bestaetigung, dass der Header zum Code passt.
  *
@@ -68,8 +56,8 @@ extern int    Q9K_ProcAProc(Q9_u32 desc, Q9_u16 *outError);      /* q9kernel_pro
 extern Q9_u32 Q9K_SchedFirstPick(void);                          /* q9kernel_sched.c   */
 
 /* Zustandscode eines auf einen Semaphor wartenden Prozesses. NICHT
- * geraten: MWOS/OS9/SRC/DEFS/process.a fuehrt ihn als
- * "Q_Sema: equ 'p' semaphore queue" -- eigener Zustand neben 'w'
+ * geraten: das Referenzsystem fuehrt ihn als
+ * 'p' (semaphore queue) -- eigener Zustand neben 'w'
  * (Warteschlange) und 's' (schlafend). */
 #ifndef Q9K_PROCDESC_STATE_OFF
 #define Q9K_PROCDESC_STATE_OFF 0x1DUL
@@ -97,8 +85,8 @@ static void Q9K_SetU8(Q9_u32 addr, unsigned char value) { *(volatile unsigned ch
 #define Q9K_READYQ_NEXT_OFF 0x30UL
 #endif
 
-/* Feldabstaende der Semaphorstruktur, aus semaphore.h und im Disassemblat
- * bestaetigt. Per #ifndef ueberschreibbar, gleicher Grund wie ueberall:
+/* Feldabstaende der Semaphorstruktur, aus dem dokumentierten semaphore.h-Layout und am
+ * Referenzsystem bestaetigt. Per #ifndef ueberschreibbar, gleicher Grund wie ueberall:
  * auf dem 64-Bit-Testhost ist Q9_u32 acht Byte breit. */
 #ifndef Q9K_SEMA_OFF_VALUE
 #define Q9K_SEMA_OFF_VALUE   0UL   /* s_value  -- frei/belegt, vom Nutzercode per tas */

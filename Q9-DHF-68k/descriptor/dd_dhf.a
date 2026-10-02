@@ -17,8 +17,8 @@ Edition         equ     1
 * er suchen soll).
 DHF_PORT        equ     $FFFF4000
 
-* Mode-Bits (MWOS/OS9/SRC/DEFS/funcs.a "File Access Permissions and Mode values") -- wie
-* rbfdesc.a's "Descriptor Defaults" (Dir_+ISize_+Append_+Exec_+Updat_), aber ohne ISize_/
+* Mode-Bits ("File Access Permissions and Mode values") -- wie
+* bei den RBF-Standarddeskriptoren ("Descriptor Defaults" (Dir_+ISize_+Append_+Exec_+Updat_), aber ohne ISize_/
 * Append_: DHF alloziert keine Dateigroesse vorab und erzwingt kein Anhaengen an EOF.
 Read_           equ     %00000001
 Write_          equ     %00000010
@@ -46,8 +46,7 @@ DHF_MODE        equ     Dir_+ISize_+Append_+Exec_+Updat_
         dc.w    0,0,0,0         * reserviert
         dc.w    OptLen          * M$Opt -- Groesse der Options-Tabelle in Byte
 
-* 2026-09-26: Options-Tabelle (wird von IOMan nach PD_OPT kopiert) im RBF-Aufbau nach
-* MWOS/OS9/SRC/IO/RBF/DESC/rbfdesc.a -- vorher stand hier nur der Basispfad-Offset, dessen
+* 2026-09-26: Options-Tabelle (wird von IOMan nach PD_OPT kopiert) im RBF-Aufbau -- vorher stand hier nur der Basispfad-Offset, dessen
 * oberes Byte ($00) als Geraetetyp PD_DTP gelesen wurde: 0 = SCF. Utilities wie "rename"
 * holen PD_OPT per SS_Opt und verweigern sich bei PD_DTP <> DT_RBF ("pathname not RBF
 * device"). Geometriefelder sind fuer DHF bedeutungslos, nur Typ und Sektorgroesse zaehlen.

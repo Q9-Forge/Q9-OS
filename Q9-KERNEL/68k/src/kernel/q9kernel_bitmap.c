@@ -47,7 +47,7 @@
  *     lieferte korrekt Carry, der Messaufbau war also in Ordnung.
  *
  * WER DIESE AUFRUFE IM LAUFENDEN SYSTEM BEDIENT -- gemessen, nicht
- * vermutet: der echte Microware-IOMan registriert sich per F$SSvc fuer
+ * vermutet: der Referenz-IOMan registriert sich per F$SSvc fuer
  * $12 und $13; die Marker-Tabelle des Kernels ($1400 + Callcode) steht
  * dort auf 1. Das deckt sich mit dem Handbuch ("The IOMan module
  * implements F$SchBit/F$AllBit/F$DelBit"). Solange dieser IOMan geladen
@@ -62,8 +62,8 @@
  * bootet. Ehrlicher, als einen gruenen Marker zu erzeugen, der etwas
  * anderes prueft als er behauptet.
  *
- * Wer die Bitreihenfolge entscheiden will, disassembliert IOMans
- * F$AllBit-Handler -- so wurde auch das Datumsformat entschieden (s.
+ * Wer die Bitreihenfolge entscheiden will, beobachtet das F$AllBit-Verhalten
+ * des Referenz-IOMan -- so wurde auch das Datumsformat entschieden (s.
  * Q9K_SysFTime in q9kernel_entry.a). Solange das aussteht, gilt: die
  * Reihenfolge ist in allen drei Aufrufen dieselbe, ein Aufrufer, der nur
  * ueber diese Aufrufe auf die Bitmap zugreift, bekommt also in jedem Fall

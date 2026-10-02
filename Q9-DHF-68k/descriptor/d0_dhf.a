@@ -7,16 +7,15 @@
 * eigener Geraetetyp erkennbar sein. Datei entsprechend von descriptor/dhf0.a nach
 * descriptor/d0_dhf.a umbenannt (Konvention: "<Laufwerksname>_dhf.a").
 *
-* 2026-09-27: Geraetedeskriptor fuer DHF, nach dem Vorbild der echten Microware-Quellen
-* MWOS/OS9/SRC/IO/RBF/DESC/rbfdesc.a und .../SCF/DESC/scfdesc.a (Feldreihenfolge/-namen
-* 1:1 uebernommen, s. deren Kopfkommentare und MWOS/OS9/SRC/DEFS/module.a). Drei Dinge sind
+* 2026-09-27: Geraetedeskriptor fuer DHF im ueblichen Deskriptorformat
+* (Feldreihenfolge/-namen wie bei den Standard-Geraetedeskriptoren). Drei Dinge sind
 * hier bewusst aenderbar, ohne Treiber/Manager neu bauen zu muessen (s. Q9-OS/Q9-DHF-68k/
 * STATUS.md):
 *
 *   1. DHF_PORT (M$Port) -- Hardware-/MMIO-Basisadresse. Der Kernel kopiert diesen Wert
 *      automatisch in Offset 0 des Treiber-eigenen statischen Speichers (V_PORT), noch
-*      bevor Init aufgerufen wird -- verifiziert an MWOS/OS9/SRC/IO/SCF/DRVR/sc68681.a's
-*      echtem Init ("movea.l V_PORT(a2),a3"). driver/dhfdrv_68k.a (ab Edition 1.10) liest
+*      bevor Init aufgerufen wird -- verifiziert am Referenz-Treiber
+*      (Init: "movea.l V_PORT(a2),a3"). driver/dhfdrv_68k.a (ab Edition 1.10) liest
 *      die Basis von dort, nicht mehr als einkompilierte Konstante.
 *   2. Der Name dieses Moduls selbst (aktuell "d0", s. "nam"-Zeile oben) -- das ist der
 *      Name, unter dem man das Geraet per "iniz d0" anspricht.
@@ -39,8 +38,8 @@ Edition         equ     1
 * er suchen soll).
 DHF_PORT        equ     $FFFF4000
 
-* Mode-Bits (MWOS/OS9/SRC/DEFS/funcs.a "File Access Permissions and Mode values") -- wie
-* rbfdesc.a's "Descriptor Defaults" (Dir_+ISize_+Append_+Exec_+Updat_), aber ohne ISize_/
+* Mode-Bits ("File Access Permissions and Mode values") -- wie
+* bei den RBF-Standarddeskriptoren ("Descriptor Defaults" (Dir_+ISize_+Append_+Exec_+Updat_), aber ohne ISize_/
 * Append_: DHF alloziert keine Dateigroesse vorab und erzwingt kein Anhaengen an EOF.
 Read_           equ     %00000001
 Write_          equ     %00000010
@@ -68,8 +67,7 @@ DHF_MODE        equ     Dir_+ISize_+Append_+Exec_+Updat_
         dc.w    0,0,0,0         * reserviert
         dc.w    OptLen          * M$Opt -- Groesse der Options-Tabelle in Byte
 
-* 2026-09-26: Options-Tabelle (wird von IOMan nach PD_OPT kopiert) im RBF-Aufbau nach
-* MWOS/OS9/SRC/IO/RBF/DESC/rbfdesc.a -- vorher stand hier nur der Basispfad-Offset, dessen
+* 2026-09-26: Options-Tabelle (wird von IOMan nach PD_OPT kopiert) im RBF-Aufbau -- vorher stand hier nur der Basispfad-Offset, dessen
 * oberes Byte ($00) als Geraetetyp PD_DTP gelesen wurde: 0 = SCF. Utilities wie "rename"
 * holen PD_OPT per SS_Opt und verweigern sich bei PD_DTP <> DT_RBF ("pathname not RBF
 * device"). Geometriefelder sind fuer DHF bedeutungslos, nur Typ und Sektorgroesse zaehlen.

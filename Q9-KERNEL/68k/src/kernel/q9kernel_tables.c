@@ -6,7 +6,7 @@
  *
  * Init-Modul-Feldoffsets $38 (M$Procs), $3A (M$Paths), $62 (M$MDirSz)
  * stammen aus dem OFFIZIELLEN Manual (68k_tech.pdf, Table 2-4 "Init
- * Module Values") -- nicht reverse-engineert, direkt nachgeschlagen
+ * Module Values") -- direkt nachgeschlagen
  * (Grundsatz: Manuals zuerst pruefen). Alle drei
  * liegen unterhalb von Offset $7C, sind also durch dieselbe Bounds-
  * Pruefung (initAvailableLen >= 0x7C) abgedeckt, die q9kernel_cinit.c
@@ -23,9 +23,9 @@
  * Annahme, das Deskriptor-Layout sei kein Kompat-Erfordernis. **Diese
  * Annahme wurde 2026-09-01 widerlegt:** IOMan (externes, reales Modul)
  * schreibt bei I$Dup unbedingt auf D_SysPrc+0x168 -- das ist exakt
- * P$Path[0] im echten Microware-Layout (P$DIO@0x148, DefIOSiz=32,
- * P$Path direkt danach@0x168, NumPaths(32)*2=64 Byte bis 0x1A8; per
- * process.a gegengeprueft, nicht kopiert). Q9K_PROCDESC_SIZE wurde
+ * P$Path[0] im Referenz-Layout (P$DIO@0x148, DefIOSiz=32,
+ * P$Path direkt danach@0x168, NumPaths(32)*2=64 Byte bis 0x1A8; am
+ * Referenzsystem gegengeprueft). Q9K_PROCDESC_SIZE wurde
  * daraufhin von 128 auf 0x200 (512) vergroessert -- deckte P$Path (bis
  * 0x1A8) plus Marge.
  *

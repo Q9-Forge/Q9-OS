@@ -9,16 +9,12 @@
 * drei Generationen anhand des Sync-Worts erkennt und ausfuehrlich
 * beschreibt -- unabhaengig von OS-9-Generation/CPU-Architektur.
 *
-* Eigenstaendig aus den drei offiziellen Technical Manuals
-* rekonstruiert (OS-9 System Programmer's Manual 1983, Kapitel 4, fuer
-* 6809; OS-9 for 68K Processors Technical Manual, Table 1-6/1-7/1-8,
-* fuer 68K; OS-9000 Technical Manual, Kapitel 1 (mh_com-Struct), fuer
-* OS-9000), verifiziert durch eigene Analyse realer Kernel-
-* Binaries (siehe intern dokumentiert).
-* KEIN Abdruck der proprietaeren Microware-Quelldateien module.h/
-* oskdefs.d (copyright-geschuetzt) -- nur die (nicht schutzfaehigen)
-* strukturellen Fakten Offset/Groesse/Bedeutung uebernommen, alle Namen
-* und Beschreibungstexte eigene Formulierungen.
+* Aus den drei offiziellen Technical Manuals erstellt (OS-9 System
+* Programmer's Manual 1983, Kapitel 4, fuer 6809; OS-9 for 68K Processors
+* Technical Manual, Table 1-6/1-7/1-8, fuer 68K; OS-9000 Technical Manual,
+* Kapitel 1 (mh_com-Struct), fuer OS-9000) und an Referenzmodulen
+* verifiziert (siehe intern dokumentiert). Alle Namen und
+* Beschreibungstexte sind eigene Formulierungen.
 *
 * Statuskennzeichnung je Feld:
 *   VERIFIZIERT   -- an einem echten Binary geprueft

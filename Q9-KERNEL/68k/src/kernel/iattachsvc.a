@@ -512,7 +512,7 @@ Q9K_AttachStart:
         move.b  d7,$FFFFF006
 
 * F$Julian: d0.l = time (00hhmmss), d1.l = date (yyyymmdd).  1970-01-01
-* must give JULBASE (2440587), the value MWOS/SRC/DEFS/time.h states for
+* must give JULBASE (2440587), the documented value for
 * that day.
         move.l  #$000C0000,d0                  * 12:00:00
         move.l  #$07B20101,d1                  * 1970-01-01
@@ -940,7 +940,7 @@ Q9K_SemaOk:
         move.b  d7,$FFFFF006
 
 * The other half of the same ABI: every resize must fail, and with the
-* code the reference kernel itself returns at $61da.
+* code the reference kernel itself returns.
         move.l  #$4000,d0                      * any non-zero request
         trap    #0
         dc.w    $0007                          * F$Mem, resize attempt

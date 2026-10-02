@@ -7,8 +7,8 @@
  *
  * Die Pruefwerte sind NICHT aus der eigenen Implementierung gewonnen,
  * sondern von aussen belegt:
- *   * 1970-01-01 -> 2440587 ist woertlich `JULBASE` aus
- *     MWOS/SRC/DEFS/time.h ("julian date for Jan 1, 1970").
+ *   * 1970-01-01 -> 2440587 ist `JULBASE`
+ *     ("julian date for Jan 1, 1970").
  *   * Alle Wochentage kommen aus der im Handbuch angegebenen Formel
  *     MOD(Julian+2, 7) und sind gegen den tatsaechlichen Wochentag
  *     geprueft.

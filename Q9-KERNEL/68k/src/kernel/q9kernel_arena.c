@@ -11,7 +11,7 @@
  * bekannt ist -- Q9_D_TOTRAM steht schon seit dem Assembler-Einstieg
  * fest, s. q9kernel_entry.a).
  *
- * BEWUSST vereinfacht gegenueber dem Original: der reale Kernel hat eine
+ * BEWUSST vereinfacht gegenueber dem Referenzkernel: dieser hat eine
  * "farbklassifizierte" (nach Groessenklasse segmentierte) Freispeicher-
  * liste (s. Q9_D_FREEMEM-Kommentar in q9sysglob.h) -- das ist eine
  * interne Kernel-Implementierungsdetail, KEIN Kompatibilitaetserfordernis

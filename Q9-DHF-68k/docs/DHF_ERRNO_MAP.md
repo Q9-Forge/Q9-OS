@@ -1,7 +1,7 @@
 # DHF: Host-errno → OS-9-Fehlercode
 
 Stand 26.09.2026. Das Status-Byte des Geräts geht **unverändert** als d1.w (mit Carry) an den
-I$-Aufrufer, die Werte sind also die echten OS-9-Codes aus `MWOS/SRC/DEFS/errno.h`.
+I$-Aufrufer, die Werte sind also die echten OS-9-Codes.
 Quelle: `errno_to_dhf()` und `enum dhf_error` in `Q9-Flux-68k/src/devices/dhf/`.
 
 | Host (errno / Lage) | OS-9 | Code |

@@ -5,7 +5,7 @@
 *         Funktion (13 I$-Einsprungpunkte, alle GetStt/SetStt-Codes) gegen ein
 *         frisches Testverzeichnis /d0/rt auf und vergleicht Rueckgabecode UND
 *         Rueckgabewerte gegen das dokumentierte OS-9-Sollverhalten ("OS-9
-*         System Calls" Kap. 2, Fehlercodes aus MWOS/SRC/DEFS/errno.h).
+*         System Calls" Kap. 2).
 *
 *         Jede Pruefung druckt genau eine Zeile:
 *           "OK     nn Name"
@@ -68,7 +68,7 @@ M_UPDATE        equ     $03
 M_DIRREAD       equ     $81
 M_DIRUPD        equ     $82
 
-* Fehlercodes (MWOS/SRC/DEFS/errno.h)
+* Fehlercodes
 E_BPNUM         equ     $C9
 E_BMODE         equ     $CB
 E_UNKSVC        equ     $D0

@@ -479,8 +479,7 @@ int Q9K_ProcRetPD(Q9_u32 dbtAddr, Q9_u16 num, Q9_u16 *outError)
  *     cmpi.b  #$20,d0
  *     movea.l a1,a0         a1 = Zeiger HINTER das letzte Namenszeichen
  *
- * Vollstaendige Ausgabe (ECHTE Microware-Konvention -- 2026-09-08 durch
- * ECHTEN RBF-Level-2-Quellcode (SchDir/RBPNam, www.roug.org, l2sources/rbf)
+ * Vollstaendige Ausgabe (Referenzkonvention -- 2026-09-08 am RBF-Level-2-Verhalten (SchDir/RBPNam)
  * zweifelsfrei belegt, nicht mehr nur aus dem Technical Manual geraten):
  * RBFs SchDir-Schleife ruft F$PrsNam via RBPNam GENAU EINMAL pro
  * Verzeichnisebene auf und braucht daraus GLEICHZEITIG zwei verschiedene

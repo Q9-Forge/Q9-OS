@@ -4,7 +4,7 @@
  *
  * Anlass (2026-09-11, Abschnitt "F$Load-Meilenstein"/Folgetest): ein per
  * F$Load geladenes echtes Kommandomodul ("/dd/CMDS/echo") per F$Fork
- * ausgefuehrt -- es startet, laeuft echten Microware-Code, versucht
+ * ausgefuehrt -- es startet, laeuft Referenzcode, versucht
  * dann per F$TLink(13,"csl") seine C-Laufzeitbibliothek "csl" zu
  * installieren (per Rueckspringadressen-/Byte-Muster-Forensik in
  * echo.mod direkt gefunden: trap 13, Name "csl", KEIN F$STrap/T$Math-

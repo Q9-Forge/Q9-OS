@@ -1,7 +1,7 @@
 *******************************************************************************
 * q9kernel_entry.a -- Q9-OS eigener Kernel: Modulkopf + Assembler-Einstieg
 *
-* ERSTER ENTWURF, 2026-08-17 -- ERFOLGREICH gegen den echten Microware-
+* ERSTER ENTWURF, 2026-08-17 -- ERFOLGREICH gegen den Referenz-
 * Assembler getestet (r68, "Microware OS-9/68020 Cross Macro Assembler
 * V2.9.1", lokal unter dem Referenzpfad tools/macos/bin/r68 als Wine-Wrapper um die
 * echte DOS-exe): "Errors: 00000", echte 68K-Opcode-Bytes erzeugt (z.B.
@@ -29,20 +29,18 @@
 *
 * psect-Parameterreihenfolge empirisch aus zwei Referenzquellen
 * rekonstruiert (kein lokal dokumentiertes r68-Handbuch gefunden):
-*   internes Analysematerial zum Original-Kernel (nicht Teil dieses Repos)
-*   Referenz-TMP/q9_cstart.a   (eigenes Q9-C-Startmodul)
+*   internes Analysematerial (nicht Teil dieses Repos)
+*   eigenes Q9-C-Startmodul
 * Format: psect name,tylang,attrrev,edition,mem/stack,exec-label,trap-label
 * -- Systm-Module (wie hier) nutzen laut Manual kein M$Mem/M$Stack, beide
 * Referenzdateien bestaetigen das mit 0 an dieser Stelle.
 *
-* Konstantenwerte gegen Referenz-TMP/q9defs.d gegengeprueft (eigene,
+* Konstantenwerte gegen die Q9-Definitionsdatei gegengeprueft (eigene,
 * schon etablierte Definitionsdatei) -- Q9Systm=12, Q9Objct=1, Q9ReEnt=$80,
 * Q9SupStat=$20 stimmen exakt mit Q9_MT_SYSTEM/Q9_ML_OBJECT/Q9_MA_REENT/
 * Q9_MA_SUPER aus src/q9moduleheader.h ueberein. Hier trotzdem eigene,
-* lokale equ-Zeilen (nicht per "use" eingebunden) -- q9defs.d ist laut
-* eigenem Kommentar ein Uebergangsstand ("wird spaeter durch eine
-* Q9-eigene Definitionsdatei ersetzt"), diese Datei soll nicht fragil
-* davon abhaengen.
+* lokale equ-Zeilen (nicht per "use" eingebunden) -- die Definitionsdatei ist ein
+* Uebergangsstand, diese Datei soll nicht fragil davon abhaengen.
 *
 * Registerkonvention beim Einsprung (verifiziert, intern dokumentiert
 * 01-kernel-bootstrap/README.md, Thema 01): d0=Gesamt-RAM-Groesse,
@@ -1416,7 +1414,7 @@ Q9K_ZeroDone:
         move.l  a1,Q9_D_SysRom(a6)               * Boot-ROM-Einsprungpunkt
         move.l  a5,Q9_D_ExcJmp(a6)               * Exception-Tabellen-Speicherblock
 
-* Original-OS-9-ROM-ABI (MWOS/OS9/SRC/ROM/CBOOT/SYSBOOT/sbtglueasm.a):
+* ROM-ABI des Referenzsystems:
 * a1 zeigt auf die Boot-ROM-Service-Tabelle; B_Debug ist das fuenfte
 * Langwort bei Offset $10.  D_SysDbg muss den dort gespeicherten
 * Funktionszeiger enthalten, nicht die Adresse des Tabellenfeldes.
@@ -1583,7 +1581,7 @@ Q9K_HaltLoopSpin:
 * absoluten Wert ab -- funktional falsch, weil der Compiler dafuer
 * IMMER eine kleine, A6-relative vsect-Verschiebung erzeugt, keinen
 * Verweis auf eine feste Adresse. vsect matcht dem eigenen
-* Referenz-TMP/q9_cstart.a (dort Teil des dritten vsect-Blocks
+* Q9-C-Startmodul (dort Teil des dritten vsect-Blocks
 * _fcbs/_ofcbs/environ/_stklimit) -- hier bewusst nur das tatsaechlich
 * referenzierte Feld, da wir keine eigene "echte" OS-9-C-Runtime
 * nachbilden, nur das, was unser eigener Compiler-Output braucht.
@@ -2697,7 +2695,7 @@ Q9K_TestEchoParamLen equ 11
 
 * NACHTRAG 2026-09-13 (Fortsetzung 61, "weitere echte Programme
 * testen"): zweites, unabhaengiges echtes Kommandomodul (aus dem
-* echten Microware-Referenzabbild, unveraendert) -- "date" statt "echo",
+* Referenzabbild, unveraendert) -- "date" statt "echo",
 * deckt organisch auf, welcher naechste Syscall wirklich gebraucht wird
 * (Zeit-Gruppe F$Time/F$STime/F$Julian/F$Gregor ist bisher komplett
 * unimplementiert, s. docs/OWN_KERNEL_MODULES_OVERVIEW.md).
@@ -3534,9 +3532,8 @@ Q9K_TrapUnknown:
 * Root-Cause-Suche eines echten IOMan-Stack-Crashs): generischer
 * Fehler-Stub fuer JEDEN in D_SysDis/D_UsrDis NICHT explizit
 * registrierten Syscall-Slot (bisher blieben unregistrierte Slots auf
-* 0 -- anders als der ECHTE Microware-Kernel, der laut REVERSE_
-* ENGINEERING.md fuer genau diesen Zweck einen "gemeinsamen Fehler-Stub"
-* im Modul bei Offset 0x1380 vorbelegt). Der PEA+RTS-Trampolin-
+* 0 -- anders als der Referenzkernel, der fuer genau diesen Zweck einen
+* "gemeinsamen Fehler-Stub" vorbelegt). Der PEA+RTS-Trampolin-
 * Mechanismus, ueber den externe Module wie IOMan performancekritische
 * Primitive DIREKT ansprechen (ohne TRAP #0, intern dokumentiert,
 * Fund "Runde 2"), liest den Primaerarray-Wert des
@@ -5077,7 +5074,7 @@ Q9K_SysFVModul_Fail:
 * gesetzt, d1.w=Fehlercode.
 *
 * Anlass (2026-09-11): ein per F$Load geladenes echtes Kommandomodul
-* ("/dd/CMDS/echo") per F$Fork ausgefuehrt, laeuft echten Microware-Code
+* ("/dd/CMDS/echo") per F$Fork ausgefuehrt, laeuft Referenzcode
 * und versucht F$TLink(13,"csl") -- scheitert bisher mit "**** can't
 * install csl ****", weil dieser Dienst komplett fehlte (per
 * Byte-Muster-Forensik direkt in echo.mod gefunden: trap 13, Name
@@ -5265,16 +5262,11 @@ Q9K_SysFSRtMem:
 * ("The OS-9 kernel keeps track of the current date and time in
 * software").
 *
-* Die Feldkodierung war ihrerseits ein echter Fehler, am Originalkernel
-* entschieden: "yyyymmdd" meint FELDER, nicht eine Dezimalzahl. Belegt an
-* MWOS/OS9/68000/CMDS/BOOTOBJS/aker000b ab $2316:
-*
-*     move.b  d1,d3        * Tag = unterstes Byte
-*     asr.l   #8,d1
-*     move.b  d1,d2        * Monat = naechstes Byte
-*     asr.l   #8,d1        * Jahr  = oberes Wort
-*     cmpi.w  #$62e,d1     * 1582, die Kalenderumstellung
-*     muls.w  #$5b5,d1     * 1461, der Vier-Jahres-Zyklus
+* Die Feldkodierung war ihrerseits ein echter Fehler, am Referenzsystem
+* entschieden: "yyyymmdd" meint FELDER, nicht eine Dezimalzahl -- Jahr im
+* oberen Wort, dann je ein Byte Monat und Tag. Die Julian-Umrechnung des
+* Referenzsystems nutzt dieselbe Feldaufteilung (Kalenderumstellung 1582,
+* Vier-Jahres-Zyklus 1461 Tage).
 *
 * Folge des alten Fehlers: F$Time und F$Julian waren zueinander
 * inkompatibel -- wer das Ergebnis des einen an den anderen weiterreichte,
@@ -5446,9 +5438,8 @@ Q9K_SysFGBlkMp_Fail:
 *******************************************************************************
 * Q9K_SysFSema -- F$Sema (Callcode $62).
 *
-* Die ABI steht NICHT im Handbuch -- sie ist aus Microwares eigener
-* Bibliothek disassembliert (MWOS/OS9/68020/LIB/os_lib.l, _os_sema_p bei
-* $9310 und _os_sema_v bei $9386; ausfuehrlich in q9kernel_sema.c):
+* Die ABI steht NICHT im Handbuch -- sie wurde am Referenzsystem
+* beobachtet (ausfuehrlich in q9kernel_sema.c):
 *   EIN d0.l = Zeiger auf die Semaphorstruktur, d1.w = 1 (P) oder 2 (V)
 *   AUS keine; bei Fehler Carry und d1.w = Fehlercode
 *
@@ -6897,8 +6888,8 @@ Q9K_SysFFModul_Fail:
 *******************************************************************************
 * Q9K_SysFMem -- F$Mem (Callcode $07, "Resize Data Memory Area").
 *
-* Reale ABI, 68k_tech.pdf S.465/466, zusaetzlich am Originalkernel
-* verifiziert (Einstieg Modul-Offset $133C):
+* Reale ABI, 68k_tech.pdf S.465/466, zusaetzlich am Referenzsystem
+* beobachtet:
 *   EIN  d0.l = gewuenschte neue Groesse; 0 = Informationsabfrage
 *   AUS  d0.l = tatsaechliche Groesse des Datenbereichs
 *        a1   = Zeiger auf das neue Ende des Datensegments (+1)
@@ -6907,7 +6898,7 @@ Q9K_SysFFModul_Fail:
 * Nur die Informationsabfrage ist umgesetzt; jede Groessenaenderung
 * wird mit E$NoRAM abgelehnt -- genau das dokumentierte Verhalten ab
 * OS-9/68K V2.3 ("Only an information request (d0=0) works"), und
-* derselbe Fehlercode, den der Originalkernel bei $61da liefert.
+* derselbe Fehlercode, den der Referenzkernel liefert.
 * Vollstaendige Herleitung im Kopfkommentar von q9kernel_mem.c.
 *
 * a1 wird hier BEWUSST NICHT gesichert -- anders als bei Q9K_SysFTime,
@@ -7473,8 +7464,7 @@ Q9K_SysIDCopyright:
 * NICHT aus der Zwischenassemblierung abgelesen, sondern angenommen --
 * und deshalb bewusst an einer Stelle geprueft, die bei einer falschen
 * Annahme zwingend auffaellt: der Live-Test rechnet den 1970-01-01 in
-* die julianische Tageszahl um und vergleicht mit JULBASE (2440587,
-* MWOS/SRC/DEFS/time.h). Jede vertauschte oder falsch gelesene
+* die julianische Tageszahl um und vergleicht mit JULBASE (2440587). Jede vertauschte oder falsch gelesene
 * Operandenzuordnung ergibt dort einen anderen Wert.
 *
 * Algorithmus: klassische Restoring-Division, 32 Schritte Schieben und

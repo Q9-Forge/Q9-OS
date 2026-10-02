@@ -26,7 +26,7 @@
 
 Edition         equ     1
 
-* I$-Callcodes (MWOS/OS9/SRC/DEFS/funcs.h) -- nicht in q9defs.d vordefiniert,
+* I$-Callcodes -- nicht vordefiniert,
 * wie schon in driver/dhfdrv_68k.a und manager/dhfmgr_68k.a gehandhabt.
 I_OPEN          equ     $84
 I_READ          equ     $89

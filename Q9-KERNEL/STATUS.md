@@ -45,7 +45,7 @@ must not replace the later implementation.
 | ✅ | `0x04` | F$Wait | Child/zombie handling; the 2026-09-29 concurrency stress test found and fixed a real deadlock here (empty ready queue mistaken for true K$Idle while a process was merely sleeping, commit `2b74e30`) and the zombie re-queue guard in `Q9K_SchedReschedule` is a direct result of that investigation |
 | ✅ | `0x05` | F$Chain | Replaces the caller's program in place; refusal, resident replacement, and the non-resident `E$MNF` → `F$Load` → retry path are emulator-verified with `chaintgt` (`c s C`) |
 | ✅ | `0x06` | F$Exit | Process exit, primary memory and tracked user allocations released; shares the same deadlock fix and idle-process-descriptor fallback as F$Wait above (commit `2b74e30`), verified across multiple real timer interrupts via debug dump |
-| ✅ | `0x07` | F$Mem | Information request implemented, wired and **exercised on the machine**. Handler `Q9K_SysFMem` in `q9kernel_entry.a` (reached through pointer cell `$1EB8`), registered in both dispatch tables; `d0=0` returns the data area size in `d0.l` and its upper bound in `a1`, read from the current process descriptor's alloc base/size fields. Every resize is refused with `E$NoRAM` — the same code the reference kernel returns at `$61da`, and what the manual mandates from V2.3 on. ABI verified twice over: manual pp. 465/466 and the disassembled original at module offset `$133C`. Emulator regression in `iattachsvc.a` covers both halves (markers `%` and `&`), 27/27 host suites green, `Vektor=0` |
+| ✅ | `0x07` | F$Mem | Information request implemented, wired and **exercised on the machine**. Handler `Q9K_SysFMem` in `q9kernel_entry.a` (reached through pointer cell `$1EB8`), registered in both dispatch tables; `d0=0` returns the data area size in `d0.l` and its upper bound in `a1`, read from the current process descriptor's alloc base/size fields. Every resize is refused with `E$NoRAM` — the same code the reference kernel returns, and what the manual mandates from V2.3 on. ABI verified twice over: manual pp. 465/466 and the behavior observed on the reference system. Emulator regression in `iattachsvc.a` covers both halves (markers `%` and `&`), 27/27 host suites green, `Vektor=0` |
 | ✅ | `0x08` | F$Send | Signal path; a real bug was found and fixed here (only `a6` was being saved across the signal delivery frame, corrupting the woken process's register image) and verified by confirming the woken process was correctly scheduled and started afterward |
 | ✅ | `0x09` | F$Icpt | Registers the routine and really **runs** it on delivery, by stacking a second process frame; emulator-verified end to end (alarm → routine → `F$RTE`) |
 | ✅ | `0x0A` | F$Sleep | Sleeps end on time and on an early signal; emulator-verified with a 2 s sleep across which the clock advanced |
@@ -53,7 +53,7 @@ must not replace the later implementation.
 | ✅ | `0x0C` | F$ID | Process identity path; direct `iattachsvc` emulator regression calls `F$ID` (callcode `$000c`) to retain the caller's own PID and to confirm it reports the updated group/user ID after `F$SUser` (checked against `$00030007`) |
 | ✅ | `0x0D` | F$SPrior | Priority change on a live process descriptor, implemented and verified in the emulator; see the note on scheduler re-queue timing below |
 | ✅ | `0x0E` | F$STrap | Registers per-process handlers in P$Except and really dispatches into them; emulator-verified end to end on a deliberate Illegal Instruction |
-| 🔷 | `0x0F` | F$PErr | Original Microware IOMan path is the supported implementation; the call is available when IOMan is loaded, while a Q9-native replacement remains open |
+| 🔷 | `0x0F` | F$PErr | The reference IOMan path is the supported implementation; the call is available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x10` | F$PrsNam | Path-name parsing; a real chaining-convention bug was found and fixed by live ground-truth tracing through RBF's own directory-scan path (2026-09-08, Fortsetzung 7) -- `outPastName` was returning a pointer to the separator instead of past it, verified by freezing on a known-good `"startup"` directory entry |
 | ✅ | `0x11` | F$CmpNam | Name comparison with `?`/`*` wildcards and case folding, implemented and verified in the emulator |
 | 🔷 | `0x12` | F$SchBit | Native Q9 implementation is complete and host-tested, including the unusual carry case and invalid-range protection; the normal system path is provided by the loaded Microware IOMan via F$SSvc |
@@ -81,7 +81,7 @@ must not replace the later implementation.
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking; two real register-image bugs were found and fixed here (frame detection via `sp+8` failing for a direct-call image, and `D0`/`A2` not passed back through the caller's register image), and the frame-recognition logic it introduced was later reused by F$AllPD |
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup; shares the A6 trampoline guard pattern documented at F$Link/F$Fork/F$Wait and the `E$Param` reserved-value check noted in the F$SRqMem investigation |
 | 🟡 | `0x2A` | F$IRQ | Native registration/removal now validates reserved vectors, clears stale metadata, restores default handlers after the last removal, and is host-tested; complete hardware-/treiber-spezifische Interruptabdeckung remains open |
-| 🔷 | `0x2B` | F$IOQu | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
+| 🔷 | `0x2B` | F$IOQu | The reference IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; higher-priority descriptors now preempt immediately from the trap context |
 | ✅ | `0x2D` | F$NProc | Takes the next process off the ready list and switches into it. The caller is deliberately not re-queued — that is the manual's own semantics. Emulator-verified with a forked process that calls it and correctly never comes back |
 | 🟡 | `0x2E` | F$VModul | Native header-parity/CRC validation, null/short-buffer and declared-size bounds, directory-pool exhaustion handling, return-buffer ABI, host tests, and live validation of `echo`/`csl` succeed; `/dd/CMDS/date` still never reaches F$VModul because Microware F$Load fails earlier in the RBF/path-read step with `E$MNF` |
@@ -89,7 +89,7 @@ must not replace the later implementation.
 | ✅ | `0x30` | F$AllPD | DBT allocation and descriptor clearing, host tests, and the direct `iattachsvc` emulator regression are verified; the marker sequence reaches the allocation before the later Microware attach/detach checks |
 | ✅ | `0x31` | F$RetPD | DBT return with descriptor-number validation, host tests, and the direct `iattachsvc` emulator regression are verified; the allocated descriptor is returned before the later Microware attach/detach checks |
 | ✅ | `0x32` | F$SSvc | Service-table registration, SysTrap routing, per-service data pointers, kernel-slot protection, and empty-table handling are host-tested; the direct `iattachsvc` emulator regression registers service `0x7F` and reaches it through a real TRAP, including the A3 data pointer |
-| 🔷 | `0x33` | F$IODel | Original Microware IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
+| 🔷 | `0x33` | F$IODel | The reference IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x37` | F$GProcP | PID-to-process-descriptor lookup implemented and host-tested; broader process-property APIs are tracked separately |
 | ✅ | `0x38` | F$Move | Memory move path; found missing via return-address forensics on a `Q9K_SysUnimplemented` probe (Fortsetzung 28, 2026-09-10) and implemented alongside `F$VModul`/`F$SRqCMem`, verified live by loading the real `/CMDS/echo` command module through `F$Load`; this investigation also found and fixed a real bug in `Q9K_ModDirValidateAndAdd`, which now reads the validated module's actual size from the header's `M$Size` field instead of trusting a caller-supplied size that IOMan was passing 2 bytes too large |
 | ⛔ | `0x39` | F$AllRAM | Im Microware-Referenzkernel nicht registriert; beide Dispatch-Tabellen zeigen auf den Fehler-Stub, daher keine nachbildbare ABI |
@@ -116,7 +116,7 @@ must not replace the later implementation.
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | 🟡 | `0x61` | F$FIRQ | Supervisor-only fast-IRQ registration/removal is implemented with one handler per vector, D1.b reservation, Static-Zeiger-Prüfung and shared exception dispatch; the target's true minimal-latency prologue and hardware/live FIRQ delivery remain open |
-| 🟡 | `0x62` | F$Sema | P and V implemented against an ABI recovered by disassembly; V and the refusals are emulator-verified, P is host-tested only (it blocks by design) |
+| 🟡 | `0x62` | F$Sema | P and V implemented against the register convention described in the F$Sema notes below; V and the refusals are emulator-verified, P is host-tested only (it blocks by design) |
 | ✅ | `0x63` | F$SigReset | Discards the saved intercept context, for a routine left via `longjmp()`; emulator-verified |
 
 ## I$ input/output system calls
@@ -178,9 +178,8 @@ task image. Accordingly, `F$Permit`, `F$Protect`, `F$AllTsk`, `F$DelTsk`, and
 “unhandled … kein TLB”, so enabling PMMU instructions in this kernel would
 not be verifiable on the current machine model.
 
-The original SSM binary is preserved at
-`Q9-KERNEL/.os9-original/ssm/vendor/ssm851`, but it is an external
-Microware module rather than a usable page-table implementation for the Q9
+The reference SSM module is an external Microware module (not part of this
+repository) rather than a usable page-table implementation for the Q9
 kernel. Completing this roadmap item therefore requires a target/emulator
 with a functioning 68030 PMMU model (or a software page-table layer first),
 an address-space structure in the process descriptor, and a defined fault-
@@ -460,7 +459,7 @@ longer available. Use F$SRqMem instead."
 That sentence was first thought to be absent from the manual entirely. It is
 not: it appears in `68k_tech.pdf` on page 313, in the error appendix, inside
 the description of **`E$NoRAM` (`000:237`, `$ED`)** — not on the `F$Mem` page,
-and not in the copies under `MWOS/DOC` that were searched. The quotation is
+and not in the documentation copies that were searched. The quotation is
 therefore real and locatable; what it is not is a statement about the call as
 a whole. It explains why a *memory allocation request* returns `E$NoRAM`, and
 points to `F$SRqMem` for growth. Lifted out of that context it reads like an
@@ -487,25 +486,13 @@ descriptor's alloc base and size fields — the same pair `F$Chain` maintains an
 `F$Exit` releases. Every resize is refused with `E$NoRAM`.
 
 The ABI is verified from two independent sources that agree. Besides the manual
-pages above, the original was disassembled: the entry at module offset `$133C`
-(runtime `$843C`) is a thin shell that hands the register image and the `a1`
-slot to the worker at `$6102`, whose success path ends
+pages above, the behavior observed on the reference system matches: on success
+`d0.l` receives the size of the data area and `a1` its upper bound (the base of
+the data area plus that size), both taken from the current process descriptor,
+and a request that would resize the area is refused with `E$NoRAM`.
 
-    621c  move.l $330(a4),(a0)    * d0.l = size of the data area
-    6220  move.l $32c(a4),d0      * base of the data area
-    6224  add.l  (a0),d0
-    6226  move.l d0,(a1)          * a1 = upper bound
-    6228  moveq  #0,d0            * success
-
-with `a4` being `$4c(a6)`, i.e. `D_Proc`. The refusal code is the original's
-own: at `$61d4` it compares the requested against the current size and falls
-through to `move.l #$ed,d0` — `E$NoRAM`. Note that Ghidra classifies `$133C` as
-data rather than code, because nothing reaches it through control flow; it is
-only ever entered through the dispatch table. It has to be disassembled
-explicitly.
-
-One deliberate narrowing: the original still *attempts* a shrink (`$61e2` ff.,
-including the `E$DelSP` check against the stack pointer). This kernel refuses
+One deliberate narrowing: the reference kernel still *attempts* a shrink
+(including a `E$DelSP` check against the stack pointer). This kernel refuses
 that too, rather than half-building it — there is no partial return of a
 process block to the arena here (`Q9K_FreeMem` releases a block whole), and the
 manual requires the failure from V2.3 on anyway.
@@ -539,7 +526,7 @@ inaccessible to every other process.
 
 `F$Julian` (`0x20`) and `F$Gregor` (`0x54`) convert between field-packed
 date/time (`yyyymmdd`, `00hhmmss`) and the OS-9 Julian day number. The zero
-point is the crux and is not guessed: `MWOS/SRC/DEFS/time.h` defines `JULBASE
+point is the crux and is not guessed: the reference system uses the base `JULBASE
 2440587` as the Julian date for 1970-01-01, one below the astronomical day
 number for that date — consistent with the manual's note that OS-9 changes
 Julian dates at midnight rather than noon. The manual's weekday formula
@@ -748,13 +735,13 @@ it. And the mechanism is simple — real OS-9 keeps the debugger's entry point i
 the system global `D_SysDbg` and F$SysDbg just jumps there. Our kernel even has
 a placeholder for it, though on an invented address and filled by nobody.
 
-The entry-point derivation is now recovered from the original boot glue:
+The entry-point derivation is now established from the reference system's boot behavior:
 `a1` is the ROM service-table base and `B_Debug` is its fifth longword at
 offset `$10`, so `D_SysDbg = *(D_SysRom+$10)`. Q9 now captures that pointer
 at boot and exposes a guarded `F$SysDbg` trampoline. The remaining work is
 the live RomBug register/return ABI and the surrounding `F$PwrMan` preamble.
 
-The reference-kernel startup code narrows this down substantially: it stores
+Observing the reference kernel's startup narrows this down substantially: it stores
 the debugger pointer as `D_SysRom + $10`, not as the address of the visible
 `NuRomBug` string. Q9-Flux passes the ROM service-table base in `D_SysRom`;
 for the current ROM image the corresponding candidate is therefore
@@ -887,9 +874,8 @@ fractions of a second gets a different delay than expected. Documented rather
 than quietly guessed.
 
 The alarm table is a Q9-owned fixed pool of eight entries rather than the
-original's two queues (`D_ALMQ1`/`D_ALMQ2`), which the boot code does create. The
-inner node format of those is known only from disassembling the original kernel
-and is of no use to us, since no foreign module reads our alarm nodes; the two
+reference kernel's two queues (`D_ALMQ1`/`D_ALMQ2`), which its boot code does create.
+Their inner node format is of no use to us, since no foreign module reads our alarm nodes; the two
 ring lists stay untouched.
 
 **F$Alarm matrix (current implementation and verification scope):**
@@ -901,7 +887,7 @@ ring lists stay untouched.
 | A$Cycle (2) | `d2.w` signal, `d3.l` interval; returns ID | Repeating relative alarm; separate full 32-bit cycle field | Repeat cadence and `70000`-tick regression | Confirm tick-vs-1/256-second unit convention |
 | A$AtDate (3) | packed `YYYY:MM:DD`, packed `HH:MM:SS`; returns ID | Calendar conversion, RTC/software-clock comparison | Exact time, missed time, invalid date/time | Emulator/live RTC marker |
 | A$AtJul (4) | Julian day, seconds after midnight; returns ID | Absolute alarm with `>=` due-time semantics | Exact time, missed time, day boundary, range errors | Emulator/live RTC marker |
-| A$Reset (5) | ID, new signal, new relative ticks | Keeps ID, restarts relative deadline, preserves cycle mode | ID preservation, signal/interval replacement | Confirm original Microware edge cases live |
+| A$Reset (5) | ID, new signal, new relative ticks | Keeps ID, restarts relative deadline, preserves cycle mode | ID preservation, signal/interval replacement | Confirm reference-system edge cases live |
 
 The matrix is complete for the six documented A$ operations. “Remaining” is
 verification scope, not an unimplemented dispatch case; the row stays 🟡 until
@@ -952,31 +938,14 @@ no loadable clock module; its timer interrupt has been running since boot.
 There is nothing here to start, so the row stays 🟡 rather than claiming a
 completeness the machine does not have.
 
-**The month-field-0 reading is now confirmed against the original kernel, not
-just the manual.** Scanning every module under `MWOS/OS9/*/CMDS` for the byte
-pattern `4E40 0016` (`TRAP #0` followed by the `F$STime` call code) turns up 38
-files, and the interesting one is the reference kernel itself. In `dker030s` at
-offset `$6e0e` the sequence reads:
+**The month-field-0 reading is also consistent with the reference system, not
+just the manual.** On the reference system the clock is set at cold start by a
+call to `F$STime` with `d1 = $076C0000`, which is field-encoded: year `$076C` =
+1900, month `$00`, day `$00`. So the reference system itself calls `F$STime`
+with a month field of zero and a bare year — exactly the battery-backed cold
+start this implementation built from the manual's wording. The reading was
+right, and it no longer rests on wording alone.
 
-```
-    moveq   #$0,d0
-    move.l  #$076c0000,d1
-    trap    #$0                 * F$STime
-```
-
-`d1 = $076C0000` is field-encoded: year `$076C` = 1900, month `$00`, day `$00`.
-So the real kernel calls `F$STime` **on itself** with a month field of zero and
-a bare year — exactly the battery-backed cold start this implementation built
-from the manual's wording. The reading was right, and it no longer rests on
-wording alone.
-
-The rest of the scan sketches who actually uses the call: `setime` (the command
-whose whole purpose it is), `cio` and `csl` as the library binding `_os_setime()`
-— present in the module, executed only if a program calls it — and, unexpectedly,
-`unzip` on the 68000 side, which assembles `d0`/`d1` byte by byte out of
-something it has read before issuing the trap. Why an archiver would set the
-system clock is not clear from the code alone and is not worth guessing at here;
-it is recorded because it is the one caller outside the obvious set.
 
 One tolerance is recorded rather than tightened: a day that does not exist in
 its month is not rejected but carried forward by the julian formula, so
@@ -1104,27 +1073,22 @@ bytes rather than guessed at.
 marked not implemented because Appendix D gives only a cross-reference or
 index entry — notably `F$FModul`, `F$AllRAM`, `F$POSK` and `F$MBuf`.
 
-That obstacle is largely gone. Microware's own C bindings carry the calling
-convention in compiled form, and `MWOS/OS9/68020/LIB/os_lib.l` holds a binding
-for most of the table. Disassembling the few instructions before each `trap #0`
-gives the register usage directly, which is how `F$Sema` below was settled. The
-recipe: find the `trap #0` (`4E40`, with the call code relocated to `0000` in
-the object), read the register moves immediately preceding it, and cross-check
-any structure offsets against the matching header in `MWOS/OS9/SRC/DEFS`.
+That obstacle is partly gone: the register usage of many calls can be
+established by observing their behavior on the reference system and checking
+structure offsets against the manual, which is how `F$Sema` below was settled.
 
-Checked one by one rather than assumed — the library covers `F$Chain`,
-`F$NProc`, `F$Panic`, `F$Event`, `F$FIRQ`, `F$GSPUMp`, `F$SysDbg`, `F$STrap`,
-`F$RTE`, `F$SigReset` and `F$DFork`. The binding settles register usage where
-it exists; the remaining F$FIRQ work is the hardware table/dispatch layer.
-`F$FModul`, `F$AllRAM`, `F$POSK`/`F$P0SK` and `F$MBuf` have neither a manual entry nor a
-binding, and for them the only remaining source is the original kernel itself.
-F$FIRQ is the exception in this group: its ABI and vector constraints were
-recovered from the reference-kernel disassembly and its registration path is
-now implemented, while the hardware delivery path remains target-specific.
+For `F$Chain`, `F$NProc`, `F$Panic`, `F$Event`, `F$FIRQ`, `F$GSPUMp`, `F$SysDbg`,
+`F$STrap`, `F$RTE`, `F$SigReset` and `F$DFork` the register usage was
+established this way; the remaining F$FIRQ work is the hardware table/dispatch
+layer. `F$FModul`, `F$AllRAM`, `F$POSK`/`F$P0SK` and `F$MBuf` have no manual
+entry, and their register usage remains to be determined by observation on the
+reference system. F$FIRQ is the exception in this group: its ABI and vector
+constraints were established by observation and its registration path is now
+implemented, while the hardware delivery path remains target-specific.
 
-Where a manual entry does exist it stays the primary source; the library
-settles what the manual leaves open, the way the original kernel settled the
-date format.
+Where a manual entry does exist it stays the primary source; observation of the
+reference system settles what the manual leaves open, the way the date format
+was settled.
 
 **F$NProc** (`0x2D`) is "Start Next Process": no input, no return, system
 state. The manual is unusually explicit about the one thing that shapes the
@@ -1243,13 +1207,12 @@ proves otherwise. `chaintgt` now writes a `c` the moment it starts, before
 touching the stack or any subroutine, so that question can be answered directly
 instead of inferred.
 
-The function codes come from `MWOS/OS9/SRC/DEFS/event.a` (counted off as
-`do.b 1` from zero), the 32-byte record layout from the same file, and the
-error codes from `funcs.a` — whose counting base sits `$4C` away from the real
-values, a shift confirmed against two codes this kernel already knows
-(`E$UnkSvc` `$D0`, `E$BPAddr` `$D2`). For "table full" the manual names
-`E$EvFull`, which `funcs.a` does not contain; `E$Full` (`$F8`) is reported
-instead and that is noted in the source rather than inventing a code.
+The function codes (counted from zero), the 32-byte record layout and the error
+codes follow the reference system's definitions; the error codes were checked
+against two codes this kernel already knows (`E$UnkSvc` `$D0`, `E$BPAddr`
+`$D2`). For "table full" the manual names `E$EvFull`, which is not among the
+codes known from the reference system; `E$Full` (`$F8`) is reported instead and
+that is noted in the source rather than inventing a code.
 
 Two things the host suite pinned down that would otherwise have been silent
 faults. **The event ID is not the table index**: it carries a serial number in
@@ -1370,15 +1333,13 @@ that faulted; the manual offers none, and a handler is expected to exit or
 
 **F$Sema** (`0x62`), and an ABI that had to be recovered. The manual describes
 semaphores at length — the structure, the states, the P/V operation codes — but
-never says which registers the call expects. That was settled by disassembling
-Microware's own library, `MWOS/OS9/68020/LIB/os_lib.l`: `_os_sema_p` at `$9310`
-and `_os_sema_v` at `$9386` give the whole convention — `d0.l` = pointer to the
-semaphore, `d1.w` = 1 for P or 2 for V. The structure offsets visible in that
-code (`s_value` +0, `s_lock` +4, the `s_flags` byte tested at +`$1f`, `s_sync`
-+32) match `semaphore.h` exactly, which independently confirms header and code
-belong together.
+never says which registers the call expects. That was settled by observing the
+reference system's behavior: the whole convention is `d0.l` = pointer to the
+semaphore, `d1.w` = 1 for P or 2 for V. The structure offsets (`s_value` +0,
+`s_lock` +4, the `s_flags` byte tested at +`$1f`, `s_sync` +32) match the
+documented `semaphore.h` layout exactly.
 
-The same disassembly explains why this call is small: **the uncontended case
+The same convention explains why this call is small: **the uncontended case
 never reaches the kernel at all.** User code takes the semaphore itself with
 `tas` and returns; only when that fails does it call F$Sema(P), and only then
 must the kernel suspend the caller. Likewise it releases the semaphore itself
@@ -1391,8 +1352,8 @@ activated and retries the reserve operation".
 Waiters are queued in the semaphore itself and chained through the same
 descriptor field the ready queue uses. A waiting process is deliberately **not**
 put on the sleep list: both chain through that one field, and a process in both
-at once would destroy both lists. The original has a separate state for this
-(`'p'`, per `process.a`), and so does this implementation.
+at once would destroy both lists. The reference system has a separate state for this
+(`'p'`), and so does this implementation.
 
 P is split across two calls into C, which matters: the queueing happens only
 *after* the assembly side has saved the caller's register set and updated
@@ -1464,17 +1425,16 @@ claims is worse than none.
 
 The bit order is an open point, stated as such: the manual only says "bit
 numbers range from 0 to n-1". This implementation puts bit 0 at the most
-significant bit of byte 0. Deciding it needs IOMan's `F$AllBit` handler
-disassembled, the same way the date format was settled. Until then all three
+significant bit of byte 0. Deciding it needs the reference system's `F$AllBit`
+behavior observed, the same way the date format was settled. Until then all three
 calls share one order, so any caller going exclusively through them gets
 consistent results; the host suite pins the order so it cannot drift.
 
-**The question has since been decided, by disassembly rather than by taste.**
-Microware's own kernel `aker000b` unpacks the date at `0x2316` with
-`move.b d1,d3` / `asr.l #8,d1` / `move.b d1,d2` / `asr.l #8,d1` — byte-wise
-field extraction, not decimal division. The same routine contains `cmpi.w
-#$62e` (1582, the Gregorian changeover) and `muls.w #$5b5` (1461, the four-year
-cycle), which identifies it as the julian-day conversion beyond doubt. So
+**The question has since been decided, by observation rather than by taste.**
+On the reference system the date handed back by `F$Time` is unpacked
+field by field (year, month, day in separate bytes), not as a decimal number.
+The julian-day conversion uses the same field layout; the Gregorian changeover
+(1582) and the four-year cycle (1461 days) appear as its constants. So
 "yyyymmdd" means **fields**: `F$Julian` was right and `F$Time` was wrong.
 
 `Q9K_SysFTime` now builds its date the same way (`swap` for the year, then

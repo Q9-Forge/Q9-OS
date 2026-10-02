@@ -27,7 +27,7 @@ ist noch nicht end-to-end nachgewiesen (siehe „Laufzeittest“).
 | Test | Ergebnis | Aussage |
 |---|---|---|
 | Erstlauf mit `JSR absolut` zu QCC-Funktionen | ❌ Illegal Instruction, Vektor 4, `PC=$7031` | Instruktionsspur zeigte den Sprung vom Modul bei `$18D20` auf `$290C` statt auf `Modulbasis+$290C`. Ursache: absoluter Aufruf war für das relocierbare Modul ungeeignet. |
-| Kontrollklon mit gleichem frisch gebautem Kernel und denselben Diskmodulen, aber originalem IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Bootstrap läuft weiter; CompactFlash-Treiber und normale Programmtestausgaben erscheinen; Exception-Mitschrift bleibt leer | Derselbe Kernel-/Emulatorlauf funktioniert mit dem originalen IOMan. Das grenzt den Fehler auf den neuen IOMan-Einstieg oder dessen Integration ein. |
+| Kontrollklon mit gleichem frisch gebautem Kernel und denselben Diskmodulen, aber dem Referenz-IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Bootstrap läuft weiter; CompactFlash-Treiber und normale Programmtestausgaben erscheinen; Exception-Mitschrift bleibt leer | Derselbe Kernel-/Emulatorlauf funktioniert mit dem Referenz-IOMan. Das grenzt den Fehler auf den neuen IOMan-Einstieg oder dessen Integration ein. |
 | Neuer Build mit PC-relativen `BSR`-Aufrufen zu QCC-Funktionen | 🟡 Einstieg und C-Initialisierung laufen ohne Exception; Watchpoint bestätigt `F$SSvc`-Einträge `Open=$18D64`, `Read=$18DA8`, `Close=$18DEC`; Instruktionsspur erreicht `Q9IOMAN_OpenEntry` bei `$18D64` | Relokationsfehler behoben und `I$Open`-Dispatch bis zum Handler-Eintritt live nachgewiesen. Handler-Rückgabe mit fehlendem Backend, `Read`/`Close`, Attach und Dateisystem-Backends sind noch offen. |
 | Kontrollierter, temporärer nicht-nativer `I$Open` aus `M$Exec` ohne registriertes Backend | 🟡 Kernel-Trace: `$84`-Trap → externer Handler (`X`) → Rückkehr (`A`); keine Exception | Der reentrante Aufruf läuft durch den registrierten Open-Einstieg und kehrt zum Aufrufer zurück. Der Emulatorlauf sicherte `D1`/Carry nicht; der Hosttest bestätigt separat `E$MNF` plus Carry. Der Test-Hook ist aus dem Produktionsbuild entfernt. |
 | Temporärer Emulator-Backendtest `Open → Read → Close` mit Testmodus | 🟡 `I$Open` erreicht den Backendpfad und liefert Handle `1`; `I$Read` wird mit Handle `1`, Buffer und Länge `4` aufgerufen, kehrt aber mit `E$BPNum` (`D1=$00C9`, Carry gesetzt) zurück; Close wird nicht erreicht | Der Test fand zwei QCC-Stack-ABI-Fehler: Assembler-Stubs pushten `(frame, callcode)` statt `(callcode, frame)`, und der handgeschriebene Pfadresolver las Callbackargumente in falscher Reihenfolge. Beide Korrekturen sind umgesetzt. Open und Read-Dispatch laufen nun bis zum Pfadslotzugriff; warum der Slot beim Read nicht mehr als offen erkannt wird, ist noch offen. Test-Hooks wurden danach aus dem Produktionsbuild entfernt. |
@@ -137,7 +137,7 @@ Treiber bereitstellen können.
 
 Diese Tabelle ist vom Abschnitt 1 zu unterscheiden: Dort **empfängt** IOMan
 Kernel-Dispatches; hier ruft der IOMan selbst Kernel-Dienste auf. Die ersten
-vier Dienste sind im bisherigen Referenz-Disassembly beobachtet. Weitere
+vier Dienste sind am Referenzsystem beobachtet. Weitere
 Lifecycle-Dienste sind Implementierungsbedarf bzw. ABI-Prüfpunkte und müssen
 vor dem Codegen gegen Q9 verifiziert werden.
 

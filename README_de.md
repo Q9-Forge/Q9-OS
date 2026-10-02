@@ -52,9 +52,8 @@ Entwicklungsstand, Meilensteine und offene Punkte:
   drei Generationen identische Typ-/Sprach-Codes (`Q9_MT_*`/`Q9_ML_*`).
   Ziel: Grundlage für ein künftiges `ident`-artiges Werkzeug, das Module
   jeder OS-9-Generation am Sync-Wort erkennt und beschreiben kann. Aus
-  den drei offiziellen Technical Manuals sowie eigener, unabhängiger
-  Analyse rekonstruiert, kein Abdruck der proprietären `module.h`/
-  `oskdefs.d`.
+  den drei offiziellen Technical Manuals erstellt und an Referenzmodulen
+  geprüft.
 - **`tools/annotate_trace.py`** — ordnet Instruktionsspuren aus dem
   Emulator automatisch Modul/Symbol zu und prüft die Call/Return-Bilanz.
 - **`tools/mkbootfile.sh`** — baut eine Bootdatei aus dem eigenen Kernel

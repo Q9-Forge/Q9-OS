@@ -3,7 +3,7 @@
  *                   2026-09-20).
  *
  * VERIFIZIERTE ABI -- doppelt belegt, einmal aus dem Handbuch und
- * einmal aus dem Originalkernel, die sich decken.
+ * einmal am Referenzsystem beobachtet, die sich decken.
  *
  * 1) 68k_tech.pdf S.465 ("F$Mem -- Resize Data Memory Area"):
  *
@@ -16,28 +16,13 @@
  *    "If d0 equals 0, the call is considered an information request and
  *     the current upper bound and size is returned."
  *
- * 2) Referenzkernel `dker030s`, Einstieg Modul-Offset $133C (Laufzeit
- *    $843C, in BEIDEN Dispatchtabellen registriert -- nicht auf dem
- *    Fehler-Stub). Der Einstieg ist ein duenner Mantel:
- *
- *      133c  move.l a5,d0        * D0 = Registerabbild des Aufrufers
- *      133e  moveq  #$24,d1
- *      1340  add.l  a5,d1        * D1 = &Abbild[$24] = A1-Slot (Ausgabe)
- *      1342  bsr.w  $6102        * Hauptarbeit
- *      1346  bra.w  $129c        * gemeinsamer Abschluss
- *
- *    und der Erfolgspfad der Hauptarbeit endet mit:
- *
- *      621c  move.l $330(a4),(a0)    * d0.l AUS = Groesse des Datenbereichs
- *      6220  move.l $32c(a4),d0      * Basis des Datenbereichs
- *      6224  add.l  (a0),d0          * + Groesse
- *      6226  move.l d0,(a1)          * a1 AUS = obere Grenze
- *      6228  moveq  #0,d0            * Erfolg
- *
- *    A4 ist dort $4c(a6), also D_Proc -- in diesem Kernel als
- *    Q9_D_PROC ($04C) bereits verifiziert. $32c/$330 sind die Basis
- *    und die Groesse des Prozess-Speicherblocks; die entsprechenden
- *    Felder heissen hier Q9K_PROCDESC_ALLOCBASE_OFF/ALLOCSIZE_OFF.
+ * 2) Beobachtung am Referenzsystem: F$Mem ist in BEIDEN Dispatchtabellen
+ *    registriert (nicht auf dem Fehler-Stub). Im Erfolgsfall liefert es
+ *    d0.l = Groesse des Datenbereichs und a1 = obere Grenze (Basis des
+ *    Datenbereichs + Groesse), gelesen aus dem Prozessdeskriptor des
+ *    Aufrufers (D_Proc, in diesem Kernel als Q9_D_PROC ($04C) bereits
+ *    verifiziert); die entsprechenden Felder heissen hier
+ *    Q9K_PROCDESC_ALLOCBASE_OFF/ALLOCSIZE_OFF.
  *
  * WARUM NUR DIE INFORMATIONSABFRAGE, und warum ueberhaupt:
  *

@@ -212,11 +212,9 @@ zuverlässiger, als die Ladeadresse aus Annahmen abzuleiten. Ergänzend die
 volle `$4AFC`-Sync-Wort-Suche mit Validierung jedes Treffers gegen
 `M$Name`/`M$Size`.
 
-**Fremde Module disassemblieren:** capstone. Für Einstiegspunkte des
-Originalkernels siehe `Q9-OS-Research/kernel-68k/tools/dis68k.py` — nötig,
-weil **Ghidra Syscall-Einstiege als Daten führt**: sie sind über keinen
-Kontrollfluss erreichbar, sondern werden ausschließlich über die
-Dispatchtabelle betreten.
+**Syscall-Einstiege analysieren:** sie sind über keinen Kontrollfluss
+erreichbar, sondern werden ausschließlich über die Dispatchtabelle
+betreten; automatische Analysewerkzeuge führen sie deshalb als Daten.
 
 **Kernelwachstum als Fehlerursache:** wächst der Kernel, verschieben sich
 alle Bootmodule. Bei unerklärlichen Abstürzen nach Wachstum **zuerst den
@@ -262,7 +260,6 @@ etwas anderes.
 Bereich einer Tabelle (Anfang + Anzahl × Eintragsgröße), nicht nur die
 Anfangsadresse. Es gibt keine automatische Kollisionsprüfung.
 
-**ABI nie raten.** Fehlercodes aus `MWOS/SRC/DEFS/errno.h` belegen,
-Strukturoffsets aus den DEFS, Aufrufkonventionen aus
-`68k_tech.pdf` — und wo das Handbuch schweigt, aus dem Originalkernel
-zurückgewinnen (erprobt mit `F$Sema`, `F$FModul`, `F$Mem`).
+**ABI nie raten.** Fehlercodes, Strukturoffsets und Aufrufkonventionen aus
+`68k_tech.pdf` belegen — und wo das Handbuch schweigt, durch Beobachtung am
+Referenzsystem bestimmen (erprobt mit `F$Sema`, `F$FModul`, `F$Mem`).

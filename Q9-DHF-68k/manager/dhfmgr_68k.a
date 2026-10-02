@@ -31,7 +31,7 @@
 * braucht dafuer nur ein nach Pfadnummer indiziertes Array (DHF_MAX_HANDLES=64, bereits
 * vorhanden). Der Manager selbst haelt damit ZWISCHEN Aufrufen gar keinen Zustand mehr.
 *
-* Alle Registerkonventionen weiterhin aus den echten Microware-Handbuechern (s. vorherige
+* Alle Registerkonventionen weiterhin aus den Handbuechern (s. vorherige
 * Fassung dieser Datei / STATUS.md "Real driver-call mechanism"), nicht geraten:
 *   - a1=Pfaddeskriptor, a4=Prozessdeskriptor, a5=Zeiger auf den geretteten Registersatz DES
 *     AUFRUFERS (reg.h: d[8] dann a[8]), a6=Systemglobal
@@ -86,7 +86,7 @@ DHF_CMD_LOCK    equ     29              * I$SetStt SS_Lock (Bereich sperren)
 * Aufrufer uebernommen (s. Mgr_Seek).
 DHF_SEEK_SET    equ     0
 
-* I$GetStt/I$SetStt-Funktionscodes (MWOS/OS9/SRC/DEFS/sg_codes.h, "OS-9 System Calls" Kap. 2)
+* I$GetStt/I$SetStt-Funktionscodes ("OS-9 System Calls" Kap. 2)
 SS_Ready        equ     $01
 SS_Size         equ     $02
 SS_Pos          equ     $05             * aktuelle Dateiposition
@@ -105,13 +105,13 @@ SS_Free         equ     $43             * Freier Speicherplatz -- ACHTUNG: das r
                                          * Kommando braucht rohen Physikalzugriff, erreicht
                                          * diesen Aufruf nie (s. dhf_proto.h/STATUS.md).
 
-* Devicetbl-Feldoffsets (MWOS/OS9/SRC/DEFS/sysio.h struct devicetbl/sysio.a)
+* Devicetbl-Feldoffsets (struct devicetbl)
 DT_DRIV         equ     0               * V_driv: Treiber-Modulzeiger
 DT_STAT         equ     4               * V_stat: Treiber-eigener statischer Speicher
 DT_DESC         equ     8               * V_desc: Geraetedeskriptor-Modulzeiger (fuer
                                          * SS_DevNm, s. Mgr_GetStt)
 
-* Modulkopf-Feldoffset (MWOS/OS9/SRC/DEFS/module.a): M$Name, ein LONGWORD-Offset (relativ
+* Modulkopf-Feldoffset: M$Name, ein LONGWORD-Offset (relativ
 * zur Modulbasis) auf den eigenen, NUL-terminierten Namensstring des Moduls -- fuer SS_DevNm
 * wird damit der Name des GERAETEDESKRIPTORS (z.B. "d0") gelesen, nicht der des Managers.
 MOD_NAME_OFF    equ     12
@@ -129,7 +129,7 @@ D_WRIT          equ     4
 * Pfaddeskriptor-Feldoffsets (path.h)
 PD_PD           equ     0               * u_short: eigene Pfadnummer
 PD_DEV          equ     4               * Devicetbl*: Geraetetabelleneintrag
-* Prozessdeskriptor (MWOS/OS9/SRC/DEFS/process.a): P$DIO = Default-I/O-Daten, je 16 Byte
+* Prozessdeskriptor: P$DIO = Default-I/O-Daten, je 16 Byte
 * Daten- und Ausfuehrungsverzeichnis; +0 Geraetetabelle (pflegt IOMan), +4 FileManager-Daten
 * (RBF: Verzeichnisadresse; DHF: Pseudo-Sektornummer des Verzeichnisses). Per F$GPrDsc
 * nachgemessen (2026-09-26).
@@ -150,8 +150,8 @@ PD_COUNT        equ     $1A             * u_short: Anzahl Pfade auf diesem Deskr
 * entscheiden, ob ein geoeffneter Pfad ueberhaupt als Verzeichnis behandelt werden soll (Bit
 * 7 = "Set if directory file", s. Kopfkommentar Mgr_Open weiter unten). DHF ist kein RBF,
 * muss dieses Feld aber selbst setzen, sonst haelt "dir" JEDEN DHF-Pfad fuer eine normale
-* Datei und listet nie echten Inhalt (gefunden per Disassemblierung von /CMDS/dir + Q9_
-* ITRACE_PATH, s. STATUS.md).
+* Datei und listet nie echten Inhalt (gefunden per Q9_
+* ITRACE_PATH-Spur des dir-Verhaltens, s. STATUS.md).
 PD_ATT          equ     $B5
 PD_FD           equ     $B6             * rbf_opt.pd_fd  (u_int)
 PD_DFD          equ     $BA             * rbf_opt.pd_dfd (u_int)
@@ -164,8 +164,8 @@ REG_D2          equ     8
 REG_D3          equ     12
 REG_A0          equ     32
 
-* F$SRqMem/F$SRtMem -- nicht in q9defs.d vordefiniert, Callcodes aus MWOS/OS9/SRC/DEFS/
-* funcs.h (F_SRQMEM=$28, F_SRTMEM=$29)
+* F$SRqMem/F$SRtMem -- nicht vordefiniert, Callcodes
+* F_SRQMEM=$28, F_SRTMEM=$29
 F$SRqMem        equ     $28
 F$SRtMem        equ     $29
 

@@ -3,7 +3,7 @@
  *
  * Vorgabe, 2026-08-18: "Plan schon mal mit, denke frueher oder spaeter
  * wird es kommen" -- Grundlage fuer spaetere Atomic/Development- und
- * Allocator-Varianten, analog zur echten Microware-Namenskonvention
+ * Allocator-Varianten, analog zur Namenskonvention des Referenzsystems
  * (intern dokumentiert: "[a|d]ker<CPU-Suffix>[s|b]").
  *
  * Kernel-Variante und Ziel-CPU sind unabhaengige Achsen. Die CPU wird vom
@@ -21,7 +21,7 @@
  *                              keine Modul/User-ID-Pruefung.
  *   Q9K_KERNEL_DEVELOPMENT  -- voll: alles davon vorhanden. Aktueller
  *                              Q9-Flux/CB030-Entwicklungsstand zielt auf
- *                              das reale Original-Kernel-Aequivalent, also ist
+ *                              das Referenzkernel-Aequivalent, also ist
  *                              das hier der aktuelle Standardfall.
  *
  *   Q9K_ALLOC_STANDARD      -- klassischer 16-Byte-Aufloesungs-Allocator.

@@ -4,9 +4,8 @@
 * Desc.:  Q9-DHF -- echtes OS-9-Treibermodul (68k), von Hand geschrieben (kein
 *         QCC-DEFMODUL -- dessen DRIVER-Backend ist noch nicht fertig, s.
 *         Q9-QCC/Q9-FRONTEND-C/q9-qcpp/docs/STATUS_DEFMODUL.md Phase 3/4).
-*         Modulkopf + Einsprung-Sprungtabelle nach dem verifizierten Vorbild
-*         eines echten Microware-Treibers (MWOS/OS9/SRC/IO/SCF/DRVR/
-*         sc68681.a: Typ Q9Drivr, a1/a2/a4/a6-Konvention, Carry+d1-Fehler).
+*         Modulkopf + Einsprung-Sprungtabelle nach dem dokumentierten
+*         Treiberformat (Typ Q9Drivr, a1/a2/a4/a6-Konvention, Carry+d1-Fehler).
 *
 *         Der Treiber selbst tut so gut wie nichts (Andreas: "der Treiber
 *         muss ja nicht viel machen, im Prinzip die Daten nur an die Hard-
@@ -48,18 +47,16 @@
 
 Edition         equ     1
 
-* Static-Storage-Groesse: MUSS mindestens sysioStatic sein (MWOS/OS9/SRC/DEFS/
-* iodev.a: v_port(4)+v_lprc(2)+v_busy(2)+v_wake(2)+v_paths(4)+v_dumm1[8](32)
-* = 46 Byte) -- "wird vom Kernel fuer ALLE Geraete verlangt" laut dortigem
-* Kommentar. Bisher stand hier 0 (unbemerkt harmlos, solange (a2) nie gelesen
+* Static-Storage-Groesse: MUSS mindestens sysioStatic sein (v_port(4)+v_lprc(2)+v_busy(2)+v_wake(2)+v_paths(4)+v_dumm1[8](32)
+* = 46 Byte) -- "wird vom Kernel fuer ALLE Geraete verlangt". Bisher stand hier 0 (unbemerkt harmlos, solange (a2) nie gelesen
 * wurde) -- jetzt braucht Read/Write/GetStat/SetStat/Init V_PORT daraus,
 * 0 waere also ab jetzt ein echter Fehler gewesen.
 STATIC_SIZE     equ     46
 
 * MMIO-Basis des DHF-Emulator-Geraets kommt jetzt zur Laufzeit aus M$Port des
 * Geraetedeskriptors -- der Kernel kopiert diesen Wert automatisch in Offset 0
-* des Treiber-eigenen statischen Speichers (V_PORT, MWOS/OS9/SRC/DEFS/iodev.a),
-* noch BEVOR Init aufgerufen wird (verifiziert an sc68681.a's echtem Init:
+* des Treiber-eigenen statischen Speichers (V_PORT),
+* noch BEVOR Init aufgerufen wird (verifiziert am Referenz-Treiber (Init):
 * "movea.l V_PORT(a2),a3"). Kein fest einkompilierter Wert mehr noetig.
 V_PORT          equ     0
 
@@ -102,8 +99,8 @@ SH_SIZE         equ     28
 * eines vsect-Blocks befuellt wird (s. q9-qr68k/README.md, ROF-Feldtabelle:
 * "20 4 statstorage reservierte Daten (ds im vsect)"). Ohne diesen Block blieb
 * der Modulkopf-Feld _mdata (mod_driver, Offset $38) auf 0, obwohl STATIC_SIZE=46
-* im Quelltext stand -- der echte Kernel verlangt _mdata!=0 fuer JEDEN Treiber
-* (gefunden per Disassemblierung des echten ioman-Moduls, Adresse $ece4-$edf8,
+* im Quelltext stand -- der Referenzkernel verlangt _mdata!=0 fuer JEDEN Treiber
+* (gefunden bei der Untersuchung, warum
 * nach "iniz dhf0" mit E$NORAM ($ed) statt Erfolg fehlschlug -- s. STATUS.md).
         vsect
         ds.b    STATIC_SIZE

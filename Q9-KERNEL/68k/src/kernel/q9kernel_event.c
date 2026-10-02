@@ -4,8 +4,8 @@
  *
  * Verifizierte ABI (68k_tech.pdf S.386 ff. sowie Kapitel 4). F$Event ist
  * ein Aufruf mit Funktionscode in d1.w; alles Weitere haengt vom Code ab.
- * Die Codes stammen aus MWOS/OS9/SRC/DEFS/event.a (dort als "do.b 1" ab 0
- * durchgezaehlt), nicht aus dem Fliesstext:
+ * Die Codes sind ab 0 durchgezaehlt (am Referenzsystem bestaetigt), nicht
+ * aus dem Fliesstext:
  *
  *   0 Ev$Link   (a0)=Name                    -> d0.l=ID
  *   1 Ev$UnLnk  d0.l=ID
@@ -29,8 +29,8 @@
  * will. Das Beispiel aus dem Handbuch ist ein Druckerpool -- Startwert =
  * Zahl der Drucker, Wait-Inkrement -1, Signal-Inkrement +1.
  *
- * Die Feldaufteilung ist aus MWOS/OS9/SRC/DEFS/event.a uebernommen, wo
- * sie mit "do.w/do.l" luecklos steht: ID (Wort), Name (12 Byte), Wert
+ * Die Feldaufteilung ist am Referenzsystem bestaetigt und
+ * steht luecklos: ID (Wort), Name (12 Byte), Wert
  * (Langwort), Wait-Inkrement (Wort), Signal-Inkrement (Wort), Link-Zaehler
  * (Wort), zwei Warteschlangenzeiger (Langworte) -- zusammen die 32 Byte,
  * die dieselbe Datei als Ev_Size festhaelt.

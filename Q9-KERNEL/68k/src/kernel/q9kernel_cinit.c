@@ -737,7 +737,7 @@ void Q9K_CInit(void)
                      * Root-Cause-Suche eines echten IOMan-Stack-Crashs):
                      * alle NOCH NICHT registrierten Slots (Wert 0) mit
                      * Q9K_SysUnimplemented befuellen, statt sie auf 0 zu
-                     * lassen -- der reale, ECHTE Microware-Kernel macht
+                     * lassen -- der Referenzkernel macht
                      * das ebenfalls (gemeinsamer Fehler-Stub, intern
                      * dokumentiert). Grund: der PEA+RTS-
                      * Trampolin-Mechanismus (den externe Module wie

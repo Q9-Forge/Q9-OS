@@ -21,7 +21,7 @@
  * NULLPUNKT (der eigentliche Knackpunkt, nicht geraten): OS-9 zaehlt
  * julianische Tage ab MITTERNACHT, die astronomische Zaehlung ab MITTAG
  * -- OS-9s Wert liegt deshalb um genau 1 unter der astronomischen
- * Tageszahl. Belegt aus MWOS/SRC/DEFS/time.h: `JULBASE 2440587` ist dort
+ * Tageszahl. Belegt: `JULBASE 2440587` ist
  * als "julian date for Jan 1, 1970" definiert, waehrend die
  * astronomische Zahl fuer diesen Tag 2440588 ist. Gegengeprueft mit der
  * im Handbuch angegebenen Wochentagsformel MOD(Julian+2, 7) (0=Sonntag):

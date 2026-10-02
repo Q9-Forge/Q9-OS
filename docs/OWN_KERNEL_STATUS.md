@@ -209,7 +209,7 @@ Stelle nicht gibt.
 `q9dbg_dump.txt` (Abschnitt „Moduldirectory-Kette ab
 `Q9K_MODDIR_HEAD_ADDR`") mit HdrPtr und Größe je Modul. Damit lässt sich
 eine beliebige PC in Sekunden einem Modul und einem Offset zuordnen —
-ohne Ghidra und ohne `annotate_trace.py`.
+ohne externe Analysewerkzeuge und ohne `annotate_trace.py`.
 
 ### Status des alten Rätsels „csl traphandler mismatch"
 
@@ -229,15 +229,13 @@ passiert.**
 
 ### Neue Werkzeuge und Methodik
 
-* **ABI aus dem Original zurückgewinnen, wenn das Handbuch schweigt.**
+* **ABI durch Beobachtung am Referenzsystem bestimmen, wenn das Handbuch schweigt.**
   Das Verfahren ist mit `F$Sema` erprobt und in `cc4ba5a` festgehalten.
   Mit `F$FModul` und `F$Mem` wurde es wiederholt.
-* **`dis68k.py`** (`Q9-OS-Research/kernel-68k/tools/`): disassembliert
-  einen Offsetbereich des Originalkernels mit capstone. Nötig, weil
-  **Ghidra Syscall-Einstiege als Daten führt** — sie sind über keinen
-  Kontrollfluss erreichbar, sondern werden ausschließlich über die
-  Dispatchtabelle betreten. Gilt für jeden noch nicht analysierten
-  Callcode.
+* **Statische Analyse von Syscall-Einstiegen:** Syscall-Einstiege sind über
+  keinen Kontrollfluss erreichbar, sondern werden ausschließlich über die
+  Dispatchtabelle betreten; automatische Analysewerkzeuge führen sie deshalb
+  als Daten. Gilt für jeden noch nicht analysierten Callcode.
 * **`Q9-OS-Research/kernel-68k/SYSCALL_ABI_UNDOCUMENTED_de.md`**: für die
   Aufrufe ohne Handbucheintrag. Enthält unter anderem den Nachweis, dass
   `F$AllRAM` (`$39`), `F$POSK` (`$5D`) und `F$SSpd` (`$0B`) im
@@ -528,7 +526,7 @@ dann `tools/mkbootfile.sh --disk`) erzeugte in dieser Sitzung
 reproduzierbar einen VÖLLIG ANDEREN, viel früheren Hang (CF-Bootstrap-
 Banner "RP012E" gefolgt von endlosem "B", kein einziges eigenes
 Diagnosezeichen) — auch mit dem unveränderten `6dbc6af`-Kernel
-(Kontrollversuch: `git stash` in Q9-OS, Original-Kernel gebaut, gleiches
+(Kontrollversuch: `git stash` in Q9-OS, unveränderter Kernel gebaut, gleiches
 Bild, gleiches Symptom). Stundenlang als Testabbild-Bug verdächtigt,
 per Sync-Wort-Analyse (`$4AFC`-Suche) VERIFIZIERT als bytegleiche
 Bootkette zum bekannt funktionierenden `OS9SYS.dbg10.hda` — also NICHT
@@ -702,7 +700,7 @@ unten im Dokument.
 neue Baustelle "csl"-Trap-Library.** Direkt im Anschluss an Fortsetzung
 30 getestet: `F$Fork("echo")` auf das per `F$Load` geladene Modul
 findet es sofort (Moduldirectory korrekt) und startet einen echten
-Kindprozess, der ECHTEN Microware-Code ausführt — sichtbar an der
+Kindprozess, der Referenzcode ausführt — sichtbar an der
 authentischen Meldung `**** can't install csl ****` (die C-Runtime-
 Bibliothek "csl" ist ein TRAP-#1–15-Trap-Handler-Modul, ein bislang
 komplett unimplementierter Mechanismus, getrennt von unseren
@@ -827,7 +825,7 @@ gelernt, für den nächsten Anlauf verinnerlichen):
 - **Jede Adresse einzeln gegen `$D2DC` (RBF-Anfang) und die eigene
   Kernelgröße prüfen**, bevor ihr eine Bedeutung zugeschrieben wird —
   keine Abkürzungen, keine Verwechslungen ähnlich aussehender Werte.
-- **Reine Analyse (auch mit `capstone`) ist nicht
+- **Reine statische Analyse ist nicht
   vertrauenswürdig**, wenn sie nicht an einer live bestätigten Adresse
   verankert ist (OS-9-Trap-Inline-Callcode-Wörter desynchronisieren
   jeden linearen Scan) — Ground-Truth-Bytes IMMER per `Q9_DUMP_ADDR`
@@ -1139,7 +1137,7 @@ Damit ist belegt: **Die Erkennung `a5 == sp+8` allein beweist keinen Rahmen.**
 Wer sie übernimmt, muss zusätzlich prüfen, ob der Aufruf überhaupt aus dem
 Wrapper kommt. Der Rückbau steht als Warnung im Code.
 
-**Nächster Ansatzpunkt:** `ioman+$11f8` analysieren (capstone) und
+**Nächster Ansatzpunkt:** `ioman+$11f8` analysieren (statische Analyse) und
 nachsehen, was IOMan dort vor und nach dem `F$Sleep` erwartet — insbesondere,
 welche Bedingung es prüft, bevor es den Lesevorgang mit Carry und `d1 = 0`
 abbricht.
@@ -1147,7 +1145,7 @@ abbricht.
 ### IOMan-Analyse (2026-09-05)
 
 IOMan aus dem Bootfile extrahiert (Laufzeitbasis `$a7a0`, Größe `$161c`) und
-mit capstone analysiert. Gesucht war, warum `I$ReadLn` mit Carry
+statisch analysiert. Gesucht war, warum `I$ReadLn` mit Carry
 zurückkehrt, ohne den Puffer zu füllen.
 
 **Alle Syscall-Aufrufe von IOMan aufgelistet.** Das Trampolin-Muster ist im
@@ -2065,27 +2063,22 @@ in unseren Kernel. Der Zufallswert ist harmlos genug, dass der Boot
 durchläuft; der echte Prozessdeskriptor ist es nicht — dort zerstört der
 Schreibzugriff etwas, das gebraucht wird.
 
-### Im Originalkernel nachgeschlagen: `F$PrsNam` schreibt in den Registerrahmen
+### Am Referenzsystem beobachtet: `F$PrsNam` schreibt in den Registerrahmen
 
-Der reale Handler liegt laut Slot-Tabelle bei `$a3e0` (Ladebasis `$7100`,
-Moduloffset `$32e0`). Analysiert ist er bemerkenswert kurz:
-
-    a3e0  bsr.b    $a3f0            * eigentliche Parse-Routine
-    a3e2  movem.l  d0-d1,$0(a5)     * Ergebnisse in den REGISTERRAHMEN
-    a3e8  movem.l  a0-a1,$20(a5)
-    a3ee  rts
+Der Handler des Referenzsystems liefert seine Ergebnisse nicht in den
+Registern, sondern im Registerrahmen.
 
 **Der echte `F$PrsNam` gibt seine Ergebnisse nicht in den Registern zurück,
-sondern schreibt sie in den R$-Registerrahmen, den `a5` adressiert** — auf
-`R$d0=$00` und `R$a0=$20`, exakt die Offsets aus `process.a`. Unser Handler
-lieferte sie bisher nur in den Registern.
+sondern schreibt sie in den R$-Registerrahmen, den `a5` adressiert** —
+`R$d0` (Offset `$00`) und `R$a0` (Offset `$20`). Unser Handler lieferte sie
+bisher nur in den Registern.
 
 **Gemessen, dass `a5` bei uns wirklich darauf zeigt:** beim `F$PrsNam`-Eintritt
 `a5 = $0002D398`, `sp = $0002D338` — `a5` liegt im Stackbereich, also auf
 einem echten Rahmen.
 
 **Umgesetzt und verifiziert:** `Q9K_SysFPrsNam` versorgt den Rahmen jetzt wie
-das Original. Der Kernel läuft damit unverändert durch (`RP012`,
+das Referenzsystem. Der Kernel läuft damit unverändert durch (`RP012`,
 `Hallo von Q9-OS!`) — die Konvention ist nachgezogen und nachweislich
 unschädlich.
 
@@ -2118,7 +2111,7 @@ erwartete Suchfehlschläge, in beiden Läufen unauffällig.)
 `P$Path`-Tabelle nur, **wenn es einen Erzeuger gibt**. Beim allerersten
 Prozess blieb sie damit völlig uninitialisiert und enthielt den Speichermüll
 der vorherigen Belegung. IOMans `I$Open` sucht dort das erste freie Wort
-(`lea $168(a4),a0 / moveq #$1f,d0 / tst.w (a0)+ / dbeq d0,…`) — unter 32
+— unter 32
 Müllworten steht nie eine Null, also `E$PthFul`.
 
 **Behoben:** Der `else`-Zweig nullt die Tabelle jetzt. Verifiziert an der
@@ -2432,7 +2425,7 @@ falsche Spur.)
 **Der Deskriptor selbst ist korrekt:** `P$PORT` in `dd` (Offset `0x32`)
 trägt `$FFFFE000`, exakt die konfigurierte Onboard-CF-Basis.
 
-**Damit bleibt offen, WIE V_PORT in einem echten Microware-Kernel gesetzt
+**Damit bleibt offen, WIE V_PORT im Referenzkernel gesetzt
 wird**, wenn nicht über `F$DAttach`. Vermutlich direkt in IOMans/RBFs eigenem
 Code (kein separater Syscall) — RBF selbst liegt nur als Binärmodul vor
 (kein Quellcode im Referenzbaum gefunden, anders als die Gerätetreiber), das
@@ -2979,7 +2972,7 @@ damit widerlegt.
 
 ## Die wahre Herkunft von $D8: kein Korruptionssymptom, sondern echte RBF-Logik
 
-Statische Analyse (capstone) des unveränderten `rbf.mod` klärt
+Statische Analyse des unveränderten `rbf.mod` klärt
 den Ursprung abschließend:
 
 - Dateioffset `$f24`: `move.w #$d8,d1` — RBF setzt `$D8` hier **fest und
@@ -3030,13 +3023,13 @@ tatsächlich im Wurzelverzeichnis (`--e-rewr`), zusätzlich (aber getrennt
 davon) auch `/dd/SYS/startup`. Kein Pfadproblem.
 
 **Methodischer Fallstrick entdeckt:** Eine erste Runde statischer
-Analyse (capstone, `rbf.mod` ab einem willkürlich gewählten
+Analyse (`rbf.mod` ab einem willkürlich gewählten
 Byte-Offset `$ea0`) ergab plausibel aussehenden, aber tatsächlich
 FALSCH ausgerichteten Code — bestätigt per `Q9_COUNT_PC` an sechs so
 gewonnenen Kandidatenadressen: vier der sechs (`$1250`, `$64c`, `$f1c`,
 `$f24`) wurden beim echten Boot NIE erreicht (0 Treffer), nur die aus
 dem unmittelbaren Kontext übernommene Adresse `$eb2` traf tatsächlich
-(2 Treffer, je einmal pro `I$Open`). Capstone synchronisiert sich beim
+(2 Treffer, je einmal pro `I$Open`). Der Instruktionsdecoder synchronisiert sich beim
 Start mitten in einer `bsr.w`-Verschiebungskonstante nicht von selbst
 auf echte Befehlsgrenzen — jede weitere Adresse aus so einem Lauf ist
 erst durch eine LIVE-Messung (Freeze/Count) zu vertrauen, nicht durch
@@ -3079,7 +3072,7 @@ RBF-Struktur.
   zweimal denselben Wert liefert, ist NICHT geklärt.
 
 **Empfehlung für den nächsten Anlauf:** Statt weiter mit ad-hoc
-capstone-Bereichen zu arbeiten, entweder (a) RBF vollständig und mit
+Analysebereichen zu arbeiten, entweder (a) RBF vollständig und mit
 echten Funktionsgrenzen analysieren (z. B. beginnend an der
 M$Exec-Einsprungadresse aus dem Modulkopf, linear, ohne Bereichslücken)
 und JEDE daraus abgeleitete Adresse per `Q9_COUNT_PC`/`Q9_FREEZE_PC`
@@ -4935,7 +4928,7 @@ Rollenbeschreibung im Kommentar war falsch begruendet. Host-Tests
 
 Kernel neu gebaut (RBF_BASE jetzt `$D2D2`, per `M$ID`-Sync-Wort im
 Ctrl-^-Dump bestätigt), Testabbild `OS9SYS.fix24.hda`. Die echte
-Vergleichsroutine im unveraenderten RBF-Modul per `capstone`
+Vergleichsroutine im unveraenderten RBF-Modul per statischer Analyse
 GEFUNDEN (nicht mehr geraten) durch Byte-Mustersuche in `rbf.mod`
 selbst (`eor.b d2,d0` gefolgt vom bekannten XOR-Vergleichsmuster) --
 Modul-Offset `$f2e`, live also `$D2D2 + $f2e = $E200`:
@@ -5260,7 +5253,7 @@ kompletten Trampolin von Hand:
 `$e0/4=$38`**) / `movea.l $4e0(a3),a3` / `rts` -- und ab Offset `$d8`
 (dem Rücksprungziel): `movea.l (a7)+,a3` / `movem.l (a7)+,...` / `rts`.
 **Kein einziger Test auf Carry oder `d1` dazwischen** -- RBF geht
-stillschweigend von Erfolg aus, genau wie beim echten Microware-Kernel
+stillschweigend von Erfolg aus, genau wie beim Referenzkernel
 üblich (F$Move gilt dort praktisch nie als fehlschlagend). Bei uns lief
 der Aufruf bisher in den Unimplemented-Stub: kein sichtbarer Fehler,
 aber auch keine kopierten Daten.
@@ -5501,7 +5494,7 @@ reproduzierbar fehlschlug. Eigene Diagnose-Bugs sind genauso real wie
 Kernel-Bugs; sofort per Kopfkommentar dokumentiert, dann korrigiert.)
 
 **Schritt 3 -- volle Analyse von `ioman+$6D6` bis `$990`**
-(per capstone, `CS_ARCH_M68K`/`CS_MODE_M68K_000`, `ioman.mod` aus dem
+(per statischer Analyse, `ioman.mod` aus dem
 F$Load-Testkorpus). Zeigt den kompletten `F$Load`-Ablauf: Speichersuche
 zuerst (`bsr $124a`, scheitert erwartungsgemäß -- Modul noch nicht
 resident), Pfadauflösung + `I$Open` + `I$Read` von Platte, dann Aufruf
@@ -5668,7 +5661,7 @@ leg los").
 Vor der Implementierung erst nachgeprüft, WELCHE Trap-Nummer/Namen
 `echo` wirklich benutzt, statt vom oberflächlich ähnlichen `T$Math`=15
 auszugehen: `echo.mod`/`csl.mod` aus dem alten Testabbild extrahiert,
-per Capstone analysiert. Fund bei Modul-Offset `0x79a` (über eine
+statisch analysiert. Fund bei Modul-Offset `0x79a` (über eine
 gemeinsame Hilfsroutine ab `0x770`): echtes `trap #13` plus Namenszeiger
 auf `"csl"`. Zusätzlich in `echo`s eigener `M$Excpt`-Fallback-Routine
 exakt die Vektor→Trap-Nummer-Rechnung gefunden, die auch unser
@@ -6337,7 +6330,7 @@ weiterverfolgen.
 ### Fund 1: Rueckverfolgung fuehrt zu `csl`, nicht zu `echo.mod`
 
 Instruktionsspur (`Q9_FREEZE_PC=0x6c`) zeigt: der Absturz ist ein `rts`
-in `csl` (Modul-Offset `$6b74`, Datei csl.mod per `xxd`/`capstone`
+in `csl` (Modul-Offset `$6b74`, Datei csl.mod per `xxd`/statischer Analyse
 gegengeprueft -- ein sauberes, unauffaelliges C-Funktionsende
 `movem.l (a7)+,d1/d6-d7/a0` + `rts`), das eine auf dem Stack liegende
 Ruecksprungadresse von `$00000000` vorfindet statt eines echten
@@ -6670,7 +6663,7 @@ gezielt an das nachzubilden, was das ORIGINALSYSTEM hatte.
 sondern eine grundsaetzliche Kompatibilitaetsfrage dieser SPEZIELLEN,
 vorkompilierten `echo.mod`/`csl.mod`-Kombination mit einem generischen,
 dynamischen `F\$TLink`. Vor einem weiteren Fixversuch waere zu klaeren
-(z. B. durch Vergleich mit einer ECHTEN Microware-Systemkonfiguration,
+(z. B. durch Vergleich mit einer Referenz-Systemkonfiguration,
 falls Referenzmaterial verfuegbar ist, oder durch weitere gezielte
 Analyse von `csl`s `M\$Init`-Routine selbst bei `csl+$50`),
 WELCHEN Mechanismus `M$Init` tatsaechlich implementiert und ob es einen
@@ -7149,7 +7142,7 @@ Host-Testsuiten unveraendert gruen, Repo sauber auf Commit `3847561`.
 
 **Fussnote (Ausrichtungsverifikation):** `echo.mod` enthaelt an
 zahlreichen Stellen die OS-9-Konvention "trap #0 / dc.w <Funktionscode>"
--- der Funktionscode ist ein DATENWORT, kein Code, capstone (und jeder
+-- der Funktionscode ist ein DATENWORT, kein Code, ein Analysewerkzeug (und jeder
 andere Analysewerkzeuge ohne dieses Sonderwissen) dekodieren beim linearen
 Durchlauf ab einer falsch geratenen Startadresse deshalb leicht falsch
 ausgerichteten Folgecode. Verifiziert wurde die Ausrichtung von
@@ -7172,7 +7165,7 @@ Stellen, Table 2-6 UND Table D-7):**
 **Das war die ECHTE, EINZIGE Ursache der gesamten `echo`/`csl`-
 Adressbeziehungs-Saga seit Fortsetzung 44** -- nicht drei verschiedene
 Probleme, sondern EIN einziges: unser `Q9K_ProcFork` uebergab A6 bisher
-UNVERSCHOBEN (`a6 = block`), waehrend der ECHTE Microware-Linker jeden
+UNVERSCHOBEN (`a6 = block`), waehrend der Referenz-Linker jeden
 negativen a6-relativen Zugriff in kompiliertem Code (wie `echo.mod`)
 so einkompiliert, dass er `a6 = block + $8000` erwartet. Nachrechnung
 bestaetigt es zweifelsfrei:
@@ -9660,8 +9653,8 @@ gruen, Standard-Emulatorboot unveraendert.
 ### Vorgeschichte: Q9-Flux-Sperre aufgehoben
 
 Andreas hat die in Fortsetzung 98-Nachtrag gemeldete 381/388-Commits-
-Divergenz aufgeklaert: bewusste Historienbereinigung (Ghidra-/RE-
-Erwaehnungen vor Veroeffentlichung entfernt), `origin/main` war die
+Divergenz aufgeklaert: bewusste Historienbereinigung (Bereinigung
+vor Veroeffentlichung), `origin/main` war die
 korrekte Fassung. Ein erster Versuch, dies per `git reset --hard
 origin/main` nachzuziehen, griff auf dem hier benutzten Checkout NICHT
 (Reflog zeigte keinen `reset`-Eintrag, Divergenz unveraendert) -- nach
