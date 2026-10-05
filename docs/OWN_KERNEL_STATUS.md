@@ -10314,3 +10314,104 @@ build 42`, `R`, dann erwartungsgemäß `o000000D8` (`E$PNNF`, keine
 `startup`-Datei im Abbild) und die gewohnte `A`-Schleife, `Vektor=0`.
 Die Vendor-Module stammen aus `Q9-Flux/.hide/OS9Boot.noprot.test`
 (die früheren `/tmp/vendor_*.mod` existieren nicht mehr).
+
+
+## Fortsetzung 106: Ursache des zweiten Absturzes gefunden und behoben -- A4 des Aufrufers lag zwischen Registersatz und Exception-Frame (2026-10-05)
+
+### Ursache
+
+Keine Rennbedingung, sondern ein fester Stack-Layout-Fehler in
+`Q9K_TrapDispatch`, Pfad "Aufrufer ist WIR SELBST". Seit `c56b48b`
+(2026-09-16, "fix external trap return") stand dort:
+
+```
+        move.l  a4,-(sp)          * preserve caller A4 across origin check
+        ...                       * Herkunftspruefung
+        movea.l Q9K_TrapHandlerScratch,a4
+        jsr     (a4)
+        movea.l (sp)+,a4
+```
+
+Ein kernelinterner Aufrufer (`Q9K_TestProcA`) betrat den Handler also mit
+`[jsr-Ruecksprung][A4 des Aufrufers][Exception-Frame]` auf dem Stack. Die
+blockierenden Handler -- `F$Wait`, `F$Sleep` (Trapweg), `F$Sema` (Warten),
+`F$Event` (Warten), `F$NProc` -- verwerfen aber nur die 4 Byte
+Ruecksprungadresse (`addq.l #4,sp`) und legen den Registersatz direkt
+darueber. Das alte A4 blieb so zwischen Registersatz und Frame liegen;
+beim Wiederaufnehmen las `movem.l (sp)+,d0-d7/a0-a6` / `rte` das A4 als
+SR (oberes Wort) und PC (unteres Wort + echtes SR).
+
+Fremde Aufrufer (IOMan, File-Manager, Treiber, echte Programme) waren
+nie betroffen: in ihrem Pfad wird A4 vor dem Aufruf wieder abgeraeumt.
+Deshalb trat der Fehler erst mit dem Stresstest (Fortsetzung 93,
+2026-09-29) auf, in dem `Q9K_TestProcA` selbst blockiert und spaeter per
+`rte` fortgesetzt wird.
+
+### Woran es zu erkennen war
+
+Der korrupte PC-Wert ist vorhersagbar: Deskriptor von `Q9K_TestProcA`
+(`$0001b890` in Fortsetzung 101) -> gelesen `SR=$0001`,
+`PC=$b890_2000`. Die Fortsetzungen 101-104 hatten diesen Wert vor
+Augen, aber nicht als "A4 = Deskriptorzeiger + echtes SR `$2000`"
+gelesen. Im A/B-Lauf dieser Fortsetzung: `D_Proc=$0001b9f0`, erster
+Validierungstreffer `#79 marker=30 pc=b9f02000` -- exakt die Vorhersage.
+
+Die Beobachtung aus Fortsetzung 103 ("keine eigene `F$Sleep`-Sicherung")
+war richtig gedeutet in Fortsetzung 104: die einzige Blockier-Sicherung
+war die von `F$Wait`. Schon deren Rahmen war durch das A4 versetzt; der
+erste Versuch, TestProcA aus diesem Rahmen fortzusetzen, war der Absturz.
+
+### Fix
+
+A4 des Aufrufers wird VOR dem Aufruf vom Stack genommen; der Handler
+wird wie im Fremdaufrufer-Pfad speicherindirekt ueber
+`Q9K_TrapHandlerScratch` angesprungen (`dc.w $4ebb,$01f1 / dc.l
+Q9K_TrapHandlerScratch` = `jsr ([Q9K_TrapHandlerScratch])`). Beim
+Eintritt liegt damit exakt `[Ruecksprung][Exception-Frame]` auf dem
+Stack -- dasselbe Layout wie fuer Fremdaufrufer.
+
+Nebenwirkung (bewusst in Kauf genommen): eigene Handler bekommen jetzt
+das A4 des Aufrufers statt der Handleradresse, und A4 wird nach dem
+Aufruf nicht mehr vom Dispatcher wiederhergestellt. Unter allen
+`Q9K_Sys*`-Handlern schreibt nur `F$TLink` nach A4 (Erfolgsfall:
+`a4` = M$Init-Einsprung) -- das gilt fuer Fremdaufrufer schon heute und
+betrifft eigene Aufrufer nur ueber `Q9K_TestCslManualLink` (Standard 0).
+
+### Verifikation (A/B)
+
+Drei frisch gebaute Varianten, Quellen ins Scratch kopiert (Repo
+unveraendert), Abbild nach dem Rezept aus `tools/malformed_boot_test.sh`
+(ohne Korruption), je 80 s:
+
+| Lauf | Stand | Ergebnis |
+|---|---|---|
+| A | alter Stand, `Q9K_TestNestedTrapStress equ 1` | `Vektor=4`, 1651 Validierungstreffer, Konsole endet `ZFFF ... E` |
+| B, B2 | Fix, Stresstest | `Vektor=0`, 0 Treffer, `ZFFF` und `M F` (forkchild beendet), weiter bis `A`-Schleife |
+| C | Fix, Standard | `Vektor=0`, Markerfolge wie vor dem Fix (`6Q`, `CompactFlash driver build 42`, `R`, `o000000D8`) |
+
+28/28 Host-Suiten gruen (keine C-Aenderung). `Q9K_TestNestedTrapStress`
+bleibt auf 0; mit dem Fix koennte er Standard werden -- nicht in dieser
+Runde entschieden.
+
+### Zwei neue Verdachtsfaelle im selben Dispatcher (NICHT gemessen, NICHT geaendert)
+
+Beim Lesen von `Q9K_TrapDispatch` aufgefallen, aus `6b1bfc2`
+(2026-09-24, I$Read/I$Close-Manager-Tagging):
+
+1. **`Q9K_TrapCheckManagerPath` veraendert Aufruferregister.** Fuer
+   `$89`/`$8f` bei registriertem Manager: `move.l a1,d1` (d1 = D_Proc),
+   `add.w d0,d0` (d0 = 2 x Pfadnummer), `a1` = Zeiger in `P$Path`. Diese
+   Werte erreichen danach sowohl den eigenen Handler (Sprung nach
+   `Q9K_TrapOwnHandler` bei ungetaggtem Pfad) als auch IOMan
+   (`Q9K_TrapCallExternal` kopiert d0-a6 in den R$-Rahmen). Bei
+   I$Read waere d0.w = Pfad und d1.l = Byteanzahl (Handbuch) -- beide
+   kaputt. Dass `/dd/startup` trotzdem gelesen wird, waere damit
+   vereinbar (Pfad 0 bleibt 0; riesige "Anzahl" liest bis Dateiende).
+2. **`Q9K_TrapManagerPathBookkeeping` liest das obere Wort von R$d0**
+   (`move.w (a5),d0`) als Pfadnummer; die Pfadnummer steht aber im
+   unteren Wort (`2(a5)`), sofern IOMan/Aufrufer das obere Wort nicht
+   nullen -- dann wuerde immer `P$Path[0]` getaggt.
+
+Naechster Schritt: einen Lauf mit nativem Pfad >= 1 nach der
+IOMan-Registrierung aufsetzen und `d0`/`d1` beim Handlereintritt bzw.
+im R$-Rahmen protokollieren, bevor etwas geaendert wird.

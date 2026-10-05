@@ -1644,6 +1644,26 @@ areas remain open independently of individual call-code implementations:
    revising a prior assumption. Not live-verified. See
    `docs/OWN_KERNEL_STATUS.md`, Fortsetzung 104, for the full
    reasoning and a lower-risk next diagnostic step.
+   **Root cause found and fixed (2026-10-05, Fortsetzung 106):** not a
+   race at all, but a fixed stack-layout bug in `Q9K_TrapDispatch`'s
+   own-caller path. Since `c56b48b` (2026-09-16) it kept the caller's
+   A4 on the stack *across* `jsr (a4)`, so a kernel-internal caller
+   such as `Q9K_TestProcA` entered the handler with
+   `[return][caller A4][exception frame]` on the stack. The blocking
+   handlers (`F$Wait`, `F$Sleep` trap path, `F$Sema`, `F$Event`,
+   `F$NProc`) discard only the 4-byte return address before saving the
+   register set, so the stale A4 ended up between register set and
+   frame, and the later `movem.l (sp)+`/`rte` read it as SR/PC. The
+   corrupted value is predictable: with TestProcA's descriptor at
+   `$0001b9f0`, the first bad frame read `pc=b9f02000` (A4 = descriptor
+   plus the genuine SR `$2000`). Fix: pop the caller's A4 *before* the
+   call and dispatch memory-indirect through `Q9K_TrapHandlerScratch`,
+   exactly like the foreign-caller path. Verified A/B with
+   `Q9K_TestNestedTrapStress equ 1`: old build `Vektor=4` with 1651
+   corrupted-frame hits; fixed build `Vektor=0`, zero hits, stress
+   block (`ZFFF`) completes, twice; default boot unchanged; 28/28 host
+   suites green. Why the crash tick varied between earlier runs was not
+   re-examined.
    Register-frame
    ownership across nested external traps and all return paths through
    IOMan/file

@@ -237,6 +237,21 @@ Erkennung übernimmt, muss zusätzlich prüfen, woher der Aufruf kommt.
 **Globale Zustandsflags im Trap-Pfad sind falsch**, sobald verschachtelt
 aufgerufen werden kann.
 
+**Das Stacklayout beim Handlereintritt ist ein Vertrag.** Die
+blockierenden Handler (`F$Wait`, `F$Sleep`, `F$Sema`, `F$Event`,
+`F$NProc`) setzen exakt `[jsr-Rücksprung][Exception-Frame]` voraus und
+verwerfen nur die 4 Byte Rücksprung. Alles, was der Dispatcher *über*
+den Handleraufruf hinweg auf den Stack legt, landet später zwischen
+Registersatz und Frame und wird beim `rte` als SR/PC gelesen. Genau das
+war der „zweite Absturz“ (Fortsetzung 106). Zwischenwerte im
+Dispatcher vor dem Aufruf wieder abräumen.
+
+**Korrupte Werte zuerst als Bytes lesen.** Ein unsinniger PC wie
+`$b8902000` ist oft ein bekannter Wert, der um 2 oder 4 Byte versetzt
+gelesen wird: hier der Deskriptor `$0001b890` plus das echte SR `$2000`.
+Den Wert gegen Deskriptor-, Stack- und Moduladressen desselben Laufs
+halten, bevor man nach einer „Rennbedingung“ sucht.
+
 **Wenn ein Einzeltest klappt, der echte Aufrufer aber scheitert**, ist fast
 immer das *Argument* anders als gedacht. Ein Protokoll der tatsächlichen
 Anfrage klärt das in einem Lauf — besser als jede Codelektüre.

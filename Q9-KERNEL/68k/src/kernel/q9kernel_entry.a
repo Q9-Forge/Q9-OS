@@ -3214,11 +3214,24 @@ Q9K_TrapOwnHandler:
         sub.l   a4,d7                                  * d7 = Ruecksprung-PC minus wahre Lade-Basis
         cmp.l   4(a4),d7                                * gegen echtes M$Size aus dem Modulkopf
         bcc     Q9K_TrapCallForeignCaller               * >= eigene Groesse: Aufrufer AUSSERHALB
-        movea.l Q9K_TrapHandlerScratch,a4                 * Aufrufer ist WIR SELBST
+* Aufrufer ist WIR SELBST (Q9K_TestProcA & Co.).
+* FIX (2026-10-05, Fortsetzung 106): A4 des Aufrufers wird VOR dem
+* Handleraufruf vom Stack genommen, nicht erst danach. Vorher lag es
+* zwischen der jsr-Ruecksprungadresse und dem Exception-Frame. Die
+* blockierenden Handler (F$Wait, F$Sleep-Trapweg, F$Sema, F$Event,
+* F$NProc) verwerfen aber nur die 4 Byte Ruecksprungadresse und legen
+* den Registersatz direkt darueber -- das alte A4 blieb so zwischen
+* Registersatz und Frame liegen, und das spaetere "movem.l (sp)+ / rte"
+* las es als SR/PC. Genau das war der "zweite Absturz" (Fortsetzung
+* 94-104): SR=$0001, PC=$b890_2000 = Deskriptor $0001b890 + echtes SR
+* $2000. Der Aufruf geht jetzt wie beim Fremdaufrufer-Pfad unten
+* speicherindirekt ueber Q9K_TrapHandlerScratch, sodass beim Eintritt
+* exakt [Ruecksprung][Exception-Frame] auf dem Stack liegt.
+        movea.l (sp)+,a4                                  * restore caller A4 -- VOR dem Aufruf, s. o.
         clr.w   Q9K_TrapForeignFlag
-        move.l  a4,Q9K_FLinkTrace_A2
-        jsr     (a4)
-        movea.l (sp)+,a4                                  * restore caller A4
+        move.l  Q9K_TrapHandlerScratch,Q9K_FLinkTrace_A2
+        dc.w    $4ebb,$01f1                               * jsr ([Q9K_TrapHandlerScratch])
+        dc.l    Q9K_TrapHandlerScratch
         bra     Q9K_TrapAfterCall
 Q9K_TrapCallForeignCaller:
         move.w  #1,Q9K_TrapForeignFlag
