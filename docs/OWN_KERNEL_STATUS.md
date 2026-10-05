@@ -10239,3 +10239,78 @@ Arbeitsbaum nach dem Zuruecknehmen exakt wieder auf Commit `1ed7f91`
 (per `git status` bestaetigt, keine Aenderung verblieben) -- keine
 neue Codeaenderung in dieser Runde, daher kein erneuter Host-Suiten-
 oder Standardboot-Lauf noetig.
+
+
+## Fortsetzung 105 – Native-I/O-End-to-End-Test mit vollständigem Boot (2026-10-02)
+
+Der bisherige `E$MNF`-Befund beim IOMan-Start ist als Bootfile-Konfigurations-
+problem reproduziert und aufgelöst: Das verwendete Referenz-Bootfile enthielt
+`ioman`, `scf`, `sc68681` und `term`, aber nicht die Diskkette
+`rbf`/`cfide`/`dd`/`c0`. Ohne diese vier Module blieb IOMan beim Wechsel auf
+das Systemgerät mit `$00DD` (`E$MNF`) stehen.
+
+Für die Gegenprobe wurde ein separates frisches Image verwendet:
+`/private/tmp/q9kernel-nativeio-full.hda`. Das alte Testimage wurde nicht
+überschrieben; `os9 gen` hatte dort beim direkten Re-Link des großen Extended-
+Bootfiles mit `Failed to allocate memory` abgebrochen. Die vorhandene Datei
+`startup` wurde anschließend in das frische Image kopiert.
+
+Reproduktionskern:
+
+```sh
+Q9K_BUILD_DIR=Q9-KERNEL/68k/src/kernel/build \
+Q9_DISK_MODULES=".../Q9SYS/CMDS/BOOTOBJS/rbf .../cfide .../dd .../c0" \
+tools/mkbootfile.sh --disk <reference-boot> /private/tmp/q9kernel-nativeio-full.hda
+os9 copy <Q9SYS.hda,startup> /private/tmp/q9kernel-nativeio-full.hda,startup
+```
+
+Der Emulatorlauf mit dem Development-ROM bestätigt in der Moduldirectory alle
+vier Diskmodule. Der aufgezeichnete Konsolenstrom enthält die Markerfolge
+`6Q ... R ... O P0123` und danach `Hallo aus einem echten Programm!`:
+
+- `6Q`: Kernel-F$Link auf `ioman` erfolgreich;
+- `R`: IOMan-Einsprung und Rückkehr erfolgreich;
+- `O`: `I$Open("/dd/startup")` erfolgreich;
+- `P0123`: Pfadpool/anschließender nativer I/O-Test erreicht;
+- keine Q9K-Exception im Emulatordump.
+
+Damit ist der native F$Link/I$Open-Pfad für den aktuellen `/dd/startup`-Test
+erstmals vollständig live bestätigt. Ein verbleibender Unterschied zwischen
+den alten negativen Läufen und diesem Ergebnis ist nicht der C-Bridge-Code,
+sondern ausschließlich das vollständige Bootmodulset plus frisches Image.
+
+### Code in derselben Runde
+
+- **`F$RetPD` über Zeigerzelle `$1F80`** (`Q9K_RetPDImplPtr`) statt
+  `bsr Q9K_SysRetPDImpl` -- dasselbe Muster wie `Q9K_FLinkSearchImplPtr`
+  (`$1F70`), wegen der `bsr`-Reichweite. `a1` ist an dieser Stelle frei:
+  die Eingabe steht zu dem Zeitpunkt bereits in `Q9K_RetPDScratch_NumIn`.
+  `$1F80`-`$1F83` war vorher unbelegt (Nachbarn `$1F7C`
+  `Q9K_ICloseManagerRoutine`, `$1F84` `Q9K_FIRQHandlersPtr`).
+- **`Q9K_ProcNativeClose`** (`q9kernel_iopath.c`): C-Backend für das
+  Schließen eines prozesslokalen nativen Pfads -- `P$Path`-Eintrag sofort
+  löschen, Referenzzähler senken, Pool-Slot erst beim letzten Verweis
+  freigeben. Noch NICHT an einen Trap angeschlossen; bisher nur per
+  Hosttest belegt (`test_q9kernel_iopath.c`, Fall F7: Schließen,
+  `E$BPNum` danach, Wiederöffnen mit frischer Position).
+- `Q9K_TestIOManLinkFail` hält nach dem Diagnosemarker `q` nicht mehr in
+  einer Endlosschleife, sondern läuft in `Q9K_TestProcA_Loop` weiter --
+  ein fehlgeschlagener `F$Link("ioman")` blockiert so den restlichen
+  Testablauf nicht mehr.
+
+### Verifikation
+
+Der 68k-Kernel wurde mit `Errors: 00000` neu gebaut. Der Emulatorlauf wurde
+mit dem separaten HDA wiederholt; der Moduldirectory-Dump weist `rbf`, `cfide`,
+`dd` und `c0` aus, und der Konsolenstrom bestätigt `6Q ... R ... O P0123`
+ohne Exception.
+
+**Nachprüfung 2026-10-05** (vor dem Commit, unabhängig vom Lauf oben): alle
+28 Host-Suiten grün (inkl. der sechs neuen F7-Close-Fälle); frischer Build
+in ein leeres Verzeichnis, alle `Errors: 00000`, kein `operand size error`;
+Standardboot (Rezept wie `tools/malformed_boot_test.sh`, ohne Korruption,
+frisch formatiertes Abbild ohne `startup`) zeigt `6Q`, `CompactFlash driver
+build 42`, `R`, dann erwartungsgemäß `o000000D8` (`E$PNNF`, keine
+`startup`-Datei im Abbild) und die gewohnte `A`-Schleife, `Vektor=0`.
+Die Vendor-Module stammen aus `Q9-Flux/.hide/OS9Boot.noprot.test`
+(die früheren `/tmp/vendor_*.mod` existieren nicht mehr).

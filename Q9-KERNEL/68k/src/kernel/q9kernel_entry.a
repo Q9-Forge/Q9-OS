@@ -548,6 +548,7 @@ Q9K_FLinkSavedD7          equ $1F58
 Q9K_FLinkSavedA6          equ $1F5C
 Q9K_FLinkSavedName        equ $1F60
 Q9K_FLinkSearchImplPtr    equ $1F70      * C-init-relocated Q9K_SysFLinkSearchImpl
+Q9K_RetPDImplPtr           equ $1F80      * C-init-relocated Q9K_SysRetPDImpl
 Q9K_IOpenManagerRoutine   equ $1F74      * IOMan I$Open handler shadow; native path remains installed
 Q9K_IReadManagerRoutine   equ $1F78      * IOMan I$Read shadow; paths carry manager tag
 Q9K_ICloseManagerRoutine  equ $1F7C      * IOMan I$Close shadow; paths carry manager tag
@@ -2530,7 +2531,7 @@ Q9K_TestIOManLinkFail:
         moveq   #'q',d7                     * DIAGNOSE: F$Link("ioman") fehlgeschlagen
         bsr     Q9K_DiagWriteD7
 Q9K_TestIOManLinkFail_Halt:
-        bra     Q9K_TestIOManLinkFail_Halt
+        bra     Q9K_TestProcA_Loop
 
 Q9K_TestProcA_Loop:
         moveq   #'A',d7
@@ -3706,7 +3707,8 @@ Q9K_SysFRetPD:
         andi.l  #$0000ffff,d0                  * nur d0.w ist echte Eingabe
         move.l  d0,Q9K_RetPDScratch_NumIn
         move.l  (sp)+,d0
-        bsr     Q9K_SysRetPDImpl
+        movea.l Q9K_RetPDImplPtr,a1
+        jsr     (a1)
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         tst.w   Q9K_RetPDScratch_Success+2

@@ -230,6 +230,21 @@ int main(void)
                  Q9K_ReadU32BE_At(poolBase + Q9K_PATHDESC_SIZE
                                   + Q9K_PATHDESC_POS_OFF), 15);
         checkU32("F7: native motd backend has no error", openErr, 0);
+
+        checkU32("F7: native close releases the local path",
+                 (Q9_u32)Q9K_ProcNativeClose(4, &openErr), 1);
+        checkU32("F7: native close clears P$Path[4]",
+                 (Q9_u32)Q9K_ReadU16BE((Q9_u32)(unsigned long)processDesc
+                                       + Q9K_PROCDESC_PATH_OFF + 4UL * 2UL), 0);
+        checkU32("F7: closed native path is no longer resolvable",
+                 Q9K_ProcPathDesc(4, &openErr), 0);
+        checkU32("F7: closed native path reports E$BPNUM", openErr, 0x00C9);
+
+        num2 = Q9K_ProcIOpen(1, name2Addr, &past, &openErr);
+        checkU32("F7: native path can be reopened after close", num2, 4);
+        checkU32("F7: reopened native path starts with a fresh position",
+                 Q9K_ReadU32BE_At(poolBase + Q9K_PATHDESC_SIZE
+                                  + Q9K_PATHDESC_POS_OFF), 0);
     }
 
     /* A second process gets its own local path 3, but the global descriptor

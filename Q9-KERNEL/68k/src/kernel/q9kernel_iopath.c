@@ -850,6 +850,55 @@ int Q9K_ProcPathSupports(Q9_u16 pathNum, Q9_u8 operation,
     return 0;
 }
 
+/* Close one process-local native path.  Keep this lifecycle operation in the
+ * same C backend boundary as open/read/status so the assembler syscall bridge
+ * and host regressions share one descriptor contract: the local P$Path entry
+ * is cleared immediately, the global reference is decremented, and the pool
+ * slot is returned only when the last reference disappears. */
+int Q9K_ProcNativeClose(Q9_u16 pathNum, Q9_u16 *outError)
+{
+    Q9_u32 procDesc;
+    Q9_u32 pathDesc;
+    Q9_u32 pathEntry;
+    Q9_u16 descriptorNum;
+    Q9_u16 refs;
+    Q9_u16 err = 0;
+
+    pathDesc = Q9K_ProcPathDesc(pathNum, &err);
+    if (pathDesc == 0) {
+        if (outError)
+            *outError = err;
+        return 0;
+    }
+    procDesc = Q9K_GetU32(Q9_D_PROC);
+    if (procDesc == 0) {
+        if (outError)
+            *outError = Q9K_E_BPNUM;
+        return 0;
+    }
+
+    descriptorNum = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_NUM_OFF);
+    refs = Q9K_ReadU16BE(pathDesc + Q9K_PATHDESC_REF_OFF);
+    if (descriptorNum < 3 || refs == 0) {
+        if (outError)
+            *outError = Q9K_E_BPNUM;
+        return 0;
+    }
+
+    pathEntry = procDesc + Q9K_PROCDESC_PATH_OFF +
+                (Q9_u32)pathNum * 2UL;
+    Q9K_WriteU16BE(pathEntry, 0);
+    refs--;
+    Q9K_WriteU16BE(pathDesc + Q9K_PATHDESC_REF_OFF, refs);
+    if (refs == 0) {
+        Q9K_SetU32(pathDesc, Q9K_GetU32(Q9K_PATHPOOL_FREE_ADDR));
+        Q9K_SetU32(Q9K_PATHPOOL_FREE_ADDR, pathDesc);
+    }
+    if (outError)
+        *outError = 0;
+    return 1;
+}
+
 /* Parameterless bridge used by the 68k I$Read trap.  Keeping the register
  * ABI at the assembly boundary makes the backend testable on the host and
  * leaves the native descriptor/position logic in one place. */

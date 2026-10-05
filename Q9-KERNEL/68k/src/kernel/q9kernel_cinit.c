@@ -199,6 +199,7 @@ extern void   Q9K_SysAllBitImpl(void);
 extern void   Q9K_SysDelBitImpl(void);
 extern void   Q9K_SysGBlkMpImpl(void);
 extern Q9_u32 Q9K_SysFLinkSearchImpl(void);
+extern void   Q9K_SysRetPDImpl(void);
 extern void   Q9K_SysTimeImpl(void);
 extern void   Q9K_SysSSvcImpl(void);
 extern void   Q9K_SysFNProc(void);        /* q9kernel_entry.a, Handler fuer F$NProc (0x2d) */
@@ -637,6 +638,7 @@ void Q9K_CInit(void)
                     Q9K_PutU32(0x1EF8UL, (Q9_u32)(unsigned long)Q9K_SysDExitImpl);
                     Q9K_PutU32(0x1EFCUL, (Q9_u32)(unsigned long)Q9K_SysDExecImpl);
                     Q9K_PutU32(0x1F70UL, (Q9_u32)(unsigned long)Q9K_SysFLinkSearchImpl);
+                    Q9K_PutU32(0x1F80UL, (Q9_u32)(unsigned long)Q9K_SysRetPDImpl);
                     Q9K_PutU32(usrdisBase + 0x5eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFPanic);
                     Q9K_PutU32(usrdisBase + 0x2dUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFNProc);
                     Q9K_PutU32(usrdisBase + 0x58UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFChkMem);
@@ -773,6 +775,7 @@ void Q9K_CInit(void)
      * this is deliberately repeated here because the early registration
      * block also initializes several scratch regions used by boot services. */
     Q9K_PutU32(0x1F70UL, (Q9_u32)(unsigned long)Q9K_SysFLinkSearchImpl);
+    Q9K_PutU32(0x1F80UL, (Q9_u32)(unsigned long)Q9K_SysRetPDImpl);
 
     /* Abschnitt "Scheduler" (2026-08-21, im Anschluss an F$Link/
      * F$UnLink): ersetzt das fruehere "minimale Geruest" (Abschnitt 2,
