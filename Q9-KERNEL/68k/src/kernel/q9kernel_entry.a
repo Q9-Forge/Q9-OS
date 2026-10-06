@@ -1991,6 +1991,54 @@ Q9K_TestQ9DbgProbeFail:
         moveq   #'v',d7
         bsr     Q9K_DiagWriteD7
 Q9K_TestQ9DbgProbeDone:
+* Fortsetzung 119: Lebensbeweis fuer das Protokollieren selbst. Trace an,
+* drei F$ID, Trace aus; dann Ausgabe "W<Satzzaehler>" (Unterfunktion 0,
+* d2) und "R<gelesene Byte>:<erste 3 Langworte>" (Unterfunktion 6). Erwartet
+* mindestens 6 Saetze (Eintritt+Rueckkehr je F$ID; F$Q9Dbg selbst wird nie
+* protokolliert, ein parallel laufender Testprozess kann weitere beitragen).
+        moveq   #1,d0
+        moveq   #1,d1
+        trap    #0
+        dc.w    $7f                        * Trace an
+        moveq   #2,d3
+Q9K_TestQ9DbgIdLoop:
+        move.l  d3,-(sp)
+        trap    #0
+        dc.w    $0c                        * F$ID
+        move.l  (sp)+,d3
+        dbra    d3,Q9K_TestQ9DbgIdLoop
+        moveq   #1,d0
+        moveq   #0,d1
+        trap    #0
+        dc.w    $7f                        * Trace aus
+        moveq   #0,d0
+        trap    #0
+        dc.w    $7f                        * Version -> d2 = Satzzaehler
+        move.l  d2,d5
+        moveq   #'W',d7
+        bsr     Q9K_DiagWriteD7
+        bsr     Q9K_DiagWriteHex32
+        lea     -16(sp),sp
+        movea.l sp,a0
+        moveq   #6,d0                      * Ringpuffer lesen
+        moveq   #0,d1
+        moveq   #12,d2                     * genau ein Satzkopf
+        moveq   #0,d3                      * Puffer 0 = Trace
+        trap    #0
+        dc.w    $7f
+        move.l  d0,d5
+        moveq   #'R',d7
+        bsr     Q9K_DiagWriteD7
+        bsr     Q9K_DiagWriteHex32
+        moveq   #':',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  (sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  4(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  8(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        lea     16(sp),sp
         endc
 * Die frueheren Testbloecke fuer F$Link/F$UnLink, F$Fork, F$Wait und
 * F$ID/F$GProcP standen hier bis 2026-09-04. Sie haben ihren Zweck erfuellt --
@@ -3249,7 +3297,11 @@ Q9K_TrapDispatch:
         movem.l d0-d2/a0,-(sp)
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        jsr     Q9K_DbgLogEntryImpl
+        movea.l Q9K_DbgLogEntryPtr,a0
+        move.l  a0,d0
+        beq.s   Q9K_DbgLogEntryImpl_Skip                    * vor Q9K_CInit noch nicht gesetzt
+        jsr     (a0)
+Q9K_DbgLogEntryImpl_Skip:
         movea.l (sp)+,a6
         movem.l (sp)+,d0-d2/a0
         endc
@@ -3791,7 +3843,11 @@ Q9K_TrapAfterCall:
         movem.l d0-d2/a0,-(sp)
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        jsr     Q9K_DbgLogReturnImpl
+        movea.l Q9K_DbgLogReturnPtr,a0
+        move.l  a0,d0
+        beq.s   Q9K_DbgLogReturnImpl_Skip                    * vor Q9K_CInit noch nicht gesetzt
+        jsr     (a0)
+Q9K_DbgLogReturnImpl_Skip:
         movea.l (sp)+,a6
         movem.l (sp)+,d0-d2/a0
         endc
@@ -5611,7 +5667,8 @@ Q9K_SysFQ9Dbg:
         move.l  a0,Q9K_DbgSvcA0
         clr.l   Q9K_DbgSvcOutErr
         lea     Q9K_CRuntimeData(pc),a6
-        jsr     Q9K_SysFQ9DbgImpl
+        movea.l Q9K_DbgSvcImplPtr,a0
+        jsr     (a0)
         movea.l (sp)+,a6
         movem.l (sp)+,d1-d7/a0-a1/a3-a5
 
@@ -8222,7 +8279,17 @@ Q9K_DbgSvcA0          equ $20F8      * Q9_u32, Zeigerwert
 Q9K_DbgSvcOutD0       equ $20FC      * Q9_u32
 Q9K_DbgSvcOutD1       equ $2100      * Q9_u32
 Q9K_DbgSvcOutD2       equ $2104      * Q9_u32
-Q9K_DbgSvcOutErr      equ $2108      * Q9_u32, 0 = Erfolg, sonst Fehlercode -- naechste freie Adresse $210C
+Q9K_DbgSvcOutErr      equ $2108      * Q9_u32, 0 = Erfolg, sonst Fehlercode
+* Zeigerzellen auf die drei C-Einspruenge (Fortsetzung 119, gefuellt in
+* Q9K_CInit). Der Kernel ist ein lageunabhaengiges Modul, ab 0 gelinkt und
+* bei $7100 geladen: "jsr Label" bzw. "movea.l #Label,a0" liefert die
+* LINK-Adresse, nicht die Laufzeitadresse, und sprang daneben (die in
+* Fortsetzung 119 vermutete Endlosschleife in __multiply war genau das).
+* C dagegen bildet Funktionsadressen PC-relativ -- dasselbe Muster wie
+* Q9K_JulianImplPtr usw.
+Q9K_DbgLogEntryPtr    equ $210C      * Q9_u32, Q9K_DbgLogEntryImpl
+Q9K_DbgLogReturnPtr   equ $2110      * Q9_u32, Q9K_DbgLogReturnImpl
+Q9K_DbgSvcImplPtr     equ $2114      * Q9_u32, Q9K_SysFQ9DbgImpl -- naechste freie Adresse $2118
 
 Q9K_SysStartProc:
         move.l  #1,Q9K_ConsoleViaIOMan        * /term ab jetzt ueber IOMan/SCF (s. Q9K_TrapNotPathIO)

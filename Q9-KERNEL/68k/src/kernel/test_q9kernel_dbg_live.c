@@ -59,6 +59,8 @@ static unsigned char g_cells[0x400];
 #define Q9DBG_A_SVC_OUT_D2        CELL(0x350)
 #define Q9DBG_A_SVC_OUT_ERR       CELL(0x360)
 #define Q9DBG_A_DISPATCH_CODE_LOW CELL(0x370)
+#define Q9DBG_A_CUR_PROC          CELL(0x380) /* Fortsetzung 119: D_Proc, 0 = unbekannt */
+#define Q9DBG_A_TICKS             CELL(0x390) /* Fortsetzung 119: Tickzaehler */
 
 /* Fake-Allokator: liefert IMMER den angeforderten Puffer aus einem
  * statischen Testarray -- reicht fuer diesen Hosttest, der nur die
@@ -331,6 +333,58 @@ static void test_trace_fn_internal(void)
     checkInt("Q9K_TRACE_FN: Rueckkehr intern, Funktions-ID 42", hdr.recType == Q9TRACE_REC_INTERN_RETURN && hdr.code == 42, 1);
 }
 
+/* Fortsetzung 119: P$ID aus dem aktuellen Deskriptor, Tiefenkorrektur bei
+ * aeusserem Trap ($3AC = 0), F$Q9Dbg ($7F) wird nie protokolliert, Tick. */
+static void test_pid_depthreset_selfskip(void)
+{
+    static unsigned char desc[0x400];
+    Q9_u8 buf[256];
+    Q9TraceRecHdr hdr;
+
+    Q9K_DbgInit();
+    Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_TRACE_ONOFF);
+    Q9K_PutU32(Q9DBG_A_SVC_D1, 1);
+    Q9K_SysFQ9DbgImpl();
+
+    memset(desc, 0, sizeof desc);
+    desc[0] = 0x00; desc[1] = 0x05;                 /* P$ID = 5 (Big Endian) */
+    Q9K_PutU32(Q9DBG_A_CUR_PROC, (Q9_u32)(unsigned long)desc);
+    Q9K_PutU32(Q9DBG_A_TICKS, 1234);
+
+    /* Ein "geleckter" Zaehler (Schlaf ohne Rueckkehr-Haken) ... */
+    Q9K_PutU32(Q9DBG_A_TRAP_DEPTH, 5);
+    Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x0C);    /* F$ID */
+    Q9K_DbgLogEntryImpl();
+    checkU32("aeusserer Trap ($3AC=0) setzt die Tiefe auf 0 zurueck", Q9K_GetU32(Q9DBG_A_TRAP_DEPTH), 1);
+
+    /* ... und F$Q9Dbg selbst taucht nicht auf. */
+    Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x7F);
+    desc[0x3AC + 3] = 1;                            /* innerhalb eines Fremdaufrufs */
+    Q9K_DbgLogEntryImpl();
+    Q9K_PutU32(Q9DBG_A_RET_CARRY, 0);
+    Q9K_DbgLogReturnImpl();
+    desc[0x3AC + 3] = 0;
+    Q9K_DbgLogReturnImpl();
+    checkU32("F$Q9Dbg ($7F) wird nicht protokolliert: nur 2 Saetze", Q9K_GetU32(Q9DBG_A_WRITTEN), 2);
+
+    Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_RING_READ);
+    Q9K_PutU32(Q9DBG_A_SVC_D1, 0);
+    Q9K_PutU32(Q9DBG_A_SVC_D2, sizeof buf);
+    Q9K_PutU32(Q9DBG_A_SVC_D3, Q9DBG_RING_TRACE);
+    Q9K_PutU32(Q9DBG_A_SVC_A0, (Q9_u32)(unsigned long)buf);
+    Q9K_SysFQ9DbgImpl();
+    Q9TraceDecodeHeader(buf, &hdr);
+    checkInt("Satz 1: Callcode F$ID", hdr.code, 0x0C);
+    checkInt("Satz 1: PID aus P$ID", hdr.pid, 5);
+    checkU32("Satz 1: Tick aus dem Tickzaehler", hdr.tick, 1234);
+    Q9TraceDecodeHeader(buf + hdr.recLen, &hdr);
+    checkInt("Satz 2: Rueckkehr von F$ID", hdr.code, 0x0C);
+    checkInt("Satz 2: PID", hdr.pid, 5);
+
+    Q9K_PutU32(Q9DBG_A_CUR_PROC, 0);
+    Q9K_PutU32(Q9DBG_A_TICKS, 0);
+}
+
 int main(void)
 {
     test_init_allocates_buffer();
@@ -342,6 +396,7 @@ int main(void)
     test_svc_filter_set();
     test_svc_ring_clear();
     test_trace_fn_internal();
+    test_pid_depthreset_selfskip();
 
     if (failures == 0) {
         printf("\nALLE TESTS OK\n");

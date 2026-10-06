@@ -166,6 +166,9 @@ extern void   Q9K_SysFTLink(void);        /* q9kernel_entry.a, F$TLink   (Callco
 extern void   Q9K_SysFCCtl(void);         /* q9kernel_entry.a, F$CCtl  (Callcode 0x5a) */
 #ifdef Q9K_DEBUG
 extern void   Q9K_SysFQ9Dbg(void);        /* q9kernel_entry.a, F$Q9Dbg (Callcode 0x7f, Debug-Konzept Fortsetzung 118) */
+extern void   Q9K_DbgLogEntryImpl(void);  /* q9kernel_dbg.c, Trap-Eintrittshaken */
+extern void   Q9K_DbgLogReturnImpl(void); /* q9kernel_dbg.c, Trap-Rueckkehrhaken */
+extern int    Q9K_SysFQ9DbgImpl(void);    /* q9kernel_dbg.c, F$Q9Dbg-Logik */
 extern void   Q9K_DbgInit(void);          /* q9kernel_dbg.c -- Trace-Ringpuffer/Filter initialisieren */
 #endif
 extern void   Q9K_SysFSetSys(void);       /* q9kernel_entry.a, F$SetSys (Callcode 0x27) */
@@ -596,6 +599,11 @@ void Q9K_CInit(void)
                      * registriert -- im Atom-Kernel bleibt $7F unregistriert
                      * (E$UnkSvc), wie im Konzeptdokument gefordert. */
                     Q9K_PutU32(usrdisBase + 0x7fUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFQ9Dbg);
+                    /* Fortsetzung 119: Zeigerzellen der Trace-Haken und des
+                     * F$Q9Dbg-Stubs (Laufzeitadressen, s. q9kernel_entry.a). */
+                    Q9K_PutU32(0x210CUL, (Q9_u32)(unsigned long)Q9K_DbgLogEntryImpl);
+                    Q9K_PutU32(0x2110UL, (Q9_u32)(unsigned long)Q9K_DbgLogReturnImpl);
+                    Q9K_PutU32(0x2114UL, (Q9_u32)(unsigned long)Q9K_SysFQ9DbgImpl);
 #endif
                     Q9K_PutU32(usrdisBase + 0x27UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSetSys);
                     Q9K_PutU32(usrdisBase + 0x2eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFVModul);

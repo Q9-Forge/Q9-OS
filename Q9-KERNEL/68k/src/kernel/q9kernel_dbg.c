@@ -312,11 +312,40 @@ static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
  * Funktion selbst aus der bestehenden Scratchzelle $1370 (vom
  * Dispatcher dort bereits abgelegt, zu diesem Zeitpunkt garantiert
  * aktuell -- s. Kopfkommentar der Einfuegestelle in q9kernel_entry.a). */
+#ifndef Q9DBG_A_TICKS
+#define Q9DBG_A_TICKS        0x1BE0UL /* Q9K_TickCount, Timer-Interrupts seit Boot */
+#endif
+#define Q9DBG_SLOT(d) ((d) * (Q9_u32)sizeof(Q9_u32))
+
+/* Fortsetzung 119: aktueller Prozessdeskriptor (D_Proc) fuer P$ID und die
+ * prozesseigene Verschachtelungstiefe $3AC (s. Q9K_TrapExtInvoke). Fuer
+ * Hosttests umlenkbar; ein Wert 0 heisst "unbekannt" (keine Korrektur). */
+#ifndef Q9DBG_A_CUR_PROC
+#define Q9DBG_A_CUR_PROC     0x004CUL /* Q9_D_Proc */
+#endif
+#define Q9DBG_PD_ID          0x00UL   /* P$ID, Wort */
+#define Q9DBG_PD_NEST        0x3ACUL  /* Syscall-Verschachtelungstiefe, Langwort */
+#define Q9DBG_CALLCODE_SELF  0x7FU    /* F$Q9Dbg -- wird nie protokolliert (Konzept 2.5) */
+
 void Q9K_DbgLogEntryImpl(void)
 {
     Q9_u32 depth = Q9K_GetU32(Q9DBG_A_TRAP_DEPTH);
     Q9_u8 code = Q9K_GetU8(Q9DBG_A_DISPATCH_CODE_LOW); /* ($1370).w, unteres Byte -- Callcode passt in 0-255 */
     Q9_u16 pid = 0;
+    Q9_u32 cur = Q9K_GetU32(Q9DBG_A_CUR_PROC);
+
+    /* Fortsetzung 119: F$Sleep/F$Wait/F$Exit wechseln den Prozess per rte,
+     * ohne durch Q9K_TrapAfterCall zu laufen -- der Rueckkehr-Haken fehlt
+     * dann, und der globale Zaehler wuchs mit jedem Schlaf (ab Tiefe 8
+     * waere nichts mehr protokolliert worden). Hat der aktuelle Prozess
+     * keinen offenen Fremdaufruf ($3AC = 0), ist dies ein aeusserer Trap:
+     * Tiefe 0. Verschachtelte Traps entstehen nur aus IOMan/Managern heraus. */
+    if (cur != 0) {
+        pid = (Q9_u16)((Q9K_GetU8(cur + Q9DBG_PD_ID) << 8) | Q9K_GetU8(cur + Q9DBG_PD_ID + 1));
+        if (Q9K_GetU8(cur + Q9DBG_PD_NEST) == 0 && Q9K_GetU8(cur + Q9DBG_PD_NEST + 1) == 0 &&
+            Q9K_GetU8(cur + Q9DBG_PD_NEST + 2) == 0 && Q9K_GetU8(cur + Q9DBG_PD_NEST + 3) == 0)
+            depth = 0;
+    }
 
     /* HINWEIS: Prozess-ID bleibt bewusst 0 ("alle", Filter-Vertrag) --
      * Q9_D_Proc ist ein ZEIGER auf den Prozessdeskriptor, keine
@@ -324,11 +353,19 @@ void Q9K_DbgLogEntryImpl(void)
      * in dieser Runde nicht verifiziert. Lieber 0 als eine geratene
      * Feldadresse -- dieselbe Vorsicht wie bei der Speicherplatzierung. */
 
+    /* KORREKTUR (Fortsetzung 119): die hier zuerst vermutete Endlosschleife
+     * in __multiply war in Wahrheit der absolute Aufruf dieser Funktion aus
+     * q9kernel_entry.a ("jsr Label"/"movea.l #Label" liefert in diesem ab 0
+     * gelinkten, bei $7100 geladenen Modul die LINK-Adresse) -- behoben
+     * ueber Zeigerzellen. "depth * sizeof(Q9_u32)" ist eine Multiplikation
+     * mit der Konstanten 4, die der Compiler ohnehin als Schiebebefehl
+     * erzeugt, und bleibt auf dem 64-Bit-Testhost (sizeof = 8) korrekt. */
     if (depth < Q9DBG_TRAP_MAXDEPTH) {
-        Q9K_PutU32(Q9DBG_A_TRAP_CODE + depth * (Q9_u32)sizeof(Q9_u32), code);
-        Q9K_PutU32(Q9DBG_A_TRAP_PID + depth * (Q9_u32)sizeof(Q9_u32), pid);
-        Q9K_PutU32(Q9DBG_A_TRAP_TICK + depth * (Q9_u32)sizeof(Q9_u32), 0);
-        LogCommon(Q9TRACE_REC_ENTRY, code, (unsigned)depth, 0, pid, 0);
+        Q9K_PutU32(Q9DBG_A_TRAP_CODE + Q9DBG_SLOT(depth), code);
+        Q9K_PutU32(Q9DBG_A_TRAP_PID + Q9DBG_SLOT(depth), pid);
+        Q9K_PutU32(Q9DBG_A_TRAP_TICK + Q9DBG_SLOT(depth), 0);
+        if (code != Q9DBG_CALLCODE_SELF)
+            LogCommon(Q9TRACE_REC_ENTRY, code, (unsigned)depth, 0, pid, Q9K_GetU32(Q9DBG_A_TICKS));
     }
     Q9K_PutU32(Q9DBG_A_TRAP_DEPTH, depth + 1);
 }
@@ -350,9 +387,10 @@ void Q9K_DbgLogReturnImpl(void)
     Q9K_PutU32(Q9DBG_A_TRAP_DEPTH, depth);
 
     if (depth < Q9DBG_TRAP_MAXDEPTH) {
-        Q9_u8 code = (Q9_u8)Q9K_GetU32(Q9DBG_A_TRAP_CODE + depth * (Q9_u32)sizeof(Q9_u32));
-        Q9_u16 pid = (Q9_u16)Q9K_GetU32(Q9DBG_A_TRAP_PID + depth * (Q9_u32)sizeof(Q9_u32));
-        LogCommon(Q9TRACE_REC_RETURN, code, (unsigned)depth, carrySet, pid, 0);
+        Q9_u8 code = (Q9_u8)Q9K_GetU32(Q9DBG_A_TRAP_CODE + Q9DBG_SLOT(depth));
+        Q9_u16 pid = (Q9_u16)Q9K_GetU32(Q9DBG_A_TRAP_PID + Q9DBG_SLOT(depth));
+        if (code != Q9DBG_CALLCODE_SELF)
+            LogCommon(Q9TRACE_REC_RETURN, code, (unsigned)depth, carrySet, pid, Q9K_GetU32(Q9DBG_A_TICKS));
     }
 }
 

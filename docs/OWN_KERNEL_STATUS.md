@@ -11219,3 +11219,38 @@ Dispatcher; Syscall-Beschreibungstabelle + `trace`-Programm + Host-
 Dekoder (Paket 4) -- braucht insbesondere die Prozess-ID-Ermittlung
 (aktuell bewusst 0/"alle", s. `Q9K_DbgLogEntryImpl`-Kommentar) und die
 Funktions-ID-Zuordnungstabelle fuer `Q9K_TRACE_FN`.
+
+## Fortsetzung 119: Syscall-Trace live im Emulator verifiziert (2026-10-06)
+
+**Ergebnis:** `tools/q9dbg_version_probe_test.sh` prueft jetzt das
+Protokollieren selbst, nicht nur Unterfunktion 0: Trace an, 3x F$ID,
+Trace aus -> genau **6 Saetze**; der erste Satz ist Eintritt F$ID ($0C),
+Laenge 12, **PID 1, Tick 1**; F$Q9Dbg selbst erscheint nicht. Ausgabe der
+Probe in Q9K_TestProcA: `VW<Saetze>R<Byte>:<Satzkopf>`.
+
+Behoben / ergaenzt:
+1. **Absolute Aufrufe der C-Einspruenge** (`jsr Label`, `movea.l #Label,a0`)
+   in Eintritts-/Rueckkehr-Haken und F$Q9Dbg-Stub: das Modul ist ab 0
+   gelinkt und bei $7100 geladen, der Sprung ging auf die Link-Adresse.
+   Die in 118/119 vermutete "Endlosschleife in __multiply" war genau das.
+   Jetzt Zeigerzellen `Q9K_DbgLogEntryPtr`/`-ReturnPtr`/`Q9K_DbgSvcImplPtr`
+   ($210C/$2110/$2114), gefuellt in Q9K_CInit (nur Developer-Kernel);
+   die Haken ueberspringen den Aufruf, solange die Zelle 0 ist.
+   Merksatz: **Code im Kernel nie absolut adressieren -- Zeigerzelle.**
+2. **Tiefen-Leck:** F$Sleep/F$Wait/F$Exit wechseln per rte ohne
+   Rueckkehr-Haken; der globale Zaehler waere mit jedem Schlaf gewachsen
+   (ab 8 kein Protokoll mehr). Jetzt: hat der aktuelle Prozess keinen
+   offenen Fremdaufruf ($3AC(P) = 0), ist der Trap aeusserer -> Tiefe 0.
+   Rueckkehr eines schlafenden Aufrufs wird weiterhin nicht protokolliert.
+3. **PID** aus P$ID (Deskriptor +0), **Tick** aus Q9K_TickCount ($1BE0).
+4. **F$Q9Dbg ($7F) wird nie protokolliert** (Konzept 2.5).
+5. Schrittweite der Tiefen-Arrays wieder `sizeof(Q9_u32)` (Host 8, Ziel 4).
+
+Verifiziert: 30/30 Hostsuiten (dbg_live +9 Faelle), Developer- (62 KB) und
+Atom-Kernel (60 KB) bauen fehlerfrei, Developer-Kernel startet ueber sysgo
+weiterhin bis zum Login; mit SCF-Konsole liefern jetzt auch pd/dir Ausgabe.
+
+Offen: Prozessverlust nach dem Login (s. Fortsetzung 113, InTrapPath-
+Hypothese allein reichte nicht); Paket 3/4 (Register-Pruefung,
+Beschreibungstabelle, `trace`-Programm, Host-Dekoder); Benutzer/Pfad im
+Satz noch 0.
