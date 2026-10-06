@@ -292,9 +292,27 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
   entspricht jede Zeile einem Codestueck, Einzelschritt und Variablen sind
   nachvollziehbar (uebliche Praxis bei Debug-Builds).
 - Die Zeileninformation steht in einem eigenen **Debug-Abschnitt** der
-  ROF-Objektdatei (`rdump` zeigt nur seine Groesse, `Debug: $AB8`). Format
-  noch zu entschluesseln; Hinweise: Microwares Quelltext-Debugger
-  (`mwsrcdbg.dll`, `hawkdbg.dll` in MWOS/DOS/BIN).
+  ROF-Objektdatei (`rdump` zeigt nur seine Groesse, `Debug: $AB8`).
+  **Entschluesselt (2026-10-06, an q9kernel_date.c):** der Abschnitt folgt
+  direkt auf Code (+ initialisierte Daten) -- dort Datei-Offset $D8 + $8B0.
+  Kopf: 4 Byte ($00000106). Danach Saetze, jeweils auf gerade Adresse
+  aufgefuellt:
+  - **Art 2, Symbol:** `[00 02][Langwort Wert][Text\0]`, Text im
+    stabs-Stil: `int:t1` (Typ), `Q9K_JulianFromDate:F21=f(7,7,7)7`
+    (globale Funktion, Wert = Codeoffset $102), `name:f..` (statische
+    Funktion), `year:p7` (Parameter), `a:l7` (lokale Variable),
+    `datei.c:SC:<zeit>` (Quelldatei). Parameter/Lokale haben ein
+    Zusatzbyte vor dem Wert (`02`) und als Wert den Abstand zu a5
+    (`fffffffc` = -4).
+  - **Art 1, Zeile:** `[00 01][Langwort Codeoffset][Langwort (Zeile<<12)|Spalte]`
+    -- z. B. `00 01 00000126 0005B008` = Offset $126 gehoert zu Zeile 91.
+    Gegen den Quelltext geprueft: die Saetze von Q9K_JulianFromDate ergeben
+    genau die Anweisungszeilen 91, 92, 94, 95, 96, 98, 99, 102.
+  - **Art 3 / Art 4:** Blockanfang/-ende mit Codeoffset (Gueltigkeitsbereiche).
+  Offen: Header-Felder der ROF-Datei allgemein (Abschnittslagen statt fester
+  Rechnung), Bedeutung der Spaltenbits im Detail, Typbeschreibungen fuer
+  Strukturen. Danach: Host-Werkzeug `.r` -> Zeilentabelle `offset datei:zeile`,
+  vom Linker-Offset des Moduls auf Kerneladressen umgerechnet.
 - **Ganzer Kernel mit `-g` geht nicht:** ~40 % mehr Code, 27 `bsr`-Sprunge
   (68000: nur +-32 KB) erreichen ihr Ziel nicht mehr. Deshalb **pro Datei**:
   Bauschalter `Q9K_SRCDEBUG="q9kernel_date.c ..."` uebersetzt nur diese

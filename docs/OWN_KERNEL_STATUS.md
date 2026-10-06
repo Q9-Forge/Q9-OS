@@ -11351,3 +11351,8 @@ Host-Gegenstueck fuer Dumps/Abstuerze bleibt tools/q9trace_decode.py.
 
 Verifiziert: Hosttest dbg_live gruen, Developer-Kernel baut, Login mit
 echo/dir/pd funktioniert.
+
+**Nachtrag Fortsetzung 122:** Debug-Abschnitt von `xcc -g` entschluesselt
+(stabs-aehnliche Symbolsaetze + Zeilensaetze `[1][Offset][(Zeile<<12)|Spalte]`,
+an q9kernel_date.c gegen den Quelltext verifiziert) -- Details in
+docs/DEBUG_KONZEPT_de.md Abschnitt 5.3.
