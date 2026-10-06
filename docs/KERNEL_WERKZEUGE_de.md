@@ -108,8 +108,17 @@ einmal komplett laufen lassen, statt der Doku zu glauben.**
 **Eingecheckte Emulator-Regressionen** (je ein Aufruf, ohne Argumente):
 `tools/malformed_boot_test.sh` (Bootmodul-Validierung) und
 `tools/mgrpath_probe_test.sh` (IOMan-Managerpfad I$Open/I$Read/I$Close,
-Fortsetzung 107). Letzteres baut seine eigene Kernelkopie mit Messsonde
-und holt die Vendor-Module selbst aus `Q9-Flux/.hide/OS9Boot.noprot.test`.
+Fortsetzung 107) und `tools/startup_shell_test.sh` (mshell laden, stdin
+umleiten, starten, warten; Fortsetzung 108). Die beiden letzten bauen
+ihre eigene Kernelkopie mit dem jeweiligen Testschalter und holen die
+Vendor-Module selbst aus `Q9-Flux/.hide/OS9Boot.noprot.test`.
+`malformed_boot_test.sh` braucht dagegen einen Build in `kernel/build` und
+`VENDOR=<verzeichnis mit vendor_*.mod>`.
+
+**Marker-Falle:** der Emulator gibt den Abbildpfad aus. Steht der Marker
+(etwa ein einzelnes `W`) zufällig im Pfad, z. B. im Zufallsteil eines
+`mktemp`-Verzeichnisses, endet der Lauf sofort. Arbeitsverzeichnisse für
+Emulatorläufe deshalb ohne Zufallsbuchstaben benennen.
 
 **Werkzeugwarnung:** `os9 gen -b=` bricht mit *„is fragmented"* ab. Die
 Bootkette immer zuerst auf ein frisch (ohne `-e`) formatiertes Abbild

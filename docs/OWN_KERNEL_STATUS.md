@@ -10498,6 +10498,10 @@ ein und schreibt die LOKALE Nummer als Langwort zurueck
    `P$Path[4]=$0001` statt `$8001`). Folge im Zwischenstand: `I$Read`
    landete im eigenen Handler (`E$BPNum`), `I$Close` im nativen
    Close-Handler, der am fremden Deskriptor mit `Vektor=4` abstuerzte.
+   **[Korrigiert in Fortsetzung 108:** beide Aufrufe landeten NICHT im
+   nativen Handler, sondern -- ueber die vorab ueberschriebene
+   `Q9K_TrapHandlerScratch` -- in IOMans Read/Close OHNE R$-Rahmen. Daher
+   `E$BPNum` bzw. der Absturz. Siehe dort, Fehler 5.**]**
    Fix: Callcode aus dem eigenen R$-Rahmen (`$3c(a5)`, R$a7-Hochwort,
    vom Dispatcher dort abgelegt) -- pro Aufruf und verschachtelungsfest.
 
@@ -10535,6 +10539,101 @@ von Q9-OS!") laeuft unveraendert weiter, `Vektor=0`.
   OS-9 waehlt per Aufrufer-Modus die `$80xx`-Tabelle; dieser Kernel laeuft
   durchgehend im Supervisor-Modus, das SR-S-Bit taugt hier also nicht zur
   Unterscheidung. Kein solcher Aufrufer ist bisher beobachtet.
-- Der native Close-Handler vertraut jedem unmarkierten `P$Path`-Eintrag.
-  Ein Managerpfad ohne Markierung bringt ihn zum Absturz (s. Fehler 4) --
-  eine Plausibilitaetspruefung dort waere eine sinnvolle Haertung.
+- ~~Der native Close-Handler vertraut jedem unmarkierten `P$Path`-Eintrag
+  und stuerzt an einem Managerpfad ohne Markierung ab.~~ **Zurueckgezogen in
+  Fortsetzung 108:** der Absturz kam aus IOMans Close ohne Rahmen (Fehler 5
+  dort), nicht aus dem nativen Handler.
+
+
+## Fortsetzung 108: Startup-Kette laeuft erstmals durch -- mshell wird geladen, mit umgeleitetem stdin gestartet und endet sauber; drei weitere Fehler im Trap-/IOMan-Pfad behoben (2026-10-05)
+
+Ziel: pruefen, ob die Fixes aus 106/107 den Startup-Zweig
+(`Q9K_TestStartup equ 1` in `Q9K_TestProcA`) voranbringen. Abbild: Bootdatei
+wie ueblich plus `csl` und `cio`, `CMDS/mshell` (Execute-Bit), `SYS/startup`
+mit `* Q9 startup test` / `chd /dd`.
+
+### Ablauf und gefundene Fehler
+
+| Lauf | Ergebnis | Ursache |
+|---|---|---|
+| 1 | `T` dann `l000000DD` (`F$Load` -> E$MNF) | Fehler 5 |
+| 2 | `T`, Load ok, Dup ok, dann `c000000C9` (`I$Close(0)` -> E$BPNum) | Fehler 6 |
+| 3 | ... Close ok, dann `o000400DD` (`I$Open /dd/SYS/startup` -> E$MNF) | Fehler 7 |
+| 4 | `T` ... `K` ... `W`, `Vektor=0` | -- |
+
+(Fehlernummern fortlaufend zu Fortsetzung 107, dort 1-4.)
+
+**Fehler 5 -- `F$Link` las die Eingabe aus dem falschen Rahmen.**
+`mshell` stand nach `F$VModul` korrekt in der Moduldirectory
+(`HdrPtr=$50ab0`), die anschliessende Suche lief aber mit dem Namen
+`"&_ _e?+H"` (Dump: `Letzte Modulsuche ... InputA0=00050af8
+InputName="mshell"`). IOMans `F$Load` (Modul-Offset `$6d6`) ruft `F$Link`
+per Trampolin mit `a0`=Modulname, `d0`=Typ in den REGISTERN; `a5` ist dabei
+der Rahmen des AEUSSEREN `F$Load`-Aufrufs (bei `$20` steht der Pfad).
+`Q9K_SysFLink` nahm im Rahmenmodus aber `d0`/`a0` aus `(a5)`/`$20(a5)`.
+Per Capstone alle vier `F$Link`-Aufrufstellen in IOMan geprueft (`$6f0`
+F$Load; `$b88`/`$bb8`/`$be8` Treiberanschluss): alle setzen `a0`/`d0` im
+Register, die Anschluss-Stellen zusaetzlich dieselben Werte im Rahmen.
+Fix: Eingabe immer aus den Registern; die Rahmen-AUSGABE bleibt (der
+Anschluss liest `$28(a5)`, fuer `F$Load` sind die Link-Ausgaben zugleich
+die eigenen Rueckgabewerte).
+
+**Fehler 6 -- `Q9K_TrapHandlerScratch` vorzeitig ueberschrieben.**
+Gemessen vor `I$Close(0)`: `P$Path[0]=3`, nativer Pool-Deskriptor mit
+Referenzzaehler 3 -- der native Close haette gelingen muessen.
+`Q9K_TrapTryManagerPathIO` ersetzte die Handlerzelle aber SOFORT durch
+IOMans Read/Close-Routine, bevor geprueft war, ob der Pfad ein Managerpfad
+ist. Jeder Rueckfall nach `Q9K_TrapOwnHandler` sprang so in IOMan, ohne
+R$-Rahmen -> `E$BPNum` (bzw. der Absturz im Zwischenstand von 107, dort
+falsch dem nativen Handler zugeschrieben, inzwischen korrigiert). Ohne
+angemeldeten Manager haette die Zelle 0 enthalten -> Sprung nach Adresse 0.
+Fix: Zelle nur auf dem Weg nach `Q9K_TrapCallExternal` setzen.
+
+**Fehler 7 -- `F$Link`-Rahmenmodus hing an einem veralteten globalen Flag.**
+Rahmenmodus nur, wenn `Q9K_InTrapPath=0` UND `Q9K_TrapForeignFlag!=0`.
+Letzteres stammt vom LETZTEN Trap irgendeines Aufrufers; direkt davor kam
+TestProcAs eigenes `I$Close(0)` -> Flag 0 -> `F$Link` schrieb beim
+Geraeteanschluss nichts nach `$28(a5)` -> IOMan las Muell -> E$MNF. (Im
+Sondenlauf von 107 war das Flag zufaellig 1.) Fix: nur noch der Aufrufweg
+zaehlt (`Q9K_InTrapPath=0` = Trampolin, das ruft nur IOMan), dazu eine
+Plausibilitaetspruefung von `a5` (gerade, >= `$400`, < 16 MByte).
+`Q9K_TrapForeignFlag` wird damit nirgends mehr gelesen.
+
+### Ergebnis
+
+```
+RT  ]F$VModul L=0x00014970 ...
+M A r=00005072 ...        mshell-Datenbereich
+K                         F$Fork mshell ok
+memory not available      Ausgabe von mshell
+M P / M F ...             mshell endet, Speicher frei
+W                         F$Wait zurueck
+```
+
+Die komplette Kette `F$Load` -> `I$Dup` -> `I$Close` -> `I$Open` (IOMan,
+Geraeteanschluss) -> `F$Fork` -> `F$Wait` laeuft erstmals durch, `Vektor=0`.
+
+### Offen: "memory not available"
+
+mshell startet, laesst per `csl` `F$TLink`, `F$CCtl`, `F$STrap`,
+`F$SetSys`, `F$Icpt` laufen, ruft viermal `I$Open` (IOMan) auf, gibt dann
+per `I$WritLn` "memory not available" aus und beendet sich mit `F$Exit`.
+Welcher Aufruf das ausloest, ist noch nicht gemessen. Auffaellig im
+RaceRing: einige "A=vor RTE"-Eintraege fuer extern behandelte Aufrufe
+zeigen PC `0`/`5` -- ob das echte Ruecksprungwerte oder nur ein falscher
+Offset der Protokollierung im Rueckweg von `Q9K_TrapCallExternal` sind,
+ist ungeprueft.
+
+### Regression
+
+- Neues Skript **`tools/startup_shell_test.sh`** (Kernelkopie mit
+  `Q9K_TestStartup=1`, Abbild mit mshell/csl/cio/startup, prueft
+  `RT ... K ... W` und `Vektor=0`; meldet bei Abbruch den
+  fehlgeschlagenen Schritt mit Fehlercode). Ergebnis: `ALLE TESTS OK`.
+  Falle beim Schreiben: `mktemp`-Verzeichnisnamen enthalten zufaellige
+  Grossbuchstaben, der Emulator gibt den Abbildpfad aus -- ein "W" darin
+  loeste den Marker zu frueh aus. Jetzt Verzeichnis `q9_startup_shell_<PID>`.
+- `tools/mgrpath_probe_test.sh`, `tools/malformed_boot_test.sh`: OK.
+- Standard/Stress jeweils ohne/mit `startup`: alle `Vektor=0`, keine
+  Rahmen-Validierungstreffer, erwartete Marker.
+- 28/28 Host-Suiten gruen.

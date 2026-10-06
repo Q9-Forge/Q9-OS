@@ -3243,24 +3243,33 @@ Q9K_TrapIOpenManager:
 * diesen Eintraegen werden Read/Close an IOMan gegeben; die Markierung wird
 * waehrend des Fremdaufrufs entfernt, weil IOMan die rohe PD-Nummer erwartet.
 Q9K_TrapTryManagerPathIO:
+* FIX (2026-10-05, Fortsetzung 108): Q9K_TrapHandlerScratch haelt hier noch
+* den NATIVEN Handler aus Q9_D_USRDIS. Frueher wurde er sofort mit IOMans
+* Read/Close-Routine ueberschrieben, BEVOR feststand, ob der Pfad ueberhaupt
+* ein Managerpfad ist. Jeder Rueckfall nach Q9K_TrapOwnHandler sprang dann
+* trotzdem in IOMan -- ohne R$-Rahmen (gemessen: natives I$Close(0) auf
+* /term endete mit E$BPNum aus IOMan, obwohl der native Deskriptor gueltig
+* war; im Zwischenstand von Fortsetzung 107 stuerzte so ein Aufruf mit
+* Vektor=4 ab). Und ohne angemeldeten Manager wurde die Zelle mit 0
+* ueberschrieben -> Sprung nach Adresse 0. Jetzt wird die Zelle NUR auf dem
+* Weg nach Q9K_TrapCallExternal gesetzt.
         cmpi.w  #$89,($1370).w
         beq.s   Q9K_TrapTryManagerRead
         cmpi.w  #$8f,($1370).w
         bne     Q9K_TrapOwnHandler
-        move.l  Q9K_ICloseManagerRoutine,Q9K_TrapHandlerScratch
+        tst.l   Q9K_ICloseManagerRoutine
+        beq     Q9K_TrapOwnHandler
         bra.s   Q9K_TrapCheckManagerPath
 Q9K_TrapTryManagerRead:
-        move.l  Q9K_IReadManagerRoutine,Q9K_TrapHandlerScratch
+        tst.l   Q9K_IReadManagerRoutine
+        beq     Q9K_TrapOwnHandler
 Q9K_TrapCheckManagerPath:
 * FIX (2026-10-05, Fortsetzung 107): d0/d1/a1 sind hier noch die
 * EINGABEREGISTER des Aufrufers (I$Read: d0.w Pfad, d1.l Anzahl, a0 Puffer)
 * und erreichen danach unveraendert den Handler bzw. ueber den R$-Rahmen
 * IOMan. Frueher wurden d1 (= D_Proc), d0 (= 2 x Pfad) und a1 hier
-* ueberschrieben -- gemessen: I$Read auf Pfad 1 lief als Pfad 2 in den
-* eigenen Handler und endete mit E$BPNum. Jetzt nur kurz gesichert und vor
-* JEDEM Weitersprung exakt wiederhergestellt (Stack wieder auf dem Frame).
-        tst.l   Q9K_TrapHandlerScratch
-        beq     Q9K_TrapOwnHandler
+* ueberschrieben. Jetzt nur kurz gesichert und vor JEDEM Weitersprung exakt
+* wiederhergestellt (Stack wieder auf dem Frame).
         cmpi.w  #32,d0
         bcc     Q9K_TrapOwnHandler
         tst.l   Q9_D_Proc
@@ -3273,10 +3282,17 @@ Q9K_TrapCheckManagerPath:
         btst    #7,(a1)                    * high byte bit 7 = P$Path word bit 15
         beq.s   Q9K_TrapCheckManagerPath_Own
         andi.w  #$7fff,(a1)                * IOMan must see the untagged PD number
+        cmpi.w  #$89,($1370).w
+        bne.s   Q9K_TrapCheckManagerPath_Close
+        move.l  Q9K_IReadManagerRoutine,Q9K_TrapHandlerScratch
+        bra.s   Q9K_TrapCheckManagerPath_Ext
+Q9K_TrapCheckManagerPath_Close:
+        move.l  Q9K_ICloseManagerRoutine,Q9K_TrapHandlerScratch
+Q9K_TrapCheckManagerPath_Ext:
         movem.l (sp)+,d0/a1
         bra     Q9K_TrapCallExternal
 Q9K_TrapCheckManagerPath_Own:
-        movem.l (sp)+,d0/a1
+        movem.l (sp)+,d0/a1                * Q9K_TrapHandlerScratch = nativer Handler, unveraendert
         bra     Q9K_TrapOwnHandler
 Q9K_TrapOwnHandler:
 * HERKUNFTSPRUEFUNG (sechster A4-Anlauf, 2026-09-07): der Rueckweg
@@ -3999,10 +4015,26 @@ Q9K_SysFLink:
 * normal process register and may point into RAM (the shell uses it for
 * its parameter boundary). Only the direct PEA+RTS path may supply the
 * external return frame.
+* FIX (2026-10-05, Fortsetzung 108): NICHT mehr Q9K_TrapForeignFlag pruefen.
+* Das Flag stammt vom LETZTEN Trap irgendeines Aufrufers und ist beim
+* Trampolinaufruf aus IOMan heraus veraltet: kam davor ein eigener Trap
+* (TestProcA: I$Close(0)), war es 0, F$Link schrieb sein Ergebnis nicht nach
+* $28(a5), IOMans Geraeteanschluss las dort Muell und meldete E$MNF beim
+* I$Open("/dd/SYS/startup"). Massgeblich ist allein der Aufrufweg:
+* Q9K_InTrapPath=0 heisst PEA+RTS-Trampolin (nur IOMan ruft F$Link so),
+* und dort ist a5 IOMans Registerrahmen. Zusaetzlich a5 auf Plausibilitaet
+* pruefen (gerade, oberhalb der Vektortabelle, unterhalb 16 MByte), damit
+* ein unerwarteter Trampolin-Aufrufer ohne Rahmen keinen fremden Speicher
+* beschreibt. d7 ist hier frei (Q9K_FLinkSavedD7, auf allen Rueckwegen).
         tst.w   Q9K_InTrapPath
         bne     Q9K_SysFLink_NoFrame
-        tst.w   Q9K_TrapForeignFlag
-        beq     Q9K_SysFLink_NoFrame
+        move.l  a5,d7
+        btst    #0,d7
+        bne     Q9K_SysFLink_NoFrame
+        cmpi.l  #$00000400,d7
+        bcs     Q9K_SysFLink_NoFrame
+        cmpi.l  #$01000000,d7
+        bcc     Q9K_SysFLink_NoFrame
         move.l  a5,Q9K_LinkFrameScratch
         bra     Q9K_SysFLink_FrameDone
 Q9K_SysFLink_NoFrame:
@@ -4012,13 +4044,18 @@ Q9K_SysFLink_FrameDone:
         move.l  d0,Q9K_FLinkTrace_D0
         move.l  a0,Q9K_FLinkTrace_A0
         move.l  8(sp),Q9K_FLinkTrace_A1       * JSR-Ruecksprung direkt nach dem Handler
-        tst.w   Q9K_InTrapPath
-        bne.s   Q9K_SysFLink_InputsReady
-        tst.l   Q9K_LinkFrameScratch
-        beq.s   Q9K_SysFLink_InputsReady
-        movea.l Q9K_LinkFrameScratch,a1       * externer Registerrahmen ist auch Eingabequelle
-        move.l  (a1),d0                       * Typ/Sprache
-        movea.l $20(a1),a0                    * Namenszeiger
+* FIX (2026-10-05, Fortsetzung 108): die EINGABE (d0 Typ/Sprache, a0 Name)
+* kommt immer aus den Registern, nie aus dem Rahmen. Alle vier F$Link-
+* Aufrufstellen in IOMan (Capstone, Modul-Offsets $6f0 F$Load, $b88/$bb8/
+* $be8 Treiberanschluss) setzen a0/d0 im Register; die Anschluss-Stellen
+* schreiben dieselben Werte zusaetzlich nach $20(a5)/$2(a5). IOMans F$Load
+* dagegen ruft mit a5 = Rahmen des AEUSSEREN F$Load-Aufrufs -- dort steht
+* bei $20 der Pfad, nicht der Modulname. Ueber den veralteten globalen
+* Q9K_TrapForeignFlag landete F$Link im Rahmenmodus, suchte nach Muell und
+* meldete E$MNF (gemessen: InputA0 -> "mshell", gesuchter Name "&_ _e?+H").
+* Die AUSGABE in den Rahmen (s. Q9K_LinkFrameScratch weiter unten) bleibt:
+* der Treiberanschluss liest $28(a5), und fuer F$Load sind die F$Link-
+* Ausgaben zugleich die eigenen Rueckgabewerte.
 Q9K_SysFLink_InputsReady:
         moveq   #0,d1
         move.w  d0,d1
