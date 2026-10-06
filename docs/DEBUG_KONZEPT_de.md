@@ -1,6 +1,8 @@
 # Debug-Konzept für den Q9-Kernel
 
 Stand: 2026-10-06. Abgestimmt mit Andreas; noch nicht umgesetzt.
+Ergänzt am selben Tag: Zeit bei Eintritt und Ende (2.2), Ringpuffer als
+allgemeiner Baustein (2.8).
 
 Ziel: Fehler im Kernel und im Zusammenspiel mit fremden Modulen (IOMan,
 RBF, SCF, csl, mshell …) **messen** statt erraten. Die Sitzungen bis
@@ -65,20 +67,39 @@ und formatiert. Sätze variabler Länge, big-endian, 2-Byte-ausgerichtet:
 
 | Offset | Größe | Feld |
 |---|---|---|
-| +0 | 1 | Satztyp: 1 Eintritt, 2 Rückkehr, 3 intern-Eintritt, 4 intern-Rückkehr, 5 verlorene Sätze, 6 Prozess-Info |
+| +0 | 1 | Satztyp: 1 Eintritt, 2 Rückkehr, 3 intern-Eintritt, 4 intern-Rückkehr, 5 verlorene Sätze, 6 Prozess-Info, 7 Zeitbasis |
 | +1 | 1 | Satzlänge in Byte (einschließlich Kopf) |
 | +2 | 1 | Callcode bzw. Funktions-ID |
 | +3 | 1 | Bits 0–3 Tiefe, Bit 4 Carry (Rückkehr), Bit 5 Satz gekürzt |
 | +4 | 2 | Prozess-ID |
-| +6 | 2 | Ticks (untere 16 Bit) |
-| +8 | n | Nutzdaten nach Satztyp und Syscall-Beschreibung (s. 2.3) |
+| +6 | 4 | Tick-Zähler seit dem Boot (voll, 32 Bit) |
+| +10 | 2 | Feinzeit innerhalb des Ticks (Zählerstand des Hardware-Timers) |
+| +12 | n | Nutzdaten nach Satztyp und Syscall-Beschreibung (s. 2.3) |
+
+**Zeit bei Eintritt und Ende:** Jeder Eintritts- und jeder Rückkehrsatz
+trägt den vollen Tick-Zähler und die Feinzeit. Bei 100 Ticks pro Sekunde
+reicht der 32-Bit-Zähler für über 497 Tage; die Feinzeit (Restzählerstand
+des Timers) löst innerhalb eines Ticks auf. Daraus zeigt das Tool die
+**Uhrzeit** von Eintritt und Ende und die **Dauer** jedes Aufrufs:
+
+```
+10:42:17.315  P07  F$Fork "echo" mem=0 par=26
+10:42:17.341  P07  F$Fork -> ok pid=8                    (26,1 ms)
+```
+
+Für die Uhrzeit schreibt der Kernel beim Einschalten des Trace (und bei
+`F$STime`) einen **Zeitbasis-Satz** (Typ 7): Datum/Uhrzeit von `F$Time`
+plus Tick-Zähler und Feinzeit im selben Moment. Das Tool rechnet jede
+andere Tick-Angabe relativ dazu um; die einzelnen Sätze bleiben dadurch
+kompakt.
 
 - **Benutzer** (Gruppe.Benutzer) steht nicht in jedem Satz. Ein Satz Typ 6
   wird geschrieben, wenn ein Prozess zum ersten Mal auftaucht und bei
   `F$Fork`; das Tool merkt sich die Zuordnung.
 - **Namen** (Pfade, Module) werden mit bis zu 15 Zeichen kopiert; der
   Zeiger allein wäre später wertlos. Abgeschnitten: Bit 5.
-- **Ringpuffer:** feste Größe im Developer-Kernel (Vorschlag 64 KByte),
+- **Ringpuffer:** der Trace benutzt den allgemeinen Ringpuffer-Baustein
+  aus Abschnitt 2.8; feste Größe im Developer-Kernel (Vorschlag 64 KByte),
   Modus *überschreiben* (immer die neuesten Sätze) oder *anhalten wenn
   voll* (Beginn erhalten). Gehen Sätze verloren, wird ein Typ-5-Satz mit
   der Anzahl eingefügt.
@@ -131,8 +152,8 @@ liegt am weitesten von künftigen Microware-Codes entfernt.
 | 3 | Syscall-Maske lesen | `a0` = Ziel, 32 Byte |
 | 4 | Filter setzen | `d1` = Filterart, `d2` = Wert |
 | 5 | Detailstufe/Modus setzen | `d1` = Stufe, `d2` = Pufferausgabe/Konsole/beides, Überschreiben/Anhalten |
-| 6 | Ringpuffer lesen | `d1` = ab Satznummer, `d2` = max. Byte, `a0` = Ziel (Ausgabe: gelesene Byte, nächste Satznummer, verlorene Sätze) |
-| 7 | Ringpuffer leeren | – |
+| 6 | Ringpuffer lesen | `d3` = Puffernummer (Trace = 0), `d1` = ab Satznummer, `d2` = max. Byte, `a0` = Ziel (Ausgabe: gelesene Byte, nächste Satznummer, verlorene Sätze) |
+| 7 | Ringpuffer leeren | `d3` = Puffernummer |
 | 8 | Interne-Funktionen-Maske setzen | `a0` = Maske |
 
 Im **Atom-Kernel** ist der Callcode nicht registriert (`E$UnkSvc`).
@@ -161,6 +182,38 @@ mit kleinen Funktionen (`q9dbg_on()`, `q9dbg_mask_set(...)`,
 - **Host-Tool** (Python, im Repo): dekodiert den Puffer aus einem
   Emulator-Dump oder einer gespeicherten Datei mit derselben
   Beschreibungstabelle.
+
+### 2.8 Ringpuffer als allgemeiner Baustein
+
+Der Trace-Puffer ist nur der erste von mehreren Ringpuffern. Später sollen
+weitere dazukommen und auch als **interne Pipes** dienen, etwa ein
+**System-Ereignisprotokoll** (Systemmeldungen, Treiberfehler,
+Speicherengpässe), das ein Programm liest und weiterverarbeitet. Damit das
+später ohne Umbau geht, wird der Ringpuffer **von Anfang an als
+eigenständiger Baustein** gebaut und der Trace als dessen erste Instanz:
+
+| Eigenschaft | Bedeutung |
+|---|---|
+| Kennung | Nummer und Name (z. B. `0 = trace`, später `syslog`) |
+| Größe | in Byte, beim Anlegen festgelegt |
+| Satzorientiert | Sätze variabler Länge mit Längenfeld, nie halbe Sätze lesen |
+| Modus | überschreiben (neueste behalten) oder anhalten wenn voll (älteste behalten) |
+| Zähler | geschriebene Sätze, verlorene Sätze, Lesestand |
+
+**Jetzt (Paket 2) nur einfach:** ein einziger, im Kernel fest angelegter
+Puffer für den Trace — aber schon mit diesem Beschreibungsblock, sodass
+Lesen/Leeren/Modus über die Puffernummer laufen (`F$Q9Dbg` Unterfunktionen
+6/7 bekommen dafür `d3` = Puffernummer, Trace = 0).
+
+**Später** (bewusst zurückgestellt):
+- Ringpuffer zur Laufzeit anlegen und freigeben (eigener Syscall oder
+  Unterfunktionen), mehrere Leser mit eigenem Lesestand.
+- Anlegen schon beim Booten über einen Eintrag im `init`-Modul (Liste:
+  Name, Größe, Modus), z. B. für das System-Ereignisprotokoll.
+- Lesen und Schreiben aus normalen Programmen als **interne Pipe** — über
+  einen kleinen Gerätetreiber/File-Manager, sodass `list /syslog` oder ein
+  Pipe-Aufruf funktioniert, sobald IOMan sicher läuft.
+- Wartende Leser (blockierendes Lesen bis neue Sätze da sind).
 
 ## 3. Register-Erhaltungsprüfung
 
@@ -224,6 +277,8 @@ Eigenes Paket, nach dem Trace.
 
 - Puffergröße und Ort (fester Bereich im Developer-Kernel oder per
   `F$SRqMem` beim Einschalten).
+- Feinzeit: welches Timer-Register des Boards den Restzählerstand liefert
+  und in welcher Einheit (für die Umrechnung im Tool).
 - Wie die Funktions-IDs für interne Aufrufe vergeben werden (Tabelle im
   Repo, damit Kernel und Tool übereinstimmen).
 - Ermittlung der FD-Nummer: genaue `I$GetStt`-Unterfunktion bei RBF
