@@ -556,6 +556,7 @@ Q9K_FIRQHandlersPtr       equ $1F84      * C-init-relocated Q9K_FIRQHandlers VSE
 Q9K_FIRQStaticsPtr        equ $1F88      * C-init-relocated Q9K_FIRQStatics VSECT base
 Q9K_IdleProcDesc          equ $1F8C      * Q9_u32, permanenter Idle-Prozessdeskriptor (s. Q9K_ProcCreateIdle, q9kernel_firstproc.c) -- naechste freie Adresse $1F90
 Q9K_FrameLoggedOnce       equ $1F90      * TEMPORAER (2026-10-02, Fortsetzung 102): Q9_u8, begrenzt die erweiterte Rahmen-Validierungs-Protokollierung auf den ERSTEN Fund -- sonst erschoepft die Dauerschleife des bereits kaputten Zustands den RaceRing binnen ca. 1600 Ticks und ueberschreibt den eigentlich gesuchten Uebergang -- naechste freie Adresse $1F91
+Q9K_MgrRoutineTable       equ $1F94      * 19 x Q9_u32 ($1F94-$1FDF): IOMan-Benutzerroutine je I/O-Code $80..$92 (Fortsetzung 110, gefuellt von Q9K_ProcSSvc) -- naechste freie Adresse $1FE0
 
 * Eigene Kernel-Global-Erweiterungen fuer F$GProcP/F$ID (Abschnitt
 * "Prozess-API", 2026-09-01). Direkt hinter I$Open; $1370/$1374 bleiben
@@ -3210,10 +3211,17 @@ Q9K_TrapDispatch:
         tst.b   (a4)
         movea.l Q9K_TrapA4Save,a4                       * A4 unveraendert zurueck
         bne     Q9K_TrapCallExternal
-        cmpi.w  #$89,($1370).w
+* Fortsetzung 110: ALLE pfadbasierten I/O-Aufrufe ($82 I$Dup, $88..$8F
+* Seek/Read/Write/ReadLn/WritLn/GetStt/SetStt/Close) pruefen, ob der Pfad
+* IOMan gehoert -- frueher nur $89/$8F, sodass z. B. I$ReadLn auf eine per
+* IOMan geoeffnete Datei im nativen Handler landete (mshell las Muell).
+        cmpi.w  #$82,($1370).w
         beq     Q9K_TrapTryManagerPathIO
+        cmpi.w  #$88,($1370).w
+        bcs.s   Q9K_TrapNotPathIO
         cmpi.w  #$8f,($1370).w
-        beq     Q9K_TrapTryManagerPathIO
+        bls     Q9K_TrapTryManagerPathIO
+Q9K_TrapNotPathIO:
 * I$Open bleibt ein Kernel-Slot, damit die native /term-Konsole den
 * bewiesenen stabilen Pfad behaelt. Fuer nicht-native Pfade delegieren wir
 * selektiv an IOMans per F$SSvc registrierten I$Open-Handler; von dort geht
@@ -3243,56 +3251,36 @@ Q9K_TrapIOpenManager:
 * diesen Eintraegen werden Read/Close an IOMan gegeben; die Markierung wird
 * waehrend des Fremdaufrufs entfernt, weil IOMan die rohe PD-Nummer erwartet.
 Q9K_TrapTryManagerPathIO:
-* FIX (2026-10-05, Fortsetzung 108): Q9K_TrapHandlerScratch haelt hier noch
-* den NATIVEN Handler aus Q9_D_USRDIS. Frueher wurde er sofort mit IOMans
-* Read/Close-Routine ueberschrieben, BEVOR feststand, ob der Pfad ueberhaupt
-* ein Managerpfad ist. Jeder Rueckfall nach Q9K_TrapOwnHandler sprang dann
-* trotzdem in IOMan -- ohne R$-Rahmen (gemessen: natives I$Close(0) auf
-* /term endete mit E$BPNum aus IOMan, obwohl der native Deskriptor gueltig
-* war; im Zwischenstand von Fortsetzung 107 stuerzte so ein Aufruf mit
-* Vektor=4 ab). Und ohne angemeldeten Manager wurde die Zelle mit 0
-* ueberschrieben -> Sprung nach Adresse 0. Jetzt wird die Zelle NUR auf dem
-* Weg nach Q9K_TrapCallExternal gesetzt.
-        cmpi.w  #$89,($1370).w
-        beq.s   Q9K_TrapTryManagerRead
-        cmpi.w  #$8f,($1370).w
-        bne     Q9K_TrapOwnHandler
-        tst.l   Q9K_ICloseManagerRoutine
-        beq     Q9K_TrapOwnHandler
-        bra.s   Q9K_TrapCheckManagerPath
-Q9K_TrapTryManagerRead:
-        tst.l   Q9K_IReadManagerRoutine
-        beq     Q9K_TrapOwnHandler
-Q9K_TrapCheckManagerPath:
-* FIX (2026-10-05, Fortsetzung 107): d0/d1/a1 sind hier noch die
-* EINGABEREGISTER des Aufrufers (I$Read: d0.w Pfad, d1.l Anzahl, a0 Puffer)
-* und erreichen danach unveraendert den Handler bzw. ueber den R$-Rahmen
-* IOMan. Frueher wurden d1 (= D_Proc), d0 (= 2 x Pfad) und a1 hier
-* ueberschrieben. Jetzt nur kurz gesichert und vor JEDEM Weitersprung exakt
-* wiederhergestellt (Stack wieder auf dem Frame).
+* Q9K_TrapHandlerScratch haelt hier noch den NATIVEN Handler und wird nur
+* auf dem Weg nach Q9K_TrapCallExternal ersetzt (Fortsetzung 108). Die
+* Eingaberegister des Aufrufers (d0 Pfad, d1, a0, a1) bleiben unveraendert
+* (Fortsetzung 107): d0-d1/a0-a1 nur kurz gesichert, vor jedem Weitersprung
+* exakt zurueck (Stack wieder auf dem Frame). Die Managerroutine kommt je
+* Callcode aus Q9K_MgrRoutineTable; ohne Eintrag bleibt es beim nativen
+* Handler (wie vor Fortsetzung 110 fuer alle Codes ausser $89/$8F).
         cmpi.w  #32,d0
         bcc     Q9K_TrapOwnHandler
         tst.l   Q9_D_Proc
         beq     Q9K_TrapOwnHandler
-        movem.l d0/a1,-(sp)
+        movem.l d0-d1/a0-a1,-(sp)
         movea.l Q9_D_Proc,a1
         adda.l  #$168,a1
         add.w   d0,d0
         adda.w  d0,a1
         btst    #7,(a1)                    * high byte bit 7 = P$Path word bit 15
         beq.s   Q9K_TrapCheckManagerPath_Own
+        move.w  ($1370).w,d0
+        subi.w  #$80,d0
+        lsl.w   #2,d0
+        movea.l #Q9K_MgrRoutineTable,a0
+        move.l  0(a0,d0.w),d1
+        beq.s   Q9K_TrapCheckManagerPath_Own
+        move.l  d1,Q9K_TrapHandlerScratch
         andi.w  #$7fff,(a1)                * IOMan must see the untagged PD number
-        cmpi.w  #$89,($1370).w
-        bne.s   Q9K_TrapCheckManagerPath_Close
-        move.l  Q9K_IReadManagerRoutine,Q9K_TrapHandlerScratch
-        bra.s   Q9K_TrapCheckManagerPath_Ext
-Q9K_TrapCheckManagerPath_Close:
-        move.l  Q9K_ICloseManagerRoutine,Q9K_TrapHandlerScratch
-Q9K_TrapCheckManagerPath_Ext:
-        movem.l (sp)+,d0/a1
+        movem.l (sp)+,d0-d1/a0-a1
         bra     Q9K_TrapCallExternal
 Q9K_TrapCheckManagerPath_Own:
-        movem.l (sp)+,d0/a1                * Q9K_TrapHandlerScratch = nativer Handler, unveraendert
+        movem.l (sp)+,d0-d1/a0-a1          * Q9K_TrapHandlerScratch = nativer Handler, unveraendert
         bra     Q9K_TrapOwnHandler
 Q9K_TrapOwnHandler:
 * HERKUNFTSPRUEFUNG (sechster A4-Anlauf, 2026-09-07): der Rueckweg
@@ -3431,6 +3419,7 @@ Q9K_TrapCallExternal:
 * IOMan read an arbitrary low word and index the M$Exec table backwards.
         clr.l   $3c(sp)
         move.w  ($1370).w,$3c(sp)                 * R$a7 high word = current callcode
+        move.w  d0,$3e(sp)                        * R$a7 low word = Aufrufer-d0.w (Pfadindex) fuer die Nachbuchung (Fortsetzung 110)
         move.w  72(sp),$40(sp)                    * R$sr  aus dem Exception-Frame
         move.l  74(sp),$42(sp)                    * R$pc
         move.w  78(sp),$46(sp)                    * R$fmt (Format/Vektor)
@@ -3546,44 +3535,58 @@ Q9K_TrapExtInvoke:
 * (bei Open den vom Manager gelieferten Index). Aufruf-SR liegt bei Eintritt
 * auf 4(sp), hinter der BSR-Ruecksprungadresse.
 Q9K_TrapManagerPathBookkeeping:
+* Nach einem IOMan-Aufruf P$Path-Eintraege (wieder) als IOMan-eigen
+* markieren (Bit 15). Callcode und urspruenglicher Pfadindex kommen aus dem
+* EIGENEN R$-Rahmen ($3c/$3e(a5)), nie aus der globalen Zelle $1370 (die
+* ueberschreiben IOMans verschachtelte Syscalls, Fortsetzung 107). Der
+* Ergebnis-Pfad steht im UNTEREN Wort von R$d0 (2(a5)).
+*   $84 I$Open:  bei Erfolg den neuen Pfad markieren
+*   $82 I$Dup:   Original wieder markieren, bei Erfolg auch den neuen Pfad
+*   $88..$8F:    Original wieder markieren (Close: Eintrag ist danach 0)
+* Stack: 24 Byte movem + 4 Byte Ruecksprung -> gesichertes SR bei 28(sp).
         movem.l d0-d2/a0-a2,-(sp)
-* FIX (2026-10-05, Fortsetzung 107): NICHT ($1370).w -- diese globale Zelle
-* ueberschreibt jeder verschachtelte Trap, und IOMans I$Open ruft intern
-* selbst Syscalls auf (F$SRqMem ...). Nach der Rueckkehr stand dort der
-* Callcode des letzten inneren Aufrufs, die Nachbuchung fand "$84" nicht
-* und markierte den neuen Pfad nie (gemessen: P$Path[4]=$0001 statt $8001).
-* Der Dispatcher legt den Callcode zusaetzlich im eigenen R$-Rahmen ab
-* (R$a7-Hochwort, $3c(a5)) -- der ist pro Aufruf und verschachtelungsfest.
         move.w  $3c(a5),d2
         cmpi.w  #$84,d2
-        bne.s   Q9K_TrapManagerPathBookkeeping_NotOpen
-        move.w  28(sp),d2                    * gespeichertes SR vor MOVEM
-        btst    #0,d2                        * Carry=1 bedeutet Open-Fehler
-        bne.s   Q9K_TrapManagerPathBookkeeping_Done
-        bra.s   Q9K_TrapManagerPathBookkeeping_Open
-Q9K_TrapManagerPathBookkeeping_NotOpen:
-        cmpi.w  #$89,d2
-        beq.s   Q9K_TrapManagerPathBookkeeping_IO
+        beq.s   Q9K_TrapMgrBk_New
+        cmpi.w  #$82,d2
+        beq.s   Q9K_TrapMgrBk_Orig
+        cmpi.w  #$88,d2
+        bcs.s   Q9K_TrapMgrBk_Done
         cmpi.w  #$8f,d2
-        bne.s   Q9K_TrapManagerPathBookkeeping_Done
-Q9K_TrapManagerPathBookkeeping_IO:
-        move.w  2(a5),d0                     * Originaler P$Path-Index (UNTERES Wort von R$d0, Fix Fortsetzung 107)
-        bra.s   Q9K_TrapManagerPathBookkeeping_Tag
-Q9K_TrapManagerPathBookkeeping_Open:
-        move.w  2(a5),d0                     * Rueckgabewert von I$Open (IOMan: "move.l d0,0(a5)" -> unteres Wort)
-Q9K_TrapManagerPathBookkeeping_Tag:
+        bhi.s   Q9K_TrapMgrBk_Done
+Q9K_TrapMgrBk_Orig:
+        move.w  $3e(a5),d0                   * urspruenglicher Pfadindex (vom Dispatcher abgelegt)
         cmpi.w  #32,d0
-        bcc.s   Q9K_TrapManagerPathBookkeeping_Done
+        bcc.s   Q9K_TrapMgrBk_OrigDone
         movea.l Q9_D_Proc,a1
         move.l  a1,d1
-        beq.s   Q9K_TrapManagerPathBookkeeping_Done
+        beq.s   Q9K_TrapMgrBk_OrigDone
         adda.l  #$168,a1
         add.w   d0,d0
         adda.w  d0,a1
-        tst.w   (a1)                          * successful Close leaves it zero
-        beq.s   Q9K_TrapManagerPathBookkeeping_Done
-        bset    #7,(a1)                      * set bit 15: manager ownership
-Q9K_TrapManagerPathBookkeeping_Done:
+        tst.w   (a1)                          * erfolgreiches Close hinterlaesst 0
+        beq.s   Q9K_TrapMgrBk_OrigDone
+        bset    #7,(a1)
+Q9K_TrapMgrBk_OrigDone:
+        cmpi.w  #$82,$3c(a5)
+        bne.s   Q9K_TrapMgrBk_Done
+Q9K_TrapMgrBk_New:
+        move.w  28(sp),d2                    * gesichertes SR: Carry = Fehlschlag
+        btst    #0,d2
+        bne.s   Q9K_TrapMgrBk_Done
+        move.w  2(a5),d0                     * neuer Pfad (IOMan: "move.l d0,0(a5)")
+        cmpi.w  #32,d0
+        bcc.s   Q9K_TrapMgrBk_Done
+        movea.l Q9_D_Proc,a1
+        move.l  a1,d1
+        beq.s   Q9K_TrapMgrBk_Done
+        adda.l  #$168,a1
+        add.w   d0,d0
+        adda.w  d0,a1
+        tst.w   (a1)
+        beq.s   Q9K_TrapMgrBk_Done
+        bset    #7,(a1)
+Q9K_TrapMgrBk_Done:
         movem.l (sp)+,d0-d2/a0-a2
         rts
 

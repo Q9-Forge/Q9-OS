@@ -144,6 +144,13 @@ static int Q9K_IsKernelService(Q9_u32 code)
 #ifndef Q9K_SSVC_ICLOSE_ROUTINE_ADDR
 #define Q9K_SSVC_ICLOSE_ROUTINE_ADDR 0x1F7CUL
 #endif
+/* Fortsetzung 110: IOMan-Benutzerroutine je I/O-Code $80..$92 (19 Eintraege,
+ * $1F94-$1FDF). Q9K_TrapDispatch leitet damit JEDEN pfadbasierten Aufruf
+ * auf einem IOMan-eigenen (markierten) Pfad an IOMan weiter, nicht nur
+ * I$Read/I$Close. */
+#ifndef Q9K_SSVC_MGR_TABLE_ADDR
+#define Q9K_SSVC_MGR_TABLE_ADDR 0x1F94UL
+#endif
 
 void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
 {
@@ -197,6 +204,8 @@ void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
                 entryAddr += 4UL;
                 continue;
             }
+            if (realCode >= 0x80UL && realCode <= 0x92UL)
+                Q9K_SetU32(Q9K_SSVC_MGR_TABLE_ADDR + (realCode - 0x80UL) * 4UL, routineAddr);
             if (realCode == 0x84UL) {
                 /* Keep native I$Open as the default (notably for /term), but
                  * retain IOMan's manager entry and per-service A3 data for

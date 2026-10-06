@@ -10695,3 +10695,88 @@ weitergeleitet; der native Handler deutet den IOMan-Deskriptor in
 `P$Path[0]` als eigenen Pool-Eintrag. Dazu: `F$Fork` kopiert Pfade ohne
 Referenzzaehlung, und `Q9K_ProcReleasePaths` behandelt markierte
 IOMan-Eintraege (`$80xx`) beim Prozessende als native Pool-Indizes.
+
+
+## Fortsetzung 110: mshell arbeitet die startup-Datei ab -- a5-Startkonvention korrigiert, alle pfadbasierten I/O-Aufrufe an IOMan weitergeleitet (2026-10-05)
+
+### Der Muell kam nicht aus stdin
+
+Nach Fortsetzung 109 las mshell "Muell" und meldete `syntax error`. Der
+RaceRing zeigte aber: mshell ruft nach dem Fork KEIN `I$Read`/`I$ReadLn`
+auf -- nur `F$PrsNam`, dann die Fehlermeldung. mshell scheiterte schon an
+seinen Startparametern.
+
+**Fehler 8 -- `a5` beim Prozessstart.** `Q9K_ProcFork` setzte `a5` auf
+`blockTop` (OBERE Parametergrenze). 68k_tech.pdf, Process entry
+conditions: "(a5) Parameter pointer", "(a7) Stack pointer (same as (a5))",
+Figure D-3: "(a5)/(a7) = parameter starting address/stack". Richtig ist
+also der Parameter-ANFANG `spBoundary` -- genau das stand bis 2026-09-15
+im Code und wurde dann in `f6fc77a` ("stabilize startup boot
+diagnostics") ohne Beleg umgestellt. Der Hosttest F1
+(`test_q9kernel_firstproc.c`) hatte die Fehlbelegung als `a5 == a1`
+festgeschrieben; jetzt `a5 == a1 - paramSize`.
+
+Gegenprobe im Emulator, gleiche Abbilder:
+
+| `a5` | mshell-Ausgabe |
+|---|---|
+| `blockTop` (alt) | `Ôà Ì Ìð U6 b6 ^syntax error` |
+| `spBoundary` (neu) | `* Q9 startup test` / `chd /dd`, dann EOF und sauberes Ende |
+
+### Alle pfadbasierten I/O-Aufrufe an IOMan
+
+Schon vorher aus dem Code ersichtlich und jetzt behoben: der Dispatcher
+leitete auf IOMan-eigenen (markierten) Pfaden nur `$89`/`$8F` weiter.
+
+- **`Q9K_MgrRoutineTable`** (`$1F94`-`$1FDF`, 19 Langworte fuer `$80`..`$92`):
+  `Q9K_ProcSSvc` traegt IOMans BENUTZER-Routine je Code ein (die
+  `$80xx`-Systemeintraege werden wie in Fortsetzung 107 uebersprungen),
+  `Q9K_CInit` leert die Tabelle beim Start. Bereich vorher auf jede
+  Verwendung geprueft (Kernel, C, Q9-Flux): frei.
+- **Weiche:** `$82` (I$Dup) und `$88`..`$8F` gehen bei markiertem Pfad an
+  die Routine aus der Tabelle; ohne Eintrag bleibt es beim nativen
+  Handler. Eingaberegister bleiben unveraendert, die Handlerzelle wird nur
+  auf dem Weg nach `Q9K_TrapCallExternal` gesetzt (Fortsetzungen 107/108).
+- **Nachbuchung:** der Dispatcher legt den urspruenglichen Pfadindex im
+  unteren Wort von R$a7 ab (`$3e(a5)`, neben dem Callcode in `$3c(a5)`).
+  Danach: Original wieder markieren (alle Codes; nach erfolgreichem Close
+  ist der Eintrag 0 und bleibt es), bei `I$Open`/`I$Dup` zusaetzlich den
+  neuen Pfad aus dem unteren Wort von R$d0.
+
+### Prozessende: IOMan-Pfade nicht als Pool-Index deuten
+
+`Q9K_ProcReleasePaths` behandelte jeden Eintrag ab Index 3 als nativen
+Pool-Deskriptor; ein markierter Eintrag (`$80xx`) wurde zu `($80xx-3)*256`
+und dessen "Referenzzaehler" irgendwo im Speicher heruntergezaehlt. Jetzt
+wird ein markierter Eintrag nur geraeumt. Hosttest R
+(`test_q9kernel_procend.c`; die Pool-Konstanten in `q9kernel_procend.c`
+sind dafuer jetzt per `#ifndef` umlenkbar).
+
+### Verifikation
+
+- 28/28 Host-Suiten (neu: F2e-Tabellenpruefung, Fall R; geaendert: F1).
+- `startup_shell_test.sh` prueft jetzt zusaetzlich, dass mshell beide
+  startup-Zeilen zwischen `K` und `W` ausgibt und kein `syntax error`
+  meldet: OK.
+- `mgrpath_probe_test.sh`, `malformed_boot_test.sh`: OK.
+- Standard/Stress jeweils ohne/mit `startup`: `Vektor=0`, keine
+  Rahmen-Validierungstreffer, erwartete Marker.
+
+### Offen (naechster Schritt)
+
+Mit `echo`, `pd`, `dir` aus `MWOS/OS9/68000/CMDS` im Abbild:
+
+```
+echo Hallo ...   mshell: can't execute "echo" - Error #000:215  (E$BPNam)
+pd               mshell: can't execute "pd"   - Error #000:221  (E$MNF)
+dir              mshell: can't execute "dir"  - Error #000:221
+chd /dd/CMDS     ok (eingebaut)
+pd               'pd' found as module relative to data directory
+```
+
+mshell kann externe Befehle noch nicht starten. Vermutung (ungeprueft):
+das Ausfuehrungsverzeichnis des Startup-Prozesses ist nicht gesetzt
+(echtes sysgo: `chd /dd`, `chx /dd/CMDS`). Ausserdem offen: `F$Fork`
+vererbt IOMan-Pfade ohne IOMans Referenzzaehler zu erhoehen; ein
+`I$Close` des Kindes gibt den Deskriptor damit auch fuer den Elternprozess
+frei.

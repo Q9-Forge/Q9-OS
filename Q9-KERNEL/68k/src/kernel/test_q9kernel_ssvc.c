@@ -26,6 +26,10 @@ static unsigned char g_ssvcExternal[256];
 #define Q9K_SSVC_IOPEN_ROUTINE_ADDR ((unsigned long)(g_fakeGlobals + 0x10))
 #define Q9K_SSVC_IREAD_ROUTINE_ADDR ((unsigned long)(g_fakeGlobals + 0x18))
 #define Q9K_SSVC_ICLOSE_ROUTINE_ADDR ((unsigned long)(g_fakeGlobals + 0x20))
+/* Fortsetzung 110: Routinentabelle $80..$92; auf dem 64-Bit-Host schreibt
+ * Q9K_SetU32 8 Byte je 4-Byte-Eintrag, daher Reserve am Ende. */
+static unsigned char g_mgrTable[19 * 4 + 8];
+#define Q9K_SSVC_MGR_TABLE_ADDR ((unsigned long)g_mgrTable)
 
 #define Q9_D_SYSDIS ((unsigned long)(g_fakeGlobals + 0x000))
 #define Q9_D_USRDIS ((unsigned long)(g_fakeGlobals + 0x008))
@@ -244,6 +248,9 @@ int main(void)
         checkU32("F2e: I$Open shadow keeps the user-state routine", Q9K_GetU32(Q9K_SSVC_IOPEN_ROUTINE_ADDR), userOpen);
         checkU32("F2e: I$Read shadow keeps the user-state routine", Q9K_GetU32(Q9K_SSVC_IREAD_ROUTINE_ADDR), userRead);
         checkU32("F2e: I$Close shadow keeps the user-state routine", Q9K_GetU32(Q9K_SSVC_ICLOSE_ROUTINE_ADDR), userClose);
+        checkU32("F2e: table[$84] = user I$Open", Q9K_GetU32(Q9K_SSVC_MGR_TABLE_ADDR + 0x04UL * 4UL), userOpen);
+        checkU32("F2e: table[$89] = user I$Read", Q9K_GetU32(Q9K_SSVC_MGR_TABLE_ADDR + 0x09UL * 4UL), userRead);
+        checkU32("F2e: table[$8F] = user I$Close", Q9K_GetU32(Q9K_SSVC_MGR_TABLE_ADDR + 0x0FUL * 4UL), userClose);
     }
 
     /* Fall 3: leere Tabelle (sofortiges Ende) -- darf nichts veraendern,

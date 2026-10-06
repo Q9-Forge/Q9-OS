@@ -938,9 +938,9 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     }
 
     /* Speicherlayout, Figure D-3 (68k_tech.pdf S. 431), HOCH->NIEDRIG:
-     *   [blockTop]     Parameter-Bereichsende -- (a1) und (a5) zeigen hierher
+     *   [blockTop]     Parameter-Bereichsende -- (a1) zeigt hierher
      *   Parameter-Bereich (paramSize Byte)
-     *   [spBoundary]   Anfangs-SP (a7) -- s. u.
+     *   [spBoundary]   Parameteranfang = Anfangs-SP (a7) = (a5) -- s. u.
      *   Stack-Bereich (stackSize Byte)
      *   Daten-Bereich (dataSize Byte)
      *   [block]        (a6), niedrigste Adresse
@@ -996,10 +996,16 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetFrameReg(frameBase, 10, 0);         /* a2 = Undefined */
     Q9K_SetFrameReg(frameBase, 11, hdrAddr);   /* a3 = Primary (forked) module pointer */
     Q9K_SetFrameReg(frameBase, 12, 0);         /* a4 = Undefined */
-    /* OS-9 passes the parameter area through A5 as a pointer to its upper
-     * boundary.  The shell walks back from that boundary using D5, while
-     * the initial A7 still resumes at spBoundary below the parameters. */
-    Q9K_SetFrameReg(frameBase, 13, blockTop);   /* a5 = parameter boundary */
+    /* FIX (2026-10-05, Fortsetzung 110): a5 zeigt auf den ANFANG der
+     * Parameter (untere Grenze), genau wie der Anfangs-a7. 68k_tech.pdf,
+     * Process entry conditions: "(a5) Parameter pointer" und "(a7) Stack
+     * pointer (same as (a5))"; Figure D-3: "(a5)/(a7) = parameter starting
+     * address/stack". Am 2026-09-15 (f6fc77a, "stabilize startup boot
+     * diagnostics") war das ohne Beleg auf blockTop (obere Grenze)
+     * umgestellt worden -- mshell zerlegte daraufhin den Speicher OBERHALB
+     * der Parameter und meldete "syntax error" mit Muell. Mit spBoundary
+     * liest mshell seine Parameter und arbeitet die startup-Datei ab. */
+    Q9K_SetFrameReg(frameBase, 13, spBoundary); /* a5 = Parameteranfang = Anfangs-a7 */
     /* ECHTER BUG GEFUNDEN + GEFIXT (2026-09-11, Fortsetzung 51) -- Manual
      * WOERTLICH (68k_tech.pdf, Table 2-6 UND Table D-7, beide Stellen
      * gegengeprueft): "(a6) is always biased by $8000 ... the OS-9 linker

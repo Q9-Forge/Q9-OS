@@ -145,8 +145,12 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #define Q9K_TRAPTBL_OFF_EXECENTRY   4UL
 #define Q9K_TRAPTBL_OFF_STATICPTR   8UL
 #define Q9K_TRAPTBL_SIZE_BASE       0x280UL
+#ifndef Q9K_PATHPOOL_BASE_ADDR             /* per #define vor dem #include umlenkbar (Hosttest) */
 #define Q9K_PATHPOOL_BASE_ADDR      0x1214UL
+#endif
+#ifndef Q9K_PATHPOOL_FREE_ADDR
 #define Q9K_PATHPOOL_FREE_ADDR      0x121CUL
+#endif
 #define Q9K_PATHDESC_SIZE           256UL
 #define Q9K_PATHDESC_REF_OFF        0x04UL
 
@@ -205,6 +209,14 @@ static void Q9K_ProcReleasePaths(Q9_u32 desc)
             continue;
         Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL, 0);
         if (pathNum < 3)
+            continue;
+        /* Fortsetzung 110: Bit 15 = Pfad gehoert IOMan (Q9K_TrapDispatch
+         * markiert ihn nach I$Open/I$Dup). Das ist KEIN Index in den
+         * nativen Pfad-Pool -- frueher wurde hier ($80xx - 3) * 256 als
+         * Pool-Deskriptor gedeutet und dessen "Referenzzaehler" irgendwo im
+         * Speicher heruntergezaehlt. IOMans eigener Deskriptor wird hier
+         * (noch) nicht geschlossen; der Eintrag wird nur geraeumt. */
+        if (pathNum & 0x8000U)
             continue;
 
         pathDesc = Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR) +

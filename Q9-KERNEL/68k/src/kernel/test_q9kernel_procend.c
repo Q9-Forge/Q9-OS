@@ -108,6 +108,11 @@ void Q9K_AlarmCleanupProcess(unsigned long desc)
     (void)desc;
 }
 
+/* Fortsetzung 110: Pfad-Pool fuer den ReleasePaths-Test umlenken. */
+static unsigned char g_fakePathPoolCell[16];
+static unsigned char g_fakePathPoolFreeCell[16];
+#define Q9K_PATHPOOL_BASE_ADDR ((unsigned long)g_fakePathPoolCell)
+#define Q9K_PATHPOOL_FREE_ADDR ((unsigned long)g_fakePathPoolFreeCell)
 #include "q9kernel_procend.c"
 
 static int failures = 0;
@@ -328,6 +333,28 @@ int main(void)
                  Q9K_GetU32(d1 + Q9K_PROCDESC_ALLOCBASE_OFF), 0);
         checkU32("F7: Zombie-Reap findet das Kind", (Q9_u32)Q9K_ProcWaitTryReap(d0, &childPid, &exitStatus, &error), 1);
         checkU32("F7: Zombie-Reap gibt denselben Block nicht doppelt frei", (Q9_u32)g_freeMemCalls, 1);
+    }
+
+    /* Fall R (Fortsetzung 110): Q9K_ProcReleasePaths darf einen als
+     * IOMan-eigen markierten Eintrag (Bit 15) NICHT als nativen
+     * Pool-Index deuten. Vorher wurde ($8001-3)*256 als Deskriptor
+     * gelesen/geschrieben -- weit ausserhalb jedes Pools. */
+    {
+        static unsigned char bigDesc[0x200];
+        static unsigned char pool[2 * 256];
+        Q9_u32 desc = (Q9_u32)(unsigned long)bigDesc;
+        Q9_u32 poolAddr = (Q9_u32)(unsigned long)pool;
+        memset(bigDesc, 0, sizeof(bigDesc));
+        memset(pool, 0, sizeof(pool));
+        Q9K_SetU32(Q9K_PATHPOOL_BASE_ADDR, poolAddr);
+        Q9K_SetU16(poolAddr + Q9K_PATHDESC_REF_OFF, 2);                       /* nativer Deskriptor 3: 2 Referenzen */
+        Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + 4UL * 2UL, 3);              /* P$Path[4] = nativ 3 */
+        Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + 5UL * 2UL, 0x8001);         /* P$Path[5] = IOMan-PD 1 */
+        Q9K_ProcReleasePaths(desc);
+        checkU32("R: nativer Eintrag geraeumt", Q9K_GetU16(desc + Q9K_PROCDESC_PATH_OFF + 4UL * 2UL), 0);
+        checkU32("R: nativer Deskriptor 2 -> 1 Referenz", Q9K_GetU16(poolAddr + Q9K_PATHDESC_REF_OFF), 1);
+        checkU32("R: IOMan-Eintrag geraeumt", Q9K_GetU16(desc + Q9K_PROCDESC_PATH_OFF + 5UL * 2UL), 0);
+        checkU32("R: zweiter Pool-Deskriptor unberuehrt", Q9K_GetU16(poolAddr + 256UL + Q9K_PATHDESC_REF_OFF), 0);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

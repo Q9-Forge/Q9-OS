@@ -7,6 +7,7 @@
 #   I$Open /dd/SYS/startup        (IOMan, device attach via F$Link)
 #   F$Fork mshell                                                     marker K
 #   F$Wait                        (mshell ran and exited)             marker W
+#   between K and W mshell echoes the startup lines (-npt)
 #
 # Fehlerfaelle melden sich mit l/d/c/o/f + Fehlercode statt K/W.
 # Baut eine Kernelkopie mit Q9K_TestStartup=1 (Quellbaum unberuehrt), haengt
@@ -99,6 +100,17 @@ if k < 0 or after.find('W', k) < 0:
     else:
         print('FAIL  K/W nicht erreicht')
     sys.exit(1)
-print('ok    mshell geladen, stdin umgeleitet, geforkt, beendet (T ... K W), keine Exception')
+# Fortsetzung 110: mshell (-npt) gibt jede gelesene Zeile wieder aus. Beide
+# startup-Zeilen zwischen K und W belegen, dass mshell seine Parameter
+# (a5 = Parameteranfang) UND stdin (IOMan-Pfad, I$ReadLn weitergeleitet)
+# korrekt bekommt; vorher stand dort "syntax error" mit Speichermuell.
+body = after[k:after.find('W', k)]
+for line in ('* Q9 startup test', 'chd /dd'):
+    if line not in body:
+        print(f'FAIL  mshell hat die startup-Zeile "{line}" nicht ausgegeben (stdin/Parameter?)')
+        sys.exit(1)
+if 'syntax error' in body:
+    print('FAIL  mshell meldet "syntax error"'); sys.exit(1)
+print('ok    mshell geladen, stdin umgeleitet, startup-Datei abgearbeitet, beendet (T ... K W), keine Exception')
 PY
 echo "ALLE TESTS OK (startup_shell_test.sh)"
