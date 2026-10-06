@@ -72,6 +72,7 @@ extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);
 extern int    Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outSize, Q9_u16 *outError);
 extern void   Q9K_ProcSRtMem(Q9_u32 addr, Q9_u32 size);
 extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
+extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size);
 #if defined(Q9K_MEMTRACE_ARENA)
 extern void   Q9K_MemTraceSetModule(Q9_u32 header);
 extern void   Q9K_MemTraceClearModule(void);
@@ -282,6 +283,22 @@ static void Q9K_PatchCslFreelistBug(Q9_u32 hdr)
     stub = Q9K_AllocMem(28UL);
     if (stub == 0)
         return;   /* kein Speicher fuer den Stub -- lieber unveraendert lassen */
+    /* FIX (2026-10-05, Fortsetzung 109): bsr.w/bra.w reichen nur +-32 KByte.
+     * Der Stub liegt in einem frisch belegten Block, csl dagegen weit unten
+     * im Speicher -- gemessen: Stub bei $6cb90, csl bei $1a686, also mehrere
+     * hundert KByte auseinander. Die Distanzen wurden bisher stillschweigend
+     * auf 16 Bit abgeschnitten; der Patch sprang mitten in csl, malloc()
+     * lieferte NULL und mshell meldete "memory not available", ohne je
+     * F$SRqMem aufzurufen. Jetzt: nur patchen, wenn ALLE drei Spruenge in
+     * 16 Bit passen, sonst den Stub zurueckgeben und csl unveraendert lassen.
+     * (Q9_u32)(d + 0x8000) < 0x10000 gilt fuer -32768..32767 -- auf dem
+     * 32-Bit-Ziel wie auf dem 64-Bit-Testhost (Modulo-Arithmetik). */
+    if ((Q9_u32)(stub - (patchAddr + 2UL) + 0x8000UL) >= 0x10000UL ||
+        (Q9_u32)(toosmallTarget - (stub + 0x14UL) + 0x8000UL) >= 0x10000UL ||
+        (Q9_u32)(growTarget - (stub + 0x1AUL) + 0x8000UL) >= 0x10000UL) {
+        Q9K_FreeMem(stub, 28UL);
+        return;
+    }
 
     Q9K_SetU8(stub + 0x00, 0x4A); Q9K_SetU8(stub + 0x01, 0x8C);  /* tst.l a4 */
     Q9K_SetU8(stub + 0x02, 0x67); Q9K_SetU8(stub + 0x03, 0x00);  /* beq.w .grow */

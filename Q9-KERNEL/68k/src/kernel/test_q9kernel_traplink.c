@@ -117,11 +117,21 @@ void Q9K_ProcSRtMem(unsigned long addr, unsigned long size)
  * Testfall F10 unten nutzt den Stub gezielt. */
 static int g_allocMemCalls = 0;
 static unsigned char g_fakeStubBuf[64];
+/* F10d (Fortsetzung 109): Test kann eine ENTFERNTE Stub-Adresse vorgeben. */
+static unsigned long g_allocOverride = 0;
+static int g_freeMemCalls = 0;
+static unsigned long g_freeMemAddr = 0;
 unsigned long Q9K_AllocMem(unsigned long requestedSize)
 {
     (void)requestedSize;
     g_allocMemCalls++;
-    return (unsigned long)g_fakeStubBuf;
+    return g_allocOverride ? g_allocOverride : (unsigned long)g_fakeStubBuf;
+}
+void Q9K_FreeMem(unsigned long addr, unsigned long size)
+{
+    (void)size;
+    g_freeMemCalls++;
+    g_freeMemAddr = addr;
 }
 
 #include "q9kernel_traplink.c"
@@ -495,19 +505,27 @@ int main(void)
                  (unsigned long)g_allocMemCalls, 0UL);
         checkU32("F10b: Patchstelle unveraendert (Originalmuster)", Q9K_GetU8(patchAddr), 0x62UL);
 
-        /* F10c: passendes Bytemuster + ausreichende Groesse -- patcht. */
+        /* F10c: passendes Bytemuster + ausreichende Groesse -- patcht.
+         * NACHTRAG (Fortsetzung 109): der Stub wird hier ausdruecklich IN
+         * Reichweite gelegt (im selben Puffer, bei $5600, ueberlappt die
+         * Patchstelle $56bc nicht). Vorher lag er im Hosttest ~38 KByte vom
+         * Sprungziel entfernt, und die Erwartungswerte waren mit derselben
+         * 16-Bit-Kappung berechnet wie der Code -- der Test bestaetigte so
+         * genau den Reichweitenfehler, den er haette finden sollen. */
         memset(bigMod, 0, sizeof(bigMod));
         setModuleFieldAt(hdr, Q9K_MH_SIZE, (unsigned long)sizeof(bigMod));
         Q9K_SetU8(patchAddr + 0, 0x62); Q9K_SetU8(patchAddr + 1, 0x00);
         Q9K_SetU8(patchAddr + 2, 0xfe); Q9K_SetU8(patchAddr + 3, 0xfc);
+        g_allocOverride = hdr + 0x5600UL;
         g_allocMemCalls = 0;
+        g_freeMemCalls = 0;
         Q9K_PatchCslFreelistBug(hdr);
         checkU32("F10c: Q9K_AllocMem genau einmal aufgerufen",
                  (unsigned long)g_allocMemCalls, 1UL);
         checkU32("F10c: Patchstelle jetzt bsr.w (0x61)", Q9K_GetU8(patchAddr), 0x61UL);
         checkU32("F10c: Patchstelle Byte 2 (0x00)", Q9K_GetU8(patchAddr + 1), 0x00UL);
 
-        stubAddr = (unsigned long)g_fakeStubBuf;
+        stubAddr = hdr + 0x5600UL;
         expDisp = (unsigned long)(unsigned short)(stubAddr - (patchAddr + 2UL));
         checkU32("F10c: bsr.w-Distanz zeigt auf den Stub",
                  (Q9K_GetU8(patchAddr + 2) << 8) | Q9K_GetU8(patchAddr + 3), expDisp);
@@ -528,6 +546,47 @@ int main(void)
         expDisp = (unsigned long)(unsigned short)((hdr + Q9K_CSL_GROW_OFF) - (stubAddr + 0x1AUL));
         checkU32("F10c: bra.w im Stub zeigt auf 'mehr Speicher' (448e2 relativ)",
                  (Q9K_GetU8(stubAddr + 0x1A) << 8) | Q9K_GetU8(stubAddr + 0x1B), expDisp);
+        checkU32("F10c: Stub in Reichweite -- nicht freigegeben",
+                 (unsigned long)g_freeMemCalls, 0UL);
+        g_allocOverride = 0;
+    }
+
+    /* F10d (Fortsetzung 109): Stub AUSSER Reichweite eines bsr.w/bra.w
+     * (live: Stub $6cb90, csl $1a686). Dann darf NICHT gepatcht werden,
+     * und der Stub muss zurueckgegeben werden. Die Testadresse wird so
+     * gewaehlt, dass sie sicher mehr als 64 KByte von der Patchstelle
+     * entfernt liegt (Anfang oder Ende eines 256-KByte-Puffers, je nachdem
+     * welches weiter weg ist). */
+    {
+        static unsigned char bigMod2[0x5700];
+        static unsigned char farBuf[0x40000];
+        unsigned long hdr = (unsigned long)bigMod2;
+        unsigned long patchAddr = hdr + Q9K_CSL_PATCH_OFF;
+        unsigned long lo = (unsigned long)farBuf;
+        unsigned long hi = (unsigned long)farBuf + sizeof(farBuf) - 64UL;
+        unsigned long dlo = lo > patchAddr ? lo - patchAddr : patchAddr - lo;
+        unsigned long dhi = hi > patchAddr ? hi - patchAddr : patchAddr - hi;
+
+        memset(bigMod2, 0, sizeof(bigMod2));
+        setModuleFieldAt(hdr, Q9K_MH_SIZE, (unsigned long)sizeof(bigMod2));
+        Q9K_SetU8(patchAddr + 0, 0x62); Q9K_SetU8(patchAddr + 1, 0x00);
+        Q9K_SetU8(patchAddr + 2, 0xfe); Q9K_SetU8(patchAddr + 3, 0xfc);
+        g_allocOverride = dlo > dhi ? lo : hi;
+        g_allocMemCalls = 0;
+        g_freeMemCalls = 0;
+        Q9K_PatchCslFreelistBug(hdr);
+        checkU32("F10d: Testadresse wirklich > 64 KByte entfernt",
+                 (unsigned long)((dlo > dhi ? dlo : dhi) > 0x10000UL), 1UL);
+        checkU32("F10d: Q9K_AllocMem einmal aufgerufen", (unsigned long)g_allocMemCalls, 1UL);
+        checkU32("F10d: Stub ausser Reichweite -- wieder freigegeben",
+                 (unsigned long)g_freeMemCalls, 1UL);
+        checkU32("F10d: freigegeben wurde genau der Stub", g_freeMemAddr, g_allocOverride);
+        checkU32("F10d: Patchstelle unveraendert (bhi.w 62 00 fe fc)",
+                 ((unsigned long)Q9K_GetU8(patchAddr) << 24) |
+                 ((unsigned long)Q9K_GetU8(patchAddr + 1) << 16) |
+                 ((unsigned long)Q9K_GetU8(patchAddr + 2) << 8) |
+                 (unsigned long)Q9K_GetU8(patchAddr + 3), 0x6200FEFCUL);
+        g_allocOverride = 0;
     }
 
     if (g_failures == 0) {

@@ -10637,3 +10637,61 @@ ist ungeprueft.
 - Standard/Stress jeweils ohne/mit `startup`: alle `Vektor=0`, keine
   Rahmen-Validierungstreffer, erwartete Marker.
 - 28/28 Host-Suiten gruen.
+
+
+## Fortsetzung 109: "memory not available" aufgeklaert -- der csl-Freilisten-Patch sprang ausser Reichweite (2026-10-05)
+
+### Messung
+
+Nach dem Fork ruft mshell (ueber csl) nur `F$TLink`, `F$CCtl`, `F$STrap`,
+`F$SetSys`, `F$Icpt` auf, dann `I$WritLn` mit "memory not available" und
+`F$Exit` -- KEIN einziger Speicher-Syscall. (Die "vier I$Open" in
+Fortsetzung 108 waren ein Auswertungsfehler meinerseits, zurueckgezogen.)
+`F$SetSys` gemessen: Variable `$7C`, Lesen 4 Byte, Wert `$1000`, Erfolg --
+korrekt. malloc() scheiterte also intern.
+
+### Ursache
+
+`Q9K_PatchCslFreelistBug` (`q9kernel_traplink.c`, Fortsetzung 58) ersetzt
+4 Byte in csl durch `bsr.w <Stub>`, der Stub springt mit `bra.w` zurueck.
+Beide reichen nur +-32 KByte. Der Stub kommt aus `Q9K_AllocMem` und lag
+gemessen bei `$6cb90` (die Zeile `M A r=0000001C` IST dieser Block), csl bei
+`$1a686` -- mehrere hundert KByte. Die Distanzen wurden stillschweigend auf
+16 Bit gekappt; der Patch sprang mitten in csl. Gegenprobe: Patch in einer
+Scratch-Kopie abgeschaltet -> keine Meldung mehr, mshell belegt per
+F$SRqMem 120 KByte (`M F r=0001E000` beim Ende) und liest seine Eingabe.
+
+Der Hosttest F10c hatte den Fehler festgeschrieben: der Stub lag auch dort
+~38 KByte vom Sprungziel, und die Erwartungswerte wurden mit derselben
+16-Bit-Kappung berechnet wie der Code.
+
+### Fix
+
+Patch nur noch, wenn ALLE drei Spruenge in 16 Bit passen
+(`(Q9_u32)(d + $8000) < $10000`, gilt auf dem 32-Bit-Ziel und im
+64-Bit-Hosttest); sonst Stub per `Q9K_FreeMem` zurueck, csl unveraendert.
+Praktisch ist der Patch damit derzeit inaktiv. Er war ein Pflaster fuer
+eine NIE gefundene Ursache ("kaputt terminierter Ring", Fortsetzung 57/58,
+damals mit mehreren inzwischen behobenen Stack-/Register-Fehlern im
+Kernel). Taucht der Vektor-10-Absturz in csl wieder auf, ist das ein
+Hinweis auf die echte Ursache -- dann diese suchen, nicht den Patch
+wiederbeleben.
+
+Hosttests: F10c legt den Stub jetzt ausdruecklich in Reichweite, neu F10d
+(Stub > 64 KByte entfernt -> kein Patch, Stub freigegeben, Patchstelle
+unveraendert `62 00 fe fc`).
+
+### Verifikation
+
+28/28 Host-Suiten; `startup_shell_test.sh`, `mgrpath_probe_test.sh` OK;
+Startup-Lauf: keine "memory not available"-Meldung mehr, `Vektor=0`.
+
+### Naechster Fehler (offen)
+
+mshell liest jetzt, bekommt aber Muell (`Ô0 Ëh Ì@ T a ^syntax error`).
+Ursache (Code gelesen, noch nicht gemessen): `I$ReadLn` ($8B) wird -- wie
+alle pfadbasierten I/O-Aufrufe ausser `$89`/`$8F` -- nie an IOMan
+weitergeleitet; der native Handler deutet den IOMan-Deskriptor in
+`P$Path[0]` als eigenen Pool-Eintrag. Dazu: `F$Fork` kopiert Pfade ohne
+Referenzzaehlung, und `Q9K_ProcReleasePaths` behandelt markierte
+IOMan-Eintraege (`$80xx`) beim Prozessende als native Pool-Indizes.
