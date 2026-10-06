@@ -195,6 +195,13 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_PROCDESC_DIO_OFF     0x148UL
 #endif
 #define Q9K_PROCDESC_DIO_SIZE    32UL
+/* Nativer Pfad-Pool (s. q9kernel_procend.c / q9kernel_tables.c) -- fuer die
+ * Referenzzaehlung geerbter Pfade (Fortsetzung 112); per #define umlenkbar. */
+#ifndef Q9K_FORK_PATHPOOL_BASE_ADDR
+#define Q9K_FORK_PATHPOOL_BASE_ADDR 0x1214UL
+#endif
+#define Q9K_FORK_PATHDESC_SIZE      256UL
+#define Q9K_FORK_PATHDESC_REF_OFF   0x04UL
 #ifndef Q9K_FORK_SCRATCH_NUMPATHS
 #define Q9K_FORK_SCRATCH_NUMPATHS 0x1284UL
 #endif
@@ -845,33 +852,40 @@ void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)             /* s. Hi
      * Datenzeiger), s. Kopfkommentar. */
     if (irefsOff != 0) {
         p = hdrAddr + irefsOff;
+        /* FIX (2026-10-06, Fortsetzung 112): 68k_tech.pdf, M$IRefs: jede der
+         * zwei Tabellen (Code-, dann Datenzeiger) ist eine Folge von Laeufen
+         * [MS-Wort, Anzahl, Anzahl x LS-Wort]; der Offset ist MS<<16 | LS; die
+         * Tabelle endet erst bei MS=0 UND Anzahl=0. Frueher wurde genau EIN
+         * Lauf gelesen, das MS-Wort verworfen und danach pauschal ein
+         * Abschlusspaar uebersprungen. Bei einer LEEREN Tabelle (nur 0/0,
+         * z. B. sysgo) wurde so das naechste Paar mit verschluckt; sysgos
+         * zweite Tabelle kam dadurch aus der CRC (MS=$009E, Anzahl=$9459)
+         * und relozierte zehntausendfach fremden Speicher -- gemessen als
+         * zerstoerte Arena-Freiliste und "Sysgo can't fork mshell" (E$MemFul). */
         for (group = 0; group < 2; group++) {
-            Q9_u32 count;
-            Q9_u32 j;
-
-            (void)Q9K_ReadHdrU16BE(p);        /* MS-Wort -- bisher immer 0, verworfen */
-            count = Q9K_ReadHdrU16BE(p + 2);
-            p += 4;
             relocBase = (group == 0) ? hdrAddr : block;
-            for (j = 0; j < count; j++) {
-                Q9_u32 fieldOff = Q9K_ReadHdrU16BE(p);
-                Q9_u32 fieldAddr = block + fieldOff;
-                Q9_u32 newVal;
-                p += 2;
-                /* ABSICHTLICH byteweise wie Q9K_SetFrameReg/Q9K_ReadHdrU32BE
-                 * -- NICHT Q9K_GetU32/Q9K_SetU32 (native Zeiger-Breite, auf
-                 * DIESEM 64-Bit-Testhost 8 statt 4 Byte, s. dortigen
-                 * Kopfkommentar). Bei eng benachbarten M$IRefs-Versaetzen
-                 * (hier real nur 4 Byte auseinander) wuerde das sonst
-                 * Nachbarfelder ueberschreiben -- exakt der schon zweimal
-                 * dokumentierte Fund (Q9K_SetFrameReg, test_q9kernel_*.c). */
-                newVal = Q9K_ReadHdrU32BE(fieldAddr) + relocBase;
-                Q9K_SetU8(fieldAddr + 0, (Q9_u8)(newVal >> 24));
-                Q9K_SetU8(fieldAddr + 1, (Q9_u8)(newVal >> 16));
-                Q9K_SetU8(fieldAddr + 2, (Q9_u8)(newVal >> 8));
-                Q9K_SetU8(fieldAddr + 3, (Q9_u8)newVal);
+            for (;;) {
+                Q9_u32 ms    = Q9K_ReadHdrU16BE(p);
+                Q9_u32 count = Q9K_ReadHdrU16BE(p + 2);
+                Q9_u32 j;
+
+                p += 4;
+                if (ms == 0 && count == 0)
+                    break;                     /* Ende dieser Tabelle */
+                for (j = 0; j < count; j++) {
+                    Q9_u32 fieldOff = (ms << 16) | (Q9_u32)Q9K_ReadHdrU16BE(p);
+                    Q9_u32 fieldAddr = block + fieldOff;
+                    Q9_u32 newVal;
+
+                    p += 2;
+                    /* byteweise, s. Q9K_SetFrameReg (64-Bit-Testhost) */
+                    newVal = Q9K_ReadHdrU32BE(fieldAddr) + relocBase;
+                    Q9K_SetU8(fieldAddr + 0, (Q9_u8)(newVal >> 24));
+                    Q9K_SetU8(fieldAddr + 1, (Q9_u8)(newVal >> 16));
+                    Q9K_SetU8(fieldAddr + 2, (Q9_u8)(newVal >> 8));
+                    Q9K_SetU8(fieldAddr + 3, (Q9_u8)newVal);
+                }
             }
-            p += 4;   /* Terminierungspaar MS=0/Anzahl=0 der Gruppe ueberspringen */
         }
     }
 }
@@ -1079,9 +1093,29 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
      * Solange Pfade in diesem Kernel nie geschlossen werden, ist die Kopie
      * gleichwertig -- sobald es I$Close gibt, MUSS hier I$Dup stehen. */
     if (parentDesc != 0) {          /* beim allerersten Prozess gibt es keinen Erzeuger */
+        /* FIX (2026-10-06, Fortsetzung 112): nur die ersten d3 Pfade erben
+         * (68k_tech.pdf F$Fork: "d3.w = number of I/O paths to copy"), und
+         * zwar wie I$Dup MIT Referenzzaehler. Frueher wurden alle 32
+         * Eintraege ohne Zaehler kopiert: sysgo sichert stdin per I$Dup auf
+         * Pfad 3, forkt mshell mit d3=3 -- mshell bekam Pfad 3 trotzdem mit,
+         * gab ihn beim Ende frei und zog sysgo die gesicherte Konsole weg
+         * (gemessen: I$Dup E$BPAddr, danach tsmon "can't get '/term' path
+         * options"). IOMan-eigene (markierte) Pfade werden kopiert; IOMans
+         * eigener Benutzungszaehler wird (noch) nicht erhoeht. */
+        Q9_u32 inherit = (Q9_u32)Q9K_GetU16(Q9K_FORK_SCRATCH_NUMPATHS);
+        if (inherit > Q9K_PROCDESC_PATH_COUNT)
+            inherit = Q9K_PROCDESC_PATH_COUNT;
         for (i = 0; i < Q9K_PROCDESC_PATH_COUNT; i++) {
-            Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL,
-                       Q9K_GetU16(parentDesc + Q9K_PROCDESC_PATH_OFF + i * 2UL));
+            Q9_u16 v = (i < inherit)
+                     ? Q9K_GetU16(parentDesc + Q9K_PROCDESC_PATH_OFF + i * 2UL)
+                     : (Q9_u16)0;
+            Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL, v);
+            if (v >= 3U && (v & 0x8000U) == 0U) {
+                Q9_u32 pd = Q9K_GetU32(Q9K_FORK_PATHPOOL_BASE_ADDR) +
+                            ((Q9_u32)v - 3UL) * Q9K_FORK_PATHDESC_SIZE;
+                Q9K_SetU16(pd + Q9K_FORK_PATHDESC_REF_OFF,
+                           (Q9_u16)(Q9K_GetU16(pd + Q9K_FORK_PATHDESC_REF_OFF) + 1U));
+            }
         }
         /* FIX (2026-10-05, Fortsetzung 111): auch die Standardverzeichnisse
          * (P$DIO) erben. Ohne sie hatte das Kind kein Ausfuehrungsverzeichnis:

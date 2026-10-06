@@ -2099,7 +2099,7 @@ Q9K_TestForkChildStressDone:
         clr.w   d0
         clr.l   d1
         clr.l   d2
-        clr.w   d3
+        moveq   #3,d3                         * Pfade 0..2 erben (F$Fork vererbt nur d3 Pfade, Fortsetzung 112)
         clr.w   d4
         lea     Q9K_TestAttachName(pc),a0
         trap    #0
@@ -2457,7 +2457,7 @@ Q9K_TestWriteSafetyGapEnd:
         clr.w   d0
         clr.l   d1
         clr.l   d2
-        clr.w   d3
+        moveq   #3,d3                         * Pfade 0..2 erben (F$Fork vererbt nur d3 Pfade, Fortsetzung 112)
         clr.w   d4
 * Maskierung wieder aufheben -- F$Fork selbst UND hellosvc brauchen
 * funktionierende IRQs (Konsolenausgabe ueber I$WritLn).
@@ -3539,13 +3539,18 @@ Q9K_TrapManagerPathBookkeeping:
 * EIGENEN R$-Rahmen ($3c/$3e(a5)), nie aus der globalen Zelle $1370 (die
 * ueberschreiben IOMans verschachtelte Syscalls, Fortsetzung 107). Der
 * Ergebnis-Pfad steht im UNTEREN Wort von R$d0 (2(a5)).
-*   $84 I$Open:  bei Erfolg den neuen Pfad markieren
+*   $84 I$Open, $83 I$Create: bei Erfolg den neuen Pfad markieren
 *   $82 I$Dup:   Original wieder markieren, bei Erfolg auch den neuen Pfad
 *   $88..$8F:    Original wieder markieren (Close: Eintrag ist danach 0)
 * Stack: 24 Byte movem + 4 Byte Ruecksprung -> gesichertes SR bei 28(sp).
         movem.l d0-d2/a0-a2,-(sp)
         move.w  $3c(a5),d2
         cmpi.w  #$84,d2
+        beq.s   Q9K_TrapMgrBk_New
+* Fortsetzung 112: I$Create ($83) liefert wie I$Open einen neuen Pfad
+* (tsmon oeffnet die Konsole per I$Create); ohne Markierung landeten alle
+* Folgeaufrufe im nativen Handler (I$GetStt -> E$BPNum).
+        cmpi.w  #$83,d2
         beq.s   Q9K_TrapMgrBk_New
         cmpi.w  #$82,d2
         beq.s   Q9K_TrapMgrBk_Orig
@@ -4457,10 +4462,15 @@ Q9K_SysFWait:
         bsr     Q9K_SysWaitImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
 
-        move.w  Q9K_WaitScratch_Outcome,d7
-        cmp.w   #1,d7
+* FIX (2026-10-06, Fortsetzung 112): Ergebnis im Speicher vergleichen, NICHT
+* ueber d7. Hier ist noch der Registersatz des Aufrufers aktiv, und der
+* Blockierpfad unten sichert ihn erst danach -- d7 = Outcome landete im
+* gesicherten Satz. sysgo haelt die gesicherte stdin-Pfadnummer in d7 ueber
+* F$Fork/F$Wait hinweg, wachte mit d7=0 auf, duplizierte den gerade
+* geschlossenen Pfad 0 (E$BPAddr) und reichte tsmon keine Konsole weiter.
+        cmpi.w  #1,Q9K_WaitScratch_Outcome
         beq     Q9K_SysFWait_Reaped
-        cmp.w   #2,d7
+        cmpi.w  #2,Q9K_WaitScratch_Outcome
         beq     Q9K_SysFWait_NoChld
 
 * Outcome 0: Kinder vorhanden, aber keins Zombie -- der Aufrufer muss
@@ -7099,6 +7109,9 @@ Q9K_SysFFModul:
         move.w  Q9K_FModulScratch_OutTy+2,d0
         move.w  Q9K_FModulScratch_OutAR+2,d1
         movea.l Q9K_FModulScratch_Entry,a2
+* Fortsetzung 112: d7 ist keine Ausgabe von F$FModul -- als Schleifenzaehler
+* sichern und auf beiden Ausgaengen VOR dem Setzen des Carry zurueckholen.
+        move.l  d7,-(sp)
         moveq   #0,d7                            * MOVEQ #255 would become -1 (0xffffffff)
         move.w  #255,d7                          * DBRA: 256 iterations, then timeout
 Q9K_SysFFModul_SkipName:
@@ -7106,10 +7119,12 @@ Q9K_SysFFModul_SkipName:
         beq     Q9K_SysFFModul_NameDone
         bmi     Q9K_SysFFModul_NameDone
         dbra    d7,Q9K_SysFFModul_SkipName
+        move.l  (sp)+,d7
         move.w  #$00dd,d1
         ori     #1,ccr
         rts
 Q9K_SysFFModul_NameDone:
+        move.l  (sp)+,d7
         andi    #$fe,ccr
         rts
 Q9K_SysFFModul_Fail:
@@ -7895,6 +7910,89 @@ Q9K_ChainSavedPriority: dc.l 0
 Q9K_ChainSavedName:     dc.l 0
 Q9K_ChainSavedParam:    dc.l 0
 Q9K_ChainSavedTrapPath: dc.l 0
+
+*******************************************************************************
+* Q9K_SysStartProc -- echter Startprozess (2026-10-06, Fortsetzung 112,
+* Paket 1 aus docs/DEBUG_KONZEPT_de.md). Der Atom-Kernel startet hiermit wie
+* ein echtes OS-9:
+*   1. IOMan linken und seinen Einsprung aufrufen. IOMans Init oeffnet die
+*      Konsole als Pfade 0/1/2 und wechselt auf das Systemgeraet (gemessen:
+*      I$Open /term, 2x I$Dup, I$ChgDir).
+*   2. Das init-Modul linken und daraus Startmodul (M$Sysgo, $3E) und
+*      Startparameter (M$SParam, $3C) lesen (MWOS OS9/SRC/DEFS/module.a;
+*      am vorhandenen init verifiziert: "sysgo", Parameter leer).
+*   3. Per F$Chain in das Startmodul wechseln; der Prozess WIRD sysgo und
+*      erbt Pfade und Verzeichnisse. sysgo selbst macht "chx CMDS", startet
+*      mshell mit SYS/startup und wechselt danach in tsmon.
+* Bisher erledigte Q9K_TestProcA Schritt 1 nebenbei; der Developer-Kernel
+* benutzt TestProcA weiterhin als Standard (Regressionsskripte), mit
+* Q9K_BOOT=sysgo beim Bauen aber ebenfalls diesen Weg.
+* Parameterzeichenkette in $1FE0-$1FFF (max. 31 Zeichen + CR), NICHT auf dem
+* Stack: F$Chain ersetzt den Prozessspeicher.
+Q9K_SysStartParam           equ $1FE0      * 32 Byte, Startparameter + CR -- naechste freie Adresse $2000
+Q9K_SysStartProc:
+        move.w  #$0c01,d0
+        lea     Q9K_SysStartIOManName(pc),a0
+        trap    #0
+        dc.w    $0000                         * F$Link ioman
+        bcs     Q9K_SysStartFail
+        lea     Q9K_IOManOutVtable(pc),a1
+        move.l  a1,($64).w                    * D_SysRom = Ausgabestruktur fuer IOMans Diagnose
+        move.w  #$0c01,d0
+        lea     Q9K_SysStartIOManName(pc),a0
+        trap    #0
+        dc.w    $0000                         * erneut: a1 = M$Exec
+        bcs     Q9K_SysStartFail
+        movea.l a6,a5
+        movea.l #0,a6                         * Systemglobals fuer IOMan
+        movea.l Q9_D_Proc,a4                  * A4 = aktueller Prozessdeskriptor
+        jsr     (a1)                          * IOMan-Init
+        movea.l a5,a6
+        moveq   #0,d0                         * beliebiger Typ (init: TyLang $0C00)
+        lea     Q9K_SysStartInitName(pc),a0
+        trap    #0
+        dc.w    $0000                         * F$Link init -> a2 = Modulkopf
+        bcs     Q9K_SysStartFail
+        moveq   #0,d0
+        move.w  $3c(a2),d0                    * M$SParam
+        lea     0(a2,d0.l),a0
+        movea.l #Q9K_SysStartParam,a1
+        moveq   #0,d2
+Q9K_SysStartParamCopy:
+        move.b  (a0)+,d1
+        beq.s   Q9K_SysStartParamEnd
+        cmpi.b  #$0d,d1
+        beq.s   Q9K_SysStartParamEnd
+        move.b  d1,(a1)+
+        addq.l  #1,d2
+        cmpi.l  #31,d2
+        bcs.s   Q9K_SysStartParamCopy
+Q9K_SysStartParamEnd:
+        move.b  #$0d,(a1)
+        addq.l  #1,d2                         * d2.l = Parametergroesse inkl. CR
+        moveq   #0,d0
+        move.w  $3e(a2),d0                    * M$Sysgo
+        lea     0(a2,d0.l),a0                 * a0 = Startmodul ("sysgo")
+        movea.l #Q9K_SysStartParam,a1         * a1 = Parameter
+        moveq   #0,d0                         * Typ/Sprache: beliebig
+        moveq   #0,d1                         * kein Zusatzspeicher
+        moveq   #3,d3                         * Pfade 0..2 erben
+        moveq   #0,d4                         * Prioritaet erben
+        trap    #0
+        dc.w    $0005                         * F$Chain -- kehrt nur bei Fehler zurueck
+Q9K_SysStartFail:
+        move.l  d1,d5
+        moveq   #'!',d7
+        bsr     Q9K_DiagWriteD7
+        bsr     Q9K_DiagWriteHex32
+Q9K_SysStartHalt:
+        bra     Q9K_SysStartHalt
+Q9K_SysStartIOManName:
+        dc.b    "ioman",0
+Q9K_SysStartInitName:
+        dc.b    "init",0
+        align
+
 
 * Q9K_ModuleEnd -- NACHTRAG 2026-08-19: nicht mehr fuer den
 * Selbstueberschreibungs-Schutz benutzt (s. ausfuehrlichen Fund-

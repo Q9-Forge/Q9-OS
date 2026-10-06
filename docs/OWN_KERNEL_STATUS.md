@@ -10861,3 +10861,76 @@ Q9K_CRuntimeData` geprueft: nur diese eine Stelle.
   Syscall-Trace im Kernel (Bauschalter + Laufzeitschalter ueber F$SetSys,
   Filter nach Callcode/Prozess/nur Fehler, Ausgabe Konsole und/oder
   Ringpuffer).
+
+
+## Fortsetzung 112: Paket 1 (Teil 1) -- Bauschalter, echter Start ueber sysgo, und sechs Fehler auf dem Weg dorthin (2026-10-06)
+
+Umsetzung von `docs/DEBUG_KONZEPT_de.md`, Abschnitt 1.
+
+### Bauschalter
+`build.sh`: `Q9K_KERNEL_VARIANT=development` -> C `-dQ9K_DEBUG`, r68
+`-a=Q9K_DEBUG=1`; `atomic` -> r68 `-a=Q9K_DEBUG=0`. Geprueft: r68 versteht
+`ifne/ifeq Q9K_DEBUG`, und ohne das Symbol bricht er mit Fehler ab (kein
+stilles Falschbauen). `Q9K_BOOT=sysgo` laesst auch den Developer-Kernel
+ueber den echten Startprozess booten.
+
+### Echter Startprozess `Q9K_SysStartProc`
+IOMan linken und starten (Konsole 0/1/2, chd Systemgeraet macht IOMan
+selbst), `init` linken, `M$Sysgo` ($3E) und `M$SParam` ($3C) lesen (am
+vorhandenen init verifiziert: "sysgo", leer), Parameter + CR nach
+`$1FE0`, `F$Chain`. Atom-Kernel: immer; Developer: mit `Q9K_BOOT=sysgo`,
+sonst weiterhin `Q9K_TestProcA` (Regressionsskripte).
+
+### Gefundene und behobene Fehler
+
+1. **M$IRefs-Parser** (`Q9K_ApplyInitializedData`, `q9kernel_traplink.c`):
+   las je Tabelle genau EINEN Lauf, verwarf das MS-Wort und uebersprang
+   pauschal ein Abschlusspaar. Bei leeren Tabellen (sysgo) kam die zweite
+   Tabelle aus der CRC (MS=$009E, Anzahl=$9459) -> zehntausendfache
+   Relozierung fremden Speichers -> zerstoerte Arena-Freiliste ->
+   "Sysgo can't fork mshell" (E$MemFul). Gefunden per Freilisten-Ausgabe
+   bei gescheitertem F$SRqMem und `Q9_WATCH_ADDR` auf den kaputten Block;
+   die geschriebenen Werte stiegen je um die Blockbasis -> Relozierung.
+   Jetzt nach 68k_tech.pdf (Laeufe bis MS=0 und Anzahl=0, Offset
+   MS<<16|LS). Fuer mshell/csl/echo liefern alter und neuer Parser
+   identische Ergebnisse (offline geprueft). Hosttests F5b (leere Tabellen
+   + CRC-Bytes; der alte Code stuerzt dabei ab) und F5c (zwei Laeufe).
+2. **F$TLink-Speicher-Override:** `d1` gewann gegen `M$Mem`, sobald != 0.
+   mshell uebergab fuer csl d1=$30 -> 48 statt $2690 Byte statischer
+   Speicher, mshells Prozessblock lag direkt dahinter -> A-Line-Absturz.
+   Jetzt das Groessere von beiden. Hosttests F6 (groesser gewinnt), F6b
+   (kleiner wird ignoriert; der alte F6 hatte das Fehlverhalten
+   festgeschrieben).
+3. **F$Chain `a5`:** wie F$Fork in Fortsetzung 110 auf den
+   Parameteranfang.
+4. **F$Fork-Pfadvererbung:** kopierte alle 32 Pfade ohne Zaehler. Jetzt nur
+   die ersten `d3` (68k_tech.pdf), native Deskriptoren mit
+   Referenzzaehler; `Q9K_ProcReleasePaths` gibt ab Pfad 0 frei. TestProcA
+   forkt hellosvc/iattachsvc jetzt mit `d3=3` (beide benutzen
+   Konsolenpfade; bisher durch das Kopieren aller Pfade verdeckt).
+   Hosttest F2 erweitert.
+5. **F$Wait zerstoerte `d7`:** `move.w Q9K_WaitScratch_Outcome,d7` VOR dem
+   Sichern des Registersatzes im Blockierpfad. sysgo haelt die gesicherte
+   stdin-Pfadnummer in d7, wachte mit 0 auf und konnte stdin nicht
+   wiederherstellen (I$Dup E$BPAddr). Jetzt Vergleich im Speicher.
+   Gleiche Pruefung ueber alle Handler: auch **F$FModul** benutzte d7 als
+   Schleifenzaehler ohne Sicherung -- behoben.
+6. **I$Create** liefert wie I$Open einen neuen IOMan-Pfad; die
+   Nachbuchung markiert ihn jetzt.
+
+### Stand des echten Starts
+IOMan-Init -> F$Chain sysgo -> sysgo: chx CMDS, stdin auf SYS/startup,
+F$Fork mshell (Nachladen), F$Wait, stdin zurueck -> F$Chain tsmon. Atom-
+und Developer-Kernel (`Q9K_BOOT=sysgo`) identisch. Offen:
+- mshell meldet beim Start durch sysgo `F$PrsNam` E$BPNam und
+  "syntax error" (Parameter "-npxt\r"; mit TestProcAs Parametern lief es).
+- tsmon: `I$GetStt` SS_Opt auf Pfad 2 -> E$BPNum. Die Standardpfade 1/2
+  sind im Kernel nur Platzhalter (Wert 1/2) ohne eigenen Deskriptor;
+  Schreiben geht, GetStt nicht. Ausserdem `I$Attach` -> Carry mit d1=0.
+- Diagnose- und Testcode im Assembler steht noch nicht unter Q9K_DEBUG
+  (Atom-Kernel zeigt noch die Boot-Marker).
+
+### Verifikation
+28/28 Host-Suiten; startup_shell_test.sh, mgrpath_probe_test.sh,
+malformed_boot_test.sh OK; Standard/Stress ohne/mit startup alle
+`Vektor=0`; Atom-Kernel baut und bootet bis tsmon.

@@ -200,7 +200,11 @@ static void Q9K_ProcReleasePaths(Q9_u32 desc)
 {
     Q9_u32 i;
 
-    for (i = 3; i < Q9K_PROCDESC_PATH_COUNT; ++i) {
+    /* Fortsetzung 112: ab Index 0, nicht 3 -- seit F$Fork geerbte Pfade wie
+     * I$Dup mitzaehlt, muss das Prozessende auch die Standardpfade 0..2
+     * zuruecknehmen. Platzhalter (<3) und IOMan-Pfade (Bit 15) werden nur
+     * geraeumt. */
+    for (i = 0; i < Q9K_PROCDESC_PATH_COUNT; ++i) {
         Q9_u16 pathNum = Q9K_GetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL);
         Q9_u32 pathDesc;
         Q9_u16 refs;

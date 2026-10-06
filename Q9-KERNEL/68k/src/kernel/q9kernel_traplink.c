@@ -178,26 +178,41 @@ static void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
 
     if (irefsOff != 0) {
         p = hdrAddr + irefsOff;
+        /* FIX (2026-10-06, Fortsetzung 112): 68k_tech.pdf, M$IRefs: jede der
+         * zwei Tabellen (Code-, dann Datenzeiger) ist eine Folge von Laeufen
+         * [MS-Wort, Anzahl, Anzahl x LS-Wort]; der Offset ist MS<<16 | LS; die
+         * Tabelle endet erst bei MS=0 UND Anzahl=0. Frueher wurde genau EIN
+         * Lauf gelesen, das MS-Wort verworfen und danach pauschal ein
+         * Abschlusspaar uebersprungen. Bei einer LEEREN Tabelle (nur 0/0,
+         * z. B. sysgo) wurde so das naechste Paar mit verschluckt; sysgos
+         * zweite Tabelle kam dadurch aus der CRC (MS=$009E, Anzahl=$9459)
+         * und relozierte zehntausendfach fremden Speicher -- gemessen als
+         * zerstoerte Arena-Freiliste und "Sysgo can't fork mshell" (E$MemFul).
+         * Gleiche Korrektur wie Q9K_ApplyInitializedData (q9kernel_firstproc.c). */
         for (group = 0; group < 2; group++) {
-            Q9_u32 count;
-            Q9_u32 j;
-
-            (void)Q9K_TLinkReadU16BE(p);      /* MS-Wort -- bisher immer 0, verworfen */
-            count = Q9K_TLinkReadU16BE(p + 2);
-            p += 4;
             relocBase = (group == 0) ? hdrAddr : block;
-            for (j = 0; j < count; j++) {
-                Q9_u32 fieldOff = Q9K_TLinkReadU16BE(p);
-                Q9_u32 fieldAddr = block + fieldOff;
-                Q9_u32 newVal;
-                p += 2;
-                newVal = Q9K_TLinkReadU32BE(fieldAddr) + relocBase;
-                Q9K_SetU8(fieldAddr + 0, (Q9_u8)(newVal >> 24));
-                Q9K_SetU8(fieldAddr + 1, (Q9_u8)(newVal >> 16));
-                Q9K_SetU8(fieldAddr + 2, (Q9_u8)(newVal >> 8));
-                Q9K_SetU8(fieldAddr + 3, (Q9_u8)newVal);
+            for (;;) {
+                Q9_u32 ms    = Q9K_TLinkReadU16BE(p);
+                Q9_u32 count = Q9K_TLinkReadU16BE(p + 2);
+                Q9_u32 j;
+
+                p += 4;
+                if (ms == 0 && count == 0)
+                    break;                     /* Ende dieser Tabelle */
+                for (j = 0; j < count; j++) {
+                    Q9_u32 fieldOff = (ms << 16) | (Q9_u32)Q9K_TLinkReadU16BE(p);
+                    Q9_u32 fieldAddr = block + fieldOff;
+                    Q9_u32 newVal;
+
+                    p += 2;
+                    /* byteweise, s. Q9K_SetFrameReg (64-Bit-Testhost) */
+                    newVal = Q9K_TLinkReadU32BE(fieldAddr) + relocBase;
+                    Q9K_SetU8(fieldAddr + 0, (Q9_u8)(newVal >> 24));
+                    Q9K_SetU8(fieldAddr + 1, (Q9_u8)(newVal >> 16));
+                    Q9K_SetU8(fieldAddr + 2, (Q9_u8)(newVal >> 8));
+                    Q9K_SetU8(fieldAddr + 3, (Q9_u8)newVal);
+                }
             }
-            p += 4;   /* Terminierungspaar MS=0/Anzahl=0 der Gruppe ueberspringen */
         }
     }
 }
@@ -403,9 +418,16 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
      * "kein eigener Speicher noetig" (reale Trap-Handler koennen das,
      * s. das Beispiel in Kapitel 5 -- die dortige TrapInit tut nichts
      * mit ihrem Speicher). */
-    size = memOverride;
-    if (size == 0)
-        size = Q9K_TLinkReadU32BE(hdr + Q9K_MH_MEM);
+    /* FIX (2026-10-06, Fortsetzung 112): d1 ("optional memory override",
+     * 68k_tech.pdf) darf den statischen Speicher nur VERGROESSERN. M$Mem ist
+     * der Mindestbedarf des Moduls. Frueher gewann jeder Wert != 0: mshell
+     * rief F$TLink fuer csl mit d1=$30 auf, csl bekam 48 statt $2690 Byte,
+     * der naechste Block (mshells Prozessspeicher) lag direkt dahinter und
+     * wurde von csl ueberschrieben -- gemessen als A-Line-Absturz in mshell
+     * beim echten Start ueber sysgo. */
+    size = Q9K_TLinkReadU32BE(hdr + Q9K_MH_MEM);
+    if (memOverride > size)
+        size = memOverride;
 
     if (size != 0) {
         Q9_u16 memErr = 0;

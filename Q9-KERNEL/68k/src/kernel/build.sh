@@ -52,12 +52,17 @@ sed -i.bak 's#"../q9sysglob.h"#"q9sysglob.h"#' q9kernel_cinit.c && rm q9kernel_c
 source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh
 
 KERNEL_VARIANT="${Q9K_KERNEL_VARIANT:-development}"
+# Ein Schalter fuer C UND Assembler (docs/DEBUG_KONZEPT_de.md, Abschnitt 1):
+# development -> C "-dQ9K_DEBUG", r68 "-a=Q9K_DEBUG=1"; atomic -> beides aus
+# (r68 bekommt Q9K_DEBUG=0, damit "ifne Q9K_DEBUG" ueberall definiert ist).
 case "$KERNEL_VARIANT" in
     development)
-        CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_MEMTRACE_ARENA"
+        CDEFS="-dQ9K_KERNEL_DEVELOPMENT -dQ9K_MEMTRACE_ARENA -dQ9K_DEBUG"
+        R68_VARIANT_OPT="-a=Q9K_DEBUG=1"
         ;;
     atomic)
         CDEFS="-dQ9K_KERNEL_ATOMIC"
+        R68_VARIANT_OPT="-a=Q9K_DEBUG=0"
         ;;
     *)
         echo "FEHLER: Q9K_KERNEL_VARIANT muss development oder atomic sein" >&2
@@ -114,6 +119,13 @@ case "$MMU_MODE" in
         ;;
 esac
 R68_CPU_OPT="-m${CPU_CODE}"
+# Q9K_BOOT=sysgo: auch der Developer-Kernel startet ueber den echten
+# Startprozess (IOMan-Init, F$Chain sysgo) statt ueber Q9K_TestProcA.
+case "${Q9K_BOOT:-test}" in
+    test) ;;
+    sysgo) CDEFS="$CDEFS -dQ9K_BOOT_SYSGO" ;;
+    *) echo "FEHLER: Q9K_BOOT muss test oder sysgo sein" >&2; exit 2 ;;
+esac
 CDEFS="$CDEFS -dQ9K_ALLOC_STANDARD -dQ9K_BOOT_STARTUP $CPU_DEF $MMU_DEF $FPU_DEF $MMU_MODE_DEF -tp=$XCC_TARGET"
 MMU_STATE=off; [ -n "$MMU_DEF" ] && MMU_STATE=on
 FPU_STATE=off; [ -n "$FPU_DEF" ] && FPU_STATE=on
@@ -170,7 +182,7 @@ WINE_BIN="$HOME/.local/wine-stable/Wine Stable.app/Contents/Resources/wine/bin/w
 export WINEPREFIX="$HOME/.local/wineprefix-os9"
 export WINEDEBUG=-all
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
-    "$R68_CPU_OPT" -o=q9kernel_entry.r "q9kernel_entry.a" < /dev/null
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=q9kernel_entry.r "q9kernel_entry.a" < /dev/null
 
 echo "== Verlinken (kein csl.l/acstart.r -- eigener Assembler-Einstieg) =="
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
@@ -199,7 +211,7 @@ file q9kernel || true
 echo "== forkchild.a bauen (eigenstaendiges Testmodul fuer F\$Fork, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/forkchild.a .
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
-    "$R68_CPU_OPT" -o=forkchild.r "forkchild.a" < /dev/null
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=forkchild.r "forkchild.a" < /dev/null
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
     -o=forkchild -f=orowoe forkchild.r < /dev/null
 echo "== Fertig: $OUTDIR/forkchild =="
@@ -208,7 +220,7 @@ file forkchild || true
 echo "== hellosvc.a bauen (eigenstaendiges Testmodul fuer F\$Fork, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/hellosvc.a .
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
-    "$R68_CPU_OPT" -o=hellosvc.r "hellosvc.a" < /dev/null
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=hellosvc.r "hellosvc.a" < /dev/null
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
     -o=hellosvc -f=orowoe hellosvc.r < /dev/null
 echo "== Fertig: $OUTDIR/hellosvc =="
@@ -217,7 +229,7 @@ file hellosvc || true
 echo "== chaintgt.a bauen (Zielmodul fuer den F\$Chain-Test, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/chaintgt.a .
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
-    "$R68_CPU_OPT" -o=chaintgt.r "chaintgt.a" < /dev/null
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=chaintgt.r "chaintgt.a" < /dev/null
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
     -o=chaintgt -f=orowoe chaintgt.r < /dev/null
 echo "== Fertig: $OUTDIR/chaintgt =="
@@ -226,7 +238,7 @@ file chaintgt || true
 echo "== nproctgt.a bauen (Zielmodul fuer den F\$NProc-Test, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/nproctgt.a .
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
-    "$R68_CPU_OPT" -o=nproctgt.r "nproctgt.a" < /dev/null
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=nproctgt.r "nproctgt.a" < /dev/null
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
     -o=nproctgt -f=orowoe nproctgt.r < /dev/null
 echo "== Fertig: $OUTDIR/nproctgt =="
@@ -235,7 +247,7 @@ file nproctgt || true
 echo "== evsigtgt.a bauen (Zielmodul fuer den blockierenden Ev\$Wait-Test, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/evsigtgt.a .
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
-    "$R68_CPU_OPT" -o=evsigtgt.r "evsigtgt.a" < /dev/null
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=evsigtgt.r "evsigtgt.a" < /dev/null
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
     -o=evsigtgt -f=orowoe evsigtgt.r < /dev/null
 echo "== Fertig: $OUTDIR/evsigtgt =="
@@ -244,7 +256,7 @@ file evsigtgt || true
 echo "== iattachsvc.a bauen (I\$Attach/I\$Detach-Regressionstest) =="
 cp "$SRCDIR"/iattachsvc.a .
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
-    "$R68_CPU_OPT" -o=iattachsvc.r "iattachsvc.a" < /dev/null
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=iattachsvc.r "iattachsvc.a" < /dev/null
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
     -o=iattachsvc -f=orowoe iattachsvc.r < /dev/null
 echo "== Fertig: $OUTDIR/iattachsvc =="

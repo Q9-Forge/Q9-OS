@@ -258,7 +258,9 @@ int Q9K_ProcChain(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
     Q9K_SetFrameReg(frameBase, 10, 0);                      /* a2 = Undefiniert   */
     Q9K_SetFrameReg(frameBase, 11, hdrAddr);                /* a3 = neues Primaermodul */
     Q9K_SetFrameReg(frameBase, 12, 0);                      /* a4 = Undefiniert   */
-    Q9K_SetFrameReg(frameBase, 13, blockTop);               /* a5 = Parametergrenze */
+    /* Fortsetzung 112: a5 = Parameter-ANFANG (= Anfangs-a7), wie bei F$Fork
+     * (Fortsetzung 110, 68k_tech.pdf "(a7) Stack pointer (same as (a5))"). */
+    Q9K_SetFrameReg(frameBase, 13, spBoundary);             /* a5 = Parameteranfang */
     Q9K_SetFrameReg(frameBase, 14, block + Q9K_A6_BIAS);    /* a6 = Datenbereich, $8000-Bias */
 
     Q9K_SetU16(frameBase + Q9K_PROCDESC_REGSAVE_SIZE + Q9K_EXCFRAME_SR_OFF,

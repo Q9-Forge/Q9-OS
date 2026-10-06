@@ -345,7 +345,8 @@ int main(void)
                  readSlotField(slotAddrFor(7UL), Q9K_TRAPTBL_OFF_STATICPTR), 0x7000UL);
     }
 
-    /* Fall 6: Aufrufer-Override (d1.l) hat Vorrang vor M$Mem. */
+    /* Fall 6 (Fortsetzung 112 geaendert): ein GROESSERER Aufrufer-Override
+     * (d1.l) gewinnt gegen M$Mem ... */
     {
         resetAll();
         setModuleField(Q9K_MH_EXEC, 0x40UL);
@@ -354,13 +355,32 @@ int main(void)
         g_modDirHdr = (unsigned long)g_fakeModule;
         g_srqmemReturn = 1;
         g_srqmemOutAddr = 0x9000UL;
-        g_srqmemOutSize = 64UL;
+        g_srqmemOutSize = 512UL;
+
+        ok = Q9K_ProcTLink(2UL, 512UL, (unsigned long)(g_fakeGlobals + 0x1000),
+                            &pastName, &modPtr, &execEntry, &initEntry, &staticPtr, &err);
+        checkU32("F6: Erfolg mit Aufrufer-Override", (unsigned long)ok, 1);
+        checkU32("F6: groesserer Override (512) gewinnt gegen M\\$Mem (256)",
+                 g_srqmemLastRequested, 512UL);
+    }
+
+    /* Fall 6b: ... ein KLEINERER nicht -- M$Mem ist der Mindestbedarf
+     * (live: mshell uebergab d1=$30 fuer csl mit M$Mem=$2690). */
+    {
+        resetAll();
+        setModuleField(Q9K_MH_EXEC, 0x40UL);
+        setModuleField(Q9K_MH_MEM, 256UL);
+        setModuleField(Q9K_MH_INIT, 0x50UL);
+        g_modDirHdr = (unsigned long)g_fakeModule;
+        g_srqmemReturn = 1;
+        g_srqmemOutAddr = 0x9000UL;
+        g_srqmemOutSize = 256UL;
 
         ok = Q9K_ProcTLink(2UL, 64UL, (unsigned long)(g_fakeGlobals + 0x1000),
                             &pastName, &modPtr, &execEntry, &initEntry, &staticPtr, &err);
-        checkU32("F6: Erfolg mit Aufrufer-Override", (unsigned long)ok, 1);
-        checkU32("F6: Q9K_ProcSRqMem mit Override-Groesse (64), NICHT M\\$Mem (256)",
-                 g_srqmemLastRequested, 64UL);
+        checkU32("F6b: Erfolg", (unsigned long)ok, 1);
+        checkU32("F6b: kleinerer Override (64) wird ignoriert, M\\$Mem (256) angefordert",
+                 g_srqmemLastRequested, 256UL);
     }
 
     /* Fall 7: Speicheranforderung schlaegt fehl -- Fehlercode wird

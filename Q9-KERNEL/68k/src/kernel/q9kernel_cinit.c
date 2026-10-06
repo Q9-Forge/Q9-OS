@@ -85,9 +85,12 @@ extern Q9_u32 Q9K_SchedFirstPick(void);    /* q9kernel_sched.c -- waehlt+setzt Q
 extern void   Q9K_SchedRun(void);          /* q9kernel_entry.a, kein Ruecksprung vorgesehen */
 extern void   Q9K_TimerActivate(void);     /* q9kernel_entry.a -- aktiviert den Board-Timer (Level 6, Autovector 30) */
 extern void   Q9K_IdleProcLoop(void);      /* q9kernel_entry.a -- reines "bra self", Ziel von Q9K_ProcCreateIdle */
+#ifdef Q9K_DEBUG
 extern void   Q9K_TestProcA(void);         /* q9kernel_entry.a -- Test-"Prozess" A, s. dortigen Kommentar */
 extern void   Q9K_TestProcB(void);         /* q9kernel_entry.a -- Test-"Prozess" B, s. dortigen Kommentar */
 extern void   Q9K_StartupProc(void);       /* q9kernel_entry.a -- minimal sysgo-style startup test */
+#endif
+extern void   Q9K_SysStartProc(void);      /* q9kernel_entry.a -- echter Startprozess: IOMan-Init, F$Chain sysgo */
 extern Q9_u32 Q9K_ModDirPopulateFromBootList(const Q9_u8 *bootList); /* q9kernel_moddir.c */
 extern void   Q9K_SysFLink(void);    /* q9kernel_entry.a, TRAP-#0-Handler fuer F$Link (Callcode 0x00) */
 extern void   Q9K_SysFUnLink(void);  /* q9kernel_entry.a, TRAP-#0-Handler fuer F$UnLink (Callcode 0x02) */
@@ -809,15 +812,21 @@ void Q9K_CInit(void)
     {
         Q9_u32 picked;
 
+#if defined(Q9K_DEBUG) && !defined(Q9K_BOOT_SYSGO)
+        /* Developer-Kernel, Standard: Testprozess. Q9K_TestProcA performs
+         * the resident IOMan initialization before its test sequence and
+         * the optional sysgo-style shell path (Q9K_TestStartup). */
 #if Q9K_BOOT_STARTUP
-        /* Q9K_TestProcA performs the resident IOMan initialization before
-         * entering the sysgo-style shell path.  Starting Q9K_StartupProc
-         * directly would use I$ChgDir/I$Open before D_DevTbl and the
-         * process paths exist. */
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
 #else
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcA, 5);
         Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_TestProcB, 3);
+#endif
+#else
+        /* Atom-Kernel (und Developer mit Q9K_BOOT=sysgo): echter Start wie
+         * OS-9 -- IOMan-Init, dann F$Chain in das Startmodul aus init
+         * (Fortsetzung 112, docs/DEBUG_KONZEPT_de.md Abschnitt 1). */
+        Q9K_ProcCreate((Q9_u32)(unsigned long)Q9K_SysStartProc, 5);
 #endif
 
         /* Permanenter Idle-Deskriptor (2026-09-29, s. Q9K_ProcCreateIdle

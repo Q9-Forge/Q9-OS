@@ -35,6 +35,10 @@ static unsigned long g_fakePoolNext;
 /* F$Fork-Scratchzelle fuer die gewuenschte Pfadanzahl (d3.w), von
  * Q9K_ProcFork beim Aufbau der Pfadtabelle gelesen. */
 #define Q9K_FORK_SCRATCH_NUMPATHS ((unsigned long)(g_fakeGlobals + 0x100))
+/* Fortsetzung 112: Pfad-Pool fuer die Referenzzaehlung geerbter Pfade. */
+static unsigned char g_fakePathPoolCellF[16];
+static unsigned char g_fakePathPoolF[8 * 256];
+#define Q9K_FORK_PATHPOOL_BASE_ADDR ((unsigned long)g_fakePathPoolCellF)
 
 /* State/Priority/Age/Next/Prev/SavedSP/EntryPC liegen im echten Deskriptor
  * nur wenige Byte auseinander (+0x00/+0x01/+0x02/+0x30/+0x34/+0x38/+0x3C)
@@ -494,6 +498,16 @@ int main(void)
             *(unsigned char *)(fakeCaller + Q9K_PROCDESC_PRIORITY_OFF) = 42;
             for (dioI = 0; dioI < Q9K_PROCDESC_DIO_SIZE; dioI++)
                 fakeCaller[Q9K_PROCDESC_DIO_OFF + dioI] = (unsigned char)(0xA0 + dioI);
+            /* Fortsetzung 112: P$Path[0]=nativ 5, [1]=Platzhalter 2, [2]=nativ 7;
+             * mit d3=2 duerfen nur [0] und [1] geerbt werden. */
+            memset(g_fakePathPoolF, 0, sizeof(g_fakePathPoolF));
+            Q9K_SetU32(Q9K_FORK_PATHPOOL_BASE_ADDR, (Q9_u32)(unsigned long)g_fakePathPoolF);
+            Q9K_SetU16((Q9_u32)(unsigned long)g_fakePathPoolF + 2UL * 256UL + 4UL, 1);  /* Deskr. 5: 1 Ref */
+            Q9K_SetU16((Q9_u32)(unsigned long)g_fakePathPoolF + 4UL * 256UL + 4UL, 1);  /* Deskr. 7: 1 Ref */
+            Q9K_SetU16((Q9_u32)(unsigned long)fakeCaller + Q9K_PROCDESC_PATH_OFF + 0UL, 5);
+            Q9K_SetU16((Q9_u32)(unsigned long)fakeCaller + Q9K_PROCDESC_PATH_OFF + 2UL, 2);
+            Q9K_SetU16((Q9_u32)(unsigned long)fakeCaller + Q9K_PROCDESC_PATH_OFF + 4UL, 7);
+            Q9K_SetU16(Q9K_FORK_SCRATCH_NUMPATHS, 2);
             Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)fakeCaller);
 
             pid2 = Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 0, &error);
@@ -504,6 +518,17 @@ int main(void)
             checkU32("F2: Deskriptor-ParentDesc == fakeCaller",
                      Q9K_GetU32(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PARENT_OFF),
                      (Q9_u32)(unsigned long)fakeCaller);
+            checkU32("F2: Pfad 0 geerbt (nativ 5)",
+                     Q9K_GetU16(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PATH_OFF + 0UL), 5);
+            checkU32("F2: Pfad 1 geerbt (Platzhalter 2)",
+                     Q9K_GetU16(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PATH_OFF + 2UL), 2);
+            checkU32("F2: Pfad 2 NICHT geerbt (d3=2)",
+                     Q9K_GetU16(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PATH_OFF + 4UL), 0);
+            checkU32("F2: Deskriptor 5 hat jetzt 2 Referenzen",
+                     Q9K_GetU16((Q9_u32)(unsigned long)g_fakePathPoolF + 2UL * 256UL + 4UL), 2);
+            checkU32("F2: Deskriptor 7 unveraendert 1 Referenz",
+                     Q9K_GetU16((Q9_u32)(unsigned long)g_fakePathPoolF + 4UL * 256UL + 4UL), 1);
+            Q9K_SetU16(Q9K_FORK_SCRATCH_NUMPATHS, 0);
             /* Fortsetzung 111: Standardverzeichnisse (P$DIO) geerbt. */
             checkU32("F2: P$DIO Byte 0 (Datenverzeichnis) geerbt",
                      Q9K_GetU8(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_DIO_OFF), 0xA0);
@@ -633,6 +658,48 @@ int main(void)
         }
     }
 
+
+    /* Fall F5b/F5c (Fortsetzung 112): M$IRefs-Tabellen nach 68k_tech.pdf --
+     * Folge von Laeufen [MS, Anzahl, LS...] bis MS=0 UND Anzahl=0.
+     * F5b bildet sysgo nach: beide Tabellen LEER (nur 0/0), danach die Bytes
+     * der echten sysgo-CRC (00 9E 94 59). Der alte Parser las daraus eine
+     * zweite "Gruppe" mit $9459 Eintraegen und relozierte fremden Speicher.
+     * F5c: Code-Tabelle leer, Daten-Tabelle mit ZWEI Laeufen. */
+    {
+        static unsigned char hdr5b[0x80];
+        static unsigned char area5b[0x400];      /* Datenblock + Umgebung */
+        unsigned long blk = (unsigned long)(area5b + 0x100);
+        unsigned int k, changed = 0;
+
+        memset(hdr5b, 0, sizeof(hdr5b));
+        memset(area5b, 0xA5, sizeof(area5b));
+        putBE32(hdr5b, 0x40, 0x50);              /* M$IData */
+        putBE32(hdr5b, 0x44, 0x58);              /* M$IRefs */
+        putBE32(hdr5b, 0x50, 0x100);             /* IData: Ziel $100 ... */
+        putBE32(hdr5b, 0x54, 0);                 /* ... Anzahl 0 (wie sysgo) */
+        putBE16(hdr5b, 0x58, 0); putBE16(hdr5b, 0x5A, 0);   /* Code-Tabelle: leer */
+        putBE16(hdr5b, 0x5C, 0); putBE16(hdr5b, 0x5E, 0);   /* Daten-Tabelle: leer */
+        hdr5b[0x60] = 0x00; hdr5b[0x61] = 0x9E; hdr5b[0x62] = 0x94; hdr5b[0x63] = 0x59; /* CRC */
+        Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk);
+        for (k = 0; k < sizeof(area5b); k++)
+            if (area5b[k] != 0xA5) changed++;
+        checkU32("F5b: leere M$IRefs-Tabellen (sysgo) -- kein Byte veraendert", changed, 0);
+
+        memset(hdr5b, 0, sizeof(hdr5b));
+        memset(area5b, 0, sizeof(area5b));
+        putBE32(hdr5b, 0x44, 0x58);              /* nur M$IRefs */
+        putBE16(hdr5b, 0x58, 0); putBE16(hdr5b, 0x5A, 0);   /* Code-Tabelle: leer */
+        putBE16(hdr5b, 0x5C, 0); putBE16(hdr5b, 0x5E, 1); putBE16(hdr5b, 0x60, 0x10); /* Lauf 1 */
+        putBE16(hdr5b, 0x62, 0); putBE16(hdr5b, 0x64, 1); putBE16(hdr5b, 0x66, 0x20); /* Lauf 2 */
+        putBE16(hdr5b, 0x68, 0); putBE16(hdr5b, 0x6A, 0);   /* Ende */
+        putBE32(area5b + 0x100, 0x10, 7);
+        putBE32(area5b + 0x100, 0x20, 9);
+        Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk);
+        checkU32("F5c: Daten-Tabelle Lauf 1 reloziert (7+block)",
+                 (Q9_u32)getBE32(blk + 0x10), (Q9_u32)(unsigned int)(7 + blk));
+        checkU32("F5c: Daten-Tabelle Lauf 2 reloziert (9+block)",
+                 (Q9_u32)getBE32(blk + 0x20), (Q9_u32)(unsigned int)(9 + blk));
+    }
 
     /* F$DFork: the child receives the initial register image but is removed
      * from the ready queue and remains allocated in the WAITING state. */
