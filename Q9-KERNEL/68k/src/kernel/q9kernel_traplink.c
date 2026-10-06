@@ -532,3 +532,34 @@ void Q9K_SysTLinkImpl(void)
  * (block+$760) -- keine Sonderallokation, keine feste "$E33C"-Konstante,
  * kein Kopieren von csl mehr noetig. Volle Herleitung in
  * docs/OWN_KERNEL_STATUS.md, Fortsetzung 51. */
+
+/* Q9K_ProcTrapReleaseAll (Fortsetzung 119) -- gibt ALLE 15 Trap-Handler
+ * eines Prozesses frei: Modul-Link zuruecknehmen, statischen Speicher
+ * zurueckgeben, Slot leeren (dieselbe Freigabe wie F$TLink mit Name 0).
+ * Gebraucht von F$Chain: das neue Programm erbt keine Trap-Handler des
+ * alten. Ohne das scheiterte mshell nach "login -> F$Chain mshell" an
+ * seinem ersten F$TLink 13 (csl) mit E$ModBsy -- login hatte csl schon
+ * eingetragen, die Shell meldete den Fehler und endete sofort (Syscall-
+ * Trace, Fortsetzung 119). */
+void Q9K_ProcTrapReleaseAll(Q9_u32 proc)
+{
+    Q9_u32 t;
+
+    if (proc == 0)
+        return;
+    for (t = 1UL; t <= 15UL; t++) {
+        Q9_u32 slot = proc + Q9K_PROCDESC_TRAPTBL_OFF + (t - 1UL) * Q9K_TRAPTBL_ENTRY_SIZE;
+        Q9_u32 mod = Q9K_GetU32(slot + Q9K_TRAPTBL_OFF_MODPTR);
+        Q9_u32 st  = Q9K_GetU32(slot + Q9K_TRAPTBL_OFF_STATICPTR);
+        Q9_u32 sz  = Q9K_GetU32(proc + Q9K_TRAPTBL_SIZE_BASE + (t - 1UL) * 4UL);
+
+        if (mod != 0)
+            Q9K_ModDirUnlinkByHeader(mod);
+        if (st != 0 && sz != 0)
+            Q9K_ProcSRtMem(st, sz);
+        Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_MODPTR, 0);
+        Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_EXECENTRY, 0);
+        Q9K_SetU32(slot + Q9K_TRAPTBL_OFF_STATICPTR, 0);
+        Q9K_SetU32(proc + Q9K_TRAPTBL_SIZE_BASE + (t - 1UL) * 4UL, 0);
+    }
+}

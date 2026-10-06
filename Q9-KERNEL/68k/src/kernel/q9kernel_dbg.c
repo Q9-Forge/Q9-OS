@@ -271,13 +271,32 @@ void Q9K_DbgInit(void)
 /* ---------- Eintritts-/Rueckkehr-Haken (aus Q9K_TrapDispatch/
  * Q9K_TrapAfterCall per bsr aufgerufen, s. q9kernel_entry.a) ---------- */
 
+/* Arbeitsbereich der Haken (Fortsetzung 119). Die Haken laufen auf dem
+ * Stack des AUFRUFENDEN Prozesses, oft tief verschachtelt (F$Fork ->
+ * F$Load -> IOMan -> RBF). Die gut 200 Byte lokaler Strukturen liessen dort
+ * sysgos kleinen Stack ueberlaufen: Q9TraceMaskTest kehrte nach Adresse 2
+ * zurueck (gemessen, Start mit Q9K_TRACEBOOT=1). Auf dem Ziel liegt der
+ * Bereich deshalb fest bei $2200 (512 Byte, hinter den Buchfuehrungszellen),
+ * auf dem Host als statisches Feld. Die Haken sperren waehrenddessen die
+ * Interrupts (q9kernel_entry.a), damit kein zweiter Prozess ihn mitbenutzt. */
+typedef struct Q9DbgScratch {
+    Q9RingBuf     rb;
+    Q9TraceFilter f;
+    Q9TraceEvent  ev;
+    Q9_u8         rec[Q9TRACE_MAX_REC];
+} Q9DbgScratch;
+typedef char Q9DbgScratchFits[(sizeof(Q9DbgScratch) <= 0x200) ? 1 : -1];
+#if defined(_OSK)
+#define Q9DBG_SCRATCH ((Q9DbgScratch *)0x2200UL)
+#else
+static Q9DbgScratch g_q9dbgScratch;
+#define Q9DBG_SCRATCH (&g_q9dbgScratch)
+#endif
+
 static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
                        int carrySet, Q9_u16 pid, Q9_u32 tick)
 {
-    Q9RingBuf rb;
-    Q9TraceFilter f;
-    Q9TraceEvent ev;
-    Q9_u8 rec[Q9TRACE_MAX_REC];
+    Q9DbgScratch *w = Q9DBG_SCRATCH;
     Q9_u32 recLen;
 
     if (Q9K_GetU32(Q9DBG_A_ENABLED) == 0)
@@ -285,25 +304,25 @@ static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
     if (Q9K_GetU32(Q9DBG_A_BUF_ADDR) == 0)
         return; /* Boot-Allokation schlug fehl -- Trace bleibt wirkungslos */
 
-    LoadFilter(&f);
-    ev.recType = recType;
-    ev.code = code;
-    ev.pid = pid;
-    ev.user = 0;       /* Benutzer-Tracking ist Paket 4 (Syscall-Beschreibungstabelle) */
-    ev.path = 0xffff;  /* dito Pfadnummer -- noch keine Quelle dafuer verdrahtet */
-    ev.fileId = 0;
-    ev.isReturn = (recType == Q9TRACE_REC_RETURN || recType == Q9TRACE_REC_INTERN_RETURN);
-    ev.carrySet = carrySet;
+    LoadFilter(&w->f);
+    w->ev.recType = recType;
+    w->ev.code = code;
+    w->ev.pid = pid;
+    w->ev.user = 0;       /* Benutzer-Tracking ist Paket 4 (Syscall-Beschreibungstabelle) */
+    w->ev.path = 0xffff;  /* dito Pfadnummer -- noch keine Quelle dafuer verdrahtet */
+    w->ev.fileId = 0;
+    w->ev.isReturn = (recType == Q9TRACE_REC_RETURN || recType == Q9TRACE_REC_INTERN_RETURN);
+    w->ev.carrySet = carrySet;
 
-    if (!Q9TraceShouldLog(&f, &ev))
+    if (!Q9TraceShouldLog(&w->f, &w->ev))
         return;
 
-    recLen = Q9TraceBuildRecord(rec, recType, code, depth, carrySet,
+    recLen = Q9TraceBuildRecord(w->rec, recType, code, depth, carrySet,
                                  pid, tick, 0, 0, 0);
 
-    LoadRingBuf(&rb);
-    Q9RingBufWrite(&rb, rec, recLen);
-    StoreRingBuf(&rb);
+    LoadRingBuf(&w->rb);
+    Q9RingBufWrite(&w->rb, w->rec, recLen);
+    StoreRingBuf(&w->rb);
 }
 
 /* Eintritt: vom Assembler-Stub direkt nach dem Ermitteln des Callcodes
@@ -324,73 +343,92 @@ static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
 #define Q9DBG_A_CUR_PROC     0x004CUL /* Q9_D_Proc */
 #endif
 #define Q9DBG_PD_ID          0x00UL   /* P$ID, Wort */
-#define Q9DBG_PD_NEST        0x3ACUL  /* Syscall-Verschachtelungstiefe, Langwort */
 #define Q9DBG_CALLCODE_SELF  0x7FU    /* F$Q9Dbg -- wird nie protokolliert (Konzept 2.5) */
+
+/* Fortsetzung 119, zweite Fassung: Tiefe und Callcode-Stapel PRO PROZESS
+ * im Deskriptor (Byte $3F0 = Tiefe, $3F1-$3F8 = Callcodes je Tiefe; in
+ * F$Fork-Slots genullt, s. Q9K_ProcPoolAlloc). Der globale Zaehler war
+ * falsch, sobald ein Prozess mitten im Aufruf wechselte: F$Sleep/F$Wait/
+ * F$Exit/F$Chain/F$RTE/F$NProc kehren nie ueber den Rueckkehr-Haken zurueck
+ * und erhoehen die Tiefe deshalb nicht; jeder andere Aufruf kommt im
+ * SELBEN Prozess zurueck, in dem er begann. Live gemessen vorher: nach
+ * F$Fork->F$Load erreichte der globale Zaehler 8, danach blieb der Trace
+ * fuer den Rest des Starts stumm. Ohne bekannten Prozess (D_Proc = 0, frueher
+ * Boot, Hosttests) gilt die globale Fassung weiter. */
+#define Q9DBG_PD_DEPTH       0x3F0UL  /* Byte */
+#define Q9DBG_PD_CODES       0x3F1UL  /* Q9DBG_TRAP_MAXDEPTH Byte */
+
+static int Q9K_DbgNoReturn(Q9_u8 code)
+{
+    return code == 0x04 || code == 0x05 || code == 0x06 || code == 0x0A ||
+           code == 0x1E || code == 0x2D;   /* Wait, Chain, Exit, Sleep, RTE, NProc */
+}
+
+static Q9_u16 Q9K_DbgPid(Q9_u32 cur)
+{
+    return (Q9_u16)((Q9K_GetU8(cur + Q9DBG_PD_ID) << 8) | Q9K_GetU8(cur + Q9DBG_PD_ID + 1));
+}
 
 void Q9K_DbgLogEntryImpl(void)
 {
-    Q9_u32 depth = Q9K_GetU32(Q9DBG_A_TRAP_DEPTH);
-    Q9_u8 code = Q9K_GetU8(Q9DBG_A_DISPATCH_CODE_LOW); /* ($1370).w, unteres Byte -- Callcode passt in 0-255 */
-    Q9_u16 pid = 0;
+    Q9_u8 code = Q9K_GetU8(Q9DBG_A_DISPATCH_CODE_LOW); /* ($1370).w, unteres Byte */
     Q9_u32 cur = Q9K_GetU32(Q9DBG_A_CUR_PROC);
+    Q9_u32 depth;
 
-    /* Fortsetzung 119: F$Sleep/F$Wait/F$Exit wechseln den Prozess per rte,
-     * ohne durch Q9K_TrapAfterCall zu laufen -- der Rueckkehr-Haken fehlt
-     * dann, und der globale Zaehler wuchs mit jedem Schlaf (ab Tiefe 8
-     * waere nichts mehr protokolliert worden). Hat der aktuelle Prozess
-     * keinen offenen Fremdaufruf ($3AC = 0), ist dies ein aeusserer Trap:
-     * Tiefe 0. Verschachtelte Traps entstehen nur aus IOMan/Managern heraus. */
     if (cur != 0) {
-        pid = (Q9_u16)((Q9K_GetU8(cur + Q9DBG_PD_ID) << 8) | Q9K_GetU8(cur + Q9DBG_PD_ID + 1));
-        if (Q9K_GetU8(cur + Q9DBG_PD_NEST) == 0 && Q9K_GetU8(cur + Q9DBG_PD_NEST + 1) == 0 &&
-            Q9K_GetU8(cur + Q9DBG_PD_NEST + 2) == 0 && Q9K_GetU8(cur + Q9DBG_PD_NEST + 3) == 0)
-            depth = 0;
-    }
-
-    /* HINWEIS: Prozess-ID bleibt bewusst 0 ("alle", Filter-Vertrag) --
-     * Q9_D_Proc ist ein ZEIGER auf den Prozessdeskriptor, keine
-     * Prozess-ID direkt; das noetige Deskriptor-Feld (P$ID o.ae.) ist
-     * in dieser Runde nicht verifiziert. Lieber 0 als eine geratene
-     * Feldadresse -- dieselbe Vorsicht wie bei der Speicherplatzierung. */
-
-    /* KORREKTUR (Fortsetzung 119): die hier zuerst vermutete Endlosschleife
-     * in __multiply war in Wahrheit der absolute Aufruf dieser Funktion aus
-     * q9kernel_entry.a ("jsr Label"/"movea.l #Label" liefert in diesem ab 0
-     * gelinkten, bei $7100 geladenen Modul die LINK-Adresse) -- behoben
-     * ueber Zeigerzellen. "depth * sizeof(Q9_u32)" ist eine Multiplikation
-     * mit der Konstanten 4, die der Compiler ohnehin als Schiebebefehl
-     * erzeugt, und bleibt auf dem 64-Bit-Testhost (sizeof = 8) korrekt. */
-    if (depth < Q9DBG_TRAP_MAXDEPTH) {
-        Q9K_PutU32(Q9DBG_A_TRAP_CODE + Q9DBG_SLOT(depth), code);
-        Q9K_PutU32(Q9DBG_A_TRAP_PID + Q9DBG_SLOT(depth), pid);
-        Q9K_PutU32(Q9DBG_A_TRAP_TICK + Q9DBG_SLOT(depth), 0);
+        Q9_u16 pid = Q9K_DbgPid(cur);
+        depth = Q9K_GetU8(cur + Q9DBG_PD_DEPTH);
+        if (depth >= Q9DBG_TRAP_MAXDEPTH)
+            depth = Q9DBG_TRAP_MAXDEPTH - 1;   /* gegen Altlasten: nie verstummen */
         if (code != Q9DBG_CALLCODE_SELF)
             LogCommon(Q9TRACE_REC_ENTRY, code, (unsigned)depth, 0, pid, Q9K_GetU32(Q9DBG_A_TICKS));
+        if (!Q9K_DbgNoReturn(code) && depth + 1 < Q9DBG_TRAP_MAXDEPTH) {
+            Q9K_PutU8(cur + Q9DBG_PD_CODES + depth, code);
+            Q9K_PutU8(cur + Q9DBG_PD_DEPTH, (Q9_u8)(depth + 1));
+        }
+        return;
+    }
+
+    depth = Q9K_GetU32(Q9DBG_A_TRAP_DEPTH);
+    if (depth < Q9DBG_TRAP_MAXDEPTH) {
+        Q9K_PutU32(Q9DBG_A_TRAP_CODE + Q9DBG_SLOT(depth), code);
+        Q9K_PutU32(Q9DBG_A_TRAP_PID + Q9DBG_SLOT(depth), 0);
+        Q9K_PutU32(Q9DBG_A_TRAP_TICK + Q9DBG_SLOT(depth), 0);
+        if (code != Q9DBG_CALLCODE_SELF)
+            LogCommon(Q9TRACE_REC_ENTRY, code, (unsigned)depth, 0, 0, Q9K_GetU32(Q9DBG_A_TICKS));
     }
     Q9K_PutU32(Q9DBG_A_TRAP_DEPTH, depth + 1);
 }
 
-/* Rueckkehr: vom Assembler-Stub unmittelbar vor "rte" in
- * Q9K_TrapAfterCall aufgerufen. Carry wurde vom Stub bereits VOR dem
- * Betreten dieser Funktion in Q9DBG_A_RET_CARRY abgelegt (aus dem noch
- * unveraenderten CCR-Arbeitsregister des bestehenden Epilogs gelesen --
- * KEINE neue Rahmen-Offset-Annahme, s. Kopfkommentar der Einfuegestelle
- * in q9kernel_entry.a). */
 void Q9K_DbgLogReturnImpl(void)
 {
-    Q9_u32 depth = Q9K_GetU32(Q9DBG_A_TRAP_DEPTH);
     int carrySet = (int)Q9K_GetU32(Q9DBG_A_RET_CARRY);
+    Q9_u32 cur = Q9K_GetU32(Q9DBG_A_CUR_PROC);
+    Q9_u32 depth;
 
+    if (cur != 0) {
+        Q9_u8 code;
+        depth = Q9K_GetU8(cur + Q9DBG_PD_DEPTH);
+        if (depth == 0 || depth > Q9DBG_TRAP_MAXDEPTH)
+            return;
+        depth--;
+        Q9K_PutU8(cur + Q9DBG_PD_DEPTH, (Q9_u8)depth);
+        code = Q9K_GetU8(cur + Q9DBG_PD_CODES + depth);
+        if (code != Q9DBG_CALLCODE_SELF)
+            LogCommon(Q9TRACE_REC_RETURN, code, (unsigned)depth, carrySet, Q9K_DbgPid(cur),
+                      Q9K_GetU32(Q9DBG_A_TICKS));
+        return;
+    }
+
+    depth = Q9K_GetU32(Q9DBG_A_TRAP_DEPTH);
     if (depth == 0)
-        return; /* unbalanciert -- sollte nie vorkommen, sicherheitshalber kein Unterlauf */
+        return; /* unbalanciert -- sicherheitshalber kein Unterlauf */
     depth--;
     Q9K_PutU32(Q9DBG_A_TRAP_DEPTH, depth);
-
     if (depth < Q9DBG_TRAP_MAXDEPTH) {
         Q9_u8 code = (Q9_u8)Q9K_GetU32(Q9DBG_A_TRAP_CODE + Q9DBG_SLOT(depth));
-        Q9_u16 pid = (Q9_u16)Q9K_GetU32(Q9DBG_A_TRAP_PID + Q9DBG_SLOT(depth));
         if (code != Q9DBG_CALLCODE_SELF)
-            LogCommon(Q9TRACE_REC_RETURN, code, (unsigned)depth, carrySet, pid, Q9K_GetU32(Q9DBG_A_TICKS));
+            LogCommon(Q9TRACE_REC_RETURN, code, (unsigned)depth, carrySet, 0, Q9K_GetU32(Q9DBG_A_TICKS));
     }
 }
 

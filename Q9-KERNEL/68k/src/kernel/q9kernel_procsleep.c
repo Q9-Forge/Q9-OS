@@ -128,6 +128,14 @@ static void Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 regIndex, Q9_u32 value)
     Q9K_SetU8(addr + 3, (Q9_u8)value);
 }
 
+/* Signalfelder -- hier vor Q9K_ProcSleep, das sie seit Fortsetzung 119 braucht. */
+#ifndef Q9K_PROCDESC_SIGNAL_OFF
+#define Q9K_PROCDESC_SIGNAL_OFF  0x26UL     /* P$Signal, s. process.a */
+#endif
+#ifndef Q9K_PROCDESC_SIGLVL_OFF
+#define Q9K_PROCDESC_SIGLVL_OFF  0x210UL    /* P$SigLvl (Byte), s. process.a */
+#endif
+
 /* Q9K_ProcSleep -- echte F$Sleep-Kernlogik (s. Kopfkommentar). Rueckgabe:
  * Deskriptoradresse des naechsten zu startenden Prozesses, oder 0 falls
  * keiner mehr bereit ist (der Aufrufer -- Q9K_SysFSleep, q9kernel_entry.a
@@ -151,6 +159,23 @@ Q9_u32 Q9K_ProcSleep(Q9_u32 callerDesc, Q9_u32 ticksIn)
      * schlafenden/wartenden Prozess "fertig"). */
     frameBase = Q9K_GetU32(callerDesc + Q9K_PROCDESC_SAVEDSP_OFF);
     Q9K_SetFrameReg(frameBase, 0, 0);
+
+    /* FIX (2026-10-06, Fortsetzung 119), 68k_tech.pdf F$SigMask: "When a
+     * process makes an F$Sleep or F$Wait system call, its signal mask is
+     * automatically cleared. If a signal is already queued, these calls
+     * return immediately (to the intercept routine)." Fehlte bisher: mshell
+     * sperrt vor dem Warten auf Eingabe die Signale (F$SigMask 1), meldet
+     * SS_SSig an und schlaeft -- das Tastensignal ($FA) blieb in P$Signal
+     * liegen und weckte nie (Syscall-Trace: mshell "s" mit sig=00fa). */
+    Q9K_SetU8(callerDesc + Q9K_PROCDESC_SIGLVL_OFF, 0);
+    {
+        Q9_u16 pending = Q9K_GetU16(callerDesc + Q9K_PROCDESC_SIGNAL_OFF);
+        if (pending != 0) {
+            Q9K_SchedInsert(callerDesc);
+            (void)Q9K_IcptDeliver(callerDesc, pending);
+            return Q9K_SchedFirstPick();
+        }
+    }
 
     if (ticks == 0) {
         /* Sleep(0) = unendlich, s. Kopfkommentar */
@@ -237,12 +262,6 @@ void Q9K_SysSleepImpl(void)
  * Ctrl-C/Ctrl-E oder F$Icpt -- muss der Code hier mitwachsen.
  * --------------------------------------------------------------------- */
 #ifndef Q9K_SEND_SCRATCH_PID
-#endif
-#ifndef Q9K_PROCDESC_SIGNAL_OFF
-#define Q9K_PROCDESC_SIGNAL_OFF  0x26UL     /* P$Signal, s. process.a */
-#endif
-#ifndef Q9K_PROCDESC_SIGLVL_OFF
-#define Q9K_PROCDESC_SIGLVL_OFF  0x210UL    /* P$SigLvl (Byte), s. process.a */
 #endif
 #ifndef Q9K_SIGNAL_KILL
 #define Q9K_SIGNAL_KILL 0U                  /* S$Kill, aus der realen Signaltabelle gezaehlt */

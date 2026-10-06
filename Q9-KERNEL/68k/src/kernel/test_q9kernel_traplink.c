@@ -617,6 +617,19 @@ int main(void)
         g_allocOverride = 0;
     }
 
+    /* F11 (Fortsetzung 119): Q9K_ProcTrapReleaseAll leert alle Slots --
+     * F$Chain ruft es, damit das neue Programm (mshell nach login) sein
+     * eigenes csl per F$TLink eintragen kann statt E$ModBsy zu bekommen. */
+    {
+        Q9K_SetU32(slotAddrFor(3UL) + Q9K_TRAPTBL_OFF_MODPTR, (unsigned long)g_fakeModule);
+        Q9K_SetU32(slotAddrFor(3UL) + Q9K_TRAPTBL_OFF_EXECENTRY, 0x1234UL);
+        Q9K_SetU32(slotAddrFor(15UL) + Q9K_TRAPTBL_OFF_MODPTR, (unsigned long)g_fakeModule);
+        Q9K_ProcTrapReleaseAll(Q9K_FAKE_PROCDESC);
+        checkU32("F11: Slot 3 Modul freigegeben", readSlotField(slotAddrFor(3UL), Q9K_TRAPTBL_OFF_MODPTR), 0);
+        checkU32("F11: Slot 3 Einsprung geleert", readSlotField(slotAddrFor(3UL), Q9K_TRAPTBL_OFF_EXECENTRY), 0);
+        checkU32("F11: Slot 15 Modul freigegeben", readSlotField(slotAddrFor(15UL), Q9K_TRAPTBL_OFF_MODPTR), 0);
+    }
+
     if (g_failures == 0) {
         printf("Alle Tests erfolgreich.\n");
         return 0;

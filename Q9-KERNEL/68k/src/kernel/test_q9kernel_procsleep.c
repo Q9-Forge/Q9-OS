@@ -40,7 +40,7 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_PROCDESC_SLEEPTICKS_OFF 0x08UL
 #define Q9K_PROCDESC_SAVEDSP_OFF    0x10UL
 
-#define Q9K_TEST_DESC_SIZE 64UL
+#define Q9K_TEST_DESC_SIZE 0x240UL  /* Fortsetzung 119: bis P$SigLvl ($210) */
 
 /* Aufrufzaehlende Stubs. */
 static int g_schedInsertCalls = 0;
@@ -134,7 +134,7 @@ int main(void)
     /* Fall 1: Sleep(0) -- unendlich. State='s', SleepTicks==Sentinel,
      * Q9K_SleepQInsert aufgerufen, NICHT Q9K_SchedInsert. */
     {
-        memset(pool, 0xCC, sizeof(pool));
+        memset(pool, 0xCC, sizeof(pool)); Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
         memset(frame, 0xCC, sizeof(frame));
         Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
         resetStubs();
@@ -150,11 +150,35 @@ int main(void)
         checkU32("F1: Rahmen-D0 == 0 (keine vorzeitige Aktivierung moeglich)", getBE32(frameBase + 0 * 4), 0);
     }
 
+    /* Fall 1b (Fortsetzung 119): Signal steht an und die Maske ist zu --
+     * F$Sleep loescht die Maske, schlaeft NICHT und stellt das Signal zu
+     * (68k_tech.pdf, F$SigMask). */
+    {
+        memset(pool, 0xCC, sizeof(pool)); Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
+        memset(frame, 0xCC, sizeof(frame));
+        Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, 'a');
+        Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0xFA);
+        Q9K_SetU8(desc + Q9K_PROCDESC_SIGLVL_OFF, 1);
+        resetStubs();
+        g_icptCalls = 0;
+        g_schedFirstPickReturn = 0x4321;
+
+        next = Q9K_ProcSleep(desc, 0);
+        checkU32("F1b: Rueckgabe == Q9K_SchedFirstPick()-Ergebnis", next, 0x4321);
+        checkU32("F1b: Signalmaske geloescht", (Q9_u32)Q9K_GetU8(desc + Q9K_PROCDESC_SIGLVL_OFF), 0);
+        checkU32("F1b: NICHT in die Schlafliste", (Q9_u32)g_sleepQInsertCalls, 0);
+        checkU32("F1b: zurueck in die Ready-Queue", (Q9_u32)g_schedInsertCalls, 1);
+        checkU32("F1b: Signal an die Intercept-Zustellung", (Q9_u32)g_icptLastSignal, 0xFA);
+        checkU32("F1b: State bleibt 'a'", (Q9_u32)Q9K_GetU8(desc + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'a');
+        Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
+    }
+
     /* Fall 2: Sleep(1) -- reiner Zeitscheiben-Verzicht. State bleibt
      * unangetastet (kein 's'), Q9K_SchedInsert aufgerufen, NICHT
      * Q9K_SleepQInsert. */
     {
-        memset(pool, 0xCC, sizeof(pool));
+        memset(pool, 0xCC, sizeof(pool)); Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
         memset(frame, 0xCC, sizeof(frame));
         Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, 'a');
         Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
@@ -173,7 +197,7 @@ int main(void)
 
     /* Fall 3: Sleep(5) -- echter Countdown (n-1 = 4 gespeichert). */
     {
-        memset(pool, 0xCC, sizeof(pool));
+        memset(pool, 0xCC, sizeof(pool)); Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
         memset(frame, 0xCC, sizeof(frame));
         Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
         resetStubs();
@@ -187,7 +211,7 @@ int main(void)
 
     /* Fall 4: Sleep(2) -- Randfall, kleinster echter Countdown (n-1=1). */
     {
-        memset(pool, 0xCC, sizeof(pool));
+        memset(pool, 0xCC, sizeof(pool)); Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
         memset(frame, 0xCC, sizeof(frame));
         Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
         resetStubs();
@@ -202,7 +226,7 @@ int main(void)
     {
         Q9_u32 val256 = 0x80000000UL | 256UL;
 
-        memset(pool, 0xCC, sizeof(pool));
+        memset(pool, 0xCC, sizeof(pool)); Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
         memset(frame, 0xCC, sizeof(frame));
         Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);
         resetStubs();
@@ -217,7 +241,7 @@ int main(void)
     {
         Q9_u32 val256 = 0x80000000UL | 3UL;   /* 3*25/64 = 1 (abgerundet) */
 
-        memset(pool, 0xCC, sizeof(pool));
+        memset(pool, 0xCC, sizeof(pool)); Q9K_SetU16(desc + Q9K_PROCDESC_SIGNAL_OFF, 0);
         memset(frame, 0xCC, sizeof(frame));
         Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, 'a');
         Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frameBase);

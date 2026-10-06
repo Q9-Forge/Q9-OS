@@ -70,6 +70,7 @@ extern Q9_u32 Q9K_ModDirLinkByName(Q9_u16 typeLang, const char *name);
 extern void   Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);
 extern Q9_u32 Q9K_AllocMem(Q9_u32 size);
 extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size);
+extern void   Q9K_ProcTrapReleaseAll(Q9_u32 proc);   /* q9kernel_traplink.c */
 extern void   Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block);
 extern Q9_u32 Q9K_ReadHdrU32BE(Q9_u32 addr);
 extern void   Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 index, Q9_u32 value);
@@ -342,6 +343,9 @@ void Q9K_SysChainReleaseImpl(void)
     /* F$UAcct is an optional OS9P2 callback on Chain.  Q9 owns alarms
      * directly, so perform the same process-lifecycle cleanup natively. */
     Q9K_AlarmCleanupProcess(Q9K_GetU32(Q9_D_PROC));
+    /* Fortsetzung 119: Trap-Handler des alten Programms freigeben (s.
+     * Q9K_ProcTrapReleaseAll, q9kernel_traplink.c). */
+    Q9K_ProcTrapReleaseAll(Q9K_GetU32(Q9_D_PROC));
 
     if (oldMod != 0UL)
         Q9K_ModDirUnlinkByHeader(oldMod);

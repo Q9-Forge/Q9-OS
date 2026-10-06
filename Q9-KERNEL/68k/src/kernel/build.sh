@@ -53,6 +53,10 @@ sed -i.bak 's#"../q9sysglob.h"#"q9sysglob.h"#' q9kernel_cinit.c && rm q9kernel_c
 
 source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh
 
+# Q9K_TRACEBOOT=1 (nur Developer-Kernel wirksam): Syscall-Trace schon beim
+# echten Start (Q9K_SysStartProc) einschalten -- Fehlersuche ohne eigenes
+# Steuerprogramm; der Puffer laeuft im Ueberschreiben-Modus und haelt die
+# letzten Saetze, der Q9-Flux-Dump gibt ihn roh aus (tools/q9trace_decode.py).
 KERNEL_VARIANT="${Q9K_KERNEL_VARIANT:-development}"
 # Ein Schalter fuer C UND Assembler (docs/DEBUG_KONZEPT_de.md, Abschnitt 1):
 # development -> C "-dQ9K_DEBUG", r68 "-a=Q9K_DEBUG=1"; atomic -> beides aus
@@ -187,7 +191,7 @@ WINE_BIN="$HOME/.local/wine-stable/Wine Stable.app/Contents/Resources/wine/bin/w
 export WINEPREFIX="$HOME/.local/wineprefix-os9"
 export WINEDEBUG=-all
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
-    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=q9kernel_entry.r "q9kernel_entry.a" < /dev/null
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" "-a=Q9K_TRACEBOOT=${Q9K_TRACEBOOT:-0}" -o=q9kernel_entry.r "q9kernel_entry.a" < /dev/null
 
 echo "== Verlinken (kein csl.l/acstart.r -- eigener Assembler-Einstieg) =="
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \

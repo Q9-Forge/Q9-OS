@@ -3294,16 +3294,23 @@ Q9K_TrapDispatch:
 * Logik direkt darueber aus demselben Grund gesichert (noch lebende
 * Aufruferregister); zusaetzlich a6 fuer den Wechsel auf die eigene
 * C-Laufzeit-Konvention vor dem bsr.
-        movem.l d0-d2/a0,-(sp)
+* FIX (Fortsetzung 119): a1 gehoert zu den C-Arbeitsregistern (d0/d1/a0/a1)
+* und traegt hier noch Aufrufer-Eingaben (F$Fork/F$Load: a1) -- deshalb mit
+* gesichert. (Der Absturz beim Start mit Trace war ein Stackueberlauf, s.
+* Q9DbgScratch in q9kernel_dbg.c.)
+        movem.l d0-d2/a0-a1,-(sp)
         move.l  a6,-(sp)
+        move.w  sr,-(sp)                   * Interrupts sperren: Arbeitsbereich $2200 ist global (Fortsetzung 119)
+        ori.w   #$0700,sr
         lea     Q9K_CRuntimeData(pc),a6
         movea.l Q9K_DbgLogEntryPtr,a0
         move.l  a0,d0
         beq.s   Q9K_DbgLogEntryImpl_Skip                    * vor Q9K_CInit noch nicht gesetzt
         jsr     (a0)
 Q9K_DbgLogEntryImpl_Skip:
+        move.w  (sp)+,sr
         movea.l (sp)+,a6
-        movem.l (sp)+,d0-d2/a0
+        movem.l (sp)+,d0-d2/a0-a1
         endc
         addq.l  #2,38(sp)                   * geretteten PC im Frame um 2 erhoehen (hinter das Funktionscode-Wort)
         cmp.w   #256,d7
@@ -3840,16 +3847,23 @@ Q9K_TrapAfterCall:
 * unangetastet bleiben, deshalb Teil des Sicherungssatzes wie bei der
 * RaceRing-Logik direkt darueber. Strikt balanciertes Push/Pop, s.
 * ausfuehrliche Begruendung beim Eintrittshaken in Q9K_TrapDispatch.
-        movem.l d0-d2/a0,-(sp)
+* FIX (Fortsetzung 119): a1 gehoert zu den C-Arbeitsregistern (d0/d1/a0/a1)
+* und traegt hier noch Aufrufer-Eingaben (F$Fork/F$Load: a1) -- deshalb mit
+* gesichert. (Der Absturz beim Start mit Trace war ein Stackueberlauf, s.
+* Q9DbgScratch in q9kernel_dbg.c.)
+        movem.l d0-d2/a0-a1,-(sp)
         move.l  a6,-(sp)
+        move.w  sr,-(sp)                   * Interrupts sperren: Arbeitsbereich $2200 ist global (Fortsetzung 119)
+        ori.w   #$0700,sr
         lea     Q9K_CRuntimeData(pc),a6
         movea.l Q9K_DbgLogReturnPtr,a0
         move.l  a0,d0
         beq.s   Q9K_DbgLogReturnImpl_Skip                    * vor Q9K_CInit noch nicht gesetzt
         jsr     (a0)
 Q9K_DbgLogReturnImpl_Skip:
+        move.w  (sp)+,sr
         movea.l (sp)+,a6
-        movem.l (sp)+,d0-d2/a0
+        movem.l (sp)+,d0-d2/a0-a1
         endc
         rte
 
@@ -8290,9 +8304,18 @@ Q9K_DbgSvcOutErr      equ $2108      * Q9_u32, 0 = Erfolg, sonst Fehlercode
 Q9K_DbgLogEntryPtr    equ $210C      * Q9_u32, Q9K_DbgLogEntryImpl
 Q9K_DbgLogReturnPtr   equ $2110      * Q9_u32, Q9K_DbgLogReturnImpl
 Q9K_DbgSvcImplPtr     equ $2114      * Q9_u32, Q9K_SysFQ9DbgImpl -- naechste freie Adresse $2118
+Q9K_DbgScratch        equ $2200      * 512 Byte Arbeitsbereich der Trace-Haken (q9kernel_dbg.c, Q9DbgScratch) -- naechste freie Adresse $2400
 
 Q9K_SysStartProc:
         move.l  #1,Q9K_ConsoleViaIOMan        * /term ab jetzt ueber IOMan/SCF (s. Q9K_TrapNotPathIO)
+        ifne    Q9K_DEBUG
+        ifne    Q9K_TRACEBOOT
+        moveq   #1,d0                         * F$Q9Dbg Unterfunktion 1: Trace an (Bauschalter Q9K_TRACEBOOT)
+        moveq   #1,d1
+        trap    #0
+        dc.w    $7f
+        endc
+        endc
         move.w  #$0c01,d0
         lea     Q9K_SysStartIOManName(pc),a0
         trap    #0

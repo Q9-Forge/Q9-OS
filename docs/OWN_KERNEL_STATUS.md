@@ -11254,3 +11254,47 @@ Offen: Prozessverlust nach dem Login (s. Fortsetzung 113, InTrapPath-
 Hypothese allein reichte nicht); Paket 3/4 (Register-Pruefung,
 Beschreibungstabelle, `trace`-Programm, Host-Dekoder); Benutzer/Pfad im
 Satz noch 0.
+
+## Fortsetzung 120: Login mit Shell funktioniert -- mit dem Syscall-Trace gefunden (2026-10-06)
+
+**Ergebnis:** Developer- UND Atom-Kernel: sysgo -> Startdatei -> tsmon ->
+login (q9test) -> mshell; `echo`, `dir`, `pd` liefern ihre Ausgabe.
+
+Werkzeuge:
+- Bauschalter **`Q9K_TRACEBOOT=1`** (nur Developer-Kernel wirksam): schaltet
+  den Syscall-Trace schon in Q9K_SysStartProc ein.
+- **Globaler Schalter** fuer alle Syscalls: F$Q9Dbg Unterfunktion 1
+  (`d1`=1/0), Zelle `Q9K_DbgTraceEnabled` ($2020); Standard aus.
+- Q9-Flux-Dump gibt den Trace-Puffer roh aus (`T <off> <hex>`) und eine
+  Prozessliste (PID, Zustand, Signal, Modul, Pfade, $3AC);
+  **`tools/q9trace_decode.py <dump> [--last N] [--pid P]`** dekodiert ihn
+  (eingerueckt nach Tiefe, Carry markiert).
+
+Mit dem Trace gefundene und behobene Fehler:
+1. **Trace-Haken liefen auf dem Prozessstack ueber** (gut 200 Byte lokale
+   Strukturen in LogCommon, tief in F$Fork->F$Load->IOMan->RBF bei sysgo):
+   Arbeitsbereich jetzt fest bei $2200 (`Q9DbgScratch`, 512 Byte, Host:
+   statisch), Haken sperren dabei die Interrupts; a1 wird mitgesichert.
+2. **Trace-Tiefe pro Prozess** (Deskriptor $3F0, Callcodes $3F1-$3F8, in
+   Q9K_ProcPoolAlloc genullt); Wait/Chain/Exit/Sleep/RTE/NProc erhoehen sie
+   nicht (kein Rueckkehr-Haken).
+3. **F$Chain gab die Trap-Handler nicht frei** -> mshell nach `login ->
+   F$Chain` bekam bei F$TLink 13 (csl) E$ModBsy und endete sofort. Neu:
+   `Q9K_ProcTrapReleaseAll` (q9kernel_traplink.c), aufgerufen in
+   Q9K_SysChainReleaseImpl.
+4. **F$Sleep loeschte die Signalmaske nicht** (68k_tech.pdf, F$SigMask:
+   "When a process makes an F$Sleep or F$Wait system call, its signal mask
+   is automatically cleared. If a signal is already queued, these calls
+   return immediately"). mshell sperrt vor dem Warten auf Eingabe die
+   Signale, das SS_SSig-Tastensignal blieb liegen. Jetzt in Q9K_ProcSleep;
+   **F$Wait fehlt noch** (gleiche Regel).
+5. Der vermeintliche "Haenger nach dem Login" war zusaetzlich ein
+   **Testskriptfehler**: Expect wartete mit `sleep` ohne zu lesen, der
+   Pty-Puffer lief voll und Q9-Flux verwarf Zeichen (nicht blockierende
+   Ausgabe). Merksatz: in Expect-Skripten LESEND warten (`expect` mit
+   Timeout), nie `sleep`, wenn der Emulator viel ausgibt.
+
+Verifiziert: 30/30 Hostsuiten, beide Varianten bauen und loggen sich ein.
+Offen: F$Wait-Maskenregel; pd-Hilfsprozesse von login/mshell bekommen bei
+I$GetStt/I$WritLn auf stdout Carry (Pipe-Pfad?) -- die Shell arbeitet
+trotzdem, pruefen; Paket 3/4 des Debug-Konzepts.

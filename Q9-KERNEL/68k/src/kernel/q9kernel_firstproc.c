@@ -530,6 +530,12 @@ static Q9_u32 Q9K_ProcPoolAlloc(void)
         return 0;
 
     Q9K_SetU32(Q9K_PROCPOOL_FREE_ADDR, Q9K_GetU32(head));
+#if defined(_OSK) && defined(Q9K_DEBUG)
+    /* Syscall-Trace (q9kernel_dbg.c): Tiefe pro Prozess bei $3F0 -- im
+     * frischen Slot auf 0, egal wie der Vorgaenger endete. Nur auf dem
+     * Ziel; die Hosttests arbeiten teils mit kleineren Slots. */
+    *(volatile unsigned char *)(head + 0x3F0UL) = 0;
+#endif
     return head;
 }
 

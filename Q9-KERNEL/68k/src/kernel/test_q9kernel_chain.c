@@ -89,6 +89,10 @@ void Q9K_FreeMem(Q9_u32 addr, Q9_u32 size)
     g_freeLastSize = size;
 }
 
+/* Fortsetzung 119: Trap-Freigabe lebt in q9kernel_traplink.c (dort getestet). */
+static int g_trapReleaseCalls;
+void Q9K_ProcTrapReleaseAll(Q9_u32 proc) { (void)proc; g_trapReleaseCalls++; }
+
 void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
 {
     (void)hdrAddr;

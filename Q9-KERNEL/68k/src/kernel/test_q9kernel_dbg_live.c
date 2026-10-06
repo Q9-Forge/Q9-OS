@@ -351,21 +351,26 @@ static void test_pid_depthreset_selfskip(void)
     Q9K_PutU32(Q9DBG_A_CUR_PROC, (Q9_u32)(unsigned long)desc);
     Q9K_PutU32(Q9DBG_A_TICKS, 1234);
 
-    /* Ein "geleckter" Zaehler (Schlaf ohne Rueckkehr-Haken) ... */
-    Q9K_PutU32(Q9DBG_A_TRAP_DEPTH, 5);
+    /* Tiefe pro Prozess (Deskriptor $3F0): F$ID hinein ... */
     Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x0C);    /* F$ID */
     Q9K_DbgLogEntryImpl();
-    checkU32("aeusserer Trap ($3AC=0) setzt die Tiefe auf 0 zurueck", Q9K_GetU32(Q9DBG_A_TRAP_DEPTH), 1);
+    checkInt("Prozesstiefe nach Eintritt = 1", desc[0x3F0], 1);
+    checkInt("Callcode auf dem Prozessstapel", desc[0x3F1], 0x0C);
 
-    /* ... und F$Q9Dbg selbst taucht nicht auf. */
+    /* ... F$Q9Dbg selbst (verschachtelt) taucht nicht auf ... */
     Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x7F);
-    desc[0x3AC + 3] = 1;                            /* innerhalb eines Fremdaufrufs */
     Q9K_DbgLogEntryImpl();
     Q9K_PutU32(Q9DBG_A_RET_CARRY, 0);
     Q9K_DbgLogReturnImpl();
-    desc[0x3AC + 3] = 0;
-    Q9K_DbgLogReturnImpl();
+    Q9K_DbgLogReturnImpl();                         /* Rueckkehr von F$ID */
+    checkInt("Prozesstiefe nach beiden Rueckkehren = 0", desc[0x3F0], 0);
     checkU32("F$Q9Dbg ($7F) wird nicht protokolliert: nur 2 Saetze", Q9K_GetU32(Q9DBG_A_WRITTEN), 2);
+
+    /* ... und F$Sleep kehrt nie ueber den Haken zurueck: keine Tiefe. */
+    Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x0A);
+    Q9K_DbgLogEntryImpl();
+    checkInt("F$Sleep erhoeht die Prozesstiefe nicht", desc[0x3F0], 0);
+    checkU32("F$Sleep-Eintritt wird protokolliert", Q9K_GetU32(Q9DBG_A_WRITTEN), 3);
 
     Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_RING_READ);
     Q9K_PutU32(Q9DBG_A_SVC_D1, 0);
@@ -379,6 +384,7 @@ static void test_pid_depthreset_selfskip(void)
     checkU32("Satz 1: Tick aus dem Tickzaehler", hdr.tick, 1234);
     Q9TraceDecodeHeader(buf + hdr.recLen, &hdr);
     checkInt("Satz 2: Rueckkehr von F$ID", hdr.code, 0x0C);
+    checkInt("Satz 2: Typ Rueckkehr", hdr.recType, Q9TRACE_REC_RETURN);
     checkInt("Satz 2: PID", hdr.pid, 5);
 
     Q9K_PutU32(Q9DBG_A_CUR_PROC, 0);
