@@ -24,6 +24,10 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_PROCPOOL_FREE_ADDR  ((unsigned long)(g_fakeGlobals + 0x010))
 #define Q9K_PROCPOOL_COUNT_ADDR ((unsigned long)(g_fakeGlobals + 0x020))
 #define Q9_D_PROC               ((unsigned long)(g_fakeGlobals + 0x030))
+#define Q9K_WAIT_SCRATCH_CHILDPID   ((unsigned long)(g_fakeGlobals + 0x1F00))  /* Fortsetzung 120 */
+#define Q9K_WAIT_SCRATCH_EXITSTATUS ((unsigned long)(g_fakeGlobals + 0x1F10))
+#define Q9K_WAIT_SCRATCH_ERRORCODE  ((unsigned long)(g_fakeGlobals + 0x1F20))
+#define Q9K_WAIT_SCRATCH_OUTCOME    ((unsigned long)(g_fakeGlobals + 0x1F30))
 
 /* Real nur wenige Byte auseinander (s. q9kernel_firstproc.c Kopf-
  * kommentar) -- hier grosszuegig auf 8-Byte-Schritte gelegt, gleiches
@@ -36,6 +40,8 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_PROCDESC_SAVEDSP_OFF    0x20UL
 #define Q9K_PROCDESC_ALLOCBASE_OFF  0x28UL
 #define Q9K_PROCDESC_ALLOCSIZE_OFF  0x30UL
+#define Q9K_WAIT_SIGNAL_OFF         0x38UL   /* Fortsetzung 120: P$Signal (Wort) */
+#define Q9K_WAIT_SIGLVL_OFF         0x3AUL   /* Fortsetzung 120: P$SigLvl (Byte) */
 
 #define Q9K_TEST_DESC_SIZE 64UL
 #define Q9K_TEST_POOL_COUNT 4UL
@@ -185,6 +191,27 @@ int main(void)
         reaped = Q9K_ProcWaitTryReap(d0, &childPid, &exitStatus, &error);
         checkU32("F2: lebendes Kind, kein Zombie -> 0 (blockieren)", (Q9_u32)reaped, 0);
         checkU32("F2: *outError bleibt 0 (kein Fehler, nur blockieren)", error, 0);
+    }
+
+    /* Fall 2b (Fortsetzung 120): wie F2, aber ein Signal steht an und die
+     * Maske ist zu -- F$Wait loescht die Maske und kehrt sofort mit Kind-ID 0
+     * zurueck (68k_tech.pdf, F$SigMask). */
+    {
+        resetPool(pool, poolBase);
+        Q9K_SetU32(d1 + Q9K_PROCDESC_PARENT_OFF, d0);
+        Q9K_SetU8(d1 + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+        Q9K_SetU32(Q9_D_PROC, d0);
+        Q9K_SetU8(d0 + Q9K_WAIT_SIGNAL_OFF, 0x00);
+        Q9K_SetU8(d0 + Q9K_WAIT_SIGNAL_OFF + 1, 0xFA);
+        Q9K_SetU8(d0 + Q9K_WAIT_SIGLVL_OFF, 1);
+        Q9K_SetU16(Q9K_WAIT_SCRATCH_CHILDPID, 0x7777);
+        Q9K_SysWaitImpl();
+        checkU32("F2b: Signal ansteht -> sofort zurueck (Ergebnis 1)", Q9K_GetU16(Q9K_WAIT_SCRATCH_OUTCOME), 1);
+        checkU32("F2b: Kind-ID 0", Q9K_GetU16(Q9K_WAIT_SCRATCH_CHILDPID), 0);
+        checkU32("F2b: Signalmaske geloescht", (Q9_u32)Q9K_GetU8(d0 + Q9K_WAIT_SIGLVL_OFF), 0);
+        Q9K_SetU8(d0 + Q9K_WAIT_SIGNAL_OFF + 1, 0);
+        Q9K_SysWaitImpl();
+        checkU32("F2b: ohne Signal wird weiter blockiert (Ergebnis 0)", Q9K_GetU16(Q9K_WAIT_SCRATCH_OUTCOME), 0);
     }
 
     /* Fall 3: Aufrufer hat ein Zombie-Kind (d2) -- sofortiges Abholen. */

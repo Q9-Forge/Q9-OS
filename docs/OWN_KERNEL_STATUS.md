@@ -11287,7 +11287,9 @@ Mit dem Trace gefundene und behobene Fehler:
    is automatically cleared. If a signal is already queued, these calls
    return immediately"). mshell sperrt vor dem Warten auf Eingabe die
    Signale, das SS_SSig-Tastensignal blieb liegen. Jetzt in Q9K_ProcSleep;
-   **F$Wait fehlt noch** (gleiche Regel).
+   F$Wait loescht die Maske ebenfalls und kehrt bei anstehendem Signal
+   sofort mit Kind-ID 0 zurueck (Q9K_SysWaitImpl) -- die Zustellung an die
+   Intercept-Routine aus dem Wait-Pfad ist noch offen.
 5. Der vermeintliche "Haenger nach dem Login" war zusaetzlich ein
    **Testskriptfehler**: Expect wartete mit `sleep` ohne zu lesen, der
    Pty-Puffer lief voll und Q9-Flux verwarf Zeichen (nicht blockierende
@@ -11295,6 +11297,7 @@ Mit dem Trace gefundene und behobene Fehler:
    Timeout), nie `sleep`, wenn der Emulator viel ausgibt.
 
 Verifiziert: 30/30 Hostsuiten, beide Varianten bauen und loggen sich ein.
-Offen: F$Wait-Maskenregel; pd-Hilfsprozesse von login/mshell bekommen bei
+Offen: Intercept-Zustellung aus F$Wait; ein `trace`-Programm im OS-9 selbst
+(Paket 4, bisher nur Host-Dekoder); pd-Hilfsprozesse von login/mshell bekommen bei
 I$GetStt/I$WritLn auf stdout Carry (Pipe-Pfad?) -- die Shell arbeitet
 trotzdem, pruefen; Paket 3/4 des Debug-Konzepts.

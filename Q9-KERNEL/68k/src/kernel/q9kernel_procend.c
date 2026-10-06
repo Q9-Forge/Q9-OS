@@ -525,6 +525,22 @@ int Q9K_ProcDebugExit(Q9_u16 childPid, Q9_u16 *outError)
  * unverifizierte Assembler<->C-Mehrparameter-Grenze wird stattdessen
  * ueber die obigen Scratch-Adressen umgangen. F$Wait hat KEINE echten
  * Eingaberegister (s. Kopfkommentar) -- liest nur Q9_D_PROC selbst. */
+#ifndef Q9K_WAIT_SIGNAL_OFF
+#define Q9K_WAIT_SIGNAL_OFF  0x26UL    /* P$Signal (Wort) */
+#endif
+#ifndef Q9K_WAIT_SIGLVL_OFF
+#define Q9K_WAIT_SIGLVL_OFF  0x210UL   /* P$SigLvl (Byte) */
+#endif
+/* Maske loeschen (F$Wait-Regel) und melden, ob ein Signal ansteht. */
+static int Q9K_WaitSignalPending(Q9_u32 desc)
+{
+    volatile Q9_u8 *d = (volatile Q9_u8 *)desc;
+    if (desc == 0)
+        return 0;
+    d[Q9K_WAIT_SIGLVL_OFF] = 0;
+    return (d[Q9K_WAIT_SIGNAL_OFF] | d[Q9K_WAIT_SIGNAL_OFF + 1]) != 0;
+}
+
 void Q9K_SysWaitImpl(void)
 {
     Q9_u32 callerDesc = Q9K_GetU32(Q9_D_PROC);
@@ -539,6 +555,14 @@ void Q9K_SysWaitImpl(void)
     } else if (error != 0) {
         Q9K_SetU16(Q9K_WAIT_SCRATCH_ERRORCODE, error);
         Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 2);
+    } else if (Q9K_WaitSignalPending(callerDesc)) {
+        /* Fortsetzung 120, 68k_tech.pdf F$SigMask: F$Wait loescht die
+         * Signalmaske; steht schon ein Signal an, kehrt der Aufruf sofort
+         * zurueck (Kind-ID 0) statt zu blockieren. OFFEN: die Zustellung an
+         * die Intercept-Routine aus diesem Pfad (F$Sleep macht sie bereits). */
+        Q9K_SetU16(Q9K_WAIT_SCRATCH_CHILDPID, 0);
+        Q9K_SetU16(Q9K_WAIT_SCRATCH_EXITSTATUS, 0);
+        Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 1);
     } else {
         Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 0);   /* Aufrufer (Trampolin) muss blockieren */
     }
