@@ -461,6 +461,7 @@ Q9K_TCallScratch_FuncCode   equ $16D6    * Q9_u16
 Q9K_PROCDESC_TRAPTBL_OFF   equ $1CC      * s. q9kernel_traplink.c Kopfkommentar, 15x12 Byte
 
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
+Q9K_PROCDESC_RESUMETRAP_OFF equ $3F8   * Q9_u16, Q9K_InTrapPath des verdraengten Prozesses (Fortsetzung 114)
 Q9K_TrapCallerPC          equ $13E8      * echte Ruecksprung-PC des Aufrufers (fuer Herkunftspruefung)
 Q9K_PrsNamScratch_Path    equ $13EC      * Q9_u32, (a0) EIN  = Pfadname (F$PrsNam)
 Q9K_PrsNamScratch_Name    equ $13F0      * Q9_u32, (a1) AUS = Namensanfang
@@ -1969,6 +1970,28 @@ __multiply:
 * TRAP-#0-Syscalls auch INNERHALB eines per Scheduler gestarteten
 * Prozesses funktionieren.
 Q9K_TestProcA:
+        ifne    Q9K_DEBUG
+* Debug-Konzept (Fortsetzung 118): minimaler Lebensbeweis fuer F$Q9Dbg
+* Unterfunktion 0 (Version/Faehigkeiten), VOR dem IOMan-Init unten --
+* haengt an nichts weiter, laeuft also auch, wenn IOMan spaeter
+* scheitert. Erfolg: d1 (Puffergroesse) > 0, d0 (Version) wird hier
+* nicht weiter geprueft. Marker 'V'/'v' (Version-Probe), bisher
+* unbenutzt in dieser Datei -- nicht zu verwechseln mit dem
+* 'Q'-Marker direkt unten (F$Link-Erfolg).
+        moveq   #0,d0
+        trap    #0
+        dc.w    $7f                        * F$Q9Dbg
+        bcs     Q9K_TestQ9DbgProbeFail
+        tst.l   d1
+        beq     Q9K_TestQ9DbgProbeFail
+        moveq   #'V',d7
+        bsr     Q9K_DiagWriteD7
+        bra     Q9K_TestQ9DbgProbeDone
+Q9K_TestQ9DbgProbeFail:
+        moveq   #'v',d7
+        bsr     Q9K_DiagWriteD7
+Q9K_TestQ9DbgProbeDone:
+        endc
 * Die frueheren Testbloecke fuer F$Link/F$UnLink, F$Fork, F$Wait und
 * F$ID/F$GProcP standen hier bis 2026-09-04. Sie haben ihren Zweck erfuellt --
 * alle vier Aufrufwege sind seit Laengerem stabil, durch Host-Testsuiten
@@ -3060,15 +3083,25 @@ Q9K_TimerIRQHandler:
         addq.l  #1,Q9K_RaceRingIdx
         movea.l Q9_D_Proc,a0                    * a0 = aktueller Prozessdeskriptor
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * dessen SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
+* Fortsetzung 114: Q9K_InTrapPath ist global, beschreibt aber den Zustand des
+* UNTERBROCHENEN Prozesses. Beim Verdraengen mitten im Systemaufruf ging er
+* bisher an den naechsten Prozess ueber: ein in IOMan-Code (Trampolin, Flag 0)
+* verdraengter Prozess lief mit Flag 1 eines anderen weiter, F$Sleep aus
+* IOMans F$IOQu nahm dann den Trap-Zweig, verwarf eine nicht vorhandene
+* Ruecksprungadresse, und der Prozess verschwand aus allen Warteschlangen
+* (gemessen nach dem Login: mshell/pd weg, nur noch Idle).
+        move.w  Q9K_InTrapPath,Q9K_PROCDESC_RESUMETRAP_OFF(a0)
 
         lea     Q9K_CRuntimeData(pc),a6           * a6 fuer den C-Aufruf (Q9K_SchedReschedule) auf den Kernel-Laufzeitpuffer setzen
         bsr     Q9K_SchedReschedule                 * -> d0 = 0 (kein Wechsel) / neuer Deskriptorzeiger
 
+        movea.l Q9_D_Proc,a0                          * fortgesetzter Prozess (neu oder derselbe)
         tst.l   d0
         beq     Q9K_TimerIRQ_Resume
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp      * auf den Stack des NEUEN Prozesses umschalten
 Q9K_TimerIRQ_Resume:
+        bsr     Q9K_ResumeTrapFlag                     * Fortsetzung 114
 * TEMPORAERE Rahmen-Validierung (2026-10-02, Fortsetzung-101/102-Folge,
 * s. docs/OWN_KERNEL_STATUS.md): prueft den GLEICH per movem/rte
 * benutzten Rahmen, BEVOR movem ihn verzehrt -- SR liegt unverzehrt bei
@@ -3098,6 +3131,16 @@ Q9K_TimerIRQ_Resume:
 Q9K_TimerIRQ_FrameOK:
         movem.l (sp)+,d0-d7/a0-a6               * (eigenen oder neuen) Registersatz zurueckholen
         rte
+
+* Q9K_ResumeTrapFlag (Fortsetzung 114): a0 = fortgesetzter Deskriptor.
+* Uebernimmt das beim Verdraengen gesicherte Q9K_InTrapPath und loescht das
+* Feld, damit ein spaeterer Schlaf-/Warte-Wechsel (Flag 0) nicht einen alten
+* Wert sieht. Veraendert nur Q9K_InTrapPath und das Feld; CCR egal (die
+* Aufrufer setzen danach per movem/rte den gesicherten Zustand).
+Q9K_ResumeTrapFlag:
+        move.w  Q9K_PROCDESC_RESUMETRAP_OFF(a0),Q9K_InTrapPath
+        clr.w   Q9K_PROCDESC_RESUMETRAP_OFF(a0)
+        rts
 
 *******************************************************************************
 * Q9K_TrapDispatch -- TRAP #0, der echte OS-9-Systemaufruf-Mechanismus
@@ -3188,6 +3231,28 @@ Q9K_TrapDispatch:
         move.l  d0,4(a0)
         addq.l  #1,Q9K_RaceRingIdx
         movem.l (sp)+,d0-d2/a0
+        ifne    Q9K_DEBUG
+* Debug-Konzept (Fortsetzung 118), Syscall-Trace-Eintrittshaken.
+* Genau hier eingefuegt (nach der bereits bestehenden RaceRing-
+* Restaurierung, VOR der Handler-Suche): Callcode steht bereits
+* vollstaendig und aktuell in ($1370).w (s. Q9K_IOpenScratch_Error-
+* Zweitverwendung, oben), Q9K_DbgLogEntryImpl liest ihn selbst dort
+* aus -- hier wird nichts weiter uebergeben. Strikt balanciertes
+* Push/Pop: egal was innerhalb passiert, der Stackpointer ist nach
+* "endc" bitidentisch zum Zustand davor, die nachfolgende Zeile
+* "addq.l #2,38(sp)" bleibt dadurch unveraendert korrekt (dieselbe
+* Garantie gilt fuer den Rueckkehr-Haken an der entsprechenden
+* Stelle in Q9K_TrapAfterCall). d0-d2/a0 werden wie bei der RaceRing-
+* Logik direkt darueber aus demselben Grund gesichert (noch lebende
+* Aufruferregister); zusaetzlich a6 fuer den Wechsel auf die eigene
+* C-Laufzeit-Konvention vor dem bsr.
+        movem.l d0-d2/a0,-(sp)
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        jsr     Q9K_DbgLogEntryImpl
+        movea.l (sp)+,a6
+        movem.l (sp)+,d0-d2/a0
+        endc
         addq.l  #2,38(sp)                   * geretteten PC im Frame um 2 erhoehen (hinter das Funktionscode-Wort)
         cmp.w   #256,d7
         bcc     Q9K_TrapUnknown
@@ -3683,6 +3748,17 @@ Q9K_TrapAfterCall:
         andi.w  #$00ff,d0                    * nur die CCR-Bits
         andi.w  #$ff00,6(sp)                  * unteres Byte des geretteten SR loeschen
         or.w    d0,6(sp)                       * echtes CCR einsetzen
+        ifne    Q9K_DEBUG
+* Debug-Konzept (Fortsetzung 118): Carry-Bit fuer den Rueckkehr-Trace-
+* Haken sichern, WAEHREND d0 noch das frisch berechnete, reine CCR-Byte
+* traegt (bitweise identisch mit dem gleich ins Frame gesetzten Wert,
+* s.o.) -- KEINE neue Rahmen-Offset-Annahme noetig, reine Mitnutzung
+* eines bereits vorhandenen, gerade berechneten Werts. d0 selbst bleibt
+* von dieser Zeile unveraendert, die nachfolgende bestehende Zeile
+* restauriert es wie bisher.
+        move.w  d0,Q9K_DbgRetCarry
+        andi.w  #1,Q9K_DbgRetCarry
+        endc
         move.l  (sp)+,d0                        * d0 wiederherstellen
         addq.l  #2,sp                            * CCR-Wort verwerfen -- sp zeigt auf den Frame
 * Q9K_RaceRing-Log (TEMPORAER, s. Definition oben), Marker $41='A' =
@@ -3704,6 +3780,21 @@ Q9K_TrapAfterCall:
         move.l  d1,4(a0)
         addq.l  #1,Q9K_RaceRingIdx
         movem.l (sp)+,d0-d2/a0
+        ifne    Q9K_DEBUG
+* Debug-Konzept (Fortsetzung 118), Syscall-Trace-Rueckkehrhaken. Carry
+* wurde bereits weiter oben (direkt nach "or.w d0,6(sp)") nach
+* Q9K_DbgRetCarry gesichert -- KEINE Rahmen-Offset-Annahme hier noetig.
+* d0 traegt den ECHTEN Handler-Rueckgabewert und MUSS fuer den Aufrufer
+* unangetastet bleiben, deshalb Teil des Sicherungssatzes wie bei der
+* RaceRing-Logik direkt darueber. Strikt balanciertes Push/Pop, s.
+* ausfuehrliche Begruendung beim Eintrittshaken in Q9K_TrapDispatch.
+        movem.l d0-d2/a0,-(sp)
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        jsr     Q9K_DbgLogReturnImpl
+        movea.l (sp)+,a6
+        movem.l (sp)+,d0-d2/a0
+        endc
         rte
 
 Q9K_TrapUnknown:
@@ -4454,7 +4545,7 @@ Q9K_SysDExec:
         movem.l d0-d7/a0-a6,-(sp)
         movea.l Q9K_DExecScratch_Next,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath              * selected debug context owns its flag
+        bsr     Q9K_ResumeTrapFlag          * selected debug context owns its flag (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysDExec_Fail:
@@ -4576,7 +4667,7 @@ Q9K_SysFWait:
 Q9K_SysFWait_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath              * do not leak the waiting process's flag
+        bsr     Q9K_ResumeTrapFlag          * do not leak the waiting process's flag (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
@@ -4641,7 +4732,7 @@ Q9K_SysFExit:
 Q9K_SysFExit_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath              * the next process starts outside a trap
+        bsr     Q9K_ResumeTrapFlag          * the next process starts outside a trap (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
@@ -4755,7 +4846,7 @@ Q9K_SysFSleep_Block:
 Q9K_SysFSleep_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath              * trap-path state is process-local
+        bsr     Q9K_ResumeTrapFlag          * trap-path state is process-local (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
@@ -5493,6 +5584,52 @@ Q9K_SysFCCtl:
         andi    #$fe,ccr                        * Carry loeschen -- immer "Erfolg", kein echter Cache vorhanden
         rts
 
+        ifne    Q9K_DEBUG
+*******************************************************************************
+* Q9K_SysFQ9Dbg -- TRAP-#0-Handler fuer den neuen Callcode $7F
+* (docs/DEBUG_KONZEPT_de.md Abschnitt 2.5, Fortsetzung 118). Nur im
+* Developer-Kernel ueberhaupt assembliert (dieser gesamte Block steht
+* unter "ifne Q9K_DEBUG") UND nur dort registriert (q9kernel_cinit.c).
+*
+* Feste Marshalling-Konvention (keine Trampolin-/Rahmen-Sonderbehandlung
+* noetig wie bei Q9K_SysFSRqMem -- dieser Callcode wird nie von IOMan
+* oder einem anderen externen Modul aufgerufen, nur ueber echtes
+* TRAP #0): d0.w=Unterfunktion, d1/d2/d3/a0 Eingaben je nach
+* Unterfunktion (s. q9dbg.h), OUT je nach Unterfunktion in d0/d1/d2.
+* Erfolg/Fehlschlag wird NICHT aus dem C-Aufruf-Rueckgaberegister
+* gelesen (ungeklaerte ABI-Frage fuer einen rohen "bsr"-Aufruf), sondern
+* -- exakt wie bei allen bestehenden Handlern dieser Datei -- aus einer
+* von Q9K_SysFQ9DbgImpl selbst gesetzten Scratchzelle
+* (Q9K_DbgSvcOutErr, vom Stub VOR dem Aufruf genullt).
+Q9K_SysFQ9Dbg:
+        movem.l d1-d7/a0-a1/a3-a5,-(sp)
+        move.l  a6,-(sp)
+        move.l  d0,Q9K_DbgSvcFn
+        move.l  d1,Q9K_DbgSvcD1
+        move.l  d2,Q9K_DbgSvcD2
+        move.l  d3,Q9K_DbgSvcD3
+        move.l  a0,Q9K_DbgSvcA0
+        clr.l   Q9K_DbgSvcOutErr
+        lea     Q9K_CRuntimeData(pc),a6
+        jsr     Q9K_SysFQ9DbgImpl
+        movea.l (sp)+,a6
+        movem.l (sp)+,d1-d7/a0-a1/a3-a5
+
+        tst.l   Q9K_DbgSvcOutErr
+        bne     Q9K_SysFQ9Dbg_Fail
+
+        move.l  Q9K_DbgSvcOutD0,d0
+        move.l  Q9K_DbgSvcOutD1,d1
+        move.l  Q9K_DbgSvcOutD2,d2
+        andi    #$fe,ccr
+        rts
+
+Q9K_SysFQ9Dbg_Fail:
+        move.w  #$00d0,d1                       * generischer Fehler (E$UnkSvc-Wert) -- keine differenzierten Codes vorgesehen, reines Entwicklerwerkzeug
+        ori     #1,ccr
+        rts
+        endc
+
 *******************************************************************************
 * Q9K_SysFSRtMem -- TRAP-#0-Handler fuer den echten F$SRtMem-Callcode
 * (0x29). Reale Konvention (68k_tech.pdf S. 505-506, echt per Read
@@ -5801,7 +5938,7 @@ Q9K_SysFSema_Wait:
         beq     Q9K_SysFSema_Idle
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath              * wake the next process cleanly
+        bsr     Q9K_ResumeTrapFlag          * wake the next process cleanly (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysFSema_Idle:
@@ -5972,7 +6109,7 @@ Q9K_SysFRTE:
 
         movea.l Q9_D_Proc,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath              * resumed intercept owns its context
+        bsr     Q9K_ResumeTrapFlag          * resumed intercept owns its context (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 
@@ -6050,7 +6187,7 @@ Q9K_SysFEvent_Wait:
         beq     Q9K_SysFEvent_Idle
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath              * event waiter resumes with clean state
+        bsr     Q9K_ResumeTrapFlag          * event waiter resumes with clean state (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysFEvent_Idle:
@@ -6104,7 +6241,7 @@ Q9K_SysFNProc:
         beq     Q9K_SysFNProc_Idle
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath              * selected process owns its trap state
+        bsr     Q9K_ResumeTrapFlag          * selected process owns its trap state (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysFNProc_Idle:
@@ -7482,7 +7619,7 @@ Q9K_SysFAProc:
         beq     Q9K_SysFAProc_FailSaved
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
-        clr.w   Q9K_InTrapPath
+        bsr     Q9K_ResumeTrapFlag
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysFAProc_Ok:
@@ -8046,6 +8183,47 @@ Q9K_ChainSavedTrapPath: dc.l 0
 * Parameterzeichenkette in $1FE0-$1FFF (max. 31 Zeichen + CR), NICHT auf dem
 * Stack: F$Chain ersetzt den Prozessspeicher.
 Q9K_SysStartParam           equ $1FE0      * 32 Byte, Startparameter + CR -- naechste freie Adresse $2000
+
+* Debug-Konzept (docs/DEBUG_KONZEPT_de.md Abschnitt 2), Arbeitspaket 2
+* Live-Anbindung (2026-10-06, Fortsetzung 118) -- Speicherstrategie und
+* Ausfuehrliche Begruendung in q9kernel_dbg.c, nur die reinen Adressen
+* hier (dieselbe Konvention wie ueberall in dieser Datei). Nur die
+* letzten neun (Q9K_DbgRetCarry bis Q9K_DbgSvcOutErr) werden von
+* Assembler-Code direkt angesprochen; der Rest ist reine C-Buchhaltung
+* (q9kernel_dbg.c), hier trotzdem vollstaendig dokumentiert.
+Q9K_DbgTraceBufAddr   equ $2000      * Q9_u32, Trace-Ringpuffer: per F$SRqMem reservierte Adresse (0 = keiner)
+Q9K_DbgTraceBufSize   equ $2004      * Q9_u32
+Q9K_DbgTraceWriteOff  equ $2008      * Q9_u32
+Q9K_DbgTraceReadOff   equ $200C      * Q9_u32
+Q9K_DbgTraceUsed      equ $2010      * Q9_u32
+Q9K_DbgTraceWritten   equ $2014      * Q9_u32
+Q9K_DbgTraceLost      equ $2018      * Q9_u32
+Q9K_DbgTraceMode      equ $201C      * Q9_u32
+Q9K_DbgTraceEnabled   equ $2020      * Q9_u32, 0/1 -- Trace an/aus
+Q9K_DbgTraceOutMode   equ $2024      * Q9_u32
+Q9K_DbgSyscallMask    equ $2028      * 32 Byte
+Q9K_DbgInternMask     equ $2048      * 32 Byte
+Q9K_DbgFiltPid        equ $2068      * Q9_u32
+Q9K_DbgFiltUser       equ $206C      * Q9_u32
+Q9K_DbgFiltPath       equ $2070      * Q9_u32
+Q9K_DbgFiltFileId     equ $2074      * Q9_u32
+Q9K_DbgFiltErrOnly    equ $2078      * Q9_u32
+Q9K_DbgFiltDetail     equ $207C      * Q9_u32
+Q9K_DbgTrapDepth      equ $2080      * Q9_u32, aktuelle Verschachtelungstiefe von Q9K_TrapDispatch
+Q9K_DbgTrapCode       equ $2084      * 8 x Q9_u32
+Q9K_DbgTrapPid        equ $20A4      * 8 x Q9_u32
+Q9K_DbgTrapTick       equ $20C4      * 8 x Q9_u32
+Q9K_DbgRetCarry       equ $20E4      * Q9_u32, vom Rueckkehr-Stub VOR dem C-Aufruf gesetzt (0/1)
+Q9K_DbgSvcFn          equ $20E8      * Q9_u32, d0.w des F$Q9Dbg-Aufrufers
+Q9K_DbgSvcD1          equ $20EC      * Q9_u32
+Q9K_DbgSvcD2          equ $20F0      * Q9_u32
+Q9K_DbgSvcD3          equ $20F4      * Q9_u32
+Q9K_DbgSvcA0          equ $20F8      * Q9_u32, Zeigerwert
+Q9K_DbgSvcOutD0       equ $20FC      * Q9_u32
+Q9K_DbgSvcOutD1       equ $2100      * Q9_u32
+Q9K_DbgSvcOutD2       equ $2104      * Q9_u32
+Q9K_DbgSvcOutErr      equ $2108      * Q9_u32, 0 = Erfolg, sonst Fehlercode -- naechste freie Adresse $210C
+
 Q9K_SysStartProc:
         move.l  #1,Q9K_ConsoleViaIOMan        * /term ab jetzt ueber IOMan/SCF (s. Q9K_TrapNotPathIO)
         move.w  #$0c01,d0

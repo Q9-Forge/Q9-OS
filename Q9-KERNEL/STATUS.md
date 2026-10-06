@@ -1727,3 +1727,27 @@ exact bug class (`vsect`/address-collision) found earlier this project.
 See `docs/OWN_KERNEL_STATUS.md` Fortsetzung 115 for the two safer paths
 considered (runtime `F$SRqMem` allocation, or an isolated static-array
 toolchain probe) for a future session.
+
+## Debug concept, Arbeitspaket 2 Live-Anbindung (2026-10-06, Fortsetzung 118)
+
+`F$Q9Dbg` ($7F) now registered (Developer kernel only -- `E$UnkSvc` in
+Atom), with entry/return trace hooks in `Q9K_TrapDispatch`/
+`Q9K_TrapAfterCall` and a nesting-depth-tracked call context (no new
+exception-frame offset assumptions). Trace buffer memory strategy
+decided: runtime `Q9K_ProcSRqMem` allocation (not a static array, s.
+Fortsetzung 115/117's open question) after a successful
+`Q9K_ArenaInit()`.
+
+Real toolchain build succeeds for both kernel variants (Developer
+62432 bytes, Atom 59638 bytes) after fixing a genuine `bsr` out-of-range
+link error (switched the three new C-bridge calls to `jsr`, absolute
+addressing -- this kernel already uses absolute addressing elsewhere,
+no strict PIC requirement). 30/30 host test suites green (68 new cases
+for the ring buffer/trace/filter/hooks/F$Q9Dbg/nesting/Q9K_TRACE_FN).
+
+A minimal console-marker probe ('V'/'v') for `F$Q9Dbg` subfunction 0
+was added at the very start of `Q9K_TestProcA`, but a live emulator
+boot confirming it was not completed this round -- the vendor module
+files needed for a bootable test image (`/tmp/vendor_*.mod`, from
+Fortsetzung 94) are gone after a restart; re-extracting them is its own
+side task for a future session.

@@ -11123,3 +11123,99 @@ gegengeprueft, keine Warnungen) -- wichtig, da der echte Zielcompiler
 sind.
 
 **Verifiziert:** 68/68 Hosttestfaelle gruen (10 neue).
+
+## Fortsetzung 118: Debug-Konzept Paket 2 -- Live-Kernel-Anbindung (F$Q9Dbg, Eintritts-/Rueckkehr-Haken), echter Toolchain-Build beider Varianten (2026-10-06)
+
+**Auftrag:** Speicherplatzierung fuer den Trace-Puffer entscheiden, dann
+die echte Live-Anbindung fertigstellen (Fortsetzung zu Fortsetzung 115).
+
+**Speicherstrategie-Entscheidung:** Laufzeitanforderung per
+`Q9K_ProcSRqMem` (nicht ein statisches C-Array) -- der 64-KByte-
+Rohpuffer wird in `Q9K_DbgInit()` (neu, q9kernel_dbg.c) NACH einem
+erfolgreichen `Q9K_ArenaInit()` angefordert. Die Buchfuehrung (Lese-/
+Schreibzeiger, Zaehler, Filter, Trap-Verschachtelungskontext) liegt in
+einzeln benannten, festen Adresszellen ab `$2000` (q9kernel_entry.a) --
+verifiziert frei (letzter bestehender Eintrag, `Q9K_SysStartParam`,
+trug selbst den Kommentar "naechste freie Adresse $2000"; die Globals-
+Region reicht laut q9kernel_cinit.c bis `$8000`). Begruendung
+ausfuehrlich in q9kernel_dbg.c und Fortsetzung 115.
+
+**Live-Anbindung umgesetzt:**
+- `Q9K_SysFQ9Dbg` (q9kernel_entry.a, Callcode `$7F`): fester
+  Marshalling-Stub (d0-d3/a0 in Scratchzellen, bsr/jsr in C-Logik,
+  Ergebnis ueber `Q9K_DbgSvcOutErr`-Zelle statt C-Rueckgaberegister --
+  dieselbe Vorsicht wie bei allen bestehenden Handlern dieser Datei).
+  Nur im Developer-Kernel assembliert (`ifne Q9K_DEBUG`) UND nur dort
+  registriert (`#ifdef Q9K_DEBUG` in q9kernel_cinit.c, beide
+  Dispatch-Tabellen) -- im Atom-Kernel bleibt `$7F` `E$UnkSvc`.
+- Zwei Eintritts-/Rueckkehr-Haken in `Q9K_TrapDispatch`/
+  `Q9K_TrapAfterCall`, OHNE neue Rahmen-Offset-Annahme: der Eintritts-
+  Haken liest den Callcode aus der bereits bestehenden, zu diesem
+  Zeitpunkt garantiert aktuellen Scratchzelle `($1370)`; der
+  Rueckkehr-Haken bekommt das Carry-Bit ueber eine eigene Zelle
+  (`Q9K_DbgRetCarry`), GESETZT direkt neben der bereits bestehenden
+  CCR-Berechnung (wiederverwendet einen schon berechneten Wert, keine
+  neue Annahme). Beide Haken sind strikt balancierte Push/Pop-Bloecke
+  (exakt dieselbe Technik wie die bestehende RaceRing-Instrumentierung
+  direkt daneben) -- der Stackpointer ist nach jedem Block bitidentisch
+  zum Zustand davor, nachfolgende feste Offsets bleiben unberuehrt.
+  Verschachtelungstiefe (0-7) ueber einen Zaehler + drei
+  Kontext-Arrays (Callcode/PID/Tick je Tiefe), kein Eingriff in den
+  echten CPU-Stack.
+- `Q9K_DbgTraceFnEntry`/`-Return` (Q9K_TRACE_FN-Mechanismus fuer interne
+  Funktionen) implementiert und per Hosttest verifiziert, bewusst noch
+  an KEINER bestehenden internen Funktion tatsaechlich verdrahtet (das
+  waere Paket-4-Umfang, braucht die Funktions-ID-Zuordnungstabelle aus
+  Abschnitt 7 "Offene Punkte").
+
+**ECHTER, WAEHREND DER UMSETZUNG GEFUNDENER UND BEHOBENER BUG:** die
+ersten drei `bsr`-Aufrufe zu den neuen C-Funktionen scheiterten beim
+echten Linken (`l68.exe: operand size error -- too large for a pc
+relative (word) operand`) -- `bsr` ist PC-relativ mit ±32-KByte
+Reichweite, und die drei neuen Objektdateien lagen (am Ende der
+Linkreihenfolge) zu weit von ihren Aufrufstellen entfernt. Eine
+Umsortierung verschob das Problem nur auf ANDERE, bis dahin
+funktionierende `bsr`-Aufrufe (z.B. `Q9K_SysGPrDBTImpl`) -- der Kernel
+ist bereits nah an der 32-KByte-Grenze gepackt. Fix: alle drei Aufrufe
+auf `jsr` (absolute Adressierung, keine Reichweitenbegrenzung) statt
+`bsr` umgestellt -- zulaessig, weil dieser Kernel ohnehin schon
+absolute Adressierung verwendet (mehrfach als Assembler-Warnung
+sichtbar, kein strenges PIC-Erfordernis). Damit konnte die
+urspruengliche, unveraenderte Linkreihenfolge (neue Dateien am Ende)
+wiederhergestellt werden -- alle bestehenden `bsr`-Aufrufe bleiben
+unberuehrt in Reichweite.
+
+**Zusaetzlicher minimaler Lebensbeweis:** ein Testblock direkt am
+Anfang von `Q9K_TestProcA` (vor dem IOMan-Init, haengt an nichts
+weiter) ruft `F$Q9Dbg` Unterfunktion 0 auf und meldet Erfolg/Fehlschlag
+ueber einen neuen Marker ('V'/'v', bisher unbenutzt in dieser Datei).
+
+**Verifiziert:**
+- Host: 30/30 Testsuiten gruen (test_q9kernel_dbg.c + test_q9kernel_dbg_live.c
+  neu, 68 Einzelfaelle fuer Ringpuffer/Trace/Filter/F$Q9Dbg/Haken/
+  Verschachtelungstiefe/Q9K_TRACE_FN, inkl. eines Fundes waehrend der
+  Testentwicklung selbst: die Tiefen-Arrays benutzten eine fest
+  codierte 4-Byte-Schrittweite -- auf dem 64-Bit-Testhost ist
+  `sizeof(Q9_u32)` aber 8 Byte, was benachbarte Slots ueberlappen
+  liess; behoben auf `sizeof(Q9_u32)`-basierte Schrittweite, korrekt
+  auf BEIDEN Plattformen).
+- ECHTER Toolchain-Build beider Kernelvarianten (`build.sh`, echtes
+  xcc/r68/l68 ueber Wine, kein Hosttest-Proxy): Developer-Kernel
+  62.432 Byte, Atom-Kernel 59.638 Byte (moderater, plausibler
+  Unterschied fuer die komplette Debug-Infrastruktur) -- beide als
+  gueltiges "OS9/68K module" erkannt, 0 Assemblerfehler.
+- NICHT geschafft in dieser Runde: ein echter Emulator-Bootlauf, der
+  den 'V'-Marker tatsaechlich auf der Konsole sieht. Die dafuer
+  noetigen, aus Fortsetzung 94 extrahierten Vendor-Modul-Dateien
+  (`/tmp/vendor_*.mod`) sind seit einem Neustart nicht mehr vorhanden;
+  deren Neuextraktion waere ein eigener Seitenfaden. Der Testblock
+  selbst ist fertig, host-aequivalent verifiziert (ueber
+  `test_q9kernel_dbg_live.c`s direkten Aufruf von
+  `Q9K_SysFQ9DbgImpl`) und wartet auf eine Folgesitzung mit frisch
+  extrahierten Vendor-Modulen fuer den finalen Emulator-Lebensbeweis.
+
+**Naechster Schritt (Paket 3/4):** Register-Erhaltungspruefung im
+Dispatcher; Syscall-Beschreibungstabelle + `trace`-Programm + Host-
+Dekoder (Paket 4) -- braucht insbesondere die Prozess-ID-Ermittlung
+(aktuell bewusst 0/"alle", s. `Q9K_DbgLogEntryImpl`-Kommentar) und die
+Funktions-ID-Zuordnungstabelle fuer `Q9K_TRACE_FN`.

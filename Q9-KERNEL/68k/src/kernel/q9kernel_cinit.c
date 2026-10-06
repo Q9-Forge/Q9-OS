@@ -164,6 +164,10 @@ extern void   Q9K_SysFVModul(void);       /* q9kernel_entry.a, F$VModul  (Callco
 extern void   Q9K_SysFSRqCMem(void);      /* q9kernel_entry.a, F$SRqCMem (Callcode 0x5c) */
 extern void   Q9K_SysFTLink(void);        /* q9kernel_entry.a, F$TLink   (Callcode 0x21) */
 extern void   Q9K_SysFCCtl(void);         /* q9kernel_entry.a, F$CCtl  (Callcode 0x5a) */
+#ifdef Q9K_DEBUG
+extern void   Q9K_SysFQ9Dbg(void);        /* q9kernel_entry.a, F$Q9Dbg (Callcode 0x7f, Debug-Konzept Fortsetzung 118) */
+extern void   Q9K_DbgInit(void);          /* q9kernel_dbg.c -- Trace-Ringpuffer/Filter initialisieren */
+#endif
 extern void   Q9K_SysFSetSys(void);       /* q9kernel_entry.a, F$SetSys (Callcode 0x27) */
 extern void   Q9K_SysFTime(void);         /* q9kernel_entry.a, F$Time (Callcode 0x15) */
 extern void   Q9K_SysFSTime(void);        /* q9kernel_entry.a, F$STime (Callcode 0x16) */
@@ -431,6 +435,14 @@ void Q9K_CInit(void)
          * (s. Definition oben) -- die Arena endet davor. */
         if (totalRam > freeBase + Q9K_BOOTSTACK_SIZE) {
             Q9K_ArenaInit(freeBase, totalRam - Q9K_BOOTSTACK_SIZE - freeBase);
+#ifdef Q9K_DEBUG
+            /* Debug-Konzept (Fortsetzung 118): Trace-Ringpuffer/Filter
+             * erst NACH einem erfolgreichen Q9K_ArenaInit anlegen --
+             * Q9K_DbgInit() fordert seinen 64-KByte-Puffer ueber
+             * Q9K_ProcSRqMem an, das braucht die Arena. Ein Fehlschlag
+             * (voller Arena) ist kein Boot-Abbruch, s. q9kernel_dbg.c. */
+            Q9K_DbgInit();
+#endif
         }
     }
 
@@ -578,6 +590,13 @@ void Q9K_CInit(void)
                     Q9K_PutU32(usrdisBase + 0x38UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMove);
                     Q9K_PutU32(usrdisBase + 0x21UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTLink);
                     Q9K_PutU32(usrdisBase + 0x5aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFCCtl);
+#ifdef Q9K_DEBUG
+                    /* Debug-Konzept (docs/DEBUG_KONZEPT_de.md Abschnitt 2.5,
+                     * Fortsetzung 118): F$Q9Dbg nur im Developer-Kernel
+                     * registriert -- im Atom-Kernel bleibt $7F unregistriert
+                     * (E$UnkSvc), wie im Konzeptdokument gefordert. */
+                    Q9K_PutU32(usrdisBase + 0x7fUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFQ9Dbg);
+#endif
                     Q9K_PutU32(usrdisBase + 0x27UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSetSys);
                     Q9K_PutU32(usrdisBase + 0x2eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFVModul);
                     Q9K_PutU32(usrdisBase + 0x5cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqCMem);
@@ -693,6 +712,9 @@ void Q9K_CInit(void)
                     Q9K_PutU32(sysdisBase + 0x38UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFMove);
                     Q9K_PutU32(sysdisBase + 0x21UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFTLink);
                     Q9K_PutU32(sysdisBase + 0x5aUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFCCtl);
+#ifdef Q9K_DEBUG
+                    Q9K_PutU32(sysdisBase + 0x7fUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFQ9Dbg);
+#endif
                     Q9K_PutU32(sysdisBase + 0x27UL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSetSys);
                     Q9K_PutU32(sysdisBase + 0x2eUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFVModul);
                     Q9K_PutU32(sysdisBase + 0x5cUL * 4UL, (Q9_u32)(unsigned long)Q9K_SysFSRqCMem);
