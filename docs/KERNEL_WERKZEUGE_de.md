@@ -105,6 +105,12 @@ einmal komplett laufen lassen, statt der Doku zu glauben.**
    stdin-EOF nicht zuverlässig selbst, und verwaiste Prozesse sammeln sich
    an.
 
+**Eingecheckte Emulator-Regressionen** (je ein Aufruf, ohne Argumente):
+`tools/malformed_boot_test.sh` (Bootmodul-Validierung) und
+`tools/mgrpath_probe_test.sh` (IOMan-Managerpfad I$Open/I$Read/I$Close,
+Fortsetzung 107). Letzteres baut seine eigene Kernelkopie mit Messsonde
+und holt die Vendor-Module selbst aus `Q9-Flux/.hide/OS9Boot.noprot.test`.
+
 **Werkzeugwarnung:** `os9 gen -b=` bricht mit *„is fragmented"* ab. Die
 Bootkette immer zuerst auf ein frisch (ohne `-e`) formatiertes Abbild
 schreiben, danach erst Dateien kopieren.
@@ -245,6 +251,18 @@ den Handleraufruf hinweg auf den Stack legt, landet später zwischen
 Registersatz und Frame und wird beim `rte` als SR/PC gelesen. Genau das
 war der „zweite Absturz“ (Fortsetzung 106). Zwischenwerte im
 Dispatcher vor dem Aufruf wieder abräumen.
+
+**`F$SSvc`-Tabellen fremder Module enthalten jeden Code zweimal**:
+`$00xx` für Aufrufe aus Prozessen, `$80xx` (später in der Tabelle) für
+Systemzustand-Aufrufe. Bei IOMan ist die `$80xx`-Variante nur die innere
+Hälfte (kein `P$Path`, gibt die globale Deskriptornummer zurück). Wer
+`codeword & $FF` benutzt, muss das `$8000`-Bit selbst auswerten, sonst
+gewinnt der spätere Systemeintrag (Fortsetzung 107).
+
+**`($1370).w` (aktueller Callcode) nur vor dem Handleraufruf lesen.**
+Jeder verschachtelte Trap überschreibt die Zelle, und fremde Handler wie
+IOMan rufen intern selbst Syscalls auf. Danach den Callcode aus dem
+eigenen R$-Rahmen nehmen (`$3c(a5)`, R$a7-Hochwort).
 
 **Korrupte Werte zuerst als Bytes lesen.** Ein unsinniger PC wie
 `$b8902000` ist oft ein bekannter Wert, der um 2 oder 4 Byte versetzt

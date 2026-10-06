@@ -182,7 +182,21 @@ void Q9K_ProcSSvc(Q9_u32 tablePtr, Q9_u32 dataPtr)
          * Off-by-2 entpuppte sich als veraltete Laufzeitbasis. */
         if (Q9K_IsKernelService(realCode)) {
             /* Kernel-owned slots are installed during C initialization.
-             * Keep both dispatch entries and their internal calling ABI. */
+             * Keep both dispatch entries and their internal calling ABI.
+             *
+             * FIX (2026-10-05, Fortsetzung 107): only the USER-state entry
+             * ($00xx) may fill the manager shadow cells. IOMan lists every
+             * I/O code twice, the system-state entry ($80xx) LATER; that one
+             * is only the inner half (e.g. $8084 opens the path but neither
+             * enters it in P$Path nor returns a local path number -- it
+             * returns the global path descriptor number). Before this check
+             * the later $80xx entry silently won, so every manager I$Open
+             * from a process returned the descriptor number instead of a
+             * path number (measured live: d0=1, P$Path unchanged). */
+            if (sysTrapOnly) {
+                entryAddr += 4UL;
+                continue;
+            }
             if (realCode == 0x84UL) {
                 /* Keep native I$Open as the default (notably for /term), but
                  * retain IOMan's manager entry and per-service A3 data for

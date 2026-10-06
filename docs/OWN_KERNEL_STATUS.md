@@ -10415,3 +10415,126 @@ Beim Lesen von `Q9K_TrapDispatch` aufgefallen, aus `6b1bfc2`
 Naechster Schritt: einen Lauf mit nativem Pfad >= 1 nach der
 IOMan-Registrierung aufsetzen und `d0`/`d1` beim Handlereintritt bzw.
 im R$-Rahmen protokollieren, bevor etwas geaendert wird.
+
+
+## Fortsetzung 107: IOMan-Managerpfad (I$Open/I$Read/I$Close) -- vier Fehler gemessen und behoben, neues Regressionsskript (2026-10-05)
+
+Ausgangspunkt waren die beiden ungemessenen Verdachtsfaelle aus
+Fortsetzung 106. Gemessen wurde zuerst, dann geaendert.
+
+### Warum das nie auffiel
+
+Im Standardboot ruft nach der IOMan-Anmeldung (`F$SSvc`, setzt die
+Managerzellen `$1F74`/`$1F78`/`$1F7C`) niemand `I$Read`/`I$Close` per Trap
+auf. `Q9K_TestProcA` macht nur ein `I$Open("/dd/startup")` und danach ein
+`I$Write` auf den ersten belegten Pfad (0). Die "P0123"-Ausgabe aus
+Fortsetzung 105 zeigte belegte `P$Path`-Eintraege, die schon VOR dem Open
+da waren -- kein Beleg fuer einen erfolgreichen Manager-Open.
+
+### Messsonde
+
+Neuer Schalter `Q9K_TestMgrPathProbe` (Standard 0) in `q9kernel_entry.a`,
+zwei Bloecke in `Q9K_TestProcA`, rein lesend bis auf die gemessenen
+Syscalls, alle Register werden wiederhergestellt:
+
+```
+=<$1F74><$1F78><$1F7C> &<P$Path[0..5]>            vor dem I$Open
+O %<d0 aus I$Open> &<P$Path[0..5]>
+  #<Carry><d1> "<Puffer 8 Byte> &<P$Path[0..5]>   I$Read(Pfad,16)
+  !<Carry><d1> &<P$Path[0..5]>                    I$Close(Pfad)
+```
+
+Abbild mit `startup`-Inhalt `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<CR>`.
+
+### Befund vor dem Fix
+
+```
+=00016530 0001658C 0001610A   &0003 0001 0002 0003 0000 0000
+O%00000001                    &0003 0001 0002 0003 0000 0000
+#FF 000000C9 "00000000 00000026
+!FF 000100C9
+```
+
+IOMan lag bei `$152e6` (Moduldirectory im Dump): die Managerzellen
+zeigten auf `ioman+$124a`/`+$12a6`/`+$e24`. IOMans `F$SSvc`-Tabelle (bei
+Modul-Offset `$1a0`, Routine = Eintrag + Offset + 4) per Capstone
+dekodiert:
+
+| Code | Variante | Routine |
+|---|---|---|
+| `$0084` I$Open | Benutzer | `$1228` |
+| `$0089` I$Read | Benutzer | `$1268` |
+| `$008f` I$Close | Benutzer | `$0e14` |
+| `$8084` | System | `$124a` |
+| `$8089` | System | `$12a6` |
+| `$808f` | System | `$0e24` |
+
+Registriert waren also die **Systemzustand**-Varianten. `$1228` (Benutzer)
+ruft `$124a` als innere Haelfte auf (`bsr $124a`): die oeffnet den Pfad
+und schreibt die GLOBALE Pfaddeskriptor-Nummer nach R$d0; erst die
+Benutzerhaelfte sucht einen freien `P$Path`-Eintrag, traegt den Deskriptor
+ein und schreibt die LOKALE Nummer als Langwort zurueck
+(`move.l d0,$0(a5)`). Daher `d0=1` (Deskriptor 1) und `P$Path` unveraendert.
+
+### Die vier Fehler
+
+1. **`Q9K_ProcSSvc` (q9kernel_ssvc.c):** IOMan listet jeden I/O-Code
+   zweimal, die `$80xx`-Variante SPAETER. Fuer die kernel-eigenen Slots
+   `$84`/`$89`/`$8f` wurde `codeword & $FF` ohne das `$8000`-Bit benutzt
+   -- der spaetere Systemeintrag gewann. Fix: Systemeintraege fuellen die
+   Managerzellen nicht. Hosttest F2e (`test_q9kernel_ssvc.c`) mit der
+   echten Reihenfolge; schlug vor dem Fix fehl.
+2. **`Q9K_TrapCheckManagerPath`:** ueberschrieb die Eingaberegister des
+   Aufrufers (`d1` = D_Proc, `d0` = 2 x Pfad, `a1`), die danach den
+   eigenen Handler bzw. ueber den R$-Rahmen IOMan erreichten. Fix: `d0/a1`
+   kurz gesichert und vor jedem Weitersprung wiederhergestellt, `d1` nicht
+   mehr angefasst (`tst.l Q9_D_Proc` statt `move.l a1,d1`).
+3. **`Q9K_TrapManagerPathBookkeeping`:** las die Pfadnummer mit
+   `move.w (a5),d0` aus dem OBEREN Wort von R$d0. Fix: `2(a5)`.
+4. **Ebenfalls Nachbuchung (erst nach 1-3 sichtbar):** der Callcode kam
+   aus der globalen Zelle `($1370).w`. IOMans `I$Open` ruft intern selbst
+   Syscalls auf, jeder ueberschreibt `$1370` -- nach der Rueckkehr stand
+   dort nicht mehr `$84`, der neue Pfad wurde nie markiert (gemessen:
+   `P$Path[4]=$0001` statt `$8001`). Folge im Zwischenstand: `I$Read`
+   landete im eigenen Handler (`E$BPNum`), `I$Close` im nativen
+   Close-Handler, der am fremden Deskriptor mit `Vektor=4` abstuerzte.
+   Fix: Callcode aus dem eigenen R$-Rahmen (`$3c(a5)`, R$a7-Hochwort,
+   vom Dispatcher dort abgelegt) -- pro Aufruf und verschachtelungsfest.
+
+### Befund nach dem Fix
+
+```
+O%00000004 &0003 0001 0002 0003 8001 0000
+#00 00000010 "41424344 45464748 &... 8001 ...
+!00 ...      &0003 0001 0002 0003 0000 0000
+```
+
+Lokaler Pfad 4, als Managerpfad markiert; `I$Read` liefert 16 Byte
+"ABCDEFGH..."; danach wieder markiert; `I$Close` gelingt und gibt den
+Eintrag frei. Der anschliessende Testablauf (`P0123`, `I$Write` "Hallo
+von Q9-OS!") laeuft unveraendert weiter, `Vektor=0`.
+
+### Regression
+
+- Neues Skript **`tools/mgrpath_probe_test.sh`**: baut eine Kopie des
+  Kernels mit `Q9K_TestMgrPathProbe=1` (Quellbaum unberuehrt), extrahiert
+  die Vendor-Module selbst aus `Q9-Flux/.hide/OS9Boot.noprot.test`
+  (keine Abhaengigkeit mehr von `/tmp/vendor_*.mod`), legt `startup` ins
+  Abbild und prueft die Sondenausgabe automatisch. Ergebnis: `ALLE TESTS
+  OK`.
+- Standard ohne/mit `startup`, Stresstest ohne/mit `startup`: alle
+  `Vektor=0`, keine Rahmen-Validierungstreffer, erwartete Marker
+  (`6Q`, `CompactFlash driver build 42`, `ZFFF`, `o000000D8` bzw.
+  `OP0123` + "Hallo von Q9-OS!").
+- 28/28 Host-Suiten gruen.
+
+### Offen / bewusst nicht geaendert
+
+- Systemzustand-Aufrufer (Treiber/File-Manager, die per `TRAP #0` I/O
+  machen) bekaemen ueber den Managerweg jetzt die Benutzervariante. Echtes
+  OS-9 waehlt per Aufrufer-Modus die `$80xx`-Tabelle; dieser Kernel laeuft
+  durchgehend im Supervisor-Modus, das SR-S-Bit taugt hier also nicht zur
+  Unterscheidung. Kein solcher Aufrufer ist bisher beobachtet.
+- Der native Close-Handler vertraut jedem unmarkierten `P$Path`-Eintrag.
+  Ein Managerpfad ohne Markierung bringt ihn zum Absturz (s. Fehler 4) --
+  eine Plausibilitaetspruefung dort waere eine sinnvolle Haertung.

@@ -929,6 +929,9 @@ Q9K_TestDirectAttach equ 0
 * Boot-Test dauerhaft (Diagnose 'H'), das darf nicht der eingecheckte
 * Normalfall sein, solange der Bug offen ist.
 Q9K_TestNestedTrapStress equ 0
+* Messsonde fuer den I$Read/I$Close-Managerpfad (Fortsetzung 107), s. Block
+* hinter dem 'O'-Marker in Q9K_TestProcA. Standard AUS.
+Q9K_TestMgrPathProbe equ 0
 Q9K_ModuleStart:
 
 * ===== Assembler-Einstieg =====
@@ -2196,6 +2199,30 @@ Q9K_BootStartupCloseFail:
 * I$Open muss VOR dem P$Path-Scan stehen: ein frisch gestarteter Prozess
 * hat noch keinen belegten Pfad. Der Open-Test erzeugt den Pfad, dessen
 * Nummer der anschliessende Scan sichtbar macht.
+        ifne    Q9K_TestMgrPathProbe
+* MESSSONDE Teil 1 (Fortsetzung 107): Managerzellen $1F74/$1F78/$1F7C und
+* P$Path[0..5] VOR dem I$Open. Ausgabe: =<1F74><1F78><1F7C>&<P$Path...>
+        movem.l d0-d7/a0-a6,-(sp)
+        moveq   #'=',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  Q9K_IOpenManagerRoutine,d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  Q9K_IReadManagerRoutine,d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  Q9K_ICloseManagerRoutine,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #'&',d7
+        bsr     Q9K_DiagWriteD7
+        movea.l Q9_D_Proc,a3
+        lea     $168(a3),a3
+        moveq   #5,d4
+Q9K_TestMgrProbeDumpPre:
+        moveq   #0,d5
+        move.w  (a3)+,d5
+        bsr     Q9K_DiagWriteHex32
+        dbra    d4,Q9K_TestMgrProbeDumpPre
+        movem.l (sp)+,d0-d7/a0-a6
+        endc
         move.l  a6,-(sp)
         movea.l #0,a6                              * Systemglobals fuer IOMan
         movea.l Q9_D_Proc,a4                       * eigener Prozessdeskriptor
@@ -2207,6 +2234,86 @@ Q9K_BootStartupCloseFail:
         bcs     Q9K_TestNativeOpenFail
         moveq   #'O',d7
         bsr     Q9K_DiagWriteD7
+        ifne    Q9K_TestMgrPathProbe
+* MESSSONDE (2026-10-05, Fortsetzung 107): Verdachtsfaelle aus Fortsetzung
+* 106 im I$Read/I$Close-Managerpfad von Q9K_TrapDispatch. Ausgabe:
+*   %<d0 aus I$Open>  &<P$Path[0..5]>
+*   #<Carry 00/FF><d1>"<Puffer 8 Byte>  &<P$Path[0..5]>   (I$Read, 16 Byte)
+*   !<Carry 00/FF><d1>  &<P$Path[0..5]>                    (I$Close)
+* Rein lesend bis auf die beiden Syscalls selbst; alle Register werden
+* exakt wiederhergestellt.
+        movem.l d0-d7/a0-a6,-(sp)
+        move.w  d0,d3                          * d3.w = Pfad aus I$Open
+        move.l  d0,d5
+        moveq   #'%',d7
+        bsr     Q9K_DiagWriteD7
+        bsr     Q9K_DiagWriteHex32
+        moveq   #'&',d7
+        bsr     Q9K_DiagWriteD7
+        movea.l Q9_D_Proc,a3
+        lea     $168(a3),a3                    * P$Path[0..5]
+        moveq   #5,d4
+Q9K_TestMgrProbeDumpA:
+        moveq   #0,d5
+        move.w  (a3)+,d5
+        bsr     Q9K_DiagWriteHex32
+        dbra    d4,Q9K_TestMgrProbeDumpA
+        lea     -16(sp),sp                     * Lesepuffer
+        move.w  d3,d0
+        moveq   #16,d1
+        movea.l sp,a0
+        suba.l  a6,a6
+        trap    #0
+        dc.w    $0089                          * I$Read
+        scs     d6
+        moveq   #'#',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #0,d5
+        move.b  d6,d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #'"',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  (sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  4(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #'&',d7
+        bsr     Q9K_DiagWriteD7
+        movea.l Q9_D_Proc,a3
+        lea     $168(a3),a3                    * P$Path[0..5]
+        moveq   #5,d4
+Q9K_TestMgrProbeDumpB:
+        moveq   #0,d5
+        move.w  (a3)+,d5
+        bsr     Q9K_DiagWriteHex32
+        dbra    d4,Q9K_TestMgrProbeDumpB
+        move.w  d3,d0
+        suba.l  a6,a6
+        trap    #0
+        dc.w    $008f                          * I$Close
+        scs     d6
+        moveq   #'!',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #0,d5
+        move.b  d6,d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  d1,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #'&',d7
+        bsr     Q9K_DiagWriteD7
+        movea.l Q9_D_Proc,a3
+        lea     $168(a3),a3                    * P$Path[0..5]
+        moveq   #5,d4
+Q9K_TestMgrProbeDumpC:
+        moveq   #0,d5
+        move.w  (a3)+,d5
+        bsr     Q9K_DiagWriteHex32
+        dbra    d4,Q9K_TestMgrProbeDumpC
+        lea     16(sp),sp
+        movem.l (sp)+,d0-d7/a0-a6
+        endc
 
 * Zwei Schritte, die Diagnose bewusst ZUERST -- so ist ihr Ergebnis auch
 * dann sichtbar, wenn der Schreibversuch selbst haengt:
@@ -3145,20 +3252,32 @@ Q9K_TrapTryManagerPathIO:
 Q9K_TrapTryManagerRead:
         move.l  Q9K_IReadManagerRoutine,Q9K_TrapHandlerScratch
 Q9K_TrapCheckManagerPath:
+* FIX (2026-10-05, Fortsetzung 107): d0/d1/a1 sind hier noch die
+* EINGABEREGISTER des Aufrufers (I$Read: d0.w Pfad, d1.l Anzahl, a0 Puffer)
+* und erreichen danach unveraendert den Handler bzw. ueber den R$-Rahmen
+* IOMan. Frueher wurden d1 (= D_Proc), d0 (= 2 x Pfad) und a1 hier
+* ueberschrieben -- gemessen: I$Read auf Pfad 1 lief als Pfad 2 in den
+* eigenen Handler und endete mit E$BPNum. Jetzt nur kurz gesichert und vor
+* JEDEM Weitersprung exakt wiederhergestellt (Stack wieder auf dem Frame).
         tst.l   Q9K_TrapHandlerScratch
         beq     Q9K_TrapOwnHandler
         cmpi.w  #32,d0
         bcc     Q9K_TrapOwnHandler
-        movea.l Q9_D_Proc,a1
-        move.l  a1,d1
+        tst.l   Q9_D_Proc
         beq     Q9K_TrapOwnHandler
+        movem.l d0/a1,-(sp)
+        movea.l Q9_D_Proc,a1
         adda.l  #$168,a1
         add.w   d0,d0
         adda.w  d0,a1
         btst    #7,(a1)                    * high byte bit 7 = P$Path word bit 15
-        beq     Q9K_TrapOwnHandler
+        beq.s   Q9K_TrapCheckManagerPath_Own
         andi.w  #$7fff,(a1)                * IOMan must see the untagged PD number
+        movem.l (sp)+,d0/a1
         bra     Q9K_TrapCallExternal
+Q9K_TrapCheckManagerPath_Own:
+        movem.l (sp)+,d0/a1
+        bra     Q9K_TrapOwnHandler
 Q9K_TrapOwnHandler:
 * HERKUNFTSPRUEFUNG (sechster A4-Anlauf, 2026-09-07): der Rueckweg
 * fuer eigene Handler ueberschreibt A4 bisher IMMER mit der Handler-
@@ -3412,7 +3531,14 @@ Q9K_TrapExtInvoke:
 * auf 4(sp), hinter der BSR-Ruecksprungadresse.
 Q9K_TrapManagerPathBookkeeping:
         movem.l d0-d2/a0-a2,-(sp)
-        move.w  ($1370).w,d2
+* FIX (2026-10-05, Fortsetzung 107): NICHT ($1370).w -- diese globale Zelle
+* ueberschreibt jeder verschachtelte Trap, und IOMans I$Open ruft intern
+* selbst Syscalls auf (F$SRqMem ...). Nach der Rueckkehr stand dort der
+* Callcode des letzten inneren Aufrufs, die Nachbuchung fand "$84" nicht
+* und markierte den neuen Pfad nie (gemessen: P$Path[4]=$0001 statt $8001).
+* Der Dispatcher legt den Callcode zusaetzlich im eigenen R$-Rahmen ab
+* (R$a7-Hochwort, $3c(a5)) -- der ist pro Aufruf und verschachtelungsfest.
+        move.w  $3c(a5),d2
         cmpi.w  #$84,d2
         bne.s   Q9K_TrapManagerPathBookkeeping_NotOpen
         move.w  28(sp),d2                    * gespeichertes SR vor MOVEM
@@ -3425,10 +3551,10 @@ Q9K_TrapManagerPathBookkeeping_NotOpen:
         cmpi.w  #$8f,d2
         bne.s   Q9K_TrapManagerPathBookkeeping_Done
 Q9K_TrapManagerPathBookkeeping_IO:
-        move.w  (a5),d0                      * Originaler P$Path-Index
+        move.w  2(a5),d0                     * Originaler P$Path-Index (UNTERES Wort von R$d0, Fix Fortsetzung 107)
         bra.s   Q9K_TrapManagerPathBookkeeping_Tag
 Q9K_TrapManagerPathBookkeeping_Open:
-        move.w  (a5),d0                      * Rueckgabewert von I$Open
+        move.w  2(a5),d0                     * Rueckgabewert von I$Open (IOMan: "move.l d0,0(a5)" -> unteres Wort)
 Q9K_TrapManagerPathBookkeeping_Tag:
         cmpi.w  #32,d0
         bcc.s   Q9K_TrapManagerPathBookkeeping_Done

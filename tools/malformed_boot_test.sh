@@ -31,7 +31,7 @@ set -e
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 BUILD="$HERE/Q9-KERNEL/68k/src/kernel/build"
 OS9=${OS9:-/Volumes/SSD1TB/projects/MWOS/tools/macos/bin/os9}
-FLUX=${FLUX:-/Volumes/SSD1TB/projects/Q9-Forge/Q9-Flux/Q9-Flux-68k}
+FLUX=${FLUX:-$HERE/../Q9-Flux/Q9-Flux-68k}
 VENDOR=${VENDOR:-/tmp}
 WORK=$(mktemp -d -t malformed_boot)
 trap 'rm -rf "$WORK"' EXIT

@@ -218,6 +218,34 @@ int main(void)
         checkU32("F2d: manager I$Close service data retained", Q9K_GetU32(usrdisBase + 0x400UL + 0x8FUL * 4UL), dataPtr);
     }
 
+    /* F2e (Fortsetzung 107): the real IOMan table lists every I/O code twice,
+     * first the user-state entry ($0084...) and LATER the system-state entry
+     * ($8084...). The system-state routine is only the inner half (no P$Path
+     * translation, returns a global path descriptor number). The manager
+     * shadow cells must keep the USER-state routines; before the fix the
+     * later $80xx entry overwrote them. */
+    {
+        static unsigned char ioTable2[28];
+        Q9_u32 b = (Q9_u32)(unsigned long)ioTable2;
+        Q9_u32 userOpen  = b +  0UL + 200UL + 4UL;
+        Q9_u32 userRead  = b +  4UL + 204UL + 4UL;
+        Q9_u32 userClose = b +  8UL + 208UL + 4UL;
+
+        memset(ioTable2, 0, sizeof(ioTable2));
+        putEntry(b,         0x0084U, 200U);
+        putEntry(b +  4UL,  0x0089U, 204U);
+        putEntry(b +  8UL,  0x008FU, 208U);
+        putEntry(b + 12UL,  0x8084U, 300U);
+        putEntry(b + 16UL,  0x8089U, 304U);
+        putEntry(b + 20UL,  0x808FU, 308U);
+        putEnd(b + 24UL);
+        Q9K_ProcSSvc(b, dataPtr);
+
+        checkU32("F2e: I$Open shadow keeps the user-state routine", Q9K_GetU32(Q9K_SSVC_IOPEN_ROUTINE_ADDR), userOpen);
+        checkU32("F2e: I$Read shadow keeps the user-state routine", Q9K_GetU32(Q9K_SSVC_IREAD_ROUTINE_ADDR), userRead);
+        checkU32("F2e: I$Close shadow keeps the user-state routine", Q9K_GetU32(Q9K_SSVC_ICLOSE_ROUTINE_ADDR), userClose);
+    }
+
     /* Fall 3: leere Tabelle (sofortiges Ende) -- darf nichts veraendern,
      * kein Absturz. Vergleich gegen eine VORHER gelesene Kopie statt
      * eines hartkodierten Hex-Literals -- vermeidet dieselbe
