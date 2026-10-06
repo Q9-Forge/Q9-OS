@@ -57,6 +57,15 @@ source /Volumes/SSD1TB/projects/MWOS/tools/macos/env/os9-toolchain.sh
 # echten Start (Q9K_SysStartProc) einschalten -- Fehlersuche ohne eigenes
 # Steuerprogramm; der Puffer laeuft im Ueberschreiben-Modus und haelt die
 # letzten Saetze, der Q9-Flux-Dump gibt ihn roh aus (tools/q9trace_decode.py).
+# Q9K_SRCDEBUG="datei.c ...": diese C-Dateien mit "-g" (Zeileninformation fuer Quelltext-Debugging).
+# xcc laesst dabei BEIDE Optimierer weg (iopt, opt68k) -- der Code ist groesser
+# und anders als im normalen Build, dafuer entspricht jede Zeile genau einem
+# Codestueck. Nur fuer die Fehlersuche (docs/DEBUG_KONZEPT_de.md, Abschnitt 5).
+# Gemessen (Fortsetzung 121): den GANZEN Kernel so zu bauen scheitert -- der
+# unoptimierte Code ist ~40 % groesser, 27 bsr-Sprunge (+-32 KB) erreichen ihr
+# Ziel nicht mehr. Deshalb pro Datei: Q9K_SRCDEBUG="q9kernel_sched.c ..." --
+# nur diese Dateien werden in einem zweiten Durchgang mit -g uebersetzt.
+SRCDEBUG_OPT=""
 KERNEL_VARIANT="${Q9K_KERNEL_VARIANT:-development}"
 # Ein Schalter fuer C UND Assembler (docs/DEBUG_KONZEPT_de.md, Abschnitt 1):
 # development -> C "-dQ9K_DEBUG", r68 "-a=Q9K_DEBUG=1"; atomic -> beides aus
@@ -137,7 +146,7 @@ MMU_STATE=off; [ -n "$MMU_DEF" ] && MMU_STATE=on
 FPU_STATE=off; [ -n "$FPU_DEF" ] && FPU_STATE=on
 echo "== Ziel-CPU: $CPU_TYPE (r68 $R68_CPU_OPT, xcc -tp=$XCC_TARGET, MMU=$MMU_STATE/$MMU_MODE, FPU=$FPU_STATE) =="
 cat > makefile <<EOF
-CFLAGS = -b -O7 -cq -cw $CDEFS
+CFLAGS = -b -O7 -cq -cw $CDEFS $SRCDEBUG_OPT
 all: q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_mmu.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r q9kernel_date.r q9kernel_alarm.r q9kernel_clock.r q9kernel_bitmap.r q9kernel_blkmap.r q9kernel_sema.r q9kernel_chain.r q9kernel_icpt.r q9kernel_strap.r q9kernel_event.r q9kernel_nproc.r q9kernel_mem.r q9ringbuf.r q9trace.r q9kernel_dbg.r
 q9kernel_cinit.r: q9kernel_cinit.c
 q9kernel_modcheck.r: q9kernel_modcheck.c
@@ -182,6 +191,18 @@ echo "== C-Dateien kompilieren ($KERNEL_VARIANT/Standard-Variante, s. q9kernel_c
 # Programm "all" zu linken) -- das ist erwartet, die acht echten .r-
 # Ziele sind zu diesem Zeitpunkt schon fertig. Deshalb || true.
 mwos-build . all < /dev/null || true
+
+if [ -n "${Q9K_SRCDEBUG:-}" ]; then
+    echo "== Quelltext-Debug: $Q9K_SRCDEBUG mit -g (unoptimiert) neu uebersetzen =="
+    for f in $Q9K_SRCDEBUG; do
+        r="${f%.c}.r"
+        rm -rf srcdebug && mkdir srcdebug
+        cp ./*.h "$f" srcdebug/
+        printf 'CFLAGS = -b -O7 -cq -cw %s -g\nall: %s\n%s: %s\n' "$CDEFS" "$r" "$r" "$f" > srcdebug/makefile
+        ( cd srcdebug && mwos-build . all < /dev/null ) || true
+        [ -f "srcdebug/$r" ] && cp "srcdebug/$r" "$r" || echo "FEHLER: $r mit -g nicht erzeugt" >&2
+    done
+fi
 for f in q9kernel_cinit.r q9kernel_modcheck.r q9kernel_initext.r q9kernel_modsearch.r q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_mmu.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r q9kernel_setsys.r q9kernel_date.r q9kernel_alarm.r q9kernel_clock.r q9kernel_bitmap.r q9kernel_blkmap.r q9kernel_sema.r q9kernel_chain.r q9kernel_icpt.r q9kernel_strap.r q9kernel_event.r q9kernel_nproc.r q9kernel_mem.r q9ringbuf.r q9trace.r q9kernel_dbg.r; do
     [ -f "$f" ] || { echo "FEHLER: $f wurde nicht erzeugt"; exit 1; }
 done

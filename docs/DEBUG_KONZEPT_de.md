@@ -249,22 +249,92 @@ damit ebenfalls sofort aufgefallen.
 
 ## 5. Debugger im Emulator (Q9-Flux)
 
-Eigenes Paket, nach dem Trace.
+Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
+(Fortsetzung 121), Messwerte in `docs/OWN_KERNEL_STATUS.md`.
 
-- **GDB-Remote-Stub** in Q9-Flux: Breakpoints, Watchpoints, Einzelschritt,
-  Register und Speicher. Oberfläche `m68k-elf-gdb`, damit auch VS Code.
-  Q9-Flux hat die nötigen Haken schon (Instruktionshook, Speicher-Watch,
-  Einfrieren nach PC/SP).
-- **Symbole:** aus der Linkmap des Kernelbuilds (`l68 -s=`), umgesetzt in
-  eine kleine ELF-Symboldatei. Fremde Module werden verschiebbar geladen;
-  der Emulator kennt das Moduldirectory und kann ihre Symbole zur
-  Laufzeit an die tatsächliche Ladeadresse legen.
-- **OS-9-Sichten:** Prozesse, Moduldirectory, Pfade, Trace-Puffer — als
-  eigene GDB-Befehle oder im Emulator-Monitor.
-- **Quelltext-Debugging:** möglich, sobald Zeileninformationen vorliegen.
-  Der Microware-Compiler erzeugt mit `-g` Daten für seinen eigenen
-  Quelltext-Debugger; ob dieses Format lesbar ist, ist offen. Langfristig
-  kann QCC Zeilentabellen schreiben.
+### 5.1 Ziele
+
+1. Jede Adresse in Spur, Dump und Debugger **symbolisch** anzeigen
+   (`Q9K_IRQDispatch+$E6`, `ioman+$1560`) statt roh.
+2. Haltepunkte, Einzelschritt, Register und Speicher im laufenden Emulator.
+3. **Quelltext-Debugging:** Adresse <-> `datei.c:Zeile`, Haltepunkt auf eine
+   Zeile, Einzelschritt pro Zeile.
+4. OS-9-Sichten: Prozesse, Moduldirectory, Pfade, Trace-Puffer.
+
+### 5.2 Symbole
+
+- **Kernel:** `l68 -s=<datei>` liefert `Name COD Offset` fuer alle globalen
+  Symbole (auch Assembler-Labels). Laufzeitadresse = Ladeadresse des Kernels
+  (heute $7100, aus der Bootliste) + Offset. Bereits erprobt
+  (Absturzanalysen in Fortsetzung 113-120). Luecke: `static`-Funktionen
+  fehlen in der Karte und werden dem vorangehenden Symbol zugeschlagen.
+- **Eigene Module** (forkchild, trace, spaeter QCC-Programme): ebenfalls
+  Linkkarte beim Bauen mitschreiben.
+- **Microware-Module** (ioman, scf, rbf, sysgo ...): MWOS enthaelt
+  `*.stb`/`*.map` (z. B. `OS9/68000/CMDS/BOOTOBJS/STB/`), selbst als
+  OS-9-Modul verpackt (`4AFC`-Kopf); Format noch zu entschluesseln. Ohne
+  Symbole bleibt `modul+offset` -- auch das ist schon viel wert.
+- **Laufzeit-Zuordnung:** Q9-Flux liest das Moduldirectory des Kernels
+  (`Q9K_MODDIR_HEAD_ADDR` $1238, Eintraege mit Kopfadresse/Groesse/Name --
+  der Dump zeigt das heute schon) und legt die Symbole jedes Moduls an seine
+  tatsaechliche Ladeadresse. Geladene Module (F$Load) werden so automatisch
+  erfasst.
+- **Format im Emulator:** eine einfache Textdatei je Modul
+  (`modulname offset name`), vom Build erzeugt. Fuer GDB zusaetzlich als
+  ELF-Symboldatei exportierbar.
+
+### 5.3 Quelltext-Debugging (gemessen)
+
+- `xcc -g` reicht `--add_debug_info` an den Compiler und `-g` an `be68k`
+  und laesst **beide Optimierer weg** (`iopt`, `opt68k`). Der Code wird
+  dadurch groesser und anders (q9kernel_date.c: $610 -> $8B0 Byte,
+  Funktionen verschoben). Das ist gewollt -- im unoptimierten Code
+  entspricht jede Zeile einem Codestueck, Einzelschritt und Variablen sind
+  nachvollziehbar (uebliche Praxis bei Debug-Builds).
+- Die Zeileninformation steht in einem eigenen **Debug-Abschnitt** der
+  ROF-Objektdatei (`rdump` zeigt nur seine Groesse, `Debug: $AB8`). Format
+  noch zu entschluesseln; Hinweise: Microwares Quelltext-Debugger
+  (`mwsrcdbg.dll`, `hawkdbg.dll` in MWOS/DOS/BIN).
+- **Ganzer Kernel mit `-g` geht nicht:** ~40 % mehr Code, 27 `bsr`-Sprunge
+  (68000: nur +-32 KB) erreichen ihr Ziel nicht mehr. Deshalb **pro Datei**:
+  Bauschalter `Q9K_SRCDEBUG="q9kernel_date.c ..."` uebersetzt nur diese
+  Dateien unoptimiert mit `-g` (umgesetzt, build.sh). Mit einer kleinen
+  Datei baut und bootet der Kernel bis zum Login; schon zwei Dateien
+  (date+sched) sprengen wieder zwei Sprunge -- der Kernel sitzt an der
+  Grenze.
+- **Strukturelle Loesung der Reichweite:** ein Fernaufruf-Makro statt
+  `bsr` fuer Aufrufe aus q9kernel_entry.a in C, PC-relativ ueber eine
+  Label-Differenz (`lea *(pc),a0 / adda.l #Ziel-*,a0 / jsr (a0)`), die der
+  Linker als Konstante aufloest -- falls l68 das kann (zu pruefen). Das
+  beseitigt die 32-KB-Grenze allgemein, nicht nur fuer Debug-Builds.
+- **QCC:** eigener Weg mit frei waehlbarem Format -- `LINE datei zeile` im
+  IR, das Backend setzt Labels und schreibt eine Zeilentabelle neben das
+  Modul. Gehoert ins QCC-Repo.
+- Der Praeprozessor muss dafuer nichts in den Quelltext einsetzen: er reicht
+  nur Zeilenmarken (`# 123 "datei.c"`) an den Compiler weiter; `__LINE__`/
+  `__FILE__` im Code wuerden Laufzeitdaten erzeugen und helfen dem Debugger
+  nicht.
+
+### 5.4 Debugger-Kern
+
+- Erst ein **Monitor im Emulator** (Konsolenbefehle oder TCP-Port):
+  Haltepunkt (PC), Watchpoint (Schreibzugriff, gibt es schon als
+  `Q9_WATCH_ADDR`), Einzelschritt, Register, Speicher -- alles symbolisch.
+  Q9-Flux hat die Haken bereits (Instruktionshook, Freeze nach PC/SP,
+  Instruktionsspur).
+- Danach ein **GDB-Remote-Stub** (`m68k-elf-gdb`, VS Code), mit der
+  ELF-Symboldatei aus 5.2.
+
+### 5.5 Reihenfolge
+
+1. Symbolische Adressen im Q9-Flux-Dump und in der Spur (Kernel-Linkkarte
+   + Moduldirectory) -- billig, sofort nuetzlich.
+2. Fernaufruf-Makro pruefen (l68-Label-Differenz); bei Erfolg `bsr` aus
+   q9kernel_entry.a nach C darauf umstellen -- loest die 32-KB-Grenze.
+3. ROF-Debug-Abschnitt (`xcc -g`) entschluesseln -> Zeilentabelle.
+4. Monitor mit Haltepunkten/Einzelschritt, dann GDB-Stub.
+5. `.stb`-Format der Microware-Module.
+6. QCC-Zeilentabellen (QCC-Repo).
 
 ## 6. Arbeitspakete
 
