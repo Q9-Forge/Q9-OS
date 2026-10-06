@@ -409,6 +409,42 @@ void Q9K_AlarmCleanupProcess(Q9_u32 desc)
     }
 }
 
+/* SS_SSig auf der nativen Konsole (2026-10-06, Fortsetzung 113).
+ *
+ * I$SetStt SS_SSig ($1A) meldet "schick mir Signal d2, sobald Eingabe
+ * anliegt" an; SS_Relea ($1B) nimmt das zurueck (68k_tech.pdf, I$SetStt).
+ * tsmon wartet genau so auf die erste Taste: SS_SSig, dann F$Sleep 0.
+ * Die native Konsole hat keinen eigenen Empfangsinterrupt -- deshalb
+ * traegt Q9K_SysFISetStt (q9kernel_entry.a) Empfaenger und Signal in
+ * zwei feste Zellen ein, und dieser Tick prueft das DUART-Empfangsbit.
+ * Einmalig wie im Original: nach der Zustellung ist die Anmeldung weg,
+ * der Aufrufer meldet sich fuer die naechste Eingabe neu an. Eine Taste
+ * wird also hoechstens einen Tick spaeter gemeldet.
+ * Adressen per #ifndef ueberschreibbar (Hosttest). */
+#ifndef Q9K_CONSSIG_PID
+#define Q9K_CONSSIG_PID     0x1F14UL   /* Q9_u32, 0 = keine Anmeldung */
+#endif
+#ifndef Q9K_CONSSIG_SIGNAL
+#define Q9K_CONSSIG_SIGNAL  0x1F18UL   /* Q9_u32, Signalcode */
+#endif
+#ifndef Q9K_CONSSIG_SRA
+#define Q9K_CONSSIG_SRA     0xFFFFF002UL /* DUART Status A, Bit 0 = RXRDY */
+#endif
+
+Q9_u32 Q9K_ConSSigTick(void)
+{
+    Q9_u32 pid = Q9K_GetU32(Q9K_CONSSIG_PID);
+    Q9_u16 err = 0;
+
+    if (pid == 0UL)
+        return 0;
+    if ((*(volatile Q9_u8 *)Q9K_CONSSIG_SRA & 0x01U) == 0U)
+        return 0;
+    Q9K_SetU32(Q9K_CONSSIG_PID, 0UL);
+    Q9K_ProcSend((Q9_u16)pid, (Q9_u16)Q9K_GetU32(Q9K_CONSSIG_SIGNAL), &err);
+    return 1;
+}
+
 /* Q9K_AlarmTick -- EINMAL PRO TICK aus dem Scheduler aufgerufen (dort,
  * wo auch die Schlafliste heruntergezaehlt wird, s.
  * Q9K_SchedReschedule). Zaehlt jeden belegten Alarm herunter und stellt
@@ -427,6 +463,8 @@ Q9_u32 Q9K_AlarmTick(void)
     Q9_u32 i;
     Q9_u32 nowDay = 0, nowSec = 0;
     int haveNow = 0;
+
+    Q9K_ConSSigTick();   /* Fortsetzung 113, s. o. -- nicht in "fired" mitgezaehlt */
 
     for (i = 0; i < Q9K_ALARM_SLOTS; ++i) {
         Q9_u32 ticks;

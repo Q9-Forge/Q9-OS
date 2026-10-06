@@ -10934,3 +10934,59 @@ und Developer-Kernel (`Q9K_BOOT=sysgo`) identisch. Offen:
 28/28 Host-Suiten; startup_shell_test.sh, mgrpath_probe_test.sh,
 malformed_boot_test.sh OK; Standard/Stress ohne/mit startup alle
 `Vektor=0`; Atom-Kernel baut und bootet bis tsmon.
+
+## Fortsetzung 113: Echter Login ueber tsmon -- neun Kernelfehler (2026-10-06)
+
+Ergebnis: Mit `Q9K_BOOT=sysgo` laeuft der echte Start bis zum Login:
+sysgo -> mshell (Startdatei) -> tsmon "1 devices online" -> Enter ->
+login "User name?:" -> "Process #03 logged on ... Welcome!" -> motd.
+Danach bleibt das System haengen (s. "Offen").
+
+Behobene Fehler (alle per Instruktionsspur/Schreib-Watch belegt):
+1. **F$TLink**: Groesse = M$Mem + d1 (d1 ist ZUSAETZLICHER Speicher fuer
+   csl-argv), nicht Ersatz/Maximum. Tests F6/F6b angepasst.
+2. **I$GetStt/I$SetStt nativ**: lehnten lokale Pfade 0..2 pauschal ab
+   (Pruefung auf Pfadnummer statt P$Path-Wert); Platzhalter 1/2 nutzen
+   jetzt Konsolen-Deskriptor 3. SS_SSig/SS_Relea fuer die native Konsole
+   (Zellen $1F14/$1F18, Zustellung im Tick ueber Q9K_ConSSigTick).
+3. **IRQ-Dispatcher**: `movea.l (a0,d0.l),a1 / beq` -- MOVEA setzt keine
+   Flags, jeder Interrupt sprang ueber die leere F$FIRQ-Tabelle nach 0.
+4. **Konsole ueber IOMan/SCF** beim echten Start (Zelle $1F1C, gesetzt in
+   Q9K_SysStartProc), sonst stahl sc68681 per IRQ die Tasten der nativen
+   Konsole.
+5. **$3AC(a4) Syscall-Verschachtelungstiefe**: TrapExtInvoke erhoeht,
+   Rueckweg senkt sie. SCFs Open endet mit `addq.l #1,$3ac(a4)`; mit 0
+   statt 1 ergab das Carry -> "can't open console device: Error $0000"
+   (historischer Fehler) und Carry/d1=0 bei I$Attach.
+6. **a1-Zerstoerung** in 15 Wrappern (`movea.l XImplPtr,a1 / jsr (a1)`):
+   tsmon schrieb das F$Julian-Ergebnis per a1 in den Kernelcode von
+   Q9K_SysJulianImpl. Wrapper retten a1 jetzt (F$Link/F$TLink liefern a1
+   und bleiben unveraendert; Chain/RTE/NProc/Wait-Pfade nicht angefasst).
+7. **__udivide/__umodulo** zerstoerten d2 (Rest) -- gesichert.
+8. **F$SUser**: Modulfaelle umgesetzt (Primaermodul von 0.0 darf alles,
+   sonst Wechsel auf den eigenen M$Owner). Vorher sofort "Logout".
+9. **Datenbereich nullen** bei F$Fork, F$Chain und F$TLink vor M$IData:
+   login bekam als erster wiederverwendeten Speicher, csls malloc rechnete
+   mit Altwerten (F$SRqCMem $2F5D1000 -> E$MemFul).
+
+Werkzeuge: Q9-Flux kennt jetzt `Q9_TRACE_AREG=<0..7>` (Adressregister
+statt a4 in der Spur). Kernel-Diagnoseausgabe direkt auf DUART A geht
+verloren, sobald sc68681 den Sender abschaltet (Trace-Kopie schaltet
+vorher per CRA=$04 ein). Testskripte im Scratch: runsysgo.sh (jetzt mit
+SYS/password q9test ohne Passwort + motd), login2.exp/login3.exp.
+
+**Offen (naechster Schritt, Ursache sehr wahrscheinlich):** Nach dem
+Login verschwinden mshell/pd aus allen Warteschlangen (nur tsmon schlaeft,
+Idle laeuft). IOMans F$IOQu ruft F$Sleep per Trampolin; welcher Zweig
+genommen wird, entscheidet das GLOBALE Flag `Q9K_InTrapPath` ($13E4).
+Der Timer-Interrupt kann Prozess A mit Flag 1 verdraengen und B (in
+IOMan-Code, Flag muesste 0 sein) fortsetzen -> B nimmt den Trap-Zweig von
+F$Sleep und geht verloren. Geplanter Fix: Flag pro Prozess im Deskriptor
+(z. B. Offset $3F8): Timer-Handler speichert es beim Verdraengen, alle
+Fortsetzungsstellen (`clr.w Q9K_InTrapPath` vor movem/rte, a0 = neuer
+Deskriptor) laden es und loeschen das Feld; F$Fork/Pool-Alloc nullen es.
+
+Nicht gelaufen in dieser Fortsetzung: volle Regression (28 Hostsuiten,
+std/stress, startup_shell_test, mgrpath_probe, malformed_boot) -- nur die
+betroffenen Hostsuiten (alarm, procapi, firstproc, chain, traplink) gruen.
+Asm-Debugcode unter Q9K_DEBUG weiterhin offen.

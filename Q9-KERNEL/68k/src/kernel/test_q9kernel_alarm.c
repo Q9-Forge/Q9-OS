@@ -39,6 +39,12 @@ static unsigned char g_alarmTable[0x200];
 #define Q9K_ALARM_SCRATCH_ERROR   ((unsigned long)(g_fakeGlobals + 0x0A0))
 #define Q9K_ALARM_SCRATCH_SUCCESS ((unsigned long)(g_fakeGlobals + 0x0C0))
 #define Q9K_ALARM_SCRATCH_DATE    ((unsigned long)(g_fakeGlobals + 0x0E0))
+/* SS_SSig der nativen Konsole (Fortsetzung 113): Zellen und DUART-Status
+ * auf Testpuffer umgebogen. */
+static unsigned char g_fakeSra;
+#define Q9K_CONSSIG_PID           ((unsigned long)(g_fakeGlobals + 0x100))
+#define Q9K_CONSSIG_SIGNAL        ((unsigned long)(g_fakeGlobals + 0x120))
+#define Q9K_CONSSIG_SRA           ((unsigned long)&g_fakeSra)
 
 /* Steuerbare Stubs. Beide Funktionen sind in ihren eigenen Testsuiten
  * abgedeckt (test_q9kernel_procsleep.c bzw. test_q9kernel_procapi.c). */
@@ -330,6 +336,27 @@ int main(void)
     Q9K_SysAlarmImpl();
     check("Bridge weist einen unbekannten Funktionscode ab",
           Q9K_GetU32(Q9K_ALARM_SCRATCH_SUCCESS), 0);
+
+    /* SS_SSig der nativen Konsole (Fortsetzung 113): ohne Anmeldung kein
+     * Signal, mit Anmeldung erst bei RXRDY, und nur einmal. */
+    reset();
+    g_sendCalls = 0;
+    g_fakeSra = 0x01;
+    Q9K_SetU32(Q9K_CONSSIG_PID, 0);
+    check("SS_SSig: ohne Anmeldung kein Signal", Q9K_ConSSigTick(), 0);
+    Q9K_SetU32(Q9K_CONSSIG_PID, 7);
+    Q9K_SetU32(Q9K_CONSSIG_SIGNAL, 0x55);
+    g_fakeSra = 0x0C;   /* TXRDY/TXEMT, aber keine Eingabe */
+    Q9K_AlarmTick();
+    check("SS_SSig: ohne RXRDY kein Signal", (unsigned long)g_sendCalls, 0);
+    g_fakeSra = 0x0D;
+    Q9K_AlarmTick();
+    check("SS_SSig: RXRDY stellt im Tick zu", (unsigned long)g_sendCalls, 1);
+    check("SS_SSig: Empfaenger", g_sendLastPid, 7);
+    check("SS_SSig: Signalcode", g_sendLastSignal, 0x55);
+    check("SS_SSig: Anmeldung danach geloescht", Q9K_GetU32(Q9K_CONSSIG_PID), 0);
+    Q9K_AlarmTick();
+    check("SS_SSig: nur einmal zugestellt", (unsigned long)g_sendCalls, 1);
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");
     return failures == 0 ? 0 : 1;

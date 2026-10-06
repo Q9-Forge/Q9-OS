@@ -351,15 +351,24 @@ void Q9K_SysSPriorImpl(void)
  * von 0.0 darf beliebig wechseln; jedes Primaermodul darf auf die ID
  * SEINES EIGENEN Modulbesitzers wechseln. Die beiden Modulfaelle
  * brauchen den Besitzereintrag aus dem Modulkopf des laufenden
- * Primaermoduls -- ein Feld, das dieser Kernel im Prozessdeskriptor noch
- * nicht fuehrt. Umgesetzt ist deshalb NUR der erste Fall (0.0 darf
- * alles), alles andere meldet sauber E$Permit statt einen der beiden
- * anderen Faelle vorzutaeuschen. Praktisch aendert das heute nichts:
- * jeder Prozess startet als 0.0 und erbt das bei F$Fork -- erst ein
- * Prozess, der sich selbst heruntergestuft hat, sieht die Grenze.
+ * Primaermoduls (seit Fortsetzung 113 umgesetzt, s. u.).
  *
  * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt).
  */
+#ifndef Q9K_PROCDESC_MODHDR_OFF
+#define Q9K_PROCDESC_MODHDR_OFF 0x38UL  /* Primaermodulkopf, s. q9kernel_firstproc.c */
+#endif
+#define Q9K_MH_OWNER_OFF        0x08UL  /* M$Owner, Gruppe.Benutzer (module.a) */
+
+/* Modulkoepfe sind Big-Endian-Bytefolgen; bytweise lesen, damit der
+ * Hosttest (64-Bit, Little Endian) dieselbe Logik prueft. */
+static Q9_u32 Q9K_SUserReadBE32(Q9_u32 addr)
+{
+    volatile unsigned char *b = (volatile unsigned char *)addr;
+    return ((Q9_u32)b[0] << 24) | ((Q9_u32)b[1] << 16) |
+           ((Q9_u32)b[2] << 8) | (Q9_u32)b[3];
+}
+
 int Q9K_ProcSUser(Q9_u32 desc, Q9_u32 groupUser, Q9_u16 *outError)
 {
     *outError = 0;
@@ -370,8 +379,26 @@ int Q9K_ProcSUser(Q9_u32 desc, Q9_u32 groupUser, Q9_u16 *outError)
     }
 
     if (Q9K_GetU32(desc + Q9K_PROCDESC_USER_OFF) != 0UL) {
-        *outError = Q9K_E_PERMIT;
-        return 0;
+        /* NACHTRAG (2026-10-06, Fortsetzung 113): die beiden Modulfaelle.
+         * Der Deskriptor fuehrt den Primaermodulkopf inzwischen (P$PModul,
+         * Q9K_PROCDESC_MODHDR_OFF); M$Owner steht im Modulkopf bei $08.
+         * Gebraucht wird das real: tsmon stuft sich per F$SUser auf 1.0
+         * herunter, das von ihm gestartete login setzt dann die ID des
+         * angemeldeten Benutzers -- beide Module gehoeren 0.0. Ohne diese
+         * Faelle endete jede Anmeldung sofort mit E$Permit ("Logout after
+         * exactly. Total time 0:00:00."). */
+        Q9_u32 mod = Q9K_GetU32(desc + Q9K_PROCDESC_MODHDR_OFF);
+        Q9_u32 owner;
+
+        if (mod == 0UL) {
+            *outError = Q9K_E_PERMIT;
+            return 0;
+        }
+        owner = Q9K_SUserReadBE32(mod + Q9K_MH_OWNER_OFF);
+        if (owner != 0UL && owner != groupUser) {
+            *outError = Q9K_E_PERMIT;
+            return 0;
+        }
     }
 
     Q9K_SetU32(desc + Q9K_PROCDESC_USER_OFF, groupUser);

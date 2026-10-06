@@ -849,6 +849,9 @@ Q9K_DExecScratch_Count      equ $1F04      * Q9_u32, d1.l EIN
 Q9K_DExecScratch_Next       equ $1F08      * Q9_u32, next descriptor AUS
 Q9K_DExecScratch_Error      equ $1F0C      * Q9_u32, d1.w AUS
 Q9K_DExecScratch_Ok         equ $1F10      * Q9_u16, 0/1
+Q9K_ConSSigPid              equ $1F14      * Q9_u32, SS_SSig-Empfaenger der nativen Konsole (0 = keiner), s. q9kernel_alarm.c
+Q9K_ConSSigSignal           equ $1F18      * Q9_u32, zugehoeriger Signalcode
+Q9K_ConsoleViaIOMan         equ $1F1C      * Q9_u32, 1 = /term ueber IOMan/SCF statt nativ (echter Start) -- naechste freie Adresse $1F20
 
 * Verschachtelungszaehler fuer Q9K_ExcTrap -- s. Rekursionsschutz dort.
 * Wort, nicht Langwort: mehr als "einmal / mehr als einmal" wird nicht
@@ -3254,6 +3257,13 @@ Q9K_TrapNotPathIO:
         bne     Q9K_TrapOwnHandler
         tst.l   Q9K_IOpenManagerRoutine
         beq     Q9K_TrapOwnHandler
+* Fortsetzung 113: beim echten Start (Q9K_SysStartProc) gehoert die Konsole
+* IOMan/SCF -- wie im Original. Sonst bedient sc68681 nach dem ersten
+* SCF-Open von /term (tsmon) den DUART-Empfang per Interrupt, waehrend
+* stdin/stdout noch die native Konsole sind: Tasten landeten im SCF-Puffer,
+* tsmon wartete auf der nativen Konsole vergeblich.
+        tst.l   Q9K_ConsoleViaIOMan
+        bne     Q9K_TrapIOpenManager
         cmpi.b  #'/',(a0)
         bne     Q9K_TrapIOpenManager
         cmpi.b  #'t',1(a0)
@@ -3455,6 +3465,14 @@ Q9K_TrapCallExternal:
 * neuen Prozesspfad. Read/Close stellen die vorher entfernte Markierung
 * wieder her, sofern der Manager den Pfad nicht geschlossen/entfernt hat.
         move.w  sr,-(sp)
+* Gegenstueck zum addq in Q9K_TrapExtInvoke (Fortsetzung 113). Ueber
+* Q9_D_Proc statt a4: der Fremdcode darf a4 veraendert haben, und nach
+* einem Schlaf im Treiber laeuft wieder DIESER Prozess. Das CCR liegt
+* schon gesichert auf dem Stack.
+        move.l  a0,-(sp)
+        movea.l Q9_D_Proc,a0
+        subq.l  #1,$3ac(a0)
+        movea.l (sp)+,a0
         bsr     Q9K_TrapManagerPathBookkeeping
 * Rahmen in die Register ZURUECKSCHREIBEN -- mit einer Ausnahme: d1
 * bleibt der Registerwert des Handlers.
@@ -3513,6 +3531,16 @@ Q9K_TrapCallExternal:
 Q9K_TrapExtInvoke:
         move.l  Q9K_TrapHandlerScratch,-(sp)                  * Handler-Adresse darueber
         movea.l Q9_D_Proc,a4                                   * A4 = aktueller Prozessdeskriptor
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-10-06, Fortsetzung 113): $3AC(a4) ist
+* die Syscall-Verschachtelungstiefe des Prozesses (q9sysglob.a, Q9_disp_488).
+* Der Originalkernel erhoeht sie beim Eintritt; die Dateimanager verlassen
+* sich darauf, dass sie im Dienst >= 1 ist. SCF zaehlt sie um den
+* Treiberaufruf herunter und wieder hoch, und sein Open endet mit
+* "addq.l #1,$3ac(a4) / rts" -- IOMan uebernimmt DESSEN Carry als Ergebnis
+* (ioman+$1560 "move.w sr,0(a7)"). Mit 0 statt 1 ergab das $FFFFFFFF+1 =
+* 0 MIT Carry: "can't open console device: Error $0000" beim Start und
+* Carry/d1=0 bei tsmons I$Attach. Gemessen per Instruktionsspur.
+        addq.l  #1,$3ac(a4)
 * NACHTRAG 2026-09-04: A6 = 0 (reale Systemglobal-Basis) fuer den externen
 * Handler. IOMans Code adressiert die Systemglobals durchgehend A6-relativ
 * -- $3a4(a6) fuer D_SysDis, $64(a6) fuer den Ausgabevektor und so fort.
@@ -3869,8 +3897,17 @@ Q9K_SysFRetPD:
         andi.l  #$0000ffff,d0                  * nur d0.w ist echte Eingabe
         move.l  d0,Q9K_RetPDScratch_NumIn
         move.l  (sp)+,d0
+* FIX (2026-10-06, Fortsetzung 113): a1 ueber den C-Aufruf retten. Ein
+* Systemaufruf veraendert nur seine dokumentierten Ausgaberegister; diese
+* Wrapper zerstoerten a1 mit der Implementierungsadresse. tsmon schrieb
+* nach F$Julian per "move.l d1,(a1)" in den Kernelcode von
+* Q9K_SysJulianImpl (Schreib-Watch: tsmon+$227E -> $129C4), der naechste
+* F$Julian lief ueber den zerstoerten link-Befehl ins ROM. Gleiches Muster
+* in allen Wrappern, deren Aufruf a1 nicht als Ausgabe hat.
+        move.l  a1,-(sp)
         movea.l Q9K_RetPDImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         tst.w   Q9K_RetPDScratch_Success+2
@@ -4355,8 +4392,10 @@ Q9K_SysDFork:
         move.l  d1,-(sp)
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
+        move.l  a1,-(sp)
         movea.l Q9K_DForkImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         move.l  (sp)+,d1
 
@@ -4383,8 +4422,10 @@ Q9K_SysDExit:
         move.w  d0,Q9K_DExitScratch_Pid
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
+        move.l  a1,-(sp)
         movea.l Q9K_DExitImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         tst.w   Q9K_DExitScratch_Ok
         beq     Q9K_SysDExit_Fail
@@ -4402,8 +4443,10 @@ Q9K_SysDExec:
         move.l  d1,Q9K_DExecScratch_Count
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
+        move.l  a1,-(sp)
         movea.l Q9K_DExecImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         tst.w   Q9K_DExecScratch_Ok
         beq     Q9K_SysDExec_Fail
@@ -4860,8 +4903,18 @@ Q9K_IRQDispatch:
         move.l  d0,d4
         lsl.l   #2,d0
         movea.l Q9K_FIRQHandlersPtr,a0
-        movea.l (a0,d0.l),a1
+* ECHTER BUG GEFUNDEN + GEFIXT (2026-10-06, Fortsetzung 113): hier stand
+* "movea.l (a0,d0.l),a1 / beq ..." -- MOVEA setzt auf dem 68k KEINE Flags.
+* Das beq sah das Z-Flag des "lsl.l #2,d0" davor (Vektor*4, nie 0) und
+* sprang deshalb NIE in den normalen Pfad: jeder Interrupt ueber diesen
+* Dispatcher lief per "jsr (a1)" mit a1=0 nach Adresse 0. Sichtbar wurde
+* es erst mit tsmon: Idle-Schleife ($7510), Taste -> DUART-Vektor $50 ->
+* PC=0 -> Vektor 4 bei $6C (Instruktionsspur). Wert deshalb ueber ein
+* Datenregister laden (d1 ist hier frei, der RaceRing hat ihn schon
+* verbraucht); MOVE setzt Z korrekt.
+        move.l  (a0,d0.l),d1
         beq     Q9K_IRQDispatchNoFast
+        movea.l d1,a1
         movea.l Q9K_FIRQStaticsPtr,a0
         movea.l (a0,d0.l),a2
         move.l  d4,d0
@@ -5548,8 +5601,10 @@ Q9K_SysFSTime:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_STimeScratch_Time
         move.l  d1,Q9K_STimeScratch_Date
+        move.l  a1,-(sp)
         movea.l Q9K_STimeImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         tst.w   Q9K_STimeScratch_Success+2
         beq     Q9K_SysFSTime_Fail
@@ -5582,8 +5637,10 @@ Q9K_SysFSchBit:
         move.w  d1,Q9K_BitmapScratch_Count+2
         move.l  a0,Q9K_BitmapScratch_Base
         move.l  a1,Q9K_BitmapScratch_End
+        move.l  a1,-(sp)
         movea.l Q9K_SchBitImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         move.w  Q9K_BitmapScratch_Start+2,d0     * in BEIDEN Faellen gueltig
         move.w  Q9K_BitmapScratch_Count+2,d1
@@ -5608,16 +5665,20 @@ Q9K_SysFAllBit:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         bsr     Q9K_BitmapArgsIn
+        move.l  a1,-(sp)
         movea.l Q9K_AllBitImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         bra     Q9K_BitmapReturn
 
 Q9K_SysFDelBit:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         bsr     Q9K_BitmapArgsIn
+        move.l  a1,-(sp)
         movea.l Q9K_DelBitImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         bra     Q9K_BitmapReturn
 
 * Gemeinsame Argumentuebergabe und Rueckkehr der beiden -- sie
@@ -5661,8 +5722,10 @@ Q9K_SysFGBlkMp:
         move.l  d0,Q9K_BlkMpScratch_Begin
         move.l  d1,Q9K_BlkMpScratch_BufSize
         move.l  a0,Q9K_BlkMpScratch_Buf
+        move.l  a1,-(sp)
         movea.l Q9K_GBlkMpImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         move.l  Q9K_BlkMpScratch_TotalRam,d2     * auch im Fehlerfall gueltig
         tst.w   Q9K_BlkMpScratch_Ok+2
@@ -5702,8 +5765,10 @@ Q9K_SysFSema:
         move.l  d0,Q9K_SemaScratch_Ptr
         clr.l   Q9K_SemaScratch_Op              * oberes Wort nullen, C liest 32 Bit
         move.w  d1,Q9K_SemaScratch_Op+2
+        move.l  a1,-(sp)
         movea.l Q9K_SemaImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         tst.w   Q9K_SemaScratch_Ok+2
         beq     Q9K_SysFSema_Fail
@@ -5946,8 +6011,10 @@ Q9K_SysFEvent:
         move.l  d3,Q9K_EventScratch_D3
         move.l  a0,Q9K_EventScratch_A0
         clr.l   Q9K_EventScratch_D1
+        move.l  a1,-(sp)
         movea.l Q9K_EventImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         tst.w   Q9K_EventScratch_Ok+2
         beq     Q9K_SysFEvent_Fail
@@ -6071,8 +6138,10 @@ Q9K_SysFSTrap:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_StrapScratch_Stack
         move.l  a1,Q9K_StrapScratch_Table
+        move.l  a1,-(sp)
         movea.l Q9K_StrapImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         tst.w   Q9K_StrapScratch_Ok+2
         beq     Q9K_SysFSTrap_Fail
@@ -6096,8 +6165,10 @@ Q9K_SysFSTrap_Fail:
 Q9K_SysFSigReset:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
+        move.l  a1,-(sp)
         movea.l Q9K_SigResetImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         andi    #$fe,ccr
         rts
@@ -6500,8 +6571,12 @@ Q9K_SysFIGetStt:
         bcs     Q9K_SysFIGetStt_Fail
         moveq   #0,d2
         move.w  d0,d2
-        cmpi.l  #3,d2
-        bcs     Q9K_SysFIGetStt_BadPath
+* FIX (2026-10-06, Fortsetzung 113): hier wurden die LOKALEN Pfadnummern
+* 0..2 pauschal abgelehnt ("cmpi.l #3,d2" auf die Pfadnummer, nicht auf den
+* P$Path-Wert). I$GetStt auf stdin/stdout/stderr scheiterte damit immer mit
+* E$BPNum -- auch wenn dahinter der native /term-Deskriptor stand. tsmon
+* ("can't get '/term' path options") und csl-Programme (echo) fragen genau
+* das ab. Die Pruefung auf einen echten Deskriptor erfolgt unten am WERT.
         cmpi.w  #5,d1
         beq     Q9K_SysFIGetStt_Pos
         cmpi.w  #1,d1
@@ -6517,7 +6592,11 @@ Q9K_SysFIGetStt:
         add.w   d2,d2
         move.w  (a1,d2.w),d2
         cmpi.w  #3,d2
-        bcs     Q9K_SysFIGetStt_BadPath
+        bcc.s   Q9K_SysFIGetStt_OptDesc
+* Platzhalter (Wert 1/2): Konsole ohne eigenen Deskriptor -- die Optionen
+* des Konsolen-Deskriptors 3 (beim Start fuer /term angelegt) liefern.
+        moveq   #3,d2
+Q9K_SysFIGetStt_OptDesc:
         subq.l  #3,d2
         lsl.l   #8,d2
         movea.l Q9K_PATHPOOL_BASE_ADDR,a1
@@ -6678,8 +6757,13 @@ Q9K_SysFISetStt:
         bcs     Q9K_SysFISetStt_Fail
         moveq   #0,d2
         move.w  d0,d2
-        cmpi.l  #3,d2
-        bcs     Q9K_SysFISetStt_BadPath
+* FIX (2026-10-06, Fortsetzung 113): wie bei I$GetStt keine pauschale
+* Ablehnung der lokalen Pfadnummern 0..2 mehr (tsmon: "can't change '/term'
+* options"); entscheidend ist der P$Path-Wert weiter unten.
+        cmpi.w  #$1a,d1
+        beq     Q9K_SysFISetStt_SSig
+        cmpi.w  #$1b,d1
+        beq     Q9K_SysFISetStt_Relea
         cmpi.w  #0,d1
         bne     Q9K_SysFISetStt_Unknown
         move.l  a0,d3
@@ -6691,7 +6775,9 @@ Q9K_SysFISetStt:
         add.w   d2,d2
         move.w  (a1,d2.w),d2
         cmpi.w  #3,d2
-        bcs     Q9K_SysFISetStt_BadPath
+        bcc.s   Q9K_SysFISetStt_OptDesc
+        moveq   #3,d2                           * Platzhalter -> Konsolen-Deskriptor
+Q9K_SysFISetStt_OptDesc:
         subq.l  #3,d2
         lsl.l   #8,d2
         movea.l Q9K_PATHPOOL_BASE_ADDR,a1
@@ -6703,6 +6789,25 @@ Q9K_SysFISetStt:
 Q9K_SysFISetStt_Copy:
         move.b  (a0)+,(a1)+
         dbra    d4,Q9K_SysFISetStt_Copy
+        movem.l (sp)+,d0/d2-d4/a0-a1
+        andi    #$fe,ccr
+        rts
+* SS_SSig/SS_Relea (Fortsetzung 113): Signal bei Konsoleneingabe an-/abmelden.
+* Empfaenger = aufrufender Prozess (P$ID, Deskriptor+0), Signal = d2.w des
+* Aufrufers (liegt gesichert bei 4(sp), Wortteil 6(sp)). Zugestellt wird im
+* Timer-Tick (Q9K_ConSSigTick, q9kernel_alarm.c), sobald RXRDY steht.
+Q9K_SysFISetStt_SSig:
+        moveq   #0,d3
+        move.w  6(sp),d3
+        move.l  d3,Q9K_ConSSigSignal
+        movea.l Q9_D_Proc,a1
+        moveq   #0,d3
+        move.w  (a1),d3
+        move.l  d3,Q9K_ConSSigPid
+        bra.s   Q9K_SysFISetStt_SigOk
+Q9K_SysFISetStt_Relea:
+        clr.l   Q9K_ConSSigPid
+Q9K_SysFISetStt_SigOk:
         movem.l (sp)+,d0/d2-d4/a0-a1
         andi    #$fe,ccr
         rts
@@ -7306,8 +7411,10 @@ Q9K_SysFJulian:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_DateScratch_Time
         move.l  d1,Q9K_DateScratch_Date
+        move.l  a1,-(sp)
         movea.l Q9K_JulianImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         tst.w   Q9K_DateScratch_Success+2
         beq     Q9K_SysFJulian_Fail
@@ -7330,8 +7437,10 @@ Q9K_SysFGregor:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_DateScratch_Time
         move.l  d1,Q9K_DateScratch_Date
+        move.l  a1,-(sp)
         movea.l Q9K_GregorImplPtr,a1
         jsr     (a1)
+        movea.l (sp)+,a1                  * a1 des Aufrufers (movea laesst CCR unberuehrt)
         movea.l (sp)+,a6
         tst.w   Q9K_DateScratch_Success+2
         beq     Q9K_SysFGregor_Fail
@@ -7719,12 +7828,19 @@ Q9K_SysIDCopyright:
 * damit auf jeder 68k-Stufe. Divisor 0 liefert Quotient 0 und Rest =
 * Dividend, statt eine Exception auszuloesen: ein Kernel soll an einer
 * fehlerhaften Rechnung nicht sterben.
+* FIX (2026-10-06, Fortsetzung 113): d2 retten. Der Compiler haelt Werte
+* ueber Aufrufe hinweg in d2 (nur d0/d1/a0/a1 sind frei); Q9K_UDivMod
+* liefert den Rest aber in d2 und zerstoerte ihn so beim Aufrufer.
 __udivide:
+        move.l  d2,-(sp)
         bsr     Q9K_UDivMod
+        move.l  (sp)+,d2
         rts                             * Q9K_UDivMod liefert den Quotienten in d0
 __umodulo:
+        move.l  d2,-(sp)
         bsr     Q9K_UDivMod
         move.l  d2,d0                   * stattdessen den Rest
+        move.l  (sp)+,d2
         rts
 
 * Gemeinsamer Kern: d0 = Dividend, d1 = Divisor.
@@ -7931,6 +8047,7 @@ Q9K_ChainSavedTrapPath: dc.l 0
 * Stack: F$Chain ersetzt den Prozessspeicher.
 Q9K_SysStartParam           equ $1FE0      * 32 Byte, Startparameter + CR -- naechste freie Adresse $2000
 Q9K_SysStartProc:
+        move.l  #1,Q9K_ConsoleViaIOMan        * /term ab jetzt ueber IOMan/SCF (s. Q9K_TrapNotPathIO)
         move.w  #$0c01,d0
         lea     Q9K_SysStartIOManName(pc),a0
         trap    #0

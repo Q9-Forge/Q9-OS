@@ -62,6 +62,7 @@ static unsigned char g_bigBuf[0x400 + 16];
  * ueberschreiben -- gleiche Grosszuegigkeit wie in
  * test_q9kernel_firstproc.c, betrifft NUR diesen Test. */
 #define Q9K_PROCDESC_USER_OFF         0x300UL
+#define Q9K_PROCDESC_MODHDR_OFF       0x340UL  /* Fortsetzung 113: F$SUser-Modulfaelle */
 
 /* Q9K_SchedInsert lebt in q9kernel_sched.c (Ready-Queue). Hier ein
  * aufrufzaehlender Stub -- dieser Test prueft nur, DASS F$AProc den
@@ -197,6 +198,32 @@ int main(void)
         check("F$SUser ohne aktuellen Prozess meldet Fehlschlag",
               (Q9_u32)Q9K_ProcSUser(0, 1, &err), 0);
         check("F$SUser ohne aktuellen Prozess meldet E$PrcID", (Q9_u32)err, Q9K_E_PRCID);
+
+        /* Fortsetzung 113: Modulfaelle. Ein Primaermodul im Besitz von
+         * 0.0 darf beliebig wechseln (tsmon -> login), jedes andere nur
+         * auf seinen eigenen Besitzer. */
+        {
+            static unsigned char modhdr[16];
+            Q9_u32 m = (Q9_u32)(unsigned long)modhdr;
+
+            Q9K_SetU32(first + Q9K_PROCDESC_MODHDR_OFF, m);
+            memset(modhdr, 0, sizeof modhdr);            /* M$Owner = 0.0 */
+            Q9K_SetU32(first + Q9K_PROCDESC_USER_OFF, 0x00010000UL);
+            err = 0;
+            check("F$SUser: Modul von 0.0 darf als 1.0 auf 0.0 zurueck",
+                  (Q9_u32)Q9K_ProcSUser(first, 0, &err), 1);
+            modhdr[8] = 0x00; modhdr[9] = 0x05; modhdr[10] = 0x00; modhdr[11] = 0x02; /* 5.2 */
+            Q9K_SetU32(first + Q9K_PROCDESC_USER_OFF, 0x00010000UL);
+            check("F$SUser: fremdes Modul darf auf seinen Besitzer",
+                  (Q9_u32)Q9K_ProcSUser(first, 0x00050002UL, &err), 1);
+            Q9K_SetU32(first + Q9K_PROCDESC_USER_OFF, 0x00010000UL);
+            err = 0;
+            check("F$SUser: fremdes Modul darf nicht auf andere IDs",
+                  (Q9_u32)Q9K_ProcSUser(first, 0x00050003UL, &err), 0);
+            check("F$SUser: dabei E$Permit", (Q9_u32)err, Q9K_E_PERMIT);
+            Q9K_SetU32(first + Q9K_PROCDESC_MODHDR_OFF, 0);
+            Q9K_SetU32(first + Q9K_PROCDESC_USER_OFF, 0x00030007UL); /* Stand fuer die F$ID-Pruefung unten */
+        }
 
         /* F$ID muss jetzt das echte Feld liefern, nicht mehr fest 0. */
         Q9K_SetU32(Q9_D_PROC, first);

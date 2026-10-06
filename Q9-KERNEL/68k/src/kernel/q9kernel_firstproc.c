@@ -948,6 +948,18 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
      * unabhaengige Speicherbereiche/Felder betroffen sind). Fuer Module
      * ohne M$IData/M$IRefs (hellosvc/forkchild, beide Felder 0) exakt
      * kein Verhaltensunterschied (frueher Ruecksprung in der Funktion). */
+    /* FIX (2026-10-06, Fortsetzung 113): den ganzen neuen Block nullen,
+     * BEVOR M$IData hineinkopiert wird. Nicht initialisierte vsect-Variablen
+     * muessen 0 sein; csl baut z. B. seine malloc-Verwaltung darauf auf.
+     * Solange jeder Prozess frisches RAM bekam, fiel das nicht auf -- login
+     * erhielt als erster wiederverwendeten Speicher und rechnete mit alten
+     * Werten (F$SRqCMem $2F5D1000 -> E$MemFul, kein "User name?"). */
+    {
+        volatile unsigned char *z = (volatile unsigned char *)block;
+        Q9_u32 n;
+        for (n = 0; n < totalSize; n++)
+            z[n] = 0;
+    }
     Q9K_ApplyInitializedData(hdrAddr, block);
 
     desc = Q9K_ProcPoolAlloc();

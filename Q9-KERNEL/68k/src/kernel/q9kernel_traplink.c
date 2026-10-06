@@ -418,16 +418,19 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
      * "kein eigener Speicher noetig" (reale Trap-Handler koennen das,
      * s. das Beispiel in Kapitel 5 -- die dortige TrapInit tut nichts
      * mit ihrem Speicher). */
-    /* FIX (2026-10-06, Fortsetzung 112): d1 ("optional memory override",
-     * 68k_tech.pdf) darf den statischen Speicher nur VERGROESSERN. M$Mem ist
-     * der Mindestbedarf des Moduls. Frueher gewann jeder Wert != 0: mshell
-     * rief F$TLink fuer csl mit d1=$30 auf, csl bekam 48 statt $2690 Byte,
-     * der naechste Block (mshells Prozessspeicher) lag direkt dahinter und
-     * wurde von csl ueberschrieben -- gemessen als A-Line-Absturz in mshell
-     * beim echten Start ueber sysgo. */
-    size = Q9K_TLinkReadU32BE(hdr + Q9K_MH_MEM);
-    if (memOverride > size)
-        size = memOverride;
+    /* FIX (2026-10-06, Fortsetzung 113): d1 ("optional memory override",
+     * 68k_tech.pdf) ist ZUSAETZLICHER statischer Speicher hinter M$Mem.
+     * Belegt an mshell/csl: mshells C-Start rechnet bei Text-Parametern
+     * (z. B. sysgos "-npxt<CR>") vorab den Platz fuer argv aus und uebergibt
+     * ihn als d1 (gemessen $30); csls Zerleger legt argv dann HINTER seinen
+     * statischen Daten an. Bei einer fertigen Binaer-argv-Struktur (endet
+     * auf ein Null-Wort, wie TestProcAs Startblock) ist d1 = 0.
+     *   - "d1 ersetzt M$Mem" (bis Fortsetzung 111): csl bekam 48 statt
+     *     $2690 Byte -> mshells Prozessblock ueberschrieben.
+     *   - "groesserer Wert" (Fortsetzung 112): kein Platz fuer argv -> der
+     *     Zerleger ueberschrieb seine eigene Ruecksprungadresse.
+     *   - "M$Mem + d1": sysgo startet mshell, die startup-Datei laeuft. */
+    size = Q9K_TLinkReadU32BE(hdr + Q9K_MH_MEM) + memOverride;
 
     if (size != 0) {
         Q9_u16 memErr = 0;
@@ -453,6 +456,14 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
          * bei Q9K_ApplyInitializedData oben. NUR wenn wirklich eigener
          * Speicher bereitgestellt wurde (staticPtr!=0, s. "size==0"-Fall
          * oben) -- ohne eigenen Speicher gibt es kein Ziel zum Kopieren. */
+        /* Fortsetzung 113: statischen Speicher des Trap-Moduls nullen, bevor
+         * M$IData hineinkommt (gleicher Grund wie bei F$Fork). */
+        {
+            volatile unsigned char *z = (volatile unsigned char *)staticPtr;
+            Q9_u32 n;
+            for (n = 0; n < grantedSize; n++)
+                z[n] = 0;
+        }
         Q9K_ApplyInitializedData(hdr, staticPtr);
         /* NACHTRAG 2026-09-13 (Fortsetzung 58): patcht bei Bedarf den in
          * Fortsetzung 56/57 gefundenen csl-eigenen Freilisten-Bug --

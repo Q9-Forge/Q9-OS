@@ -373,6 +373,8 @@ void Q9K_CInit(void)
         for (mgrOff = 0UL; mgrOff < 19UL * 4UL; mgrOff += 4UL)
             Q9K_PutU32(0x1F94UL + mgrOff, 0UL);
     }
+    Q9K_PutU32(0x1F14UL, 0UL); /* Fortsetzung 113: keine SS_SSig-Anmeldung der Konsole */
+    Q9K_PutU32(0x1F1CUL, 0UL); /* Fortsetzung 113: Konsole nativ, bis Q9K_SysStartProc umschaltet */
     Q9K_PutU32(0x1F84UL, (Q9_u32)(unsigned long)Q9K_FIRQHandlers);
     Q9K_PutU32(0x1F88UL, (Q9_u32)(unsigned long)Q9K_FIRQStatics);
 

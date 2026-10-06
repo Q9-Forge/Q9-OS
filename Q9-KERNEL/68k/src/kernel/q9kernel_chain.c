@@ -220,6 +220,13 @@ int Q9K_ProcChain(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
         return 0;
     }
 
+    /* Fortsetzung 113: neuen Block nullen wie bei F$Fork (s. dort). */
+    {
+        volatile unsigned char *z = (volatile unsigned char *)block;
+        Q9_u32 n;
+        for (n = 0; n < totalSize; n++)
+            z[n] = 0;
+    }
     Q9K_ApplyInitializedData(hdrAddr, block);
 
     blockTop   = block + totalSize;

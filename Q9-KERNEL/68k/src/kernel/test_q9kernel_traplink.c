@@ -91,6 +91,13 @@ unsigned long Q9K_ModDirUnlinkByHeader(unsigned long hdrAddr)
 static int           g_srqmemReturn = 1;
 static unsigned long g_srqmemOutAddr = 0;
 static unsigned long g_srqmemOutSize = 0;
+/* Fortsetzung 113: F$TLink nullt den statischen Speicher jetzt -- die
+ * Stub-Ergebnisse muessen deshalb echter, beschreibbarer Speicher sein
+ * statt erfundener Adressen ($7000/$9000). */
+static unsigned char g_tlinkStaticA[1024];
+static unsigned char g_tlinkStaticB[1024];
+#define TLINK_STATIC_A ((unsigned long)g_tlinkStaticA)
+#define TLINK_STATIC_B ((unsigned long)g_tlinkStaticB)
 static unsigned short g_srqmemOutError = 0;
 static unsigned long g_srqmemLastRequested = 0;
 static int           g_srqmemCalls = 0;
@@ -332,7 +339,7 @@ int main(void)
         setModuleField(Q9K_MH_INIT, 0x50UL);
         g_modDirHdr = (unsigned long)g_fakeModule;
         g_srqmemReturn = 1;
-        g_srqmemOutAddr = 0x7000UL;
+        g_srqmemOutAddr = TLINK_STATIC_A;
         g_srqmemOutSize = 256UL;
 
         ok = Q9K_ProcTLink(7UL, 0UL, (unsigned long)(g_fakeGlobals + 0x1000),
@@ -340,13 +347,14 @@ int main(void)
         checkU32("F5: Erfolg mit M\\$Mem-Speicher", (unsigned long)ok, 1);
         checkU32("F5: Q9K_ProcSRqMem mit M\\$Mem-Groesse (256) aufgerufen",
                  g_srqmemLastRequested, 256UL);
-        checkU32("F5: staticPtr == Q9K_ProcSRqMem-Ergebnis", staticPtr, 0x7000UL);
+        checkU32("F5: staticPtr == Q9K_ProcSRqMem-Ergebnis", staticPtr, TLINK_STATIC_A);
         checkU32("F5: Trap-Tabelle Slot 7 StaticPtr gesetzt",
-                 readSlotField(slotAddrFor(7UL), Q9K_TRAPTBL_OFF_STATICPTR), 0x7000UL);
+                 readSlotField(slotAddrFor(7UL), Q9K_TRAPTBL_OFF_STATICPTR),
+                 (unsigned long)(unsigned int)TLINK_STATIC_A); /* Slotfeld ist 32 Bit breit */
     }
 
-    /* Fall 6 (Fortsetzung 112 geaendert): ein GROESSERER Aufrufer-Override
-     * (d1.l) gewinnt gegen M$Mem ... */
+    /* Fall 6 (Fortsetzung 113): der Aufrufer-Override (d1.l) ist
+     * ZUSAETZLICHER Speicher: M$Mem (256) + d1 (512) = 768. */
     {
         resetAll();
         setModuleField(Q9K_MH_EXEC, 0x40UL);
@@ -354,18 +362,18 @@ int main(void)
         setModuleField(Q9K_MH_INIT, 0x50UL);
         g_modDirHdr = (unsigned long)g_fakeModule;
         g_srqmemReturn = 1;
-        g_srqmemOutAddr = 0x9000UL;
-        g_srqmemOutSize = 512UL;
+        g_srqmemOutAddr = TLINK_STATIC_B;
+        g_srqmemOutSize = 768UL;
 
         ok = Q9K_ProcTLink(2UL, 512UL, (unsigned long)(g_fakeGlobals + 0x1000),
                             &pastName, &modPtr, &execEntry, &initEntry, &staticPtr, &err);
         checkU32("F6: Erfolg mit Aufrufer-Override", (unsigned long)ok, 1);
-        checkU32("F6: groesserer Override (512) gewinnt gegen M\\$Mem (256)",
-                 g_srqmemLastRequested, 512UL);
+        checkU32("F6: M\\$Mem (256) + Override (512) angefordert",
+                 g_srqmemLastRequested, 768UL);
     }
 
-    /* Fall 6b: ... ein KLEINERER nicht -- M$Mem ist der Mindestbedarf
-     * (live: mshell uebergab d1=$30 fuer csl mit M$Mem=$2690). */
+    /* Fall 6b: auch ein kleiner Override wird ADDIERT, nicht ersetzt
+     * (live: mshell uebergibt d1=$30 fuer csl mit M$Mem=$2690). */
     {
         resetAll();
         setModuleField(Q9K_MH_EXEC, 0x40UL);
@@ -373,14 +381,14 @@ int main(void)
         setModuleField(Q9K_MH_INIT, 0x50UL);
         g_modDirHdr = (unsigned long)g_fakeModule;
         g_srqmemReturn = 1;
-        g_srqmemOutAddr = 0x9000UL;
-        g_srqmemOutSize = 256UL;
+        g_srqmemOutAddr = TLINK_STATIC_B;
+        g_srqmemOutSize = 320UL;
 
         ok = Q9K_ProcTLink(2UL, 64UL, (unsigned long)(g_fakeGlobals + 0x1000),
                             &pastName, &modPtr, &execEntry, &initEntry, &staticPtr, &err);
         checkU32("F6b: Erfolg", (unsigned long)ok, 1);
-        checkU32("F6b: kleinerer Override (64) wird ignoriert, M\\$Mem (256) angefordert",
-                 g_srqmemLastRequested, 256UL);
+        checkU32("F6b: M\\$Mem (256) + Override (64) angefordert, nicht nur 64",
+                 g_srqmemLastRequested, 320UL);
     }
 
     /* Fall 7: Speicheranforderung schlaegt fehl -- Fehlercode wird
