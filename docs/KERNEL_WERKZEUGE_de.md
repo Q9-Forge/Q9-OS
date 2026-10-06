@@ -4,6 +4,9 @@ Operatives Handwerkszeug für die Arbeit am eigenen Q9-Kernel: wie gebaut
 und im Emulator getestet wird, welche Diagnosetechniken sich bewährt
 haben, und welche Fallen wiederholt Zeit gekostet haben.
 
+Geplante feste Debug-Werkzeuge (Syscall-Trace, Register-Erhaltungsprüfung,
+Emulator-Debugger) beschreibt `docs/DEBUG_KONZEPT_de.md`.
+
 Diese Datei sammelt Wissen, das bis 2026-09-20 nur in privaten Notizen
 stand und dadurch für andere nicht auffindbar war. Der Stand der
 einzelnen Systemaufrufe steht in `STATUS.md`, der Arbeitsstand in
