@@ -178,3 +178,8 @@ void Q9TraceDecodeHeader(const Q9_u8 *rec, Q9TraceRecHdr *hdr)
                 ((Q9_u32)rec[8] << 8) | (Q9_u32)rec[9];
     hdr->fineTime = (Q9_u16)(((Q9_u16)rec[10] << 8) | rec[11]);
 }
+
+Q9_u32 Q9TraceLostRecordFormatter(Q9_u8 *out, Q9_u32 lostCount)
+{
+    return Q9TraceBuildLostRecord(out, 0, 0, 0, lostCount);
+}

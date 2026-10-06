@@ -77,6 +77,87 @@ static void test_ringbuf_wrap_overwrite(void)
     check("ringbuf overwrite: aeltester verbliebener Satz ist C (nicht A/B)", hdr.code, 3);
 }
 
+/* Praezisierung von Andreas (06.10.2026): im Ueberschreiben-Modus muss
+ * der Lesezeiger beim Opfern alter Saetze mitwandern (bereits oben
+ * getestet) UND an genau der neuen Leseposition ein ERKENNBARER
+ * Verlust-Marker-Satz stehen, der zeigt, was verlorengegangen ist --
+ * bevor ein Leser auf noch gueltige Altdaten oder den gerade neu
+ * geschriebenen Satz trifft. Szenario: Puffer mit bekannter Groesse
+ * (48 Byte, passt exakt fuer vier 12-Byte-Saetze) ueber die Kapazitaet
+ * hinaus fuellen (A,B,C,D, dann E), sodass drei Saetze (A,B,C) geopfert
+ * werden muessen, D aber UNANGETASTET ueberlebt. */
+static void test_ringbuf_overwrite_lost_marker(void)
+{
+    Q9RingBuf rb;
+    Q9_u8 mem[48];
+    Q9_u8 recA[12] = { 1, 12, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0 };
+    Q9_u8 recB[12] = { 1, 12, 2, 0, 0, 2, 0, 0, 0, 2, 0, 0 };
+    Q9_u8 recC[12] = { 1, 12, 3, 0, 0, 3, 0, 0, 0, 3, 0, 0 };
+    Q9_u8 recD[12] = { 1, 12, 4, 0, 0, 4, 0, 0, 0, 4, 0, 0 };
+    Q9_u8 recE[12] = { 1, 12, 5, 0, 0, 5, 0, 0, 0, 5, 0, 0 };
+    Q9_u8 out[64];
+    Q9_u32 n;
+    Q9TraceRecHdr hdr;
+
+    Q9RingBufInit(&rb, mem, sizeof mem, 0, "trace", Q9RB_MODE_OVERWRITE);
+    Q9RingBufSetLostFormatter(&rb, Q9TraceLostRecordFormatter);
+
+    Q9RingBufWrite(&rb, recA, sizeof recA);
+    Q9RingBufWrite(&rb, recB, sizeof recB);
+    Q9RingBufWrite(&rb, recC, sizeof recC);
+    Q9RingBufWrite(&rb, recD, sizeof recD); /* Puffer jetzt exakt voll (48/48) */
+    check("marker: Puffer exakt voll vor dem Ueberlauf", rb.used, 48);
+
+    checkInt("marker: fuenfter Satz (E) wird trotzdem angenommen", Q9RingBufWrite(&rb, recE, sizeof recE), 1);
+    check("marker: lostCount = 3 (A,B,C geopfert, D ueberlebt)", rb.lostCount, 3);
+
+    n = Q9RingBufRead(&rb, out, sizeof out, 0);
+
+    /* Erster gelesener Satz MUSS der Marker sein (Typ 5), nicht D. */
+    Q9TraceDecodeHeader(out, &hdr);
+    checkInt("marker: erster gelesener Satz ist der Verlust-Marker", hdr.recType, Q9TRACE_REC_LOST);
+    check("marker: Marker nennt die richtige Anzahl (3)", ((Q9_u32)out[12] << 24) | ((Q9_u32)out[13] << 16) |
+          ((Q9_u32)out[14] << 8) | out[15], 3);
+
+    /* Direkt danach MUSS D unversehrt folgen (nicht etwa ueberschrieben). */
+    Q9TraceDecodeHeader(out + hdr.recLen, &hdr);
+    checkInt("marker: zweiter gelesener Satz ist D, unversehrt", hdr.code, 4);
+
+    /* Und als Drittes der gerade neu geschriebene Satz E. */
+    {
+        Q9_u32 off2 = 16 + 12; /* Marker (16) + D (12) */
+        Q9TraceDecodeHeader(out + off2, &hdr);
+        checkInt("marker: dritter gelesener Satz ist E", hdr.code, 5);
+    }
+
+    check("marker: insgesamt gelesene Byte = Marker+D+E (16+12+12)", n, 40);
+    check("marker: used nach vollstaendigem Lesen = 0", rb.used, 0);
+}
+
+/* Randfall: ohne gesetzten Formatierer (Standard) bleibt es beim reinen
+ * Zaehler, KEIN Marker im Datenstrom -- Rueckwaertskompatibilitaet zum
+ * bereits bestehenden test_ringbuf_wrap_overwrite (das dort erwartete
+ * "aeltester verbliebener Satz ist C" waere FALSCH, gaebe es dort
+ * ploetzlich auch einen Marker -- dieser Test haelt das bewusst fest). */
+static void test_ringbuf_overwrite_no_formatter_no_marker(void)
+{
+    Q9RingBuf rb;
+    Q9_u8 mem[20];
+    Q9_u8 recA[12] = { 1, 12, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0 };
+    Q9_u8 recB[12] = { 1, 12, 2, 0, 0, 2, 0, 0, 0, 2, 0, 0 };
+    Q9_u8 out[64];
+    Q9TraceRecHdr hdr;
+
+    Q9RingBufInit(&rb, mem, sizeof mem, 0, "trace", Q9RB_MODE_OVERWRITE);
+    /* KEIN Q9RingBufSetLostFormatter-Aufruf hier -- bewusst. */
+    Q9RingBufWrite(&rb, recA, sizeof recA);
+    Q9RingBufWrite(&rb, recB, sizeof recB); /* 24 Byte noetig, 20 vorhanden -> A faellt weg */
+
+    Q9RingBufRead(&rb, out, sizeof out, 0);
+    Q9TraceDecodeHeader(out, &hdr);
+    checkInt("ohne Formatierer: erster gelesener Satz ist direkt B (kein Marker)", hdr.code, 2);
+}
+
 static void test_ringbuf_halt_mode(void)
 {
     Q9RingBuf rb;
@@ -316,6 +397,8 @@ int main(void)
 {
     test_ringbuf_basic();
     test_ringbuf_wrap_overwrite();
+    test_ringbuf_overwrite_lost_marker();
+    test_ringbuf_overwrite_no_formatter_no_marker();
     test_ringbuf_halt_mode();
     test_ringbuf_wraparound_offset();
     test_record_roundtrip();

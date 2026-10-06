@@ -148,4 +148,18 @@ typedef struct Q9TraceRecHdr {
 
 void Q9TraceDecodeHeader(const Q9_u8 *rec, Q9TraceRecHdr *hdr);
 
+/* Verlust-Marker-Formatierer fuer q9ringbuf.c (Q9RingBufLostFmt-
+ * Signatur, s. q9ringbuf.h) -- baut einen Q9TRACE_REC_LOST-Satz mit
+ * "lostCount" als Anzahl. pid/tick/fineTime sind auf dieser, sehr
+ * niedrigen Ebene (der Ringpuffer selbst kennt weder Prozesse noch
+ * Ticks) nicht verfuegbar und werden deshalb genullt -- der Marker ist
+ * ohnehin ueber seinen Satztyp UND seine Position (genau am neuen
+ * Lesekopf, von Q9RingBufWrite eingefuegt) eindeutig als "hier wurde
+ * ueberschrieben" erkennbar, die exakte Tick-Zeit des Verlusts ist
+ * dafuer nicht noetig. Rueckgabe ist IMMER Q9TRACE_HDR_LEN+4 (16),
+ * unabhaengig von "lostCount" -- erfuellt damit den von q9ringbuf.h
+ * verlangten Vertrag "Laenge unabhaengig vom Wert". Mit
+ * Q9RingBufSetLostFormatter(rb, Q9TraceLostRecordFormatter) verdrahten. */
+Q9_u32 Q9TraceLostRecordFormatter(Q9_u8 *out, Q9_u32 lostCount);
+
 #endif /* Q9TRACE_H */

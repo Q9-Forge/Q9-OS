@@ -11074,3 +11074,52 @@ Trace-Puffer klaeren (s.o.), danach `F$Q9Dbg`-Handler + die zwei
 Dispatcher-Haken wirklich verdrahten, dann `q9dbg.d`
 (Assembler-Makros) ergaenzen -- bisher ausgelassen, weil ohne
 registrierten Syscall ungetestbarer toter Code waere.
+
+## Fortsetzung 116: Ueberschreiben-Semantik des Ringpuffers praezisiert -- Verlust-Marker an der neuen Leseposition (2026-10-06)
+
+**Auftrag von Andreas:** "Wenn Ringpuffer voll, soll er einfach
+ueberschrieben werden, der Lesezeiger wird dann auch weiter bewegt. Und
+ein erkennbares Zeichen am Anfang vom Buffer, das zeigt, was
+verlorengegangen ist."
+
+Die Lesezeiger-Mitbewegung war in Fortsetzung 115 bereits korrekt
+umgesetzt; es fehlte der sichtbare Marker IM DATENSTROM. Ergaenzt:
+
+- `q9ringbuf.h`: neuer, optionaler Formatierer-Funktionszeiger
+  (`Q9RingBufLostFmt`, per `Q9RingBufSetLostFormatter` registrierbar)
+  mit explizitem Vertrag "Laenge unabhaengig vom Zaehlerwert" -- ohne
+  gesetzten Formatierer bleibt ein Ringpuffer reiner Zaehler, kein
+  Verhaltensbruch fuer eine kuenftige Instanz ohne eigenes Satzformat.
+- `q9ringbuf.c`: beim Opfern alter Saetze wird jetzt zusaetzlich Platz
+  fuer den Marker eingeplant (`recLen+markerLen > free` statt nur
+  `recLen > free`). **Wichtiger Korrekturpunkt waehrend der Umsetzung:**
+  der naheliegende erste Versuch (Marker AN der neuen Leseposition
+  schreiben) haette den aeltesten UEBERLEBENDEN Satz zerstoert, den die
+  Schleife bewusst NICHT geopfert hat -- der Marker belegt stattdessen
+  die letzten `markerLen` Byte der insgesamt frei gewordenen Spanne
+  (unmittelbar VOR der neuen Leseposition), der Lesezeiger wird auf
+  dessen Anfang zurueckgesetzt. Rechnerisch bewiesen und per Test
+  bestaetigt: so bleibt jeder ueberlebende Satz unangetastet, und
+  Marker+eingehender neuer Satz passen immer gleichzeitig hinein, weil
+  die Stop-Bedingung der Opferschleife genau das garantiert.
+- `q9trace.c`/`.h`: `Q9TraceLostRecordFormatter` -- die konkrete
+  Andock-Funktion fuer `q9trace.c`s Satztyp 5, passend zur
+  `Q9RingBufLostFmt`-Signatur (feste Laenge 16, pid/tick/fineTime
+  genullt -- Position und Satztyp machen den Marker eindeutig
+  erkennbar, die exakte Zeit ist dafuer nicht noetig).
+- `test_q9kernel_dbg.c`: neuer, gezielter Testfall nach Andreas' Vorgabe
+  (Puffer mit bekannter Groesse exakt volllaufen lassen, dann ueber die
+  Kapazitaet hinaus schreiben) -- bestaetigt: Lesezeiger zeigt korrekt
+  auf den gueltigen Bereich, der Verlust-Satz mit der RICHTIGEN Anzahl
+  steht an der RICHTIGEN Stelle (zuerst gelesen), und der aelteste
+  UEBERLEBENDE Satz folgt unversehrt direkt danach. Zweiter neuer Test
+  haelt das Rueckwaertskompatibilitaetsverhalten ohne Formatierer fest
+  (reiner Zaehler, kein Marker -- der bestehende Test aus
+  Fortsetzung 115 bleibt dadurch unveraendert gueltig).
+
+Alle Dateien bleiben nebenbei C89-rein (`gcc -std=c89 -pedantic`
+gegengeprueft, keine Warnungen) -- wichtig, da der echte Zielcompiler
+(QCC) C89 ist, auch wenn diese Dateien noch nicht Teil des Kernel-Baus
+sind.
+
+**Verifiziert:** 68/68 Hosttestfaelle gruen (10 neue).

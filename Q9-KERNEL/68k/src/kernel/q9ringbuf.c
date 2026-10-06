@@ -15,12 +15,18 @@ void Q9RingBufInit(Q9RingBuf *rb, Q9_u8 *data, Q9_u32 size,
     rb->used = 0;
     rb->writtenCount = 0;
     rb->lostCount = 0;
+    rb->lostFmt = 0;
     rb->mode = mode;
     rb->id = id;
 
     for (i = 0; i < sizeof(rb->name) - 1 && name[i] != '\0'; i++)
         rb->name[i] = name[i];
     rb->name[i] = '\0';
+}
+
+void Q9RingBufSetLostFormatter(Q9RingBuf *rb, Q9RingBufLostFmt fmt)
+{
+    rb->lostFmt = fmt;
 }
 
 /* Laenge des Satzes, dessen ERSTES Byte an "off" liegt (zirkulaer). */
@@ -32,10 +38,24 @@ static Q9_u32 RecLenAt(const Q9RingBuf *rb, Q9_u32 off)
     return (Q9_u32)rb->data[lenOff];
 }
 
+/* Kopiert "len" Byte aus "src" zirkulaer ab "off" in rb->data. */
+static void CopyIn(Q9RingBuf *rb, Q9_u32 off, const Q9_u8 *src, Q9_u32 len)
+{
+    Q9_u32 i;
+    for (i = 0; i < len; i++) {
+        Q9_u32 at = off + i;
+        if (at >= rb->size)
+            at -= rb->size;
+        rb->data[at] = src[i];
+    }
+}
+
 int Q9RingBufWrite(Q9RingBuf *rb, const Q9_u8 *rec, Q9_u32 recLen)
 {
     Q9_u32 free;
-    Q9_u32 i;
+    Q9_u32 lostThisOp = 0;
+    Q9_u32 markerLen = 0;
+    Q9_u8 markerBuf[Q9RINGBUF_LOSTMARKER_MAX];
 
     if (recLen == 0 || recLen > rb->size)
         return 0;
@@ -47,11 +67,24 @@ int Q9RingBufWrite(Q9RingBuf *rb, const Q9_u8 *rec, Q9_u32 recLen)
             rb->lostCount++;
             return 0;
         }
-        /* OVERWRITE: am Lesekopf ganze (alte) Saetze opfern, bis genug
-         * Platz frei ist. Jeder geopferte Satz zaehlt einzeln als
-         * verloren -- ein teilweise ueberschriebener Satz waere ohnehin
-         * nie wieder vollstaendig lesbar. */
-        while (recLen > free) {
+        /* OVERWRITE (Semantik von Andreas praezisiert, 06.10.2026): am
+         * Lesekopf alte Saetze opfern, bis genug Platz frei ist -- UND
+         * genug fuer den Verlust-Marker-Satz, falls ein Formatierer
+         * gesetzt ist. Der Marker hat fuer ein gegebenes Format IMMER
+         * dieselbe Laenge unabhaengig vom Zaehlerwert (Vertrag in
+         * q9ringbuf.h), deshalb genuegt es, sie EINMAL vorab zu messen
+         * (Aufruf mit lostCount=0 nur zur Laengenermittlung -- der
+         * tatsaechliche, richtige Zaehlerwert wird erst GANZ am Ende
+         * hineingeschrieben, s.u.). Jeder geopferte Satz zaehlt einzeln
+         * als verloren -- ein teilweise ueberschriebener Satz waere
+         * ohnehin nie wieder vollstaendig lesbar. */
+        if (rb->lostFmt != 0) {
+            markerLen = rb->lostFmt(markerBuf, 0);
+            if (markerLen > rb->size)
+                markerLen = 0; /* Puffer zu klein fuer JEDEN Marker -- Zaehler-only-Rueckfall */
+        }
+
+        while (recLen + markerLen > free) {
             Q9_u32 oldLen = RecLenAt(rb, rb->readOff);
             if (oldLen == 0 || oldLen > rb->used) {
                 /* Kaputter/leerer Zustand (sollte nie vorkommen) --
@@ -67,15 +100,41 @@ int Q9RingBufWrite(Q9RingBuf *rb, const Q9_u8 *rec, Q9_u32 recLen)
             rb->used -= oldLen;
             free += oldLen;
             rb->lostCount++;
+            lostThisOp++;
+        }
+
+        if (lostThisOp > 0 && rb->lostFmt != 0 && markerLen > 0) {
+            /* WICHTIG: der Marker darf NICHT an der (neuen) Lesekopf-
+             * Position selbst beginnen -- dort faengt bereits der
+             * aelteste UEBERLEBENDE Satz an (falls einer ueberlebt
+             * hat), ihn dort hineinzuschreiben wuerde genau DIESEN
+             * Satz zerstoeren, den wir gerade NICHT opfern wollten.
+             * Stattdessen belegt der Marker die LETZTEN "markerLen"
+             * Byte der soeben insgesamt frei gewordenen Spanne --
+             * d.h. er liegt UNMITTELBAR VOR der neuen Lesekopf-
+             * Position, und genau dorthin wird der Lesekopf
+             * zurueckgesetzt. Die Spanne ist dank der Schleifen-
+             * bedingung oben ("recLen+markerLen > free") immer
+             * mindestens recLen+markerLen Byte gross, sodass Marker
+             * UND der nachfolgend neu geschriebene Satz (an writeOff,
+             * s.u.) nie denselben Platz beanspruchen, unabhaengig
+             * davon, wie die freie Spanne physisch im Ring liegt. */
+            Q9_u32 finalLen = rb->lostFmt(markerBuf, lostThisOp);
+            Q9_u32 markerPos = rb->readOff + rb->size - markerLen;
+            if (markerPos >= rb->size)
+                markerPos -= rb->size;
+
+            CopyIn(rb, markerPos, markerBuf, finalLen);
+            rb->readOff = markerPos;
+            rb->used += finalLen;
+            free -= finalLen;
+            /* Der Marker selbst zaehlt NICHT nochmal als "geschrieben"
+             * im Sinne eines Nutzsatzes -- er ist Buchfuehrung ueber
+             * bereits gezaehlte Verluste, kein neuer Trace-Eintrag. */
         }
     }
 
-    for (i = 0; i < recLen; i++) {
-        Q9_u32 off = rb->writeOff + i;
-        if (off >= rb->size)
-            off -= rb->size;
-        rb->data[off] = rec[i];
-    }
+    CopyIn(rb, rb->writeOff, rec, recLen);
     rb->writeOff += recLen;
     if (rb->writeOff >= rb->size)
         rb->writeOff -= rb->size;
