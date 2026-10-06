@@ -176,6 +176,10 @@ mit kleinen Funktionen (`q9dbg_on()`, `q9dbg_mask_set(...)`,
 
 ### 2.7 Werkzeuge
 
+> **Stand 2026-10-06 (Fortsetzung 121):** umgesetzt sind das OS-9-Kommando
+> `trace [on|off|clear]` (Assembler, `Q9-KERNEL/68k/src/kernel/trace.a`) und
+> der Host-Dekoder `tools/q9trace_decode.py` fuer Q9-Flux-Dumps.
+
 - **`trace`** (OS-9-Programm): `trace on|off`, `trace mask +I$Open -F$SRqMem`,
   `trace filter -p=7 -u=0.5 -f=/dd/SYS/startup -e`, `trace show`,
   `trace clear`. Läuft auch aus einer `startup`-Datei.

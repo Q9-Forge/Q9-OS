@@ -11301,3 +11301,22 @@ Offen: Intercept-Zustellung aus F$Wait; ein `trace`-Programm im OS-9 selbst
 (Paket 4, bisher nur Host-Dekoder); pd-Hilfsprozesse von login/mshell bekommen bei
 I$GetStt/I$WritLn auf stdout Carry (Pipe-Pfad?) -- die Shell arbeitet
 trotzdem, pruefen; Paket 3/4 des Debug-Konzepts.
+
+## Fortsetzung 121: `trace`-Kommando im OS-9 (2026-10-06)
+
+Neues Programmmodul `trace` (Q9-KERNEL/68k/src/kernel/trace.a, reiner
+Assembler ohne csl, von build.sh mitgebaut, ins Testabbild nach CMDS):
+
+    trace on      Logging fuer alle Syscalls ein (F$Q9Dbg Unterfunktion 1)
+    trace off     aus
+    trace clear   Puffer leeren (Unterfunktion 7)
+    trace         Logging AUS, dann Puffer dekodiert ausgeben (Unterfunktion 6)
+
+Ausgabe je Satz: `<Tick hex> <PID hex> <Einrueckung> -> / <- Name [CARRY]`,
+`!! verloren: n` fuer Verlust-Saetze. Beim Anzeigen wird das Logging
+ausgeschaltet, weil das Ausgeben selbst I$WritLn-Saetze erzeugen wuerde.
+Live verifiziert nach dem Login: `trace on`, `trace` zeigt mshells
+Zeichen-Echo, F$Link CARRY -> F$Load -> F$Fork mit eingerueckten inneren
+Aufrufen. Im Atom-Kernel meldet `trace` einen Fehler (F$Q9Dbg fehlt).
+
+Host-Gegenstueck fuer Dumps/Abstuerze bleibt tools/q9trace_decode.py.

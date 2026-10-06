@@ -1,0 +1,283 @@
+*******************************************************************************
+* trace -- Syscall-Trace des Q9-Developer-Kernels steuern und anzeigen
+* (docs/DEBUG_KONZEPT_de.md, Abschnitt 2.7; Fortsetzung 121).
+*
+*   trace on      Trace einschalten (F$Q9Dbg Unterfunktion 1, d1=1)
+*   trace off     Trace ausschalten
+*   trace clear   Ringpuffer leeren (Unterfunktion 7)
+*   trace         Trace AUSSCHALTEN und den Puffer dekodiert ausgeben
+*                 (Unterfunktion 6, liest und verbraucht ganze Saetze)
+*
+* Beim Anzeigen wird der Trace bewusst ausgeschaltet: das Auslesen schreibt
+* selbst ueber I$WritLn und wuerde sonst ohne Ende nachprotokolliert.
+*
+* Ausgabezeile: <Tick hex> <PID hex> <Einrueckung je Tiefe> -> / <- Name
+* [CARRY]. "!!" markiert einen Verlust-Satz (ueberschriebene Saetze).
+* Satzformat s. q9trace.h (12-Byte-Kopf: Typ, Laenge, Callcode, Flags,
+* PID.w, Tick.l, Feinzeit.w).
+*
+* Bewusst reiner Assembler ohne csl: das Werkzeug soll auch dann laufen,
+* wenn die C-Laufzeit gerade das Problem ist. Im Atom-Kernel liefert
+* F$Q9Dbg E$UnkSvc -- trace meldet dann einen Fehler.
+*******************************************************************************
+Q9Prgrm                 equ     1
+Q9Objct                 equ     1
+TrEdition               equ     1
+TrStackSize             equ     $800
+TrReadMax               equ     480             * max. Byte je Lesevorgang (ganze Saetze)
+
+        psect   trace,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,TrEdition,TrStackSize,TrStart
+
+        vsect
+TrBuf:  ds.b    512
+TrLine: ds.b    96
+        ends
+
+TrStart:
+        movea.l a5,a0                           * a5 = Parameterzeichenkette (OS-9-Startkonvention)
+TrSkip:
+        cmpi.b  #' ',(a0)
+        bne.s   TrArg
+        addq.l  #1,a0
+        bra.s   TrSkip
+TrArg:
+        move.b  (a0),d0
+        cmpi.b  #'o',d0
+        bne.s   TrNotO
+        cmpi.b  #'n',1(a0)
+        beq.s   TrOn
+        cmpi.b  #'f',1(a0)
+        beq.s   TrOff
+        bra     TrUsage
+TrNotO:
+        cmpi.b  #'c',d0
+        beq.s   TrClear
+        cmpi.b  #$0d,d0
+        beq     TrDump
+        tst.b   d0
+        beq     TrDump
+        bra     TrUsage
+
+TrOn:
+        moveq   #1,d0
+        moveq   #1,d1
+        trap    #0
+        dc.w    $7f                             * F$Q9Dbg: Trace an
+        bcs     TrErr
+        lea     TrMsgOn(pc),a0
+        bra     TrSay
+TrOff:
+        moveq   #1,d0
+        moveq   #0,d1
+        trap    #0
+        dc.w    $7f                             * F$Q9Dbg: Trace aus
+        bcs     TrErr
+        lea     TrMsgOff(pc),a0
+        bra     TrSay
+TrClear:
+        moveq   #7,d0
+        moveq   #0,d3
+        trap    #0
+        dc.w    $7f                             * F$Q9Dbg: Puffer 0 leeren
+        bcs     TrErr
+        lea     TrMsgClr(pc),a0
+        bra     TrSay
+
+TrDump:
+        moveq   #1,d0
+        moveq   #0,d1
+        trap    #0
+        dc.w    $7f                             * zuerst Trace aus (s. Kopfkommentar)
+        bcs     TrErr
+TrRead:
+        lea     TrBuf(a6),a0
+        moveq   #6,d0
+        moveq   #0,d1
+        move.l  #TrReadMax,d2
+        moveq   #0,d3
+        trap    #0
+        dc.w    $7f                             * F$Q9Dbg: Ringpuffer lesen -> d0 = Byte
+        bcs     TrErr
+        tst.l   d0
+        beq     TrDone
+        lea     TrBuf(a6),a2
+        move.l  d0,d4                           * d4 = noch zu dekodierende Byte
+TrRec:
+        tst.l   d4
+        ble.s   TrRead
+        moveq   #0,d5
+        move.b  1(a2),d5                        * Satzlaenge
+        cmpi.b  #12,d5
+        bcs.s   TrRead                          * kaputt -- naechsten Block holen
+        bsr     TrFmt
+        adda.l  d5,a2
+        sub.l   d5,d4
+        bra.s   TrRec
+TrDone:
+        lea     TrMsgEnd(pc),a0
+
+TrSay:
+        moveq   #1,d0
+        moveq   #80,d1
+        trap    #0
+        dc.w    $008c                           * I$WritLn
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                               * F$Exit 0
+TrUsage:
+        lea     TrMsgUse(pc),a0
+        bra.s   TrSay
+TrErr:
+        trap    #0
+        dc.w    6                               * F$Exit mit Fehlercode in d1
+
+*******************************************************************************
+* TrFmt -- eine Zeile fuer den Satz bei (a2) bauen und ausgeben.
+* Erhaelt a2/d4/d5.
+TrFmt:
+        movem.l d4-d5/a2,-(sp)
+        lea     TrLine(a6),a1
+        move.l  6(a2),d1                        * Tick
+        moveq   #8,d2
+        bsr     TrHex
+        move.b  #' ',(a1)+
+        moveq   #0,d1
+        move.w  4(a2),d1                        * PID
+        moveq   #4,d2
+        bsr     TrHex
+        move.b  #' ',(a1)+
+        cmpi.b  #5,(a2)                         * Verlust-Satz?
+        bne.s   TrFmtNorm
+        lea     TrMsgLost(pc),a3
+TrFmtLostC:
+        move.b  (a3)+,d0
+        beq.s   TrFmtLostN
+        move.b  d0,(a1)+
+        bra.s   TrFmtLostC
+TrFmtLostN:
+        move.l  12(a2),d1                       * Anzahl verlorener Saetze
+        moveq   #8,d2
+        bsr     TrHex
+        bra     TrFmtEnd
+TrFmtNorm:
+        moveq   #0,d1
+        move.b  3(a2),d1
+        andi.b  #$0f,d1                         * Tiefe
+TrInd:
+        subq.w  #1,d1
+        bmi.s   TrIndE
+        move.b  #' ',(a1)+
+        move.b  #' ',(a1)+
+        bra.s   TrInd
+TrIndE:
+        move.b  #'?',d0
+        move.b  #'?',d1
+        cmpi.b  #1,(a2)
+        bne.s   TrNotEnt
+        move.b  #'-',d0
+        move.b  #'>',d1
+TrNotEnt:
+        cmpi.b  #2,(a2)
+        bne.s   TrNotRet
+        move.b  #'<',d0
+        move.b  #'-',d1
+TrNotRet:
+        move.b  d0,(a1)+
+        move.b  d1,(a1)+
+        move.b  #' ',(a1)+
+        lea     TrNames(pc),a3
+TrNmL:
+        move.b  (a3),d1
+        cmpi.b  #$ff,d1
+        beq.s   TrNmNo
+        cmp.b   2(a2),d1
+        beq.s   TrNmHit
+        lea     9(a3),a3
+        bra.s   TrNmL
+TrNmHit:
+        addq.l  #1,a3
+        moveq   #7,d1
+TrNmC:
+        move.b  (a3)+,d0
+        cmpi.b  #' ',d0
+        beq.s   TrNmE
+        move.b  d0,(a1)+
+        dbra    d1,TrNmC
+        bra.s   TrNmE
+TrNmNo:
+        move.b  #'$',(a1)+
+        moveq   #0,d1
+        move.b  2(a2),d1
+        moveq   #2,d2
+        bsr     TrHex
+TrNmE:
+        btst    #4,3(a2)                        * Carry = Fehler
+        beq.s   TrFmtEnd
+        lea     TrMsgCarry(pc),a3
+TrCaC:
+        move.b  (a3)+,d0
+        beq.s   TrFmtEnd
+        move.b  d0,(a1)+
+        bra.s   TrCaC
+TrFmtEnd:
+        move.b  #$0d,(a1)+
+        lea     TrLine(a6),a0
+        moveq   #1,d0
+        moveq   #96,d1
+        trap    #0
+        dc.w    $008c                           * I$WritLn
+        movem.l (sp)+,d4-d5/a2
+        rts
+
+*******************************************************************************
+* TrHex -- d1 als d2 Hexziffern nach (a1)+ (hoechste zuerst).
+TrHex:
+        movem.l d0-d1/d3,-(sp)
+        adda.w  d2,a1
+        move.l  a1,-(sp)
+        move.w  d2,d3
+        subq.w  #1,d3
+TrHexL:
+        move.b  d1,d0
+        andi.b  #$0f,d0
+        cmpi.b  #10,d0
+        bcs.s   TrHexD
+        addq.b  #7,d0
+TrHexD:
+        addi.b  #'0',d0
+        move.b  d0,-(a1)
+        lsr.l   #4,d1
+        dbra    d3,TrHexL
+        movea.l (sp)+,a1
+        movem.l (sp)+,d0-d1/d3
+        rts
+
+*******************************************************************************
+* Namen: je Eintrag Callcode-Byte + 8 Zeichen (mit Leerzeichen aufgefuellt).
+TrNames:
+        dc.b    $00,"F$Link  ",$01,"F$Load  ",$02,"F$UnLink",$03,"F$Fork  "
+        dc.b    $04,"F$Wait  ",$05,"F$Chain ",$06,"F$Exit  ",$07,"F$Mem   "
+        dc.b    $08,"F$Send  ",$09,"F$Icpt  ",$0a,"F$Sleep ",$0c,"F$ID    "
+        dc.b    $0e,"F$STrap ",$0f,"F$PErr  ",$10,"F$PrsNam",$11,"F$CmpNam"
+        dc.b    $15,"F$Time  ",$16,"F$STime ",$18,"F$GPrDsc",$1a,"F$GModDr"
+        dc.b    $1b,"F$CpyMem",$1c,"F$SUser ",$1e,"F$RTE   ",$20,"F$Julian"
+        dc.b    $21,"F$TLink ",$27,"F$SetSys",$28,"F$SRqMem",$29,"F$SRtMem"
+        dc.b    $2a,"F$IRQ   ",$2b,"F$IOQu  ",$2e,"F$VModul",$32,"F$SSvc  "
+        dc.b    $37,"F$GProcP",$38,"F$Move  ",$54,"F$Gregor",$56,"F$Alarm "
+        dc.b    $57,"F$SigMsk",$5a,"F$CCtl  ",$5c,"F$SRqCMm",$7f,"F$Q9Dbg "
+        dc.b    $80,"I$Attach",$81,"I$Detach",$82,"I$Dup   ",$83,"I$Create"
+        dc.b    $84,"I$Open  ",$85,"I$MakDir",$86,"I$ChgDir",$87,"I$Delete"
+        dc.b    $88,"I$Seek  ",$89,"I$Read  ",$8a,"I$Write ",$8b,"I$ReadLn"
+        dc.b    $8c,"I$WritLn",$8d,"I$GetStt",$8e,"I$SetStt",$8f,"I$Close "
+        dc.b    $ff
+
+TrMsgOn:    dc.b    "trace: an",$0d
+TrMsgOff:   dc.b    "trace: aus",$0d
+TrMsgClr:   dc.b    "trace: Puffer geleert",$0d
+TrMsgEnd:   dc.b    "trace: Ende (Trace ist jetzt aus)",$0d
+TrMsgUse:   dc.b    "Aufruf: trace [on|off|clear]",$0d
+TrMsgLost:  dc.b    "!! verloren: ",0
+TrMsgCarry: dc.b    " CARRY",0
+        align
+
+        endsect

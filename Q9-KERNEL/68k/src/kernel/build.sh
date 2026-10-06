@@ -227,6 +227,15 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
 echo "== Fertig: $OUTDIR/forkchild =="
 file forkchild || true
 
+echo "== trace.a bauen (Kommando zum Steuern/Anzeigen des Syscall-Trace, Fortsetzung 121) =="
+cp "$SRCDIR"/trace.a .
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=trace.r "trace.a" < /dev/null
+arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+    -o=trace -f=orowoe trace.r < /dev/null
+echo "== Fertig: $OUTDIR/trace =="
+file trace || true
+
 echo "== hellosvc.a bauen (eigenstaendiges Testmodul fuer F\$Fork, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/hellosvc.a .
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
