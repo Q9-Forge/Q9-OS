@@ -273,6 +273,30 @@ Jeder verschachtelte Trap überschreibt die Zelle, und fremde Handler wie
 IOMan rufen intern selbst Syscalls auf. Danach den Callcode aus dem
 eigenen R$-Rahmen nehmen (`$3c(a5)`, R$a7-Hochwort).
 
+**Nach dem Zurückladen der Aufruferregister ist kein Register mehr
+„frei“.** Der Dispatcher hat jahrelang `d7` für eine Prüfung benutzt,
+nachdem `movem.l (sp),d2-d7/a3-a5` die Aufruferwerte schon geladen hatte.
+Jeder Syscall kam mit verändertem `d7` zurück (Fortsetzung 111). C hält
+in `d2`–`d7`/`a2`–`a6` Registervariablen über Aufrufe hinweg. Fällt ein
+Programm nach einem *erfolgreichen* Syscall in einen Fehlerzweig: Register
+am Ein- und Ausgang des Handlers vollständig ausgeben und vergleichen.
+
+**`a6` vor *jedem* C-Aufruf umschalten, nicht nur vor dem ersten.** Wer
+nach einem C-Aufruf das Aufrufer-`a6` zurücklädt und danach noch einmal C
+aufruft (`F$Wait` → `Q9K_WaitQInsert`), löst mit fremdem `a6` die
+Compiler-Stackprüfung aus (`_stkhandler`, Marker `S`).
+
+**Rücksprungadresse einer Kernelfunktion zuordnen:** die vorhandenen
+`.r`-Dateien aus dem Buildverzeichnis noch einmal mit `l68 … -s=map.txt`
+linken (Reihenfolge wie in `build.sh`). Die Karte listet `Name COD
+Adresse`; Adressen sind Moduloffsets einschließlich `$3C`-Kopf, also
+`PC − Ladeadresse des Kernels`.
+
+**RaceRing im Dump ist gefiltert.** Der Renderer zeigt nur Einträge nahe
+X/A-Markern. Für lückenlose Syscall-Folgen eine eigene Ausgabe am Anfang
+von `Q9K_TrapDispatch` einbauen (in einer Wegwerfkopie), nicht aus dem Dump
+schließen.
+
 **Korrupte Werte zuerst als Bytes lesen.** Ein unsinniger PC wie
 `$b8902000` ist oft ein bekannter Wert, der um 2 oder 4 Byte versetzt
 gelesen wird: hier der Deskriptor `$0001b890` plus das echte SR `$2000`.

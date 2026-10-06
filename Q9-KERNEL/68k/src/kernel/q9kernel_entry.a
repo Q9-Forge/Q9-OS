@@ -2124,6 +2124,22 @@ Q9K_TestAttachForkFail:
 * use the explicit equivalent here.
         moveq   #'T',d7
         bsr     Q9K_DiagWriteD7
+* Fortsetzung 111: wie sysgo vor dem Shellstart Daten- und
+* Ausfuehrungsverzeichnis setzen ("chd /dd", "chx /dd/CMDS"). Ohne
+* Ausfuehrungsverzeichnis findet mshell externe Befehle nicht
+* (F$Load mit relativem Namen sucht dort). 68k_tech.pdf I$ChgDir:
+* d0.b Modus 3 = Update -> Datenverzeichnis, 4 = Execute ->
+* Ausfuehrungsverzeichnis.
+        moveq   #3,d0
+        lea     Q9K_StartupDataDir(pc),a0
+        trap    #0
+        dc.w    $0086                         * I$ChgDir /dd (Daten)
+        bcs     Q9K_BootStartupChdFail
+        moveq   #4,d0
+        lea     Q9K_StartupExecDir(pc),a0
+        trap    #0
+        dc.w    $0086                         * I$ChgDir /dd/CMDS (Ausfuehrung)
+        bcs     Q9K_BootStartupChxFail
         moveq   #1,d0
         lea     Q9K_StartupShellPath(pc),a0
         trap    #0
@@ -2186,6 +2202,12 @@ Q9K_BootStartupDupFail:
         bra     Q9K_BootStartupFail
 Q9K_BootStartupCloseFail:
         moveq   #'c',d7
+        bra     Q9K_BootStartupFail
+Q9K_BootStartupChdFail:
+        moveq   #'h',d7
+        bra     Q9K_BootStartupFail
+Q9K_BootStartupChxFail:
+        moveq   #'x',d7
         bra     Q9K_BootStartupFail
         endc
 
@@ -3330,44 +3352,21 @@ Q9K_TrapOwnHandler:
 * (a1)" weiter oben in dieser Datei). Damit laufen I$Open UND I$Read auf
 * /dd/startup erstmals sauber durch. Details: docs/OWN_KERNEL_STATUS.md
 * Fortsetzung 25-27.
-        move.l  a4,-(sp)                                  * preserve caller A4 across origin check
-        lea     Q9K_ModuleStart(pc),a4               * a4 = Ende des generierten Modulkopfs
-        suba.l  #Q9K_ModuleHeaderSize,a4                * a4 = WAHRER Modulanfang (M$ID-Wort)
-        move.l  Q9K_TrapCallerPC,d7
-        sub.l   a4,d7                                  * d7 = Ruecksprung-PC minus wahre Lade-Basis
-        cmp.l   4(a4),d7                                * gegen echtes M$Size aus dem Modulkopf
-        bcc     Q9K_TrapCallForeignCaller               * >= eigene Groesse: Aufrufer AUSSERHALB
-* Aufrufer ist WIR SELBST (Q9K_TestProcA & Co.).
-* FIX (2026-10-05, Fortsetzung 106): A4 des Aufrufers wird VOR dem
-* Handleraufruf vom Stack genommen, nicht erst danach. Vorher lag es
-* zwischen der jsr-Ruecksprungadresse und dem Exception-Frame. Die
-* blockierenden Handler (F$Wait, F$Sleep-Trapweg, F$Sema, F$Event,
-* F$NProc) verwerfen aber nur die 4 Byte Ruecksprungadresse und legen
-* den Registersatz direkt darueber -- das alte A4 blieb so zwischen
-* Registersatz und Frame liegen, und das spaetere "movem.l (sp)+ / rte"
-* las es als SR/PC. Genau das war der "zweite Absturz" (Fortsetzung
-* 94-104): SR=$0001, PC=$b890_2000 = Deskriptor $0001b890 + echtes SR
-* $2000. Der Aufruf geht jetzt wie beim Fremdaufrufer-Pfad unten
-* speicherindirekt ueber Q9K_TrapHandlerScratch, sodass beim Eintritt
-* exakt [Ruecksprung][Exception-Frame] auf dem Stack liegt.
-        movea.l (sp)+,a4                                  * restore caller A4 -- VOR dem Aufruf, s. o.
-        clr.w   Q9K_TrapForeignFlag
-        move.l  Q9K_TrapHandlerScratch,Q9K_FLinkTrace_A2
-        dc.w    $4ebb,$01f1                               * jsr ([Q9K_TrapHandlerScratch])
-        dc.l    Q9K_TrapHandlerScratch
-        bra     Q9K_TrapAfterCall
-Q9K_TrapCallForeignCaller:
-        move.w  #1,Q9K_TrapForeignFlag
-* Aufrufer liegt ausserhalb unseres Moduls (IOMan/File-Manager/Treiber) --
-* A4 must remain the caller's own process/device context.  The origin
-* check above temporarily used A4 for the kernel module base; restore the
-* saved value before entering the kernel-owned handler.  Without this,
-* an internal syscall issued by scf/ioman sees the kernel base in A4 and
-* can reject its path lock or calculate a bogus dispatch target.
-* "jsr (a4)" wuerde A4 zusaetzlich mit der Handler-Adresse ueberschreiben,
-* deshalb speicherindirekt ueber Opcode-Bytes (r68 kennt "jsr ([...])"
-* nicht, der 68030 die Adressierungsart aber sehr wohl).
-        movea.l (sp)+,a4                                  * restore foreign caller A4
+* FIX (2026-10-05, Fortsetzung 111): die Herkunftspruefung (eigener vs.
+* fremder Aufrufer) ist entfernt. Sie rechnete mit d7 ("move.l
+* Q9K_TrapCallerPC,d7 / sub.l a4,d7 / cmp.l 4(a4),d7"), NACHDEM die
+* Aufruferregister schon zurueckgeladen waren, und stellte d7 nie wieder
+* her: JEDER Syscall, der hier landete, gab dem Aufrufer d7 = Ruecksprung-
+* PC minus Kernelbasis zurueck. d7 ist in C eine Registervariable
+* (callee-saved d2-d7/a2-a6) -- gemessen: mshell kam nach einem
+* erfolgreichen F$Fork mit d7=$2022 statt $5D2BA zurueck und nahm den
+* Fehlerzweig. Seit Fortsetzung 106 riefen beide Zweige den Handler
+* identisch auf (A4 vorher zurueck, speicherindirekt ueber
+* Q9K_TrapHandlerScratch); das einzige Ergebnis der Pruefung war noch
+* Q9K_TrapForeignFlag, das seit Fortsetzung 108 niemand mehr liest.
+* Beim Eintritt liegt exakt [Ruecksprung][Exception-Frame] auf dem Stack,
+* alle Aufruferregister sind unveraendert.
+        clr.w   Q9K_TrapForeignFlag                       * nicht mehr gelesen; definiert 0
         move.l  Q9K_TrapHandlerScratch,Q9K_FLinkTrace_A2
         dc.w    $4ebb,$01f1                               * jsr ([Q9K_TrapHandlerScratch])
         dc.l    Q9K_TrapHandlerScratch
@@ -4251,6 +4250,52 @@ Q9K_SysFUnLink_Ok:
 * deshalb hier explizit gesichert/wiederhergestellt, gleiche Vorsicht wie
 * schon bei d7 in Q9K_SysFLink/SysFUnLink oben.
 Q9K_SysFFork:
+* FIX (2026-10-05, Fortsetzung 111): F$Fork laedt nach, wenn das Modul nicht
+* im Speicher ist. 68k_tech.pdf F$Fork: "...searched to see if the program is
+* already in memory. If so, the module is linked and executed. If not, the
+* name string is used as the pathlist of the file to be loaded into memory.
+* The first module in this file is linked and executed." mshell verlaesst
+* sich darauf: es laedt einen Befehl nur zur Pruefung (F$Load), gibt ihn
+* sofort wieder frei (F$UnLink -> Zaehler 0 -> entfernt) und forkt dann per
+* Namen. Ohne Nachladen: E$MNF fuer jeden externen Befehl.
+* Ablauf: Versuch -> bei E$MNF F$Load (Exec_ = 4, Ausfuehrungsverzeichnis)
+* -> zweiter Versuch -> ausgleichendes F$UnLink (der Link von F$Load IST
+* laut Handbuch der Link des Forks; ohne Ausgleich bliebe das Modul nach
+* Programmende mit Zaehler 1 im Speicher). Ausgabe wie gehabt d0 = PID,
+* a0 = hinter dem Namen, d1 = Fehler; d2-d4/a1-a2 des Aufrufers bleiben
+* (a2 ist C-callee-saved; F$Load liefert dort den Modulzeiger -- ohne
+* Wiederherstellung nahm mshells C-Code nach erfolgreichem Fork den
+* Fehlerzweig).
+* Stack: 32 Byte gesicherte Eingaben [d0 d1 d2 d3 d4 a0 a1 a2].
+        movem.l d0-d4/a0-a2,-(sp)
+        bsr     Q9K_SysFForkOnce
+        bcc.s   Q9K_SysFFork_Done
+        cmpi.w  #$00dd,d1                     * E$MNF -> aus dem Ausfuehrungsverzeichnis laden
+        bne.s   Q9K_SysFFork_Done
+        movea.l 20(sp),a0                     * Namenszeiger des Aufrufers
+        moveq   #4,d0                         * Exec_
+        moveq   #0,d1
+        trap    #0
+        dc.w    $0001                         * F$Load
+        bcs.s   Q9K_SysFFork_Done             * Ladefehler (d1) an den Aufrufer
+        move.l  a2,-(sp)                      * geladenes Modul fuer den Ausgleich
+        movem.l 4(sp),d0-d4/a0-a2             * Fork-Eingaben zurueck
+        bsr     Q9K_SysFForkOnce
+        move.w  sr,-(sp)                      * Ergebnis-CCR
+        movem.l d0-d1/a0,-(sp)                * Ergebnisregister
+        movea.l 14(sp),a2                     * [d0 d1 a0][sr][a2]
+        trap    #0
+        dc.w    $0002                         * F$UnLink (Ausgleich fuer F$Load)
+        movem.l (sp)+,d0-d1/a0
+        move.w  (sp)+,ccr
+        lea     4(sp),sp                      * a2-Kopie verwerfen (lea laesst CCR)
+Q9K_SysFFork_Done:
+        movem.l 8(sp),d2-d4                   * movem/movea/lea lassen CCR unberuehrt
+        movem.l 24(sp),a1-a2
+        lea     32(sp),sp
+        rts
+
+Q9K_SysFForkOnce:
         move.w  d0,Q9K_ForkScratch_TypeLang
         move.l  d1,Q9K_ForkScratch_AddMem
         move.l  d2,Q9K_ForkScratch_ParamSize
@@ -4457,9 +4502,15 @@ Q9K_SysFWait:
         move.b  #'w',Q9K_PROCDESC_STATE_OFF(a0)    * State='w' (wartend), s. q9kernel_firstproc.c
 
         move.l  a0,d0
+* FIX (2026-10-05, Fortsetzung 111): a6 VOR Q9K_WaitQInsert (C) umschalten,
+* nicht erst danach. Hier steht noch das a6 des Aufrufers; fuer TestProcA
+* ging das zufaellig gut, fuer mshell zeigte es in dessen Datenbereich, die
+* Compiler-Stackpruefung las dort _stklimit=0 und loeste _stkhandler aus
+* (Marker 'S', gemessen: a6=$6D5B0, Ruecksprung in Q9K_WaitQInsert). Der
+* Registersatz des Aufrufers liegt bereits gesichert auf seinem Stack.
+        lea     Q9K_CRuntimeData(pc),a6
         bsr     Q9K_WaitQInsert                      * in die eigene Wait-Queue einhaengen (q9kernel_sched.c)
 
-        lea     Q9K_CRuntimeData(pc),a6                 * fuer den folgenden C-Aufruf, gleiches Muster wie Q9K_TimerIRQHandler
         bsr     Q9K_SchedFirstPick                        * -> d0 = neuer Deskriptor oder 0 (kein aktueller zum Wiedereinreihen)
 
         tst.l   d0

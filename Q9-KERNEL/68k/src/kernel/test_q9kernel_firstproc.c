@@ -485,9 +485,15 @@ int main(void)
          * "laufenden" Deskriptor mit Prioritaet 42 -- Kind muss dessen
          * Prioritaet erben. */
         {
-            static unsigned char fakeCaller[128];
+            /* Fortsetzung 111: echte Deskriptorgroesse -- Q9K_ProcFork liest
+             * P$DIO ($148) und P$Path ($168) des Erzeugers; mit 128 Byte
+             * las der Test schon vorher ueber das Pufferende hinaus. */
+            static unsigned char fakeCaller[0x400];
+            unsigned int dioI;
             memset(fakeCaller, 0, sizeof(fakeCaller));
             *(unsigned char *)(fakeCaller + Q9K_PROCDESC_PRIORITY_OFF) = 42;
+            for (dioI = 0; dioI < Q9K_PROCDESC_DIO_SIZE; dioI++)
+                fakeCaller[Q9K_PROCDESC_DIO_OFF + dioI] = (unsigned char)(0xA0 + dioI);
             Q9K_SetU32(Q9_D_PROC, (Q9_u32)(unsigned long)fakeCaller);
 
             pid2 = Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 0, &error);
@@ -498,6 +504,13 @@ int main(void)
             checkU32("F2: Deskriptor-ParentDesc == fakeCaller",
                      Q9K_GetU32(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_PARENT_OFF),
                      (Q9_u32)(unsigned long)fakeCaller);
+            /* Fortsetzung 111: Standardverzeichnisse (P$DIO) geerbt. */
+            checkU32("F2: P$DIO Byte 0 (Datenverzeichnis) geerbt",
+                     Q9K_GetU8(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_DIO_OFF), 0xA0);
+            checkU32("F2: P$DIO Byte 16 (Ausfuehrungsverzeichnis) geerbt",
+                     Q9K_GetU8(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_DIO_OFF + 16UL), 0xB0);
+            checkU32("F2: P$DIO Byte 31 geerbt",
+                     Q9K_GetU8(forkPoolBase + Q9K_PROCDESC_SIZE + Q9K_PROCDESC_DIO_OFF + 31UL), 0xBF);
 
             Q9K_SetU32(Q9_D_PROC, 0); /* fuer die naechsten Faelle zuruecksetzen */
         }

@@ -7,7 +7,8 @@
 #   I$Open /dd/SYS/startup        (IOMan, device attach via F$Link)
 #   F$Fork mshell                                                     marker K
 #   F$Wait                        (mshell ran and exited)             marker W
-#   between K and W mshell echoes the startup lines (-npt)
+#   between K and W mshell echoes the startup lines (-npt) and starts the
+#   external command "echo" without an error message (Fortsetzung 111)
 #
 # Fehlerfaelle melden sich mit l/d/c/o/f + Fehlercode statt K/W.
 # Baut eine Kernelkopie mit Q9K_TestStartup=1 (Quellbaum unberuehrt), haengt
@@ -21,6 +22,7 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 FLUX=${FLUX:-$HERE/../Q9-Flux/Q9-Flux-68k}
 REFBOOT=${REFBOOT:-$HERE/../Q9-Flux/.hide/OS9Boot.noprot.test}
 OS9=${OS9:-/Volumes/SSD1TB/projects/MWOS/tools/macos/bin/os9}
+CMDSDIR=${CMDSDIR:-/Volumes/SSD1TB/projects/MWOS/OS9/68000/CMDS}
 # Nur Ziffern im Verzeichnisnamen: der Emulator gibt den Abbildpfad aus, und
 # ein zufaelliges grosses "W" darin (mktemp) loeste den Marker zu frueh aus.
 WORK="${TMPDIR:-/tmp}/q9_startup_shell_$$"
@@ -29,6 +31,7 @@ trap 'rm -rf "$WORK"' EXIT
 
 [ -x "$FLUX/build/macos/q9.exe" ] || { echo "Emulator fehlt: $FLUX/build/macos/q9.exe" >&2; exit 1; }
 [ -f "$REFBOOT" ] || { echo "Referenz-Bootdatei fehlt: $REFBOOT" >&2; exit 1; }
+[ -f "$CMDSDIR/echo" ] || { echo "echo-Modul fehlt: $CMDSDIR/echo" >&2; exit 1; }
 
 # 1. Kernel mit Q9K_TestStartup=1 bauen (Kopie).
 mkdir -p "$WORK/src/Q9-KERNEL/68k/src" "$WORK/src/Q9-KERNEL/common"
@@ -68,7 +71,11 @@ Q9K_BUILD_DIR="$WORK/kb" "$HERE/tools/mkbootfile.sh" "$WORK/ref.boot" "$WORK/img
 "$OS9" makdir "$WORK/img.hda,SYS"
 "$OS9" copy "$V/vendor_mshell.mod" "$WORK/img.hda,CMDS/mshell" >/dev/null
 "$OS9" attr -q -e -pe "$WORK/img.hda,CMDS/mshell" >/dev/null 2>&1 || true
-printf '* Q9 startup test\rchd /dd\r' > "$WORK/startup"
+# Fortsetzung 111: ein externer Befehl, den mshell aus dem
+# Ausfuehrungsverzeichnis nachladen und forken muss.
+"$OS9" copy "$CMDSDIR/echo" "$WORK/img.hda,CMDS/echo" >/dev/null
+"$OS9" attr -q -e -pe "$WORK/img.hda,CMDS/echo" >/dev/null 2>&1 || true
+printf '* Q9 startup test\rchd /dd\recho q9\r' > "$WORK/startup"
 "$OS9" copy "$WORK/startup" "$WORK/img.hda,SYS/startup" >/dev/null
 
 # 4. Laufen lassen bis "W" (F$Wait der Startup-Shell zurueck). K und W stehen
@@ -111,6 +118,11 @@ for line in ('* Q9 startup test', 'chd /dd'):
         sys.exit(1)
 if 'syntax error' in body:
     print('FAIL  mshell meldet "syntax error"'); sys.exit(1)
+# Fortsetzung 111: externer Befehl muss starten (chx /dd/CMDS, geerbtes
+# Ausfuehrungsverzeichnis, F$Fork laedt nach, d7/a6 bleiben erhalten).
+for bad in ("can't execute", 'Error #'):
+    if bad in body:
+        print(f'FAIL  mshell meldet beim externen Befehl: {bad}'); sys.exit(1)
 print('ok    mshell geladen, stdin umgeleitet, startup-Datei abgearbeitet, beendet (T ... K W), keine Exception')
 PY
 echo "ALLE TESTS OK (startup_shell_test.sh)"

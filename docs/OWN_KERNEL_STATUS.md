@@ -10780,3 +10780,84 @@ das Ausfuehrungsverzeichnis des Startup-Prozesses ist nicht gesetzt
 vererbt IOMan-Pfade ohne IOMans Referenzzaehler zu erhoehen; ein
 `I$Close` des Kindes gibt den Deskriptor damit auch fuer den Elternprozess
 frei.
+
+
+## Fortsetzung 111: mshell startet externe Befehle -- Verzeichnisse, F$Fork-Nachladen und zwei Registerfehler, die JEDES Programm betrafen (2026-10-06)
+
+Testaufbau: Startup-Kette (Fortsetzung 108-110) mit `echo`, `pd`, `dir` aus
+`MWOS/OS9/68000/CMDS` im Abbild und einer startup-Datei, die sie aufruft.
+Gemessen wurde mit temporaeren Ausgaben in Wegwerfkopien des Kernels,
+darunter eine lueckenlose Trap-Protokollierung (`~<Callcode>@<Prozess>` am
+Anfang von `Q9K_TrapDispatch`). **Wichtig:** die RaceRing-Ausgabe im Dump
+zeigt nur Eintraege in der Naehe von X/A-Markern; Syscall-Folgen daraus
+koennen luecken haben (ein vermeintliches "4x I$Open" in Fortsetzung 108
+war genau so ein Lesefehler).
+
+### Schritt fuer Schritt
+
+| Symptom | Ursache | Fix |
+|---|---|---|
+| `can't execute "echo" - Error #000:215` | kein Ausfuehrungsverzeichnis | Startup-Zweig: `I$ChgDir("/dd", 3)` und `I$ChgDir("/dd/CMDS", 4)` wie sysgo (Marker `h`/`x` bei Fehler) |
+| unveraendert | `F$Fork` vererbt nur `P$Path`, nicht `P$DIO` (`$148`, 32 Byte, MWOS `process.a`) | `Q9K_ProcFork` kopiert `P$DIO`; Hosttest F2 |
+| `F$Load` gelingt, `F$Fork` -> E$MNF | mshell laedt den Befehl nur zur Pruefung, gibt ihn per `F$UnLink` frei (Zaehler 0 -> entfernt) und forkt per Namen. Laut 68k_tech.pdf laedt F$Fork dann selbst nach | `Q9K_SysFFork`: bei E$MNF `F$Load` (Exec_) und zweiter Versuch, danach ausgleichendes `F$UnLink` |
+| Fork liefert Erfolg, mshell nimmt trotzdem den Fehlerzweig ("Error #227:204", Wert je Build anders) | **`d7` des Aufrufers zerstoert** -- s. u. | Herkunftspruefung im Dispatcher entfernt |
+| `S` (Stack-Ueberlauf-Handler) | **`F$Wait` rief `Q9K_WaitQInsert` (C) mit dem `a6` des Aufrufers** | `a6` vor dem Aufruf umschalten |
+| -- | -- | mshell arbeitet die Datei ab, wartet auf jedes Kind, beendet sich |
+
+### Der d7-Fehler (betraf jeden Syscall jedes Programms)
+
+`Q9K_TrapOwnHandler` pruefte, ob der Aufrufer im Kernelmodul liegt:
+`move.l Q9K_TrapCallerPC,d7 / sub.l a4,d7 / cmp.l 4(a4),d7` -- NACHDEM
+die Aufruferregister schon zurueckgeladen waren, ohne d7 zu retten. Jeder
+Syscall, der dort landete, gab d7 = Ruecksprung-PC minus Kernelbasis
+zurueck. In C ist d7 eine Registervariable (callee-saved d2-d7/a2-a6).
+Gefunden per Registervergleich am Ein- und Ausgang von F$Fork: d7
+`$0005D2BA` -> `$00002022`, alle anderen erhaltenen Register gleich. Die
+Pruefung hatte seit Fortsetzung 106 keine Wirkung mehr (beide Zweige rufen
+identisch auf), ihr einziges Ergebnis `Q9K_TrapForeignFlag` liest seit
+Fortsetzung 108 niemand. Sie ist entfernt; das Flag bleibt definiert 0.
+
+Dass das so lange unbemerkt blieb: die bisherigen Testprogramme hielten
+ueber einen Syscall hinweg zufaellig nichts in d7.
+
+### Der a6-Fehler in F$Wait
+
+Blockierpfad: `movea.l (sp)+,a6` (Aufrufer-a6 zurueck) ... `bsr
+Q9K_WaitQInsert` ... und erst DANACH `lea Q9K_CRuntimeData(pc),a6`. Die
+Compiler-Stackpruefung in `Q9K_WaitQInsert` las `_stklimit` ueber das a6
+von mshell (Datenbereich, Wert 0) und rief `_stkhandler`. Gemessen: `a6=$6D5B0`,
+Ruecksprung `$ED62` = Kernel-Offset `$7C62`, per Linkmap
+(`l68 -s=<datei>`, s. KERNEL_WERKZEUGE) in `Q9K_WaitQInsert`. Per awk
+alle blockierenden Handler auf C-Aufrufe ohne vorheriges `lea
+Q9K_CRuntimeData` geprueft: nur diese eine Stelle.
+
+### Weitere Anpassungen
+
+- `Q9K_SysFFork` sichert jetzt d2-d4/a1-a2 des Aufrufers selbst (a1 war
+  schon vorher durch den C-Aufruf gefaehrdet; a2 liefert F$Load als
+  Modulzeiger).
+- Hosttest F2: Erzeuger-Deskriptor auf echte Groesse vergroessert (der
+  Test las bei `P$Path`/`P$DIO` schon vorher ueber ein 128-Byte-Puffer
+  hinaus).
+- `tools/startup_shell_test.sh`: legt zusaetzlich `CMDS/echo` ins Abbild,
+  ruft es aus der startup-Datei auf und prueft, dass mshell weder
+  "can't execute" noch "Error #" meldet (`CMDSDIR` ueberschreibbar).
+
+### Verifikation
+
+28/28 Host-Suiten; `startup_shell_test.sh`, `mgrpath_probe_test.sh`,
+`malformed_boot_test.sh` OK; Standard/Stress ohne/mit startup alle
+`Vektor=0`, keine Rahmen-Validierungstreffer.
+
+### Offen
+
+- **Die Kinder schreiben, aber nichts erscheint.** `echo` ruft `I$WritLn`
+  auf Pfad 1 auf und endet normal; auf der Konsole kommt nichts an,
+  waehrend mshells eigene Ausgaben sichtbar sind. Naechste Stelle: der
+  native `I$WritLn`-Weg fuer die Standardpfade (`P$Path`-Werte < 3,
+  `Q9K_ValidateNativePath`).
+- Vererbte IOMan-Pfade und `P$DIO` erhoehen IOMans Benutzungszaehler nicht.
+- Naechstes Werkzeug (mit Andreas abgesprochen): konfigurierbarer
+  Syscall-Trace im Kernel (Bauschalter + Laufzeitschalter ueber F$SetSys,
+  Filter nach Callcode/Prozess/nur Fehler, Ausgabe Konsole und/oder
+  Ringpuffer).

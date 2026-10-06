@@ -188,6 +188,13 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #endif
 #define Q9K_PROCDESC_PATH_OFF    0x168UL
 #define Q9K_PROCDESC_PATH_COUNT  32UL
+/* Fortsetzung 111: P$DIO (Standardverzeichnisse) liegt direkt vor P$Path,
+ * DefIOSiz=32 Byte; erste Haelfte Daten-, zweite Haelfte (ExecDir =
+ * DefIOSiz/2) Ausfuehrungsverzeichnis (MWOS OS9/SRC/DEFS/process.a). */
+#ifndef Q9K_PROCDESC_DIO_OFF
+#define Q9K_PROCDESC_DIO_OFF     0x148UL
+#endif
+#define Q9K_PROCDESC_DIO_SIZE    32UL
 #ifndef Q9K_FORK_SCRATCH_NUMPATHS
 #define Q9K_FORK_SCRATCH_NUMPATHS 0x1284UL
 #endif
@@ -1076,6 +1083,15 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
             Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL,
                        Q9K_GetU16(parentDesc + Q9K_PROCDESC_PATH_OFF + i * 2UL));
         }
+        /* FIX (2026-10-05, Fortsetzung 111): auch die Standardverzeichnisse
+         * (P$DIO) erben. Ohne sie hatte das Kind kein Ausfuehrungsverzeichnis:
+         * mshell konnte nach "chx /dd/CMDS" im Erzeuger keinen externen
+         * Befehl laden (F$Load relativ -> E$BPNam/E$MNF). Wie bei P$Path oben
+         * eine reine Kopie -- die Geraete-Benutzungszaehler, die das echte
+         * OS-9 dabei mitfuehrt, werden (noch) nicht erhoeht. */
+        for (i = 0; i < Q9K_PROCDESC_DIO_SIZE; i++)
+            Q9K_SetU8(desc + Q9K_PROCDESC_DIO_OFF + i,
+                      Q9K_GetU8(parentDesc + Q9K_PROCDESC_DIO_OFF + i));
     } else {
         /* ECHTER BUG, gefunden 2026-09-06: Ohne Erzeuger blieb die
          * P$Path-Tabelle voellig UNINITIALISIERT -- sie enthielt den
@@ -1094,6 +1110,8 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
         for (i = 0; i < Q9K_PROCDESC_PATH_COUNT; i++) {
             Q9K_SetU16(desc + Q9K_PROCDESC_PATH_OFF + i * 2UL, 0);
         }
+        for (i = 0; i < Q9K_PROCDESC_DIO_SIZE; i++)
+            Q9K_SetU8(desc + Q9K_PROCDESC_DIO_OFF + i, 0);
     }
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, hdrAddr);      /* NACHTRAG 2026-08-22 */
     Q9K_SetU32(desc + Q9K_PROCDESC_ALLOCBASE_OFF, block);
