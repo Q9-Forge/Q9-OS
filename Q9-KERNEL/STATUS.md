@@ -1706,3 +1706,24 @@ work.
 
 This file should be updated whenever a syscall gains a real implementation
 or a new emulator regression test.
+
+## Debug concept, Arbeitspaket 2 (2026-10-06, Fortsetzung 115)
+
+Host-tested foundation for `docs/DEBUG_KONZEPT_de.md` section 2 landed:
+a generic, instance-agnostic ring buffer (`q9ringbuf.c`/`.h`,
+record-oriented, overwrite/halt modes, loss counters), the 12-byte
+trace record format for all seven record types plus the full filter
+logic from section 2.4 (`q9trace.c`/`.h`), and the `F$Q9Dbg` ABI
+constants (`q9dbg.h`). 58/58 new host-test cases green
+(`test_q9kernel_dbg.c`), no interference with existing suites.
+
+**Deliberately NOT wired into the live kernel yet** — the real
+`F$Q9Dbg` dispatch registration, its two entry/return hooks, and the
+trace buffer's actual memory placement remain open. No existing kernel
+`.c` file uses a large static array (this would be the first), and no
+memory-map document confirms a free absolute-address range near the
+existing `RaceRing` debug cells — guessing either would repeat the
+exact bug class (`vsect`/address-collision) found earlier this project.
+See `docs/OWN_KERNEL_STATUS.md` Fortsetzung 115 for the two safer paths
+considered (runtime `F$SRqMem` allocation, or an isolated static-array
+toolchain probe) for a future session.

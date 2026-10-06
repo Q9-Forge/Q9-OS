@@ -10990,3 +10990,87 @@ Nicht gelaufen in dieser Fortsetzung: volle Regression (28 Hostsuiten,
 std/stress, startup_shell_test, mgrpath_probe, malformed_boot) -- nur die
 betroffenen Hostsuiten (alarm, procapi, firstproc, chain, traplink) gruen.
 Asm-Debugcode unter Q9K_DEBUG weiterhin offen.
+
+## Fortsetzung 115: Paket 2 (Teil 1) -- Ringpuffer-Baustein, Trace-Satzformat, Filterlogik, host-getestet (2026-10-06)
+
+**Auftrag:** Arbeitspaket 2 aus `docs/DEBUG_KONZEPT_de.md` (Trace-Kern:
+Satzformat, Ringpuffer, Filter, `F$Q9Dbg`, Makros/Header, Hosttests).
+
+**Umgesetzt, reiner freistehender C-Code, 58 Hosttests gruen
+(`test_q9kernel_dbg.c`):**
+- `q9ringbuf.c`/`.h` -- der Ringpuffer als eigenstaendiger Baustein
+  (Konzeptdokument 2.8): satzorientiert (Laengenfeld bei Offset +1,
+  nie ein halber Satz wird gelesen/geschrieben), Modus ueberschreiben
+  (aelteste Saetze weichen, jeweils einzeln als "verloren" gezaehlt)
+  oder anhalten-wenn-voll, Zaehler fuer geschrieben/verloren/Lesestand.
+  Getestet: Grundumlauf, Ueberschreiben mit korrektem Verlustzaehler,
+  Anhalten-Modus, mehrfaches Zirkulieren ueber die Puffergrenze hinweg.
+- `q9trace.c`/`.h` -- das 12-Byte-Satzkopfformat exakt wie in
+  Abschnitt 2.2 spezifiziert (Satztyp/Laenge/Callcode-oder-Funktions-ID/
+  Flags mit Tiefe+Carry+Gekuerzt-Bit/Prozess-ID/Tick-Zaehler/Feinzeit),
+  Baufunktionen fuer alle sieben Satztypen (Eintritt/Rueckkehr/intern-
+  Eintritt/intern-Rueckkehr/verlorene-Saetze/Prozess-Info/Zeitbasis),
+  automatische Kuerzung auf `Q9TRACE_MAX_REC` mit gesetztem
+  Gekuerzt-Bit, sowie die komplette Filterlogik aus Abschnitt 2.4:
+  256-Bit-Syscall-Maske, eigene Maske fuer interne Funktionen,
+  Prozess-/Benutzer-/Pfadfilter (0 = kein Filter), "nur Fehler"
+  (laesst Eintrittssaetze IMMER durch -- der Aufrufer muss sie bis zur
+  zugehoerigen Rueckkehr selbst zwischenhalten, das kann eine
+  Pro-Satz-Filterfunktion nicht leisten), Detailstufe 1-3 (interne
+  Funktionen nur ab Stufe 3 sichtbar, unabhaengig von ihrer eigenen
+  Maske). Getestet: Satzaufbau+Dekodierung fuer alle sieben Typen,
+  Kuerzungsfall, jede Filterart einzeln inkl. Zusammenspiel.
+- `q9dbg.h` -- die ABI-Konstanten aus Abschnitt 2.5 (Callcode `$7F`,
+  alle neun Unterfunktionen, Filterarten, Ausgabemodi). Bewusst OHNE
+  Code, reiner Header, gefahrlos einbindbar.
+
+**BEWUSST NICHT umgesetzt in dieser Runde, als offene Architekturfrage
+dokumentiert statt geraten (Konzeptdokument Abschnitt 7, "Puffergroesse
+und Ort"):** die eigentliche Live-Kernel-Anbindung (`F$Q9Dbg`-Handler
+im Dispatcher registrieren, die beiden Eintritts-/Rueckkehr-Haken in
+`Q9K_TrapDispatch`/`Q9K_TrapAfterCall`, die TATSAECHLICHE Speicherlage
+des 64-KByte-Trace-Puffers). Grund: dieser Kernel adressiert sein
+gesamtes bisheriges Scratch-/Debug-Gelaende (RaceRing, `Q9K_TickCount`,
+die ganzen `*Scratch_*`-Zellen) ueber HANDVERLESENE ABSOLUTE ADRESSEN
+(`equ $XXXX`) statt ueber normale C-Arrays -- recherchiert: KEIN
+einziges bestehendes `.c` im Kernel benutzt je ein grosses statisches
+Array (`grep` ueber alle `q9kernel_*.c` liefert null Treffer). Ob die
+eigene Toolchain (qcc -> r68 -> ql68k) ein 64-KByte-`static`-Array
+ueberhaupt korrekt im Modul platziert, ist also NIE verifiziert worden
+-- und genau diese Klasse Fehler (Speicher-/Adresskollisionen,
+Toolchain-Platzierungsfehler bei statischem Speicher) hat in diesem
+Projekt wiederholt echte Bugs verursacht (u.a. die `Q9K_TrapCCRScratch`/
+NamePtr-Kollision, und in der PARALLELEN QCC-Session derselben Nacht
+unabhaengig ein `vsect`-statt-`psect`-Platzierungsfehler in
+`extra_atexit.a`, der JEDES Programm abstuerzen liess). Eine manuell
+geratene Adresse im RaceRing-Umfeld (`$1440C0`..`$1540C0`) waere
+ebenso blind -- kein Speicherkarten-Dokument im Repo bestaetigt, dass
+dieser Bereich tatsaechlich frei ist (RaceRings eigener Kopfkommentar
+"Base + Slots*EntSz" passt rechnerisch nicht einmal zur eingetragenen
+`Idx`-Adresse, ein Hinweis, dass dort grosszuegig, aber nicht
+dokumentiert reserviert wurde). Empfehlung fuer die Fortsetzung: ENTWEDER
+den Puffer zur Laufzeit per `F$SRqMem` anfordern (vermeidet die
+Adressfrage komplett, passt zum zweiten im Konzeptdokument genannten
+Weg "oder per F$SRqMem beim Einschalten") ODER zuerst ein einziges,
+kleines Testmodul bauen, das nur ein 64-KByte-`static`-Array deklariert
+und durch `qcc`/`r68`/`ql68k` schickt, um die Toolchain-Frage einmal
+isoliert zu klaeren, BEVOR das am echten Kernel versucht wird.
+
+**Nicht angefasst:** die Datei-ID-Filterung (Geraet+Sektornummer) ist
+im Code als Feld vorhanden, aber bewusst ohne echten Befuller -- die
+genaue `I$GetStt`-Unterfunktion dafuer ist laut Konzeptdokument
+Abschnitt 7 selbst noch ungeklaert, das waere Raten gewesen.
+
+**Verifiziert:** `test_q9kernel_dbg.c`, 58/58 Faelle gruen
+(`gcc -Wall -Wextra -DQ9K_KERNEL_DEVELOPMENT -DQ9K_ALLOC_STANDARD`).
+Spot-Check eines bestehenden, unveraenderten Tests
+(`test_q9kernel_bitmap.c`) bleibt gruen -- keine Interferenz. Die
+neuen Dateien sind NICHT in `build.sh`s Kompilierliste eingetragen,
+weil noch kein Kernel-Code sie aufruft (kein toter Objektcode im
+Kernel-Link).
+
+**Naechster Schritt (Paket 2, Rest):** Speicherstrategie fuer den
+Trace-Puffer klaeren (s.o.), danach `F$Q9Dbg`-Handler + die zwei
+Dispatcher-Haken wirklich verdrahten, dann `q9dbg.d`
+(Assembler-Makros) ergaenzen -- bisher ausgelassen, weil ohne
+registrierten Syscall ungetestbarer toter Code waere.
