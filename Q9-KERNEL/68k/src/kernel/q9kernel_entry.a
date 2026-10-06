@@ -883,6 +883,19 @@ Q9K_SRqMemFrameScratch    equ $13A4      * Q9_u32, Rahmenbasis oder 0
 * FALSCH -- genau der Fund vom vorherigen Kernel-Link). Ein fehlender
 * Parameter ergibt dagegen echte 0, passend zum verifizierten M$Excpt=0
 * am realen Referenzkernel.
+* Q9K_FARCALL <Ziel> (Fortsetzung 121) -- lageunabhaengiger Aufruf ohne
+* die +-32-KB-Grenze von bsr (68000 kennt nur 16-Bit-PC-Distanzen). l68
+* loest die Label-Differenz "Ziel-*" als Konstante auf, auch ueber
+* Dateigrenzen (an einem 40-KB-Beispiel geprueft). Benutzt a0 -- in der
+* Microware-C-Konvention ohnehin ein freies Arbeitsregister; deshalb NUR fuer
+* Aufrufe in C-Funktionen. 12 statt 4 Byte. Noetig, seit der Kernel an der
+* bsr-Grenze sitzt (schon zwei unoptimierte -g-Dateien sprengten sie).
+Q9K_FARCALL macro
+        lea     *(pc),a0
+        adda.l  #\1-*+4,a0
+        jsr     (a0)
+        endm
+
         psect   q9kernel,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,Q9K_Edition,0,Q9K_Entry
 
 * Q9K_ModuleStart -- markiert den WIRKLICHEN Anfang des Moduls (direkt

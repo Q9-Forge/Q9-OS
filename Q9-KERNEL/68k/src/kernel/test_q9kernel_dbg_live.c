@@ -351,11 +351,11 @@ static void test_pid_depthreset_selfskip(void)
     Q9K_PutU32(Q9DBG_A_CUR_PROC, (Q9_u32)(unsigned long)desc);
     Q9K_PutU32(Q9DBG_A_TICKS, 1234);
 
-    /* Tiefe pro Prozess (Deskriptor $3F0): F$ID hinein ... */
+    /* Tiefe pro Prozess (Deskriptor $3E0): F$ID hinein ... */
     Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x0C);    /* F$ID */
     Q9K_DbgLogEntryImpl();
-    checkInt("Prozesstiefe nach Eintritt = 1", desc[0x3F0], 1);
-    checkInt("Callcode auf dem Prozessstapel", desc[0x3F1], 0x0C);
+    checkInt("Prozesstiefe nach Eintritt = 1", desc[0x3E0], 1);
+    checkInt("Callcode auf dem Prozessstapel", desc[0x3E1], 0x0C);
 
     /* ... F$Q9Dbg selbst (verschachtelt) taucht nicht auf ... */
     Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x7F);
@@ -363,13 +363,13 @@ static void test_pid_depthreset_selfskip(void)
     Q9K_PutU32(Q9DBG_A_RET_CARRY, 0);
     Q9K_DbgLogReturnImpl();
     Q9K_DbgLogReturnImpl();                         /* Rueckkehr von F$ID */
-    checkInt("Prozesstiefe nach beiden Rueckkehren = 0", desc[0x3F0], 0);
+    checkInt("Prozesstiefe nach beiden Rueckkehren = 0", desc[0x3E0], 0);
     checkU32("F$Q9Dbg ($7F) wird nicht protokolliert: nur 2 Saetze", Q9K_GetU32(Q9DBG_A_WRITTEN), 2);
 
     /* ... und F$Sleep kehrt nie ueber den Haken zurueck: keine Tiefe. */
     Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x0A);
     Q9K_DbgLogEntryImpl();
-    checkInt("F$Sleep erhoeht die Prozesstiefe nicht", desc[0x3F0], 0);
+    checkInt("F$Sleep erhoeht die Prozesstiefe nicht", desc[0x3E0], 0);
     checkU32("F$Sleep-Eintritt wird protokolliert", Q9K_GetU32(Q9DBG_A_WRITTEN), 3);
 
     Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_RING_READ);

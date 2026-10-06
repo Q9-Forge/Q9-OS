@@ -346,7 +346,7 @@ static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
 #define Q9DBG_CALLCODE_SELF  0x7FU    /* F$Q9Dbg -- wird nie protokolliert (Konzept 2.5) */
 
 /* Fortsetzung 119, zweite Fassung: Tiefe und Callcode-Stapel PRO PROZESS
- * im Deskriptor (Byte $3F0 = Tiefe, $3F1-$3F8 = Callcodes je Tiefe; in
+ * im Deskriptor (Byte $3E0 = Tiefe, $3E1-$3E8 = Callcodes je Tiefe; in
  * F$Fork-Slots genullt, s. Q9K_ProcPoolAlloc). Der globale Zaehler war
  * falsch, sobald ein Prozess mitten im Aufruf wechselte: F$Sleep/F$Wait/
  * F$Exit/F$Chain/F$RTE/F$NProc kehren nie ueber den Rueckkehr-Haken zurueck
@@ -355,8 +355,8 @@ static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
  * F$Fork->F$Load erreichte der globale Zaehler 8, danach blieb der Trace
  * fuer den Rest des Starts stumm. Ohne bekannten Prozess (D_Proc = 0, frueher
  * Boot, Hosttests) gilt die globale Fassung weiter. */
-#define Q9DBG_PD_DEPTH       0x3F0UL  /* Byte */
-#define Q9DBG_PD_CODES       0x3F1UL  /* Q9DBG_TRAP_MAXDEPTH Byte */
+#define Q9DBG_PD_DEPTH       0x3E0UL  /* Byte (nicht $3F8: dort liegt Q9K_PROCDESC_RESUMETRAP_OFF) */
+#define Q9DBG_PD_CODES       0x3E1UL  /* Q9DBG_TRAP_MAXDEPTH Byte */
 
 static int Q9K_DbgNoReturn(Q9_u8 code)
 {

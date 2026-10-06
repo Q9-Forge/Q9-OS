@@ -305,8 +305,9 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
 - **Strukturelle Loesung der Reichweite:** ein Fernaufruf-Makro statt
   `bsr` fuer Aufrufe aus q9kernel_entry.a in C, PC-relativ ueber eine
   Label-Differenz (`lea *(pc),a0 / adda.l #Ziel-*,a0 / jsr (a0)`), die der
-  Linker als Konstante aufloest -- falls l68 das kann (zu pruefen). Das
-  beseitigt die 32-KB-Grenze allgemein, nicht nur fuer Debug-Builds.
+  Linker als Konstante aufloest. **Geprueft (Fortsetzung 122):** l68 kann
+  das, Makro `Q9K_FARCALL` steht bereit; die Massenumstellung der 42
+  Aufrufstellen brach aber den Start -- Ursache wird per Bisektion gesucht.
 - **QCC:** eigener Weg mit frei waehlbarem Format -- `LINE datei zeile` im
   IR, das Backend setzt Labels und schreibt eine Zeilentabelle neben das
   Modul. Gehoert ins QCC-Repo.

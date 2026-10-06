@@ -11320,3 +11320,34 @@ Zeichen-Echo, F$Link CARRY -> F$Load -> F$Fork mit eingerueckten inneren
 Aufrufen. Im Atom-Kernel meldet `trace` einen Fehler (F$Q9Dbg fehlt).
 
 Host-Gegenstueck fuer Dumps/Abstuerze bleibt tools/q9trace_decode.py.
+
+## Fortsetzung 122: Quelltext-Debugging und Fernaufruf -- Messungen (2026-10-06)
+
+- **`xcc -g`** laesst beide Optimierer weg (iopt, opt68k); Code ~40 %
+  groesser (date.c $610 -> $8B0), Zeilendaten im ROF-Debug-Abschnitt
+  (Format offen, `rdump` zeigt nur die Groesse). Ganzer Kernel mit `-g`:
+  27 `bsr` ausser Reichweite. **Pro Datei** geht es: Bauschalter
+  `Q9K_SRCDEBUG="datei.c ..."` (build.sh, zweiter Durchgang mit -g); mit
+  q9kernel_date.c baut und bootet der Kernel bis zur Shell, mit
+  date+sched schon wieder 2 Sprunge zu weit.
+- **Fernaufruf `Q9K_FARCALL <ziel>`** (`lea *(pc),a0 / adda.l #ziel-*+4,a0 /
+  jsr (a0)`): l68 loest die Label-Differenz ueber Dateigrenzen auf, an einem
+  40-KB-Beispiel exakt richtig. Das Makro steht in q9kernel_entry.a, wird
+  aber **noch nicht benutzt**: die Umstellung aller 42 `bsr` von
+  q9kernel_entry.a in C-Funktionen fuehrte zu einem Absturz kurz nach dem
+  Start (Vektor 4, PC $1298; Q9K_SysWaitImpl kehrte mit verschobenem a5 an
+  eine Benutzeradresse zurueck). Bisektion begonnen: Stellen 1-21 als
+  FARCALL -> ebenfalls kaputt. Naechster Schritt: Haelfte 1-10/11-21 weiter
+  eingrenzen. Werkzeug im Scratch: fcbisect.sh (setzt eine Auswahl der
+  Stellen auf FARCALL, baut, testet den Login); die vollstaendig umgestellte
+  Fassung erzeugt man neu per Regex (alle `bsr` auf C-Funktionen ->
+  `Q9K_FARCALL`).
+- **Offset-Konflikt behoben:** Trace-Tiefe/Callcodes lagen bei $3F0/$3F1-$3F8
+  und ueberlappten `Q9K_PROCDESC_RESUMETRAP_OFF` ($3F8, Wort). Jetzt
+  $3E0/$3E1-$3E8 (q9kernel_dbg.c, Nullung in Q9K_ProcPoolAlloc).
+- Plan des Emulator-Debuggers: docs/DEBUG_KONZEPT_de.md Abschnitt 5
+  (Symbole aus der Linkkarte + Moduldirectory, Quelltext pro Datei, Monitor,
+  GDB-Stub).
+
+Verifiziert: Hosttest dbg_live gruen, Developer-Kernel baut, Login mit
+echo/dir/pd funktioniert.
