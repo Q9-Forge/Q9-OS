@@ -1,5 +1,9 @@
 # Kernel: Analyse und nächste Arbeitspakete
 
+> **Überholt (07.10.2026):** Die Roadmap unten ist vom 14.09.2026. Maßgeblich
+> ist jetzt [`KERNEL_ARBEITSPLAN_de.md`](KERNEL_ARBEITSPLAN_de.md). Diese Datei
+> bleibt für die Abschnitte „Technische Schulden" und die Messhistorie stehen.
+
 Stand: 14.09.2026. Analysierter Stand: `main`, `3681010`.
 Basis: Quellcode, Buildskript, aktuelle Übergabe in
 `OWN_KERNEL_STATUS.md` und erneuter Lauf aller 16 Hosttests (alle bestanden).
