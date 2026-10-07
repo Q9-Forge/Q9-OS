@@ -1,10 +1,18 @@
-# Kernel-Arbeitsplan
+# Kernel- und Userland-Arbeitsplan
 
 Stand: 07.10.2026, Grundlage `main` `2ea3c3c` (Fortsetzung 122).
 
-Dieser Plan zerlegt alle offenen Arbeiten am Q9-Kernel in Schritte, die
-jeweils **in einer Session** erledigt werden können. Er ersetzt die Roadmap
-in `KERNEL_NEXT_SESSION_de.md` (Stand 14.09.2026, überholt).
+Dieser Plan zerlegt alle offenen Arbeiten am Q9-System in Schritte, die
+jeweils **in einer Session** erledigt werden können:
+
+- **Teil 1 — Kernel** (Phasen A–H): Kernel, eigener IOMan, Filemanager,
+  Treiber, Speicherschutz.
+- **Teil 2 — Userland** (Phasen I–O): Systemstart und Anmeldung, Shell,
+  Laufzeitbibliotheken, Entwicklungswerkzeuge und alle übrigen
+  Systemprogramme. Der Code dafür liegt überwiegend im Repo `Q9-Tools`.
+
+Er ersetzt die Roadmap in `KERNEL_NEXT_SESSION_de.md` (Stand 14.09.2026,
+überholt).
 
 ## So wird der Plan benutzt
 
@@ -47,14 +55,26 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Gesamt** | | **0 / 47** | |
+| **Teil 1 Kernel** | | **0 / 47** | |
+| I | Userland-Grundlagen | 0 / 5 | ⬜ |
+| J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
+| K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
+| L | Entwicklungswerkzeuge auf dem Ziel | 0 / 5 | ⬜ |
+| M | Datenträger und Archive | 0 / 5 | ⬜ |
+| N | Netzwerk | 0 / 7 | ⬜ |
+| O | Grafik und übrige Programme | 0 / 6 | ⬜ |
+| **Teil 2 Userland** | | **0 / 43** | |
+| **Gesamt** | | **0 / 90** | |
 
 | Meilenstein | Status |
 |---|---|
-| M1 Stabil mit Microware-I/O | ⬜ |
-| M2 Eigener IOMan | ⬜ |
-| M3 Eigene I/O-Kette | ⬜ |
-| M4 Speicherschutz | ⛔ |
+| MS1 Stabil mit Microware-I/O | ⬜ |
+| MS2 Eigener IOMan | ⬜ |
+| MS3 Eigene I/O-Kette | ⬜ |
+| MS4 Speicherschutz | ⛔ |
+| MS5 Eigener Systemstart bis zur Shell | ⬜ |
+| MS6 Alle eigenen Programme mit eigener Werkzeugkette gebaut | ⬜ |
+| MS7 Userland vollständig eigen | ⬜ |
 
 ## Bereits erledigt (vor diesem Plan)
 
@@ -75,6 +95,11 @@ Zur Orientierung, damit nichts davon erneut angegangen wird.
 | ✅ | Debug-Abschnitt von `xcc -g` entschlüsselt | `2ea3c3c` |
 | ✅ | Negativtests mit beschädigten Bootmodulen | `tools/malformed_boot_test.sh` |
 | ✅ | 52 von 101 Syscalls voll umgesetzt | `Q9-KERNEL/STATUS.md` |
+| ✅ | 67 der 198 Systemprogramme aus `CMDS` als eigene Q9-Tools vorhanden, dazu 22 weitere eigene; gebaut mit dem Microware-Compiler, geprüft unter dem Microware-Kernel | `Q9-Tools/System/PORT_STATUS.md`, `Q9-Tools/Network/NETWORK_STATUS.md` |
+| ✅ | Gesamtbau aller eigenen Programme (88) mit SDK-Werkzeugen nach `Q9SYS/CMDS_XCC` | 27.09.2026 |
+| ✅ | Eigene Werkzeugkette `qcpp`/`qcir`/`qir68k`/`qr68k`/`ql68k` läuft auf dem Ziel, byteidentisch zum Host | Q9-QCC, 27.09.2026 |
+| ✅ | qclib: alle 140 öffentlichen clib-Symbole vorhanden, 79 verifiziert, 61 mit dokumentierter Abweichung | `Q9-QCC/Q9-BACKEND-68K/q9-qclib/STATUS.md` |
+| ✅ | bash 1.12 portiert (läuft bis 16 MB RAM) | `Q9-Tools/System/bash_v1.12.10` |
 
 ## Ausgangslage
 
@@ -93,18 +118,28 @@ Zur Orientierung, damit nichts davon erneut angegangen wird.
 - **Microware-Module im laufenden Boot:** ioman, scf, rbf, sc68681, cfide,
   sysgo, tsmon, login, mshell, csl, math. Eigen sind der Kernel und der
   DHF-Treiber (`dhfmgr`, `dhfdrv`).
+- **Userland:** `Q9SYS/CMDS` enthält ohne eigene Testprogramme 198
+  Programme. **67 davon gibt es schon als eigene Q9-Tools, 131 kommen noch
+  von Microware.** Die eigenen Tools werden bisher mit dem
+  Microware-Compiler gegen Microware-Bibliotheken gebaut und unter dem
+  Microware-Kernel getestet.
 
 ## Meilensteine
 
 | Meilenstein | Erreicht nach | Grobe Schätzung |
 |---|---|---|
-| M1 Stabil mit Microware-I/O | Phasen A, B, C | ~20 Sessions |
-| M2 Eigener IOMan (mit Microware-Filemanagern) | Phase D | ~8 Sessions |
-| M3 Eigene I/O-Kette | Phasen E, F | ~10 Sessions |
-| M4 Speicherschutz | Phase G | offen, wartet auf Q9-Flux |
+| MS1 Stabil mit Microware-I/O | Phasen A, B, C | ~20 Sessions |
+| MS2 Eigener IOMan (mit Microware-Filemanagern) | Phase D | ~8 Sessions |
+| MS3 Eigene I/O-Kette | Phasen E, F | ~10 Sessions |
+| MS4 Speicherschutz | Phase G | offen, wartet auf Q9-Flux |
+| MS5 Eigener Systemstart bis zur Shell | Phase J (setzt MS1 voraus) | ~8 Sessions |
+| MS6 Eigene Werkzeugkette für alle Programme | Phase K | ~7 Sessions |
+| MS7 Userland vollständig eigen | Phasen I, L–O | ~28 Sessions, genauer nach I1 |
 
 Die Schätzungen sind grob. Besonders D2, E3 und E4 können sich teilen, wenn
 unterwegs Fehler auftauchen.
+
+# Teil 1 — Kernel
 
 ## Phase A — Kernel-Fundament
 
@@ -165,7 +200,7 @@ wird eine Schicht nach der anderen ersetzt — nie zwei auf einmal.
 | D5 | ⬜ | **Namensauflösung** `/gerät/rest` → Manager; `I$ChgDir` | Boot bis zur Konsole mit eigenem IOMan | D4 | |
 | D6 | ⬜ | **Fehlermapping und Cleanup bei Prozessende** (offene Pfade, Locks, Queue-Elemente, Modulreferenzen) | Offene Pfade werden bei `F$Exit` freigegeben | D5 | |
 | D7 | ⬜ | **Pfad-Locks, Wait/Wake, I/O-Queue** (`F$IOQu`/`F$IODel`) | Konkurrierende Zugriffe serialisiert und getestet | D6 | |
-| D8 | ⬜ | **`F$Load`, `F$PErr`, Bitmap-Dienste** im eigenen IOMan; native Kernel-Bitmaps (`F$SchBit`/`AllBit`/`DelBit`) nutzen | **M2:** Login komplett mit eigenem IOMan plus Microware-Filemanagern | D7 | |
+| D8 | ⬜ | **`F$Load`, `F$PErr`, Bitmap-Dienste** im eigenen IOMan; native Kernel-Bitmaps (`F$SchBit`/`AllBit`/`DelBit`) nutzen | **MS2:** Login komplett mit eigenem IOMan plus Microware-Filemanagern | D7 | |
 
 ## Phase E — Eigene Filemanager
 
@@ -187,7 +222,7 @@ Die Verzeichnisse unter `Q9-Manager/` sind derzeit leer.
 |---|---|---|---|---|---|
 | F1 | ⬜ | **Konsolentreiber** für den 68681-DUART (ersetzt `sc68681`) | Login über eigenen Treiber | E2 | |
 | F2 | ⬜ | **CF/IDE-Treiber** (ersetzt `cfide`) | Boot von CF über eigene Kette | E3 | |
-| F3 | ⬜ | **Statusumstellung**: `I$`-Aufrufe und `F$PErr`/`F$IOQu`/`F$IODel` von 🔷 auf ✅, wo die Kette eigen ist | **M3:** `Q9-KERNEL/STATUS.md` ohne 🔷, jede Zeile mit Beleg | F1, F2 | |
+| F3 | ⬜ | **Statusumstellung**: `I$`-Aufrufe und `F$PErr`/`F$IOQu`/`F$IODel` von 🔷 auf ✅, wo die Kette eigen ist | **MS3:** `Q9-KERNEL/STATUS.md` ohne 🔷, jede Zeile mit Beleg | F1, F2 | |
 
 ## Phase G — Speicherschutz (MMU/SSM)
 
@@ -200,7 +235,7 @@ unbehandelt gemeldet). Siehe „MMU/SSM audit" in `Q9-KERNEL/STATUS.md`.
 | G1 | ⛔ | **Adressraumstruktur im Prozessdeskriptor** | Kontextwechsel lädt den Adressraum | G0 | |
 | G2 | ⛔ | **Seitentabellen und Fault-Behandlung** | Zugriffsfehler beendet den Prozess, nicht den Kernel | G1 | |
 | G3 | ⛔ | **`F$Permit`/`F$Protect`/`F$ChkMem` echt** | Verbotener Zugriff wird abgewiesen | G2 | |
-| G4 | ⛔ | **`F$AllTsk`/`F$DelTsk`/`F$GSPUMp` echt** | **M4:** Werte stimmen gegen das Handbuch | G2 | |
+| G4 | ⛔ | **`F$AllTsk`/`F$DelTsk`/`F$GSPUMp` echt** | **MS4:** Werte stimmen gegen das Handbuch | G2 | |
 
 ## Phase H — Werkzeuge und Pflege
 
@@ -213,12 +248,107 @@ Kann jederzeit eingeschoben werden, wenn eine Fehlersuche es verlangt.
 | H3 | ⬜ | **GDB-Stub** (Debug-Paket 5) | Breakpoint und Einzelschritt aus gdb | H1 | |
 | H4 | ⬜ | **Doku-Hygiene**: `OWN_KERNEL_STATUS.md` (über 11.000 Zeilen) archivieren und kürzen; `KERNEL_NEXT_SESSION_de.md` ins Archiv | Kurzer aktueller Status plus Archiv | — | |
 
-## Nicht in diesem Plan
+# Teil 2 — Userland
 
-- **Userland:** sysgo, tsmon, login, mshell, csl und math sind ebenfalls
-  Microware-Module. Soll Q9-OS auch dort unabhängig werden, braucht es einen
-  eigenen Plan.
-- **`F$MBuf`:** bleibt mangels belegter ABI offen (siehe Phase C).
+Grundlage ist der Abgleich vom 07.10.2026: `Q9SYS/CMDS` gegen die
+Verzeichnisse in `Q9-Tools/System`, `Network` und `Language`. Jedes der 131
+noch von Microware stammenden Programme steht unten in genau einer Zeile.
+Programme, deren Zweck nicht sicher feststeht, sind **nicht geraten
+einsortiert**, sondern stehen in Phase O, bis Schritt I1 sie einordnet.
+
+## Phase I — Userland-Grundlagen
+
+| Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
+|---|---|---|---|---|---|
+| I1 | ⬜ | **Einordnung aller 131 Microware-Programme**: Zweck (Handbuch, `ident`), Abhängigkeiten, Priorität; Phase-O-Blöcke danach neu schneiden | Tabelle in `Q9-Tools/docs`, jedes Programm einer Phase zugeordnet | — | |
+| I2 | ⬜ | **Regressionslauf für Werkzeuge**: jedes Q9-Tool mit Beispielaufruf im Emulator starten, Ausgabe vergleichen | Ein Skript, lauffähig unter Microware- und unter Q9-Kernel | A1 | |
+| I3 | ⬜ | **Alle Q9-Tools auf dem Q9-Kernel** laufen lassen | Ergebnisliste; Kernelfehler als neue Zeilen in Phase A/C | I2 | |
+| I4 | ⬜ | **`mdir` und `devs` vollständig** über `F$CpyMem` (im Q9-Kernel inzwischen ✅) | Ausgabe entspricht dem Original | I2 | |
+| I5 | ⬜ | **Offene Funktionen aus `PORT_STATUS.md`**: `touch` (Setstat), `del -e`, `del -f`, zentrale `-x`-Auflösung | Alle vier Punkte erledigt oder begründet offen | I2 | |
+
+## Phase J — Systemstart, Anmeldung, Shell
+
+Ohne diese Phase gibt es kein eigenes System: heute laufen sysgo, tsmon,
+login und mshell aus dem Microware-Bestand.
+
+| Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
+|---|---|---|---|---|---|
+| J1 | ⬜ | **`sysgo`** eigen | Boot startet über eigenes sysgo bis zum startup | MS1 | |
+| J2 | ⬜ | **init-Modul aus eigener Quelle** (heute aus dem CB030-Port über `mk_init.sh`) | Byteidentisch zum bisherigen oder Abweichungen begründet | — | |
+| J3 | ⬜ | **`tsmon`** eigen | Anmeldeaufforderung über eigenes tsmon | J1 | |
+| J4 | ⬜ | **`login`** eigen, samt Passwortdatei | Anmeldung mit Benutzer und Passwort | J3 | |
+| J5 | ⬜ | **Shell-Entscheidung** (ersetzt `shell` und `mshell`): eigene mshell-kompatible Shell oder bash als Standard (bash 1.12 läuft nur bis 16 MB RAM) | Entscheidung dokumentiert | — | |
+| J6 | ⬜ | **Shell Grundfunktionen**: Befehle, Umleitung, Pipes, Hintergrund, Variablen | Interaktiver Betrieb ohne mshell | J5 | |
+| J7 | ⬜ | **Shell-Skripte**: `startup` und vorhandene Skripte laufen unverändert | Boot-startup und eine Skriptsammlung grün | J6 | |
+| J8 | ⬜ | **`su`, `tmode`, `xmode`** | Alle drei eigen und geprüft | J4 | |
+
+## Phase K — Laufzeit und Bibliotheken
+
+| Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
+|---|---|---|---|---|---|
+| K1 | ⬜ | **qclib-Abweichungen ordnen**: die 61 🟡-Funktionen nach Gruppe und Korpus-Häufigkeit sortieren | Reihenfolge für K2–K4 festgelegt | — | |
+| K2 | ⬜ | **qclib: Zeitfunktionen** | Gruppe auf ✅ | K1 | |
+| K3 | ⬜ | **qclib: Signale** | Gruppe auf ✅ | K1 | |
+| K4 | ⬜ | **qclib: Mathematik (Transzendente)** | Gruppe auf ✅ | K1 | |
+| K5 | ⬜ | **Trapmodule `csl`, `math`, `cio`**: werden sie für eigene Programme noch gebraucht, oder nur für Fremdprogramme? Bei Bedarf eigene Fassung | Entscheidung belegt; ggf. eigenes Modul im Boot | K4 | |
+| K6 | ⬜ | **Q9-Tools mit eigener Kette bauen**, erster Block von 10 (`qcc` + qclib statt xcc + `clib.l`) | Die 10 laufen gleich wie die xcc-Fassung | K1 | |
+| K7 | ⬜ | **Alle Q9-Tools mit eigener Kette** | **MS6:** kein Programm braucht mehr den Microware-Compiler | K6 | |
+
+## Phase L — Entwicklungswerkzeuge auf dem Ziel
+
+| Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
+|---|---|---|---|---|---|
+| L1 | ⬜ | **`cc`, `c68`, `o68`, `cpp`, `r68`, `l68`** durch die QCC-Kette abdecken: Aufrufnamen, Standardpfade (`qcc.conf`, `/dd/LIB/Q9`, `/dd/DEFS`) | Ein C-Programm lässt sich auf dem Ziel mit den gewohnten Befehlen bauen | K6 | |
+| L2 | ⬜ | **`make`** | Ein Q9-Tools-Makefile läuft auf dem Ziel | L1 | |
+| L3 | ⬜ | **Modul- und ROF-Werkzeuge**: `rdump`, `mkdatmod`, `editmod` | Ausgabe stimmt mit dem Original überein | L1 | |
+| L4 | ⬜ | **`debug`** (Debugger) | Breakpoint und Einzelschritt in einem Programm | C2 | |
+| L5 | ⬜ | **Editoren `umacs` und `edt`** | Datei öffnen, ändern, speichern | — | |
+
+## Phase M — Datenträger und Archive
+
+| Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
+|---|---|---|---|---|---|
+| M1 | ⬜ | **`format` und `os9gen`** | Neues Abbild formatiert und bootfähig gemacht | — | |
+| M2 | ⬜ | **`backup`, `dsave`, `fsave`, `frestore`** | Sichern und Zurückspielen eines Verzeichnisbaums | — | |
+| M3 | ⬜ | **`tar`, `compress`, `unzip`** | Archive des Originals werden gelesen und erzeugt | — | |
+| M4 | ⬜ | **`undel`, `rcopy`, `mount`, `park`, `diskcache`** | Alle fünf geprüft | — | |
+| M5 | ⬜ | **`partition`, `partdgen`, `pcformat`, `mbinstall`, `mbdump`** | Alle fünf geprüft | — | |
+
+## Phase N — Netzwerk
+
+Abgleich mit `Q9-Tools/Network/NETWORK_STATUS.md` zu Beginn von N1.
+
+| Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
+|---|---|---|---|---|---|
+| N1 | ⬜ | **Grundkonfiguration**: `ipstart`, `dhcp`, `bootpd`, `arp`, `routed` | Netzwerk startet über eigene Programme | — | |
+| N2 | ⬜ | **Dienste**: `telnetd`, `telnetdc`, `ftpd`, `ftpdc`, `tftpd`, `tftpdc` | Anmeldung per telnet, Dateiübertragung per ftp/tftp | N1 | |
+| N3 | ⬜ | **RPC-Grundlage**: `portmap`, `rpcgen`, `rpcdbgen`, `rpcdump`, `rpchost` | RPC-Dienst registrierbar und abfragbar | N1 | |
+| N4 | ⬜ | **RPC-Dienste**: `rstatd`, `rup`, `rusers`, `rusersd`, `spray`, `sprayd`, `rexd`, `rexdc`, `rpr` | Alle geprüft | N3 | |
+| N5 | ⬜ | **NFS**: `nfsc`, `nfsd`, `mountd`, `exportfs`, `showmount`, `nfsstat`, `pcnfsd`, `nfs.map` | Freigabe einbinden, lesen, schreiben | N3 | |
+| N6 | ⬜ | **SMB**: `smbdrv`, `smbmount`, `smbsetime`, `smbstat`, `smbview` | Freigabe einbinden | N1 | |
+| N7 | ⬜ | **PPP und seriell**: `pppd`, `pppauth`, `chat`, `kermit` | Verbindung aufgebaut, Datei übertragen | N1 | |
+
+## Phase O — Grafik und übrige Programme
+
+Die Blöcke O2–O6 sind vorläufig alphabetisch geschnitten. Schritt I1
+ordnet ihren Inhalt ein und schneidet sie danach neu.
+
+| Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
+|---|---|---|---|---|---|
+| O1 | ⬜ | **Grafik (MAUI)**: `maui`, `graphic`, `setfont`, `fkeys` | Bedarf entschieden; wenn gebraucht, eigen und geprüft | I1 | |
+| O2 | ⬜ | Block: `BOOTOBJ`, `bfed`, `cfp`, `code`, `com`, `cslot`, `cudo`, `dird`, `dpsplit` | Eingeordnet und eigen | I1 | |
+| O3 | ⬜ | Block: `exbin`, `expand`, `idbdump`, `idbgen`, `initslot`, `irqs`, `lmm`, `maps`, `merge` | Eingeordnet und eigen | I1 | |
+| O4 | ⬜ | Block: `moded`, `msgd`, `ndbmod`, `ndpio`, `on`, `p2init`, `padrom`, `probe`, `pwrstat` | Eingeordnet und eigen | I1 | |
+| O5 | ⬜ | Block: `rldd`, `rload`, `romsplit`, `sortd`, `spfndpd`, `spfndpdc`, `spfnppd`, `spfnppdc` | Eingeordnet und eigen | I1 | |
+| O6 | ⬜ | Block: `tape`, `tapegen`, `tapestart`, `target`, `undpd`, `undpdc`, `x`, `y` | **MS7:** Eingeordnet und eigen; `CMDS` enthält kein Microware-Programm mehr | I1 | |
+
+## Hinweise zum Userland
+- **Reihenfolge:** Phase J setzt einen stabilen Kernel voraus (MS1). Phasen
+  I, K, L und M können parallel zu Teil 1 laufen, weil sie zunächst unter
+  dem Microware-Kernel testbar sind.
+- **Ein Programm gilt als eigen,** wenn es aus eigener Quelle gebaut ist und
+  der Regressionslauf aus I2 es unter dem Q9-Kernel grün meldet.
+- **`F$MBuf`** bleibt mangels belegter ABI offen (siehe Phase C).
 
 ## Quellen
 
@@ -228,3 +358,6 @@ Kann jederzeit eingeschoben werden, wenn eine Fehlersuche es verlangt.
 - `docs/OWN_KERNEL_STATUS.md` — Fortsetzung 122 (FARCALL-Bisektion)
 - `docs/DEBUG_KONZEPT_de.md` — Abschnitte 5–7
 - `Q9-IOMAN/STATUS.md` — Abschnitte 5, 7 und 8
+- `Q9-Tools/System/PORT_STATUS.md`, `Q9-Tools/Network/NETWORK_STATUS.md`
+- `Q9-QCC/Q9-BACKEND-68K/q9-qclib/STATUS.md`
+- Abgleich `Q9-Images/cf_images/Q9SYS/CMDS` gegen `Q9-Tools` (07.10.2026)
