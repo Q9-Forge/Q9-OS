@@ -1,0 +1,6 @@
+# Architecture-local modules and the standalone kernel build.
+[global]
+SUBDIRS = kernel
+
+[mac-xcc-68k]
+all:

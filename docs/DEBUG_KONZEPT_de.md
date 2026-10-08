@@ -2,7 +2,6 @@
 
 Stand: 2026-10-06. Abgestimmt mit Andreas; noch nicht umgesetzt.
 Ergänzt am selben Tag: Zeit bei Eintritt und Ende (2.2), Ringpuffer als
-allgemeiner Baustein (2.8).
 
 Ziel: Fehler im Kernel und im Zusammenspiel mit fremden Modulen (IOMan,
 RBF, SCF, csl, mshell …) **messen** statt erraten. Die Sitzungen bis
@@ -311,8 +310,17 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
   - **Art 3 / Art 4:** Blockanfang/-ende mit Codeoffset (Gueltigkeitsbereiche).
   Offen: Header-Felder der ROF-Datei allgemein (Abschnittslagen statt fester
   Rechnung), Bedeutung der Spaltenbits im Detail, Typbeschreibungen fuer
-  Strukturen. Danach: Host-Werkzeug `.r` -> Zeilentabelle `offset datei:zeile`,
-  vom Linker-Offset des Moduls auf Kerneladressen umgerechnet.
+  Strukturen. Das Host-Werkzeug `tools/q9rof_lines.py` ist dafuer jetzt
+  vorhanden. Es liest die Saetze Typ 1/2, erkennt die Quelldatei aus dem
+  `:SC:`-Stabs-Satz und gibt `offset datei:zeile:spalte` aus; mit `--base`
+  kommt die Laufzeitadresse hinzu. Bei einem einzelnen ROF vor dem Linken
+  kommt der P-Segment-Offset im gelinkten Kernel ueber `--module-offset` dazu;
+  `--symbols` annotiert die naechste Funktion aus der `l68 -s`-Linkmap.
+  Beispiel: `tools/q9rof_lines.py q9kernel_date.r --base 0x7100
+  --module-offset 0xb6d2 --symbols q9kernel_debug.map`.
+  Ohne `--debug-offset` sucht es die Debug-Signatur automatisch. Ein normal
+  uebersetztes `.r` ohne `xcc -g` wird bewusst mit einer klaren Fehlermeldung
+  abgewiesen.
 - **Ganzer Kernel mit `-g` geht nicht:** ~40 % mehr Code, 27 `bsr`-Sprunge
   (68000: nur +-32 KB) erreichen ihr Ziel nicht mehr. Deshalb **pro Datei**:
   Bauschalter `Q9K_SRCDEBUG="q9kernel_date.c ..."` uebersetzt nur diese

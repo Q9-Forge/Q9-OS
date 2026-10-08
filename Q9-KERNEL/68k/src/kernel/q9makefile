@@ -1,0 +1,9 @@
+# build.sh generates and incrementally runs its own target-specific os9make
+# description; qmake supplies the shared profile and recursive entrypoint.
+[global]
+TOOLCHAIN_FILE = ../../../../../Q9-QCC/Q9-Make/toolchains/qmake.conf
+
+[mac-xcc-68k]
+all: kernel
+kernel:
+	./build.sh

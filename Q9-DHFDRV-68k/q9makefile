@@ -1,0 +1,26 @@
+# Legacy host simulator and regression targets, retained for comparison.
+[global]
+TOOLCHAIN_FILE = ../../Q9-QCC/Q9-Make/toolchains/qmake.conf
+
+[mac-clang]
+all: host-build
+host-build:
+	make all
+test:
+	make test
+clean:
+	make clean
+
+[linux-gcc]
+all: host-build
+host-build:
+	make all
+test:
+	make test
+
+[windows-clang]
+all: host-build
+host-build:
+	make all
+test:
+	make test

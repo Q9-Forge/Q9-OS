@@ -533,6 +533,16 @@ Q9K_FLinkTrace_A0        equ $15414C
 Q9K_FLinkTrace_A1        equ $154150
 Q9K_FLinkTrace_A2        equ $154154
 Q9K_FLinkTrace_InputA0   equ $154158
+Q9K_FLinkFrame_Mode      equ $154194      * Q9K_InTrapPath beim F$Link-Eintritt
+Q9K_FLinkFrame_EntrySP   equ $154198      * SP beim Handler-Eintritt
+Q9K_FLinkFrame_EntryRet  equ $15419C      * erstes Stackwort beim Handler-Eintritt
+Q9K_FLinkFrame_PostSP    equ $1541A0      * SP direkt nach der C-Suche
+Q9K_FLinkFrame_Post0     equ $1541A4      * erstes Stackwort nach der C-Suche
+Q9K_FLinkFrame_Post4     equ $1541A8      * zweites Stackwort nach der C-Suche
+Q9K_FLinkFrame_EntryPC   equ $1541AC      * PC-Feld des Frames beim Eintritt
+Q9K_FLinkFrame_PostPC    equ $1541B0      * PC-Feld des Frames nach der C-Suche
+Q9K_FLinkFrame_RTEPC     equ $1541B4      * PC-Feld unmittelbar vor RTE
+Q9K_FLinkFrame_RTESR     equ $1541B8      * SR-Feld unmittelbar vor RTE
 Q9K_SSvcExternalBase      equ $1400      * 256 Byte Markierungstabelle, s. q9kernel_ssvc.c
 Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte real genutzt)
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
@@ -3878,6 +3888,8 @@ Q9K_DbgLogReturnImpl_Skip:
         movea.l (sp)+,a6
         movem.l (sp)+,d0-d2/a0-a1
         endc
+        move.l  2(sp),Q9K_FLinkFrame_RTEPC
+        move.l  (sp),Q9K_FLinkFrame_RTESR
         rte
 
 Q9K_TrapUnknown:
@@ -4181,6 +4193,10 @@ Q9K_SysUnimplemented:
 * vorbereitet.
 Q9K_SysFLink:
         move.l  sp,Q9K_FLinkSavedSP
+        move.l  Q9K_InTrapPath,Q9K_FLinkFrame_Mode
+        move.l  sp,Q9K_FLinkFrame_EntrySP
+        move.l  (sp),Q9K_FLinkFrame_EntryRet
+        move.l  6(sp),Q9K_FLinkFrame_EntryPC
         move.l  d7,Q9K_FLinkSavedD7
         move.l  a6,Q9K_FLinkSavedA6
         move.l  a0,Q9K_FLinkSavedName
@@ -4293,6 +4309,10 @@ Q9K_SysFLink_InputsReady:
         movea.l Q9K_FLinkSearchImplPtr,a1
         move.l  a1,($15417c).l              * diagnostic: resolved C entry address
         jsr     (a1)
+        move.l  sp,Q9K_FLinkFrame_PostSP
+        move.l  (sp),Q9K_FLinkFrame_Post0
+        move.l  4(sp),Q9K_FLinkFrame_Post4
+        move.l  6(sp),Q9K_FLinkFrame_PostPC
         movea.l Q9K_FLinkSavedA6,a6
         move.l  ($154178).l,d7
         tst.l   d7
@@ -7203,6 +7223,7 @@ Q9K_SysFIClose_BadPath:
 * descriptor.  File-manager/device resolution remains a separate layer.
 *******************************************************************************
 Q9K_SysFIChgDir:
+        move.l  #1,($154190).l                  * Diagnose: Handler betreten
         movem.l d2-d4/a0-a1,-(sp)
         moveq   #0,d2
         move.w  d0,d2
@@ -7229,10 +7250,12 @@ Q9K_SysFIChgDir_CopyLoop:
         dbra    d3,Q9K_SysFIChgDir_CopyLoop
         bra.s   Q9K_SysFIChgDir_BadPath
 Q9K_SysFIChgDir_Ok:
+        move.l  #2,($154190).l                  * Diagnose: Handler erfolgreich
         movem.l (sp)+,d2-d4/a0-a1
         andi    #$fe,ccr
         rts
 Q9K_SysFIChgDir_BadPath:
+        move.l  #3,($154190).l                  * Diagnose: Handler abgelehnt
         movem.l (sp)+,d2-d4/a0-a1
         move.w  #$00d8,d1                     * E$PNNF: path not found
         ori     #1,ccr

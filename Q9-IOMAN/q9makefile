@@ -1,0 +1,16 @@
+# Host regression suite and target module builder for the new I/O manager.
+[global]
+TOOLCHAIN_FILE = ../../Q9-QCC/Q9-Make/toolchains/qmake.conf
+
+[mac-clang]
+all: test
+test: build/test_qioman
+	./build/test_qioman
+build/test_qioman: src/qioman.c src/qioman_system.c src/qioman_kernel.c tests/test_qioman.c include/qioman.h include/qioman_system.h include/qioman_kernel.h
+	mkdir -p build && $(HOST_CC) -std=c99 -Wall -Wextra -Werror -pedantic -O2 -Iinclude src/qioman.c src/qioman_system.c src/qioman_kernel.c tests/test_qioman.c -o build/test_qioman
+
+[mac-xqcc-68k]
+all: q9-module
+q9-module:
+	Q9_QCPP="$(Q9SDK)/macOS/CMDS_CLANG/qcpp" Q9_QCIR="$(Q9SDK)/macOS/CMDS_CLANG/qcir" Q9_QIR68K="$(Q9SDK)/macOS/CMDS_CLANG/qir68k" Q9_QR68K="$(Q9SDK)/macOS/CMDS_CLANG/qr68k" Q9_QL68K="$(Q9SDK)/macOS/CMDS_CLANG/ql68k" make q9-module
+	mkdir -p "$(Q9SDK)/Q9/68k/CMDS_XQCC" && cp build/qioman "$(Q9SDK)/Q9/68k/CMDS_XQCC/ioman"

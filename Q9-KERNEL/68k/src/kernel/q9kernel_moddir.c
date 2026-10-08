@@ -129,6 +129,15 @@ extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
 #define Q9K_FMODUL_SCRATCH_ERROR  0x1A14UL
 #define Q9K_FMODUL_SCRATCH_OK     0x1A18UL
 
+/* F$Link-Suchdiagnose: bewusst im bestehenden Debug-Erweiterungsbereich.
+ * Diese Felder machen einen verketteten Listenfehler sichtbar, statt den
+ * Kernel bei einer zyklischen Moduldirectory endlos in C laufen zu lassen. */
+#define Q9K_FLINK_DIAG_ITER       0x154180UL
+#define Q9K_FLINK_DIAG_SLOT       0x154184UL
+#define Q9K_FLINK_DIAG_HEADER     0x154188UL
+#define Q9K_FLINK_DIAG_GUARD      0x15418CUL
+#define Q9K_FLINK_DIAG_MAX        256UL
+
 /* F$DatMod-Scratch (2026-09-18): hinter dem F$Trans-Block
  * ($19A8-$19B0, q9kernel_sysmem.c). */
 #ifndef Q9K_DATMOD_SCRATCH_SIZE
@@ -463,27 +472,53 @@ static Q9_u32 Q9K_ModDirFindSlotByName(Q9_u16 desiredTyLang, const char *name,
     Q9_u32 slot = Q9K_GetU32(Q9K_MODDIR_HEAD_ADDR);
     Q9_u32 bestSlot = 0;
     Q9_u32 bestRevision = 0;
+    Q9_u32 iterations = 0;
+    Q9_u32 hdrAddr;
+    Q9_u16 tyLang;
+    Q9_u16 wantType;
+    Q9_u16 wantLang;
+    Q9_u16 haveType;
+    Q9_u16 haveLang;
+    Q9_u32 nameOffset;
+    Q9_u32 moduleSize;
+    Q9_u32 revision;
+
+    Q9K_SetU32(Q9K_FLINK_DIAG_ITER, 0);
+    Q9K_SetU32(Q9K_FLINK_DIAG_SLOT, 0);
+    Q9K_SetU32(Q9K_FLINK_DIAG_HEADER, 0);
+    Q9K_SetU32(Q9K_FLINK_DIAG_GUARD, 0);
 
     while (slot != 0) {
-        Q9_u32 hdrAddr = Q9K_GetU32(slot + Q9K_MODDIR_HDRPTR_OFF);
-        Q9_u16 tyLang  = Q9K_ModDirGetU16(slot + Q9K_MODDIR_TYLANG_OFF);
+        if (iterations++ >= Q9K_FLINK_DIAG_MAX) {
+            /* Defensive failure: a valid directory in this kernel is much
+             * smaller. A nonzero guard proves the list did not terminate. */
+            Q9K_SetU32(Q9K_FLINK_DIAG_ITER, iterations);
+            Q9K_SetU32(Q9K_FLINK_DIAG_GUARD, 1);
+            return 0;
+        }
+        hdrAddr = Q9K_GetU32(slot + Q9K_MODDIR_HDRPTR_OFF);
+        tyLang  = Q9K_ModDirGetU16(slot + Q9K_MODDIR_TYLANG_OFF);
+
+        Q9K_SetU32(Q9K_FLINK_DIAG_ITER, iterations);
+        Q9K_SetU32(Q9K_FLINK_DIAG_SLOT, slot);
+        Q9K_SetU32(Q9K_FLINK_DIAG_HEADER, hdrAddr);
 
         /* Typ und Sprache getrennt, jeweils "0 = beliebig" (s. Kopfkommentar).
          * Deckt den bisherigen Fall desiredTyLang==0 unveraendert mit ab:
          * dann sind beide Teilfilter 0 und damit beide "beliebig". */
-        Q9_u16 wantType = (Q9_u16)((desiredTyLang >> 8) & 0x00FFU);
-        Q9_u16 wantLang = (Q9_u16)(desiredTyLang & 0x00FFU);
-        Q9_u16 haveType = (Q9_u16)((tyLang >> 8) & 0x00FFU);
-        Q9_u16 haveLang = (Q9_u16)(tyLang & 0x00FFU);
+        wantType = (Q9_u16)((desiredTyLang >> 8) & 0x00FFU);
+        wantLang = (Q9_u16)(desiredTyLang & 0x00FFU);
+        haveType = (Q9_u16)((tyLang >> 8) & 0x00FFU);
+        haveLang = (Q9_u16)(tyLang & 0x00FFU);
 
         if ((wantType == 0 || wantType == haveType) &&
             (wantLang == 0 || wantLang == haveLang)) {
-            Q9_u32 nameOffset = Q9K_ReadU32BE((const Q9_u8 *)hdrAddr + Q9K_MH_NAME);
-            Q9_u32 moduleSize = Q9K_ReadU32BE((const Q9_u8 *)hdrAddr + Q9K_MH_SIZE);
+            nameOffset = Q9K_ReadU32BE((const Q9_u8 *)hdrAddr + Q9K_MH_NAME);
+            moduleSize = Q9K_ReadU32BE((const Q9_u8 *)hdrAddr + Q9K_MH_SIZE);
 
             if (nameOffset < moduleSize &&
                 Q9K_ModDirNamesMatch((const Q9_u8 *)(hdrAddr + nameOffset), moduleSize - nameOffset, name)) {
-                Q9_u32 revision = ((const Q9_u8 *)hdrAddr)[0x15];
+                revision = ((const Q9_u8 *)hdrAddr)[0x15];
 
                 if (!highestRevision)
                     return slot;
@@ -497,6 +532,7 @@ static Q9_u32 Q9K_ModDirFindSlotByName(Q9_u16 desiredTyLang, const char *name,
         slot = Q9K_GetU32(slot + Q9K_MODDIR_NEXT_OFF);
     }
 
+    Q9K_SetU32(Q9K_FLINK_DIAG_ITER, iterations);
     return bestSlot;
 }
 
