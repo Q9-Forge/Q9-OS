@@ -1,5 +1,7 @@
 # Q9-OS status
 
+> **Arbeitsplan und Schrittkennungen:** Die Kennungen A1–H4 (Kernel) und I1–O6 (Userland) beziehen sich auf [`docs/KERNEL_ARBEITSPLAN_de.md`](../docs/KERNEL_ARBEITSPLAN_de.md). Nicht verwechseln mit den Testvarianten A/B/B2 weiter unten in diesem Dokument. Der Bearbeitungsstand wird auf dem Hermes-Kanban-Board „Q9-OS“ geführt.
+
 This file describes the current implementation status of the OS-9 system
 calls in Q9-OS.  The status refers to the Q9-OS kernel and its current
 IOMan integration, not to the original OS-9 implementation.
