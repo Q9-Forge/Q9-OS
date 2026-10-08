@@ -1,0 +1,16 @@
+# Native OS components. Profile-specific subtrees keep host tests separate
+# from OS-9/68k modules built by the cross toolchain.
+[global]
+TOOLCHAIN_FILE = ../Q9-QCC/Q9-Make/toolchains/qmake.conf
+
+[mac-clang]
+SUBDIRS = Q9-DHFDRV-68k
+all:
+
+[mac-xcc-68k]
+SUBDIRS = Q9-KERNEL
+all:
+
+[mac-xqcc-68k]
+SUBDIRS = Q9-IOMAN
+all:

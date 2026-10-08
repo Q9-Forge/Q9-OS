@@ -1766,3 +1766,31 @@ boot confirming it was not completed this round -- the vendor module
 files needed for a bootable test image (`/tmp/vendor_*.mod`, from
 Fortsetzung 94) are gone after a restart; re-extracting them is its own
 side task for a future session.
+
+## Debug concept, Live-Regression und nächster Fehler (2026-10-08)
+
+Die Vendor-Module wurden für einen isolierten Lauf direkt aus
+`OS9Boot.noprot.test` extrahiert. `tools/q9dbg_version_probe_test.sh`
+läuft im Q9-Flux-Emulator vollständig durch: `F$Q9Dbg` Unterfunktion 0
+liefert den `V`-Marker, der Trace schreibt sechs Sätze für drei `F$ID`-
+Aufrufe, und der erste Datensatz ist ein korrekter Eintrittssatz für
+Prozess 1. Damit ist die Live-Anbindung des Debug-Traces bestätigt.
+
+Der breitere `tools/startup_shell_test.sh` bleibt dagegen offen. Der
+Lauf erreicht den initialen `F$Link` erfolgreich, aber weder den folgenden
+`F$Fork` noch den `K/W`-Abschlussmarker. Im Dump ist keine Exception
+verzeichnet; der gespeicherte Prozess-PC ist jedoch bereits korrupt
+(`0x6bee0000`, in einem Vergleichslauf `0x00002000`) und der Modulname
+fehlt. Der nächste technische Schritt ist daher die Rückkehr-/Rahmen-
+Analyse direkt nach diesem ersten `F$Link`, bevor `F$Fork` betreten wird.
+Der `I$ChgDir`-Handler ist davon getrennt: sein Host-Breakpoint trifft
+mit plausiblen Registern (`D0=3`, gültiges `A0`) im externen IOMan.
+
+Die Frame-Instrumentierung vom 2026-10-08 grenzt den Fehler weiter ein:
+Beim ersten `F$Link` bleibt der Frame-PC vor und nach der C-Suche identisch
+(`0x000085be`), ebenso der Stackzeiger. Direkt vor `RTE` enthält derselbe
+Rückkehr-Frame jedoch bereits `0x00016cdc`. `F$Link` selbst beschädigt den
+Frame damit nicht; der Fehler liegt im gemeinsamen `Q9K_TrapAfterCall`-
+Epilog oder im dort aktivierten Debug-Rückkehrhaken. Der nächste Vergleich
+ist ein Developer-Build ohne diesen Haken, danach wird der erste abweichende
+Frame-Offset korrigiert.

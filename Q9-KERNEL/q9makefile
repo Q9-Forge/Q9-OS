@@ -1,0 +1,7 @@
+# Kernel sources are nested by target architecture.
+[global]
+SUBDIRS = 68k
+
+[mac-xcc-68k]
+all:
+

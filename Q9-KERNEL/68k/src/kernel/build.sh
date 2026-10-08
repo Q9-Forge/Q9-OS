@@ -29,6 +29,7 @@ set -euo pipefail
 
 OUTDIR="${1:-$(dirname "$0")/build}"
 SRCDIR="$(cd "$(dirname "$0")" && pwd)"
+Q9OS_ROOT="$(cd "$SRCDIR/../../../../" && pwd)"
 mkdir -p "$OUTDIR"
 cd "$OUTDIR"
 
@@ -216,7 +217,7 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe
 
 echo "== Verlinken (kein csl.l/acstart.r -- eigener Assembler-Einstieg) =="
 arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
-    -o=q9kernel -f=orowoe \
+    -o=q9kernel -s=q9kernel_debug.map -f=orowoe \
     q9kernel_entry.r q9kernel_cinit.r q9kernel_modcheck.r q9kernel_modsearch.r q9kernel_initext.r \
     q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_mmu.r \
     q9kernel_sched.r q9kernel_procend.r q9kernel_procsleep.r q9kernel_sysmem.r q9kernel_debug.r q9kernel_ssvc.r q9kernel_iopath.r q9kernel_procapi.r q9kernel_traplink.r \
@@ -235,6 +236,27 @@ arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe
 # fuer den, der den A4-Bug eines Tages wirklich behebt.
 gap=$(xxd -s 0x3ac -l 4 -p q9kernel)
 echo "== Layout-Hinweis: Bytes an Datei-Offset \$3ac = $gap (Totraum-Soll: 00000000, s. Kommentar) =="
+
+if [ -n "${Q9K_SRCDEBUG:-}" ] && [ -f q9kernel_debug.map ]; then
+    echo "== Quelltextkarten erzeugen =="
+    for f in $Q9K_SRCDEBUG; do
+        r="${f%.c}.r"
+        [ -f "$r" ] || continue
+        module_offset="$(grep -A1 "psect from file: $r" q9kernel_debug.map \
+            | tail -n 1 | tr -d '\r' \
+            | sed -nE 's/.*C:([0-9A-Fa-f]+).*/0x\1/p')"
+        if [ -z "$module_offset" ]; then
+            echo "WARNUNG: kein PSECT-Offset fuer $r in q9kernel_debug.map gefunden" >&2
+            continue
+        fi
+        python3 "$Q9OS_ROOT/tools/q9rof_lines.py" "$r" \
+            --base "${Q9K_SYMBOL_BASE:-0x7100}" \
+            --module-offset "$module_offset" \
+            --symbols q9kernel_debug.map --format flux \
+            > "${f%.c}.lines"
+        echo "  ${f%.c}.lines (Moduloffset $module_offset)"
+    done
+fi
 
 echo "== Fertig: $OUTDIR/q9kernel =="
 file q9kernel || true

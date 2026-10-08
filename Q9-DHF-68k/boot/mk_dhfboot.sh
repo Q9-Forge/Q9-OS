@@ -54,8 +54,8 @@ DHF=$(cd "$HERE/.." && pwd)
 FORGE=$(cd "$DHF/../.." && pwd)
 QR68K=${QR68K:-$FORGE/Q9-QCC/Q9-BACKEND-68K/q9-qr68k/build/qr68k}
 QL68K=${QL68K:-$FORGE/Q9-QCC/Q9-BACKEND-68K/q9-ql68k/build/ql68k}
-DEFS=$FORGE/Q9-QCC/runtime/os9/q9defs.d
-SRC=$FORGE/Q9-Images/cf_images/OS9SYS
+DEFS=${DEFS:-$FORGE/Q9-QCC/runtime/os9/q9defs.d}
+SRC=${SRC:-$FORGE/Q9-Images/cf_images/OS9SYS}
 BAUM=${1:-$FORGE/Q9-Images/dhf_root/boot}
 
 die() { echo "mk_dhfboot: $*" >&2; exit 2; }
