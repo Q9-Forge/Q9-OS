@@ -2263,6 +2263,12 @@ Q9K_TestAttachForkFail:
         dc.w    4                             * F$Wait for startup shell
         moveq   #'W',d7
         bsr     Q9K_DiagWriteD7
+* Eindeutiges Endzeichen fuer tools/startup_shell_test.sh: ein einzelnes 'W'
+* gibt es im Developer-Kernel schon frueher (Q9Dbg-Versionsprobe 'V', 'W'+Hex
+* in Q9K_TestProcA) -- der Test brach dadurch beim ersten 'W' ab, mitten im
+* Boot, und meldete "K/W nicht erreicht".
+        moveq   #'!',d7
+        bsr     Q9K_DiagWriteD7
         moveq   #0,d0
         trap    #0
         dc.w    $008f                         * I$Close redirected startup path

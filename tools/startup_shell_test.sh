@@ -78,13 +78,15 @@ Q9K_BUILD_DIR="$WORK/kb" "$HERE/tools/mkbootfile.sh" "$WORK/ref.boot" "$WORK/img
 printf '* Q9 startup test\rchd /dd\recho q9\r' > "$WORK/startup"
 "$OS9" copy "$WORK/startup" "$WORK/img.hda,SYS/startup" >/dev/null
 
-# 4. Laufen lassen bis "W" (F$Wait der Startup-Shell zurueck). K und W stehen
-#    nicht zwingend nebeneinander: dazwischen schreibt mshell seine Ausgabe.
-#    Ein grosses W kommt in den Boot- und Emulatormeldungen sonst nicht vor.
+# 4. Laufen lassen bis "W!" (F$Wait der Startup-Shell zurueck; das '!' hängt
+#    der Kernel nach dem 'W' an). K und W stehen nicht zwingend nebeneinander:
+#    dazwischen schreibt mshell seine Ausgabe. Ein einzelnes 'W' reicht als
+#    Marker NICHT: der Developer-Kernel schreibt es schon beim Q9Dbg-Probe
+#    ('V', 'W'+Hex), der Test brach dann mitten im Boot ab.
 dump="$FLUX/local_images/q9dbg_dump.txt"
 rm -f "$dump"
 ( cd "$FLUX" && Q9_TEST_TIMEOUT="${Q9_TEST_TIMEOUT:-60}" \
-    expect -f "$HERE/tools/run_kernel_test.exp" "$FLUX" "$WORK/img.hda" 'W' "$WORK/console.log" \
+    expect -f "$HERE/tools/run_kernel_test.exp" "$FLUX" "$WORK/img.hda" 'W!' "$WORK/console.log" \
     > "$WORK/expect.out" 2>&1 ) || true
 
 [ -f "$dump" ] || { echo "FAIL  kein Debug-Dump geschrieben"; exit 1; }
