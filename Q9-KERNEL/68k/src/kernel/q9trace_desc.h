@@ -1,9 +1,23 @@
 #ifndef Q9TRACE_DESC_H
 #define Q9TRACE_DESC_H
 
+#if defined(__has_include)
+# if __has_include("q9trace.h")
+#  include "q9trace.h"
+# else
+#  include <stdint.h>
+typedef uint8_t Q9_u8;
+typedef uint16_t Q9_u16;
+typedef uint32_t Q9_u32;
+# endif
+#else
 #include "q9trace.h"
+#endif
 
 /* Name field: allow up to Q9TRACE_MAX_NAME characters plus terminating NUL. */
+#ifndef Q9TRACE_MAX_NAME
+#define Q9TRACE_MAX_NAME 15
+#endif
 #define Q9TRACE_DESC_NAME_LEN (Q9TRACE_MAX_NAME + 1)
 /* Payload cap so header(12)+payload(<=52) <= Q9TRACE_MAX_REC (64) */
 #define Q9TRACE_DESC_MAX_PAYLOAD 52
