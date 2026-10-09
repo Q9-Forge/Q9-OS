@@ -3841,7 +3841,10 @@ Q9K_TrapAfterCall:
 * veraendert, das ist HIER folgenlos: RTE laedt SR ausschliesslich aus
 * dem Frame (bereits oben per "or.w d0,6(sp)" endgueltig gesetzt).
         movem.l d0-d2/a0,-(sp)
-        move.l  24(sp),d1                        * PC, der GLEICH per RTE zurueckgegeben wird
+* PC liegt bei Frame+2: sp steht hier nach CCR-/d0-Aufraeumen wieder auf dem
+* Frame, davor nur der movem (16 Byte) -> 16+2 = 18(sp). Frueher 24(sp) =
+* Frame+8, also das Wort HINTER dem Frame (fremder Stackinhalt).
+        move.l  18(sp),d1                        * PC, der GLEICH per RTE zurueckgegeben wird
         move.l  Q9K_RaceRingIdx,d2
         andi.l  #$1fff,d2                          * Q9K_RaceRingSlots-1 (8192 Slots)
         movea.l #Q9K_RaceRingBase,a0
