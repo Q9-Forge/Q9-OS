@@ -88,6 +88,4 @@ int cmd_trace(int argc, char **argv)
     return 1;
 }
 
-#ifdef TEST_MAIN
-int main(int argc, char **argv){ return cmd_trace(argc, argv); }
-#endif
+/* No main here for linking with test harness; TEST_MAIN may be defined in test build to provide a main. */
