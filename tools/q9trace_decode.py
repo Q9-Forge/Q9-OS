@@ -8,8 +8,18 @@ ringfoermig -- genau der Inhalt, den F$Q9Dbg Unterfunktion 6 liefern wuerde.
 Satzformat s. Q9-KERNEL/68k/src/kernel/q9trace.h (12-Byte-Kopf: Typ, Laenge,
 Callcode, Flags[Tiefe 0-3, Carry 4, gekuerzt 5], PID.w, Tick.l, Feinzeit.w).
 
-Aufruf: q9trace_decode.py <dump> [--last N] [--pid P]
+Eingabe: Textdump aus Q9-Flux-Logs (siehe oben) ODER roher Binaer-Dump (.bin):
+ein linearer Strom aus Saetzen, beginnend am aeltesten Satz (so liefert ihn
+F$Q9Dbg Unterfunktion 6). Die Art wird an Endung/Inhalt erkannt, --bin und
+--text erzwingen sie.
+
+Ausgabe je Satz: Zeitstempel (Tick.Feinzeit), PID, Einrueckung nach Tiefe
+(2 Leerzeichen je Stufe), Richtung, Callcode-Name, bei Rueckkehr Carry-Status.
+
+Aufruf: q9trace_decode.py <dump> [--bin|--text] [--pid ID] [--call NAME]
+                          [--min-depth N] [--last N]
 """
+import argparse
 import re
 import sys
 
@@ -36,71 +46,192 @@ NAMES = {
 TYPES = {1: '->', 2: '<-', 3: '+>', 4: '<+', 5: '!!', 6: 'PI', 7: 'TB'}
 
 
+RECORD_NAMES = {1: 'Eintritt', 2: 'Rueckkehr', 3: 'intern-Eintritt',
+                4: 'intern-Rueckkehr', 5: 'verloren', 6: 'Prozess-Info', 7: 'Zeitbasis'}
+HDR_LEN = 12
+TRACE_HDR_RE = re.compile(
+    r'--- Q9-Trace-Puffer addr=(\w+) size=(\w+) wr=(\w+) rd=(\w+) used=(\w+) '
+    r'written=(\w+) lost=(\w+) enabled=(\w+)')
+
+
 def load(path):
+    """Textdump -> (Kopfdaten, Pufferbytes) oder (None, b'')."""
     hdr = None
     data = bytearray()
-    for line in open(path, errors='replace'):
-        m = re.match(r'--- Q9-Trace-Puffer addr=(\w+) size=(\w+) wr=(\w+) rd=(\w+) used=(\w+) '
-                     r'written=(\w+) lost=(\w+) enabled=(\w+)', line)
-        if m:
-            hdr = {k: int(v, 16) for k, v in zip(
-                ('addr', 'size', 'wr', 'rd', 'used', 'written', 'lost', 'enabled'), m.groups())}
-            continue
-        if hdr and line.startswith('T '):
-            data += bytes.fromhex(line.split()[2])
+    with open(path, errors='replace') as f:
+        for line in f:
+            m = TRACE_HDR_RE.match(line)
+            if m:
+                hdr = {k: int(v, 16) for k, v in zip(
+                    ('addr', 'size', 'wr', 'rd', 'used', 'written', 'lost', 'enabled'),
+                    m.groups())}
+                continue
+            if hdr and line.startswith('T '):
+                parts = line.split()
+                if len(parts) >= 3:
+                    data += bytes.fromhex(parts[2])
     return hdr, bytes(data)
 
 
-def records(hdr, data):
+def ring_stream(hdr, data):
+    """Linearisiert den Ringpuffer ab Leseoffset, 'used' Byte weit."""
     size, rd, used = hdr['size'], hdr['rd'], hdr['used']
-    stream = bytes(data[(rd + i) % size] for i in range(used))
+    if size <= 0 or not data:
+        return b''
+    return bytes(data[(rd + i) % len(data)] for i in range(min(used, size)))
+
+
+def is_text_dump(path):
+    with open(path, 'rb') as f:
+        return b'--- Q9-Trace-Puffer' in f.read()
+
+
+def records(stream):
+    """Zerlegt einen linearen Satzstrom. Liefert Tupel (Zustand, Offset, Bytes);
+    Zustand 'ok', 'kaputt' (Laenge < Kopf, Abbruch) oder 'abgeschnitten'
+    (Satz reicht ueber das Stromende, Abbruch)."""
     off = 0
-    while off + 12 <= len(stream):
+    n = len(stream)
+    while off < n:
+        if off + HDR_LEN > n:
+            yield ('abgeschnitten', off, stream[off:])
+            return
         rlen = stream[off + 1]
-        if rlen < 12:
-            yield ('kaputt', off, stream[off:off + 12])
+        if rlen < HDR_LEN:
+            yield ('kaputt', off, stream[off:off + HDR_LEN])
+            return
+        if off + rlen > n:
+            yield ('abgeschnitten', off, stream[off:])
             return
         yield ('ok', off, stream[off:off + rlen])
         off += rlen
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        return 2
-    last = None
-    pidf = None
-    args = sys.argv[2:]
-    if '--last' in args:
-        last = int(args[args.index('--last') + 1])
-    if '--pid' in args:
-        pidf = int(args[args.index('--pid') + 1])
-    hdr, data = load(sys.argv[1])
-    if not hdr:
-        print('kein Trace-Puffer im Dump (Developer-Kernel? Trace eingeschaltet?)')
-        return 1
-    print('Puffer %(addr)08x, %(size)d Byte, belegt %(used)d, geschrieben %(written)d, '
-          'verloren %(lost)d, an=%(enabled)d' % hdr)
+def parse(rec):
+    """Satzbytes -> dict mit den Kopffeldern und den Nutzdaten."""
+    flags = rec[3]
+    return {
+        'type': rec[0], 'len': rec[1], 'code': rec[2], 'flags': flags,
+        'depth': flags & 0x0F, 'carry': bool(flags & 0x10), 'trunc': bool(flags & 0x20),
+        'pid': (rec[4] << 8) | rec[5],
+        'tick': int.from_bytes(rec[6:10], 'big'),
+        'fine': (rec[10] << 8) | rec[11],
+        'payload': bytes(rec[HDR_LEN:rec[1]]),
+    }
+
+
+def call_name(r):
+    if r['type'] in (3, 4):
+        return 'FN$%02X' % r['code']
+    return NAMES.get(r['code'], '$%02X' % r['code'])
+
+
+def _norm(name):
+    return name.strip().lower().replace('$', '')
+
+
+def call_matches(r, wanted):
+    """--call: Name ohne Beachtung von Gross-/Kleinschreibung und '$'
+    ('I$Open', 'iopen', 'i$open'), oder Zahl ('0x84', '$84')."""
+    if r['type'] not in (1, 2, 3, 4):
+        return False
+    w = wanted.strip()
+    try:
+        num = int(w[1:], 16) if w.startswith('$') else int(w, 0)
+        return r['code'] == num
+    except ValueError:
+        pass
+    return _norm(call_name(r)) == _norm(w)
+
+
+def select(recs, pid=None, call=None, min_depth=None, last=None):
+    """Filtert dekodierte Saetze. Satztyp 5/7 (Verlust/Zeitbasis) bleiben immer
+    sichtbar; Typ 6 (Prozess-Info) unterliegt nur dem PID-Filter."""
     out = []
-    for state, off, rec in records(hdr, data):
-        if state != 'ok':
-            out.append('  ?? unlesbarer Satz bei %d: %s' % (off, rec.hex()))
-            break
-        rtype, rlen, code, flags = rec[0], rec[1], rec[2], rec[3]
-        pid = (rec[4] << 8) | rec[5]
-        tick = int.from_bytes(rec[6:10], 'big')
-        if pidf is not None and pid != pidf:
+    for r in recs:
+        t = r['type']
+        if t in (5, 7):
+            out.append(r)
             continue
-        if rtype == 5:
-            out.append('%8d  !! %d Saetze verloren' % (tick, int.from_bytes(rec[12:16], 'big')))
+        if pid is not None and r['pid'] != pid:
             continue
-        depth = flags & 0x0F
-        name = NAMES.get(code, '$%02X' % code)
-        err = ' CARRY' if flags & 0x10 else ''
-        out.append('%8d  pid %2d  %s%s %s%s' % (tick, pid, '  ' * depth, TYPES.get(rtype, '?'), name, err))
-    if last:
-        out = out[-last:]
-    print('\n'.join(out))
+        if t != 6:
+            if call is not None and not call_matches(r, call):
+                continue
+            if min_depth is not None and r['depth'] < min_depth:
+                continue
+        elif call is not None or min_depth is not None:
+            continue
+        out.append(r)
+    if last is not None and last >= 0:
+        out = out[-last:] if last else []
+    return out
+
+
+def format_record(r):
+    t = r['type']
+    stamp = '%8d.%04x' % (r['tick'], r['fine'])
+    if t == 5:
+        n = int.from_bytes(r['payload'][:4], 'big')
+        return '%s  !! %d Saetze verloren' % (stamp, n)
+    if t == 7:
+        return '%s  TB Zeitbasis raw=%s' % (stamp, r['payload'][:4].hex())
+    if t == 6:
+        u = int.from_bytes(r['payload'][:2], 'big')
+        return '%s  pid %2d  PI Benutzer %d.%d' % (stamp, r['pid'], u >> 8, u & 0xFF)
+    line = '%s  pid %2d  %s%s %s' % (stamp, r['pid'], '  ' * r['depth'],
+                                     TYPES.get(t, '?'), call_name(r))
+    if t in (2, 4):
+        line += ' CARRY' if r['carry'] else ' ok'
+    if r['trunc']:
+        line += ' (gekuerzt)'
+    return line
+
+
+def decode_stream(stream):
+    """Satzstrom -> (Satzliste, Warnzeilen)."""
+    recs, warn = [], []
+    for state, off, raw in records(stream):
+        if state == 'ok':
+            recs.append(parse(raw))
+        elif state == 'kaputt':
+            warn.append('  ?? unlesbarer Satz bei %d: %s' % (off, raw.hex()))
+        else:
+            warn.append('  ?? abgeschnittener Satz bei %d: %s' % (off, raw.hex()))
+    return recs, warn
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description='Dekodiert den Q9-Syscall-Trace.')
+    ap.add_argument('dump', help='Q9-Flux-Textdump oder rohe .bin-Datei')
+    kind = ap.add_mutually_exclusive_group()
+    kind.add_argument('--bin', action='store_true', help='als rohen Binaerstrom lesen')
+    kind.add_argument('--text', action='store_true', help='als Textdump lesen')
+    ap.add_argument('--pid', type=int, help='nur diese Prozess-ID')
+    ap.add_argument('--call', help='nur diesen Callcode (Name oder Zahl)')
+    ap.add_argument('--min-depth', type=int, help='nur Saetze ab dieser Tiefe')
+    ap.add_argument('--last', type=int, help='nur die letzten N Zeilen (nach Filter)')
+    args = ap.parse_args(argv)
+
+    as_bin = args.bin or (not args.text and (args.dump.lower().endswith('.bin')
+                                             or not is_text_dump(args.dump)))
+    if as_bin:
+        with open(args.dump, 'rb') as f:
+            stream = f.read()
+        print('Binaerdump, %d Byte' % len(stream))
+    else:
+        hdr, data = load(args.dump)
+        if not hdr:
+            print('kein Trace-Puffer im Dump (Developer-Kernel? Trace eingeschaltet?)')
+            return 1
+        print('Puffer %(addr)08x, %(size)d Byte, belegt %(used)d, geschrieben %(written)d, '
+              'verloren %(lost)d, an=%(enabled)d' % hdr)
+        stream = ring_stream(hdr, data)
+    recs, warn = decode_stream(stream)
+    sel = select(recs, args.pid, args.call, args.min_depth, args.last)
+    lines = [format_record(r) for r in sel] + warn
+    if lines:
+        print('\n'.join(lines))
     return 0
 
 
