@@ -282,8 +282,9 @@ damit ebenfalls sofort aufgefallen.
 
 ## 5. Debugger im Emulator (Q9-Flux)
 
-Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
-(Fortsetzung 121), Messwerte in `docs/OWN_KERNEL_STATUS.md`.
+Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
+`docs/OWN_KERNEL_STATUS.md`. Die Emulator-Basis ist im Q9-Flux-Commit
+8790ca6 umgesetzt und per synthetischem ROM Ende-zu-Ende getestet.
 
 ### 5.1 Ziele
 
@@ -319,8 +320,8 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
 - **Quellzeilen:** `Q9_LINE_DIR/<modulname>.lines` nimmt die
   `q9rof_lines.py --base 0 --module-offset <psect> --format flux`-Ausgabe
   auf. Q9-Flux addiert zur Laufzeit die Modul-Headeradresse. Kernelzeilen
-  bleiben ueber `Q9_LINE_MAP` konfiguriert. Der GDB-Stub und ein Live-Test
-  mit einem PC in einem dynamisch geladenen Modul sind noch offen.
+  bleiben ueber `Q9_LINE_MAP` konfiguriert. Der GDB-Stub ist umgesetzt;
+  der Live-Test mit einem PC in einem dynamisch geladenen Modul bleibt offen.
 
 ### 5.3 Quelltext-Debugging (gemessen)
 
@@ -384,13 +385,16 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
 
 ### 5.4 Debugger-Kern
 
-- Erst ein **Monitor im Emulator** (Konsolenbefehle oder TCP-Port):
-  Haltepunkt (PC), Watchpoint (Schreibzugriff, gibt es schon als
-  `Q9_WATCH_ADDR`), Einzelschritt, Register, Speicher -- alles symbolisch.
-  Q9-Flux hat die Haken bereits (Instruktionshook, Freeze nach PC/SP,
-  Instruktionsspur).
-- Danach ein **GDB-Remote-Stub** (`m68k-elf-gdb`, VS Code), mit der
-  ELF-Symboldatei aus 5.2.
+- **Monitor im Emulator:** PC-Haltepunkt, Watchpoint (Q9_WATCH_ADDR),
+  Einzelschritt und Register-/Stack-Dump sind vorhanden. Die bisherige
+  Host-Konsole verwendet Ctrl-R und Ctrl-T.
+- **GDB Remote Serial Protocol:** in Q9-Flux als optionaler Stub umgesetzt.
+  Q9_GDB_PORT=1234 bindet ausschließlich an 127.0.0.1; GDB verbindet mit
+  target remote localhost:1234. Register D0-D7/A0-A7/SR/PC, Speicher,
+  Software-Breakpoints, Continue, Single-Step, vCont, No-Ack-Modus und
+  Ctrl-C sind enthalten. make test-gdbstub prüft den Datenweg mit einem
+  Test-ROM. Die Symbol- und Quellzeilenauflösung für dynamische Module muss
+  noch mit einem Live-PC im Gast verifiziert werden.
 
 ### 5.5 Reihenfolge
 
@@ -399,7 +403,8 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
 2. Fernaufruf-Makro pruefen (l68-Label-Differenz); bei Erfolg `bsr` aus
    q9kernel_entry.a nach C darauf umstellen -- loest die 32-KB-Grenze.
 3. ROF-Debug-Abschnitt (`xcc -g`) entschluesseln -> Zeilentabelle.
-4. Monitor mit Haltepunkten/Einzelschritt, dann GDB-Stub.
+4. Monitor und GDB-Stub im Emulator (Grundfunktionen umgesetzt); danach
+   Modul-PC/Symbole/Quellzeilen live im Gast verifizieren.
 5. `.stb`-Format der Microware-Module.
 6. QCC-Zeilentabellen (QCC-Repo).
 
@@ -412,7 +417,8 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
 3. Register-Erhaltungsprüfung.
 4. Beschreibungstabelle für die wichtigsten Syscalls, Programm `trace`,
    Host-Dekoder.
-5. Emulator-Debugger (GDB-Stub + Symbole).
+5. Emulator-Debugger: Monitor, GDB-RSP und Modul-Symbolauflösung sind
+   umgesetzt; Live-Verifikation im dynamisch geladenen Gastmodul ist offen.
 
 ## 7. Offene Punkte
 
@@ -424,5 +430,7 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
   Repo, damit Kernel und Tool übereinstimmen).
 - Ermittlung der FD-Nummer: genaue `I$GetStt`-Unterfunktion bei RBF
   prüfen, bevor das Tool sie benutzt.
+- GDB-Live-Test: Haltepunkt auf einer Adresse in einem dynamisch geladenen
+  Q9-/Microware-Modul mit Symbol- und Quellzeilenanzeige.
 - Timing: Konsolenausgabe verändert das Zeitverhalten deutlich; für
   zeitkritische Fehler nur den Ringpuffer verwenden.
