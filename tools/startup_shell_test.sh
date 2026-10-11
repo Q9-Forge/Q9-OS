@@ -115,12 +115,13 @@ if k < 0 or w < 0 or end < 0:
     else:
         print('FAIL  Q9SHELLK/Q9SHELLW/Q9SHELLDONE nicht erreicht')
     sys.exit(1)
-body = s[k:w]
+# Terminalausgabe kann wegen gepufferter/cooperativer Ausgabe vor dem K-
+# Marker eintreffen. Fuer die Inhaltspruefung deshalb den ganzen Startup-
+# Lauf bis W nehmen; K und W pruefen separat, dass der Fork wirklich lief.
+body = s[start:w]
 # Fortsetzung 110: mshell (-npt) gibt jede gelesene Zeile wieder aus. Beide
-# startup-Zeilen zwischen K und W belegen, dass mshell seine Parameter
-# (a5 = Parameteranfang) UND stdin (IOMan-Pfad, I$ReadLn weitergeleitet)
-# korrekt bekommt; vorher stand dort "syntax error" mit Speichermuell.
-body = s[k:w]
+# Startup-Zeilen belegen, dass Parameter und stdin korrekt ankamen; vorher
+# stand dort "syntax error" mit Speichermuell.
 for line in ('* Q9 startup test', 'chd /dd'):
     if line not in body:
         print(f'FAIL  mshell hat die startup-Zeile "{line}" nicht ausgegeben (stdin/Parameter?)')
