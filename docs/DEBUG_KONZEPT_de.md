@@ -304,17 +304,23 @@ Eigenes Paket, nach dem Trace. Stand der Planung: 2026-10-06
 - **Eigene Module** (forkchild, trace, spaeter QCC-Programme): ebenfalls
   Linkkarte beim Bauen mitschreiben.
 - **Microware-Module** (ioman, scf, rbf, sysgo ...): MWOS enthaelt
-  `*.stb`/`*.map` (z. B. `OS9/68000/CMDS/BOOTOBJS/STB/`), selbst als
-  OS-9-Modul verpackt (`4AFC`-Kopf); Format noch zu entschluesseln. Ohne
-  Symbole bleibt `modul+offset` -- auch das ist schon viel wert.
-- **Laufzeit-Zuordnung:** Q9-Flux liest das Moduldirectory des Kernels
-  (`Q9K_MODDIR_HEAD_ADDR` $1238, Eintraege mit Kopfadresse/Groesse/Name --
-  der Dump zeigt das heute schon) und legt die Symbole jedes Moduls an seine
-  tatsaechliche Ladeadresse. Geladene Module (F$Load) werden so automatisch
-  erfasst.
-- **Format im Emulator:** eine einfache Textdatei je Modul
-  (`modulname offset name`), vom Build erzeugt. Fuer GDB zusaetzlich als
-  ELF-Symboldatei exportierbar.
+  `*.stb`/`*.map` (z. B. `OS9/68000/CMDS/BOOTOBJS/STB/`). Die `.map`-Dateien
+  sind lesbare l68-Linkkarten; der Symbolresolver verarbeitet deren
+  `COD`-Eintraege. Das `.stb`-Format ist weiterhin nicht entschluesselt.
+- **Laufzeit-Zuordnung (Q9-Flux umgesetzt):** Der Debugger liest das
+  Q9-Moduldirectory ab `Q9K_MODDIR_HEAD_ADDR` ($1238), validiert Syncwort,
+  Groesse und Namen und ordnet den PC der echten Headeradresse zu. Fuer
+  geladene Module zeigt er ohne Karte `modul+offset`.
+- **Linkkarten:** `Q9_SYMBOL_DIR/<modulname>.map` nimmt die normale
+  Microware-Linkkarte (`COD`-Eintraege) auf. Der Resolver verwendet die
+  modulrelativen Offsets aus `l68 -s`; Modulnamen werden fuer den Dateinamen
+  kleingeschrieben. Kernel-Symbole bleiben ueber `Q9_SYMBOL_MAP` und
+  `Q9_SYMBOL_BASE` konfiguriert.
+- **Quellzeilen:** `Q9_LINE_DIR/<modulname>.lines` nimmt die
+  `q9rof_lines.py --base 0 --module-offset <psect> --format flux`-Ausgabe
+  auf. Q9-Flux addiert zur Laufzeit die Modul-Headeradresse. Kernelzeilen
+  bleiben ueber `Q9_LINE_MAP` konfiguriert. Der GDB-Stub und ein Live-Test
+  mit einem PC in einem dynamisch geladenen Modul sind noch offen.
 
 ### 5.3 Quelltext-Debugging (gemessen)
 
