@@ -63,14 +63,13 @@ cat "$WORK/kb/q9kernel" "$V/vendor_init.mod" "$WORK/kb/forkchild" "$V/vendor_iom
 "$OS9" format -q -k -nQ9TEST -bs512 -l32768 -c32 "$WORK/img.hda" >/dev/null
 Q9K_BUILD_DIR="$WORK/kb" "$HERE/tools/mkbootfile.sh" "$WORK/ref.boot" "$WORK/img.hda" >/dev/null
 
-# 4. Laufen lassen, bis die F$Q9Dbg-Sonde erreicht ist (oder ein
-#    Fehlschlag-Marker kommt -- expect matcht nur EXAKT 'V', ein
-#    Fehlschlag faellt deshalb in den Timeout-Zweig, danach wird der
-#    Dump trotzdem geprueft).
+# 4. Laufen lassen, bis zum Abschlussmarker der Nutzdaten-Probe. Auf 'V'
+#    zu warten reicht seit Fortsetzung 123 nicht mehr: das Versionszeichen
+#    kommt vor der Probe und wuerde den Emulator zu frueh beenden.
 dump="$FLUX/local_images/q9dbg_dump.txt"
 rm -f "$dump"
 ( cd "$FLUX" && Q9_TEST_TIMEOUT="${Q9_TEST_TIMEOUT:-30}" \
-    expect -f "$HERE/tools/run_kernel_test.exp" "$FLUX" "$WORK/img.hda" 'V' "$WORK/console.log" \
+    expect -f "$HERE/tools/run_kernel_test.exp" "$FLUX" "$WORK/img.hda" 'Q9DBGEND' "$WORK/console.log" \
     > "$WORK/expect.out" 2>&1 ) || true
 
 echo "--- Konsolenausgabe (roh) ---"
@@ -125,6 +124,23 @@ if rtype != 1 or code != 0x0C:
 if pid == 0:
     print('FAIL  erster Satz traegt keine Prozess-ID'); sys.exit(1)
 print('ok    erster Satz: Eintritt F$ID, Laenge %d, PID %d, Tick %d -- F$Q9Dbg selbst nicht protokolliert' % (rlen, pid, int.from_bytes(hdr[6:10], 'big')))
+# Fortsetzung 123: Nutzdaten ab Detailstufe 2 (Register + Name), s. Probe-Block
+# "P<gelesene Byte>:<10 Langworte>" in Q9K_TestProcA.
+mp = re.search(r'P([0-9A-F]{8}):([0-9A-F]{80})', s)
+if not mp:
+    print('FAIL  Nutzdaten-Probe "P...:..." nicht gefunden'); sys.exit(1)
+nread = int(mp.group(1), 16); rec = bytes.fromhex(mp.group(2))
+if nread < 38:
+    print('FAIL  Nutzdaten-Probe las nur %d Byte (erwartet >= 38)' % nread); sys.exit(1)
+rtype, rlen, code = rec[0], rec[1], rec[2]
+if rtype != 1 or code != 0x10 or rlen != 38:
+    print('FAIL  Nutzdaten-Satz: Typ %d Code $%02X Laenge %d, erwartet Eintritt F$PrsNam ($10) Laenge 38' % (rtype, code, rlen)); sys.exit(1)
+a0 = int.from_bytes(rec[24:28], 'big')
+nlen = rec[32]
+name = rec[33:33 + nlen]
+if a0 == 0 or nlen != 5 or name != b'ioman':
+    print('FAIL  Nutzdaten: a0=$%08X Namenslaenge %d Name %r, erwartet "ioman"' % (a0, nlen, name)); sys.exit(1)
+print('ok    Detailstufe 2: F$PrsNam-Eintritt mit a0=$%08X und Name "%s" im Satz' % (a0, name.decode()))
 PY
 
 echo "ALLE TESTS OK (q9dbg_version_probe_test.sh)"

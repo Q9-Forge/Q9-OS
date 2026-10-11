@@ -11356,3 +11356,167 @@ echo/dir/pd funktioniert.
 (stabs-aehnliche Symbolsaetze + Zeilensaetze `[1][Offset][(Zeile<<12)|Spalte]`,
 an q9kernel_date.c gegen den Quelltext verifiziert) -- Details in
 docs/DEBUG_KONZEPT_de.md Abschnitt 5.3.
+
+
+## Fortsetzung 123: Trace-Register und Namensparameter (2026-10-09)
+
+Ab Detailstufe 2 tragen Eintritts- und Rückkehrsätze D0, D1, D2, A0 und A1.
+Namens-Syscalls speichern zusätzlich den übergebenen Namen; `trace on` aktiviert
+Detailstufe 2. Der 68000-Developer-Build assembliert und linkt.
+
+## Fortsetzung 124: Call-Masken und Filter (2026-10-11)
+
+Das OS-9-Programm `trace` unterstützt `mask +/-<Syscall>`, `show` und Filter
+für PID, Gruppe/Benutzer, lokale Pfadnummer, Fehler und Detailstufe. Der
+Benutzerfilter liest P$User aus dem aktuellen Prozessdeskriptor; unbekannte
+oder nicht darstellbare Werte matchen nicht. Build erfolgreich, neue
+Kommandozweige damals noch nicht separat live geprüft.
+
+## Fortsetzung 125: Lesbare Trace-Ausgabe und Host-Dekoder (2026-10-11)
+
+Der Host-Dekoder gruppiert Eintritt/Rückkehr zu einer Zeile, zeigt Namen,
+Modus, Pfadnummer, Laufzeit und Fehlernamen. `--events`, `--regs`, `--last`,
+`--pid`, `--code`, `--err` und `--name` steuern Ausgabe und Filter. Ungültige
+oder abgeschnittene Puffersätze werden erkannt. Synthetische Paare bestätigten
+die kompakte und getrennte Ausgabe. Datei-ID-/Pfadauflösung und feinere
+Zeitbasis bleiben offen; rohe Registerwerte sind für die erste Version
+akzeptiert.
+
+## Fortsetzung 126: Kernel-Trace live in Q9-Flux (2026-10-11)
+
+Der 68000-Developer-Kernel meldet über F$Q9Dbg Version und Puffergröße und
+erzeugt bei drei F$ID-Aufrufen sechs Trace-Sätze. Ein Detailstufe-2-Aufruf von
+F$PrsNam enthält A0 und den Namen `ioman`. Emulator-gelesene Satzbytes wurden
+vom Host-Dekoder ausgewertet. Der Emulator-Dump enthielt den Ringpuffer in
+diesem Lauf nicht; Proben gaben die Bytes auf der Konsole aus.
+
+## Fortsetzung 127: Trace-Zeilen und symbolischer Haltepunkt (2026-10-11)
+
+Syscall-Zeilen wurden für kompakte Lesbarkeit überarbeitet. PC-Haltepunkte
+zeigen Symbol und Quellzeile, wenn Symbol- und Line-Maps gesetzt sind. Der
+Debugger unterscheidet den PC nach Ausführung von der Adresse der letzten
+Instruktion.
+
+## Fortsetzung 128: Emulator-Debugger (2026-10-11)
+
+Der Host-Debugger bietet PC-Haltepunkte mit Trefferzähler, Register-Snapshot,
+Symbol-/Quellzeilenanzeige, Einzelschritt (`Ctrl-T`), Fortsetzen (`Ctrl-R`),
+Schreib-Watch und PC-Zähler. `Q9_BREAK_PC` und `Q9_WATCH_ADDR` unterstützen
+mehrere Adressen. Die vollständige Q9-Flux-Testsuite bestand; der vorherige
+Debug-Dump wurde nach den Live-Proben bytegleich wiederhergestellt.
+
+## Fortsetzung 129: Instruktionsvorschau am Haltepunkt (2026-10-11)
+
+Die sichere Teilvorschau las RAM/ROM ohne MMIO und dekodierte NOP/RTS/RTE/RTR,
+RESET/STOP, TRAP, MOVEQ, MOVE(A) mit Immediate, JSR/JMP und bedingte Zweige.
+Unbekannte Instruktionen erschienen als Rohwort.
+
+## Fortsetzung 130: Mehrere PC-Haltepunkte (2026-10-11)
+
+`Q9_BREAK_PC` nimmt bis zu 16 Adressen; `Q9_BREAK_PC_N` gilt pro Adresse.
+Zwei Haltepunkte wurden live nacheinander mit Fortsetzen geprüft.
+
+## Fortsetzung 131: Statusflags, Stackfenster und Watch-Grenzen (2026-10-11)
+
+Der Dump zeigt SR-Bits T1/T0, Supervisor-/Mastermodus, IPL, XNZVC und
+USP/ISP/MSP. Das Stackfenster wird nur aus RAM nach REMAP gelesen. Der
+Schreib-Watch behandelt Adresse 0 und Bereichsüberläufe korrekt. Live geprüft
+wurden BRA-Ziel, Stackfenster und Watch-Treffer.
+
+## Fortsetzung 132: Watch-Adresse Null (2026-10-11)
+
+Ein Probe-ROM schrieb $CAFEBABE nach Adresse 0; `Q9_WATCH_ADDR=0` zeichnete
+PC, Ziel und Breite korrekt auf.
+
+## Fortsetzung 133: JSR/JMP in der Vorschau (2026-10-11)
+
+JSR/JMP mit absoluter Wort-/Langadresse und einfachem Registerindirekt-Ziel
+werden angezeigt und wurden mit einem Live-Probe-ROM geprüft.
+
+## Fortsetzung 134: Letzte Instruktionsadresse (2026-10-11)
+
+Snapshot-Ausgabe unterscheidet PC nach Ausführung und Adresse der letzten
+Instruktion. `Ctrl-T` aktualisiert Herkunft, PC und Register korrekt.
+
+## Fortsetzung 135: Mehrere Schreib-Watchfenster (2026-10-11)
+
+`Q9_WATCH_ADDR` nimmt bis zu 16 Adressen mit gemeinsamer Fenstergröße.
+Überlappende Fenster protokollieren einen Schreibzugriff nur einmal. Zwei
+unterschiedliche Live-Schreibvorgänge erschienen mit korrekter Adresse und
+Breite.
+
+## Fortsetzung 136: Weitere Decoder-Mnemonics (2026-10-11)
+
+LEA absolut, DBcc und ADDQ/SUBQ auf Dn kamen zur sicheren Teilvorschau hinzu.
+Native Build und vollständige `make test` waren erfolgreich.
+
+## Fortsetzung 137: Stack-Prologue und PEA (2026-10-11)
+
+LINK An,#disp, UNLK An und PEA absolut werden angezeigt. Live bestätigt:
+`LINK A6,#-16`, `UNLK A6`, `PEA $12345678`.
+
+## Fortsetzung 138: Branch-Ziele und CPU-Modell (2026-10-11)
+
+Bcc.W verwendet die korrekte PC-Basis. Opcode-Byte $FF ist beim 68000 ein
+Byte-Offset, beim 68020+ eine 32-Bit-Erweiterung. Die konfigurierte CPU wird
+berücksichtigt. Live bestätigt: BNE.W `$FE00010A`, 68030-BNE.L `$FE000112`,
+68000-BNE.B `$FE00010B`.
+
+## Fortsetzung 139: Registerdirekte Datenoperationen (2026-10-11)
+
+Registerdirektes MOVE.B/W/L zwischen D-Registern, MOVEA.W/L aus Dn, CLR und
+TST auf Dn werden angezeigt und live geprüft.
+
+## Fortsetzung 140: PC-relative Adressierung (2026-10-11)
+
+Die Vorschau dekodiert LEA d16(PC), PEA d16(PC), JSR d16(PC) und JMP d16(PC).
+Live bestätigte Ziele: $FE000110, $FE000108, $FE000116 und $FE000114.
+
+## Fortsetzung 141: Optionale Capstone-Disassembly (2026-10-11)
+
+Q9-Flux erkennt Capstone optional über pkg-config und nutzt dessen M68K-Decoder
+im konfigurierten CPU-Modus. Ohne die Bibliothek bleibt der interne, MMIO-sichere
+Teil-Decoder aktiv. Capstone ist eine externe Systemabhängigkeit und nicht
+vendored. Beide Buildvarianten bauen; eine bislang rohe MOVE-Instruktion wurde
+mit Capstone live vollständig angezeigt.
+
+## Fortsetzung 142: Capstone-Rückfall bei Daten-Platzhaltern (2026-10-11)
+
+Capstone kann gültige, im gewählten CPU-Modus nicht dekodierte Instruktionen
+als `dc.w` ausgeben. Diese Platzhalter gehen an den internen Decoder zurück.
+Live bestätigt: 68000 BNE.B mit Opcode-Byte $FF zeigt Ziel $FE00010B,
+68030 BNE.L zeigt Ziel $FE000112; `MOVE.L (A0)+,D0` bleibt mit Capstone
+dekodiert. Der Debug-Dump wurde nach den Proben bytegleich wiederhergestellt.
+
+
+## Fortsetzung 143: Detailstufe-2-Trace live geprüft (2026-10-12)
+
+Der Emulator-Probeablauf wurde bis zum eindeutigen Marker `Q9DBGEND` verlängert.
+Der vorherige Ein-Zeichen-Marker `V` stoppte den Lauf, bevor die spätere
+Parameterprobe ausgegeben war; ein einzelnes `p` war wegen „Bootstrap“ ebenfalls
+mehrdeutig. Der Test prüft jetzt nach dem Bootmarker zusätzlich den F$PrsNam-
+Eintrittssatz: Typ 1, Callcode `$10`, 38 Byte Länge, nichtnull A0 und den
+Namensparameter `ioman`. Live im Q9-Flux-Emulator bestanden. Der bestehende
+Debug-Dump wurde bytegleich wiederhergestellt.
+
+Der strenge Hosttest `test_q9kernel_dbg_live.c` besteht mit C89,
+`-Wall -Wextra -Werror`; `q9trace_decode.py` kompiliert und gibt seine Hilfe
+fehlerfrei aus. Für Hosttests, die `Q9DBG_SAVED_A0` überschreiben, wird der
+68k-spezifische Big-Endian-Lesehelfer nicht mehr ungenutzt mitgebaut.
+
+Offen bleiben ein Emulator-Test der neuen `trace mask`-/`trace filter`-
+Kommandozweige sowie die im Debug-Konzept genannten Datei-ID- und Zeitbasis-
+Erweiterungen.
+
+
+## Fortsetzung 144: Pfadfilter an I$-Aufrufe angebunden (2026-10-12)
+
+Der Kernel setzt die Ereignis-Pfadnummer nun aus D0.w der lokalen I$-Aufrufe
+`I$Dup` und `I$Seek` bis `I$Close`. `I$Create` und `I$Open` erhalten den
+Pfad erst im erfolgreichen Rückkehrsatz. Der Hosttest prüft, dass ein Filter
+auf Pfad 3 Eintritt und Rückkehr von `I$Read` für Pfad 3 behält und Pfad 4
+unterdrückt. C89 mit `-Wall -Wextra -Werror` besteht. Der Emulator-Probe-
+Regressionstest besteht ebenfalls mit der finalen Kerneländerung.
+
+Der Zeitbasis-/Feinzeit-Satz, Datei-ID und ein Live-Test der `trace`-
+Kommandozweige bleiben offen.

@@ -170,6 +170,13 @@ static void   Q9K_PutU8(Q9_u32 addr, Q9_u8 v) { *(volatile Q9_u8 *)addr = v; }
 #endif
 /* naechste freie Adresse $210C */
 
+/* Fortsetzung 123: Stackadresse der von den Haken gesicherten Register
+ * d0,d1,d2,a0,a1 des Aufrufers (je 4 Byte, in dieser Reihenfolge). Wert 0
+ * = keine Registerquelle (Hosttests ohne Block, frueher Boot). */
+#ifndef Q9DBG_A_REGS
+#define Q9DBG_A_REGS         0x2118UL
+#endif
+
 /* ---------- Hilfsfunktionen: Ringpuffer/Filter aus den Zellen bauen ---------- */
 
 static Q9_u32 LostFormatterBridge(Q9_u8 *out, Q9_u32 lostCount)
@@ -279,11 +286,26 @@ void Q9K_DbgInit(void)
  * Bereich deshalb fest bei $2200 (512 Byte, hinter den Buchfuehrungszellen),
  * auf dem Host als statisches Feld. Die Haken sperren waehrenddessen die
  * Interrupts (q9kernel_entry.a), damit kein zweiter Prozess ihn mitbenutzt. */
+/* Nutzdaten ab Detailstufe 2 (Fortsetzung 123): d0,d1,d2,a0,a1 des Aufrufers
+ * (5 x 4 Byte, big-endian; beim Eintritt die Eingaben, bei der Rueckkehr die
+ * Ausgaben), bei Aufrufen mit Namensparameter (a0) danach 1 Byte Laenge und
+ * bis zu Q9TRACE_MAX_NAME Zeichen. Im Satz: Nutzdatenlaenge = Satzlaenge-12;
+ * mehr als Q9DBG_PAY_REGS Byte heisst "Name folgt". */
+#ifndef Q9DBG_A_CUR_PROC
+#define Q9DBG_A_CUR_PROC     0x004CUL /* Q9_D_Proc */
+#endif
+#define Q9DBG_PD_ID          0x00UL   /* P$ID, Wort */
+#define Q9DBG_PD_USER        0x14UL   /* P$User, Langwort (Gruppe.l/User.w) */
+
+#define Q9DBG_PAY_REGS 20
+#define Q9DBG_PAY_MAX  (Q9DBG_PAY_REGS + 1 + Q9TRACE_MAX_NAME)
+
 typedef struct Q9DbgScratch {
     Q9RingBuf     rb;
     Q9TraceFilter f;
     Q9TraceEvent  ev;
     Q9_u8         rec[Q9TRACE_MAX_REC];
+    Q9_u8         pay[Q9DBG_PAY_MAX];
 } Q9DbgScratch;
 typedef char Q9DbgScratchFits[(sizeof(Q9DbgScratch) <= 0x200) ? 1 : -1];
 #if defined(_OSK)
@@ -293,11 +315,99 @@ static Q9DbgScratch g_q9dbgScratch;
 #define Q9DBG_SCRATCH (&g_q9dbgScratch)
 #endif
 
+/* Gesichertes a0 aus dem Registerblock (fuer Hosttests umlenkbar: dort sind
+ * Zeiger 64 Bit breit und passen nicht in 4 Byte). */
+#ifndef Q9DBG_NAME_ADDR_LIMIT
+#define Q9DBG_NAME_ADDR_LIMIT 0xff000000UL   /* darueber liegt I/O, nie als Namen lesen */
+#endif
+#ifndef Q9DBG_SAVED_A0
+static Q9_u32 GetBE32(Q9_u32 addr)
+{
+    return ((Q9_u32)Q9K_GetU8(addr) << 24) | ((Q9_u32)Q9K_GetU8(addr + 1) << 16) |
+           ((Q9_u32)Q9K_GetU8(addr + 2) << 8) | (Q9_u32)Q9K_GetU8(addr + 3);
+}
+#define Q9DBG_SAVED_A0(regs) GetBE32((regs) + 12)
+#endif
+
+/* Aufrufe, deren a0 auf einen Namen/Pfad zeigt (Konzept 2.3). */
+static int Q9K_DbgTakesName(Q9_u8 code)
+{
+    switch (code) {
+    case 0x00: case 0x01: case 0x03: case 0x05:   /* F$Link F$Load F$Fork F$Chain */
+    case 0x10: case 0x21:                         /* F$PrsNam F$TLink */
+    case 0x80: case 0x83: case 0x84: case 0x85:   /* I$Attach I$Create I$Open I$MakDir */
+    case 0x86: case 0x87:                         /* I$ChgDir I$Delete */
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Prozesslokale Pfadnummern liegen bei den I$-Aufrufen in D0.w. Bei
+ * I$Open/I$Create existiert sie erst nach erfolgreicher Rueckkehr. */
+static Q9_u16 Q9K_DbgSavedD0(Q9_u32 regs)
+{
+    return (Q9_u16)(((Q9_u16)Q9K_GetU8(regs + 2) << 8) | Q9K_GetU8(regs + 3));
+}
+
+static Q9_u16 Q9K_DbgPath(Q9_u8 recType, Q9_u8 code, int carrySet, Q9_u32 regs)
+{
+    if (regs == 0)
+        return 0xffff;
+    if (recType == Q9TRACE_REC_ENTRY) {
+        if (code == 0x82 || (code >= 0x88 && code <= 0x8f))
+            return Q9K_DbgSavedD0(regs);
+        return 0xffff;
+    }
+    if (recType == Q9TRACE_REC_RETURN) {
+        if (code == 0x83 || code == 0x84) {
+            if (carrySet)
+                return 0xffff;
+            return Q9K_DbgSavedD0(regs);
+        }
+        if (code == 0x82 || (code >= 0x88 && code <= 0x8f))
+            return Q9K_DbgSavedD0(regs);
+    }
+    return 0xffff;
+}
+
+/* Baut die Nutzdaten in w->pay, Rueckgabe: Laenge (0 = keine). */
+static Q9_u32 BuildPayload(Q9DbgScratch *w, Q9_u8 recType, Q9_u8 code)
+{
+    Q9_u32 regs = Q9K_GetU32(Q9DBG_A_REGS);
+    Q9_u32 i, n;
+    Q9_u32 namePtr;
+
+    if (w->f.detail < 2 || regs == 0)
+        return 0;
+    if (recType != Q9TRACE_REC_ENTRY && recType != Q9TRACE_REC_RETURN)
+        return 0;
+    for (i = 0; i < Q9DBG_PAY_REGS; i++)
+        w->pay[i] = Q9K_GetU8(regs + i);
+    n = Q9DBG_PAY_REGS;
+    if (recType == Q9TRACE_REC_ENTRY && Q9K_DbgTakesName(code)) {
+        namePtr = Q9DBG_SAVED_A0(regs);   /* gesichertes a0 */
+        if (namePtr != 0 && namePtr < Q9DBG_NAME_ADDR_LIMIT) {
+            Q9_u32 len = 0;
+            while (len < Q9TRACE_MAX_NAME) {
+                Q9_u8 c = Q9K_GetU8(namePtr + len);
+                if (c <= 0x20 || c >= 0x7f)   /* Namensende (auch Blank/CR/NUL) */
+                    break;
+                w->pay[n + 1 + len] = c;
+                len++;
+            }
+            w->pay[n] = (Q9_u8)len;
+            n += 1 + len;
+        }
+    }
+    return n;
+}
+
 static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
                        int carrySet, Q9_u16 pid, Q9_u32 tick)
 {
     Q9DbgScratch *w = Q9DBG_SCRATCH;
-    Q9_u32 recLen;
+    Q9_u32 recLen, regs;
 
     if (Q9K_GetU32(Q9DBG_A_ENABLED) == 0)
         return;
@@ -308,8 +418,19 @@ static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
     w->ev.recType = recType;
     w->ev.code = code;
     w->ev.pid = pid;
-    w->ev.user = 0;       /* Benutzer-Tracking ist Paket 4 (Syscall-Beschreibungstabelle) */
-    w->ev.path = 0xffff;  /* dito Pfadnummer -- noch keine Quelle dafuer verdrahtet */
+    {
+        Q9_u32 cur = Q9K_GetU32(Q9DBG_A_CUR_PROC);
+        Q9_u32 groupUser = cur != 0 ? Q9K_GetU32(cur + Q9DBG_PD_USER) : 0;
+        Q9_u32 group = groupUser >> 16;
+        Q9_u32 user = groupUser & 0xffffUL;
+        /* Filterformat ist Gruppe/Benutzer als je ein Byte. IDs ausserhalb
+         * dieses darstellbaren Bereichs bleiben unbekannt statt falsch zu
+         * matchen. */
+        w->ev.user = (group <= 255UL && user <= 255UL)
+                   ? (Q9_u16)((group << 8) | user) : 0;
+    }
+    regs = Q9K_GetU32(Q9DBG_A_REGS);
+    w->ev.path = Q9K_DbgPath(recType, code, carrySet, regs);
     w->ev.fileId = 0;
     w->ev.isReturn = (recType == Q9TRACE_REC_RETURN || recType == Q9TRACE_REC_INTERN_RETURN);
     w->ev.carrySet = carrySet;
@@ -318,7 +439,7 @@ static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
         return;
 
     recLen = Q9TraceBuildRecord(w->rec, recType, code, depth, carrySet,
-                                 pid, tick, 0, 0, 0);
+                                 pid, tick, 0, w->pay, BuildPayload(w, recType, code));
 
     LoadRingBuf(&w->rb);
     Q9RingBufWrite(&w->rb, w->rec, recLen);
@@ -339,10 +460,6 @@ static void LogCommon(Q9_u8 recType, Q9_u8 code, unsigned depth,
 /* Fortsetzung 119: aktueller Prozessdeskriptor (D_Proc) fuer P$ID und die
  * prozesseigene Verschachtelungstiefe $3AC (s. Q9K_TrapExtInvoke). Fuer
  * Hosttests umlenkbar; ein Wert 0 heisst "unbekannt" (keine Korrektur). */
-#ifndef Q9DBG_A_CUR_PROC
-#define Q9DBG_A_CUR_PROC     0x004CUL /* Q9_D_Proc */
-#endif
-#define Q9DBG_PD_ID          0x00UL   /* P$ID, Wort */
 #define Q9DBG_CALLCODE_SELF  0x7FU    /* F$Q9Dbg -- wird nie protokolliert (Konzept 2.5) */
 
 /* Fortsetzung 119, zweite Fassung: Tiefe und Callcode-Stapel PRO PROZESS

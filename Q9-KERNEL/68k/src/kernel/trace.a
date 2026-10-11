@@ -2,9 +2,13 @@
 * trace -- Syscall-Trace des Q9-Developer-Kernels steuern und anzeigen
 * (docs/DEBUG_KONZEPT_de.md, Abschnitt 2.7; Fortsetzung 121).
 *
-*   trace on      Trace einschalten (F$Q9Dbg Unterfunktion 1, d1=1)
+*   trace on      Trace einschalten (F$Q9Dbg Unterfunktion 1, d1=1) mit
+*                 Detailstufe 2 (Unterfunktion 5): Register und Namen je Satz
 *   trace off     Trace ausschalten
 *   trace clear   Ringpuffer leeren (Unterfunktion 7)
+*   trace show    Trace ausschalten und den Puffer anzeigen
+*   trace mask    Syscall-Maske mit +Name/-Name aendern
+*   trace filter  pid=, user=, path= oder error= setzen
 *   trace         Trace AUSSCHALTEN und den Puffer dekodiert ausgeben
 *                 (Unterfunktion 6, liest und verbraucht ganze Saetze)
 *
@@ -12,7 +16,8 @@
 * selbst ueber I$WritLn und wuerde sonst ohne Ende nachprotokolliert.
 *
 * Ausgabezeile: <Tick hex> <PID hex> <Einrueckung je Tiefe> -> / <- Name
-* [CARRY]. "!!" markiert einen Verlust-Satz (ueberschriebene Saetze).
+* [CARRY] [ d0=.. d1=.. d2=.. a0=.. a1=.. ["Name"]]. Register: beim Eintritt
+* die Eingaben, bei der Rueckkehr die Ausgaben. "!!" markiert einen Verlust-Satz (ueberschriebene Saetze).
 * Satzformat s. q9trace.h (12-Byte-Kopf: Typ, Laenge, Callcode, Flags,
 * PID.w, Tick.l, Feinzeit.w).
 *
@@ -30,7 +35,8 @@ TrReadMax               equ     480             * max. Byte je Lesevorgang (ganz
 
         vsect
 TrBuf:  ds.b    512
-TrLine: ds.b    96
+TrLine: ds.b    160
+TrMaskBytes: ds.b 32
         ends
 
 TrStart:
@@ -42,14 +48,42 @@ TrSkip:
         bra.s   TrSkip
 TrArg:
         move.b  (a0),d0
+        cmpi.b  #'f',d0
+        bne.s   TrNotF
+        cmpi.b  #'f',1(a0)
+        beq     TrOff
+        cmpi.b  #'i',1(a0)
+        beq     TrFilterCmd
+        bra     TrUsage
+TrNotF:
         cmpi.b  #'o',d0
         bne.s   TrNotO
         cmpi.b  #'n',1(a0)
         beq.s   TrOn
         cmpi.b  #'f',1(a0)
-        beq.s   TrOff
+        beq     TrOff
         bra     TrUsage
 TrNotO:
+        cmpi.b  #'s',d0
+        bne.s   TrNotS
+        cmpi.b  #'h',1(a0)
+        bne     TrUsage
+        cmpi.b  #'o',2(a0)
+        bne     TrUsage
+        cmpi.b  #'w',3(a0)
+        bne     TrUsage
+        bra     TrDump
+TrNotS:
+        cmpi.b  #'m',d0
+        bne.s   TrNotM
+        cmpi.b  #'a',1(a0)
+        bne     TrUsage
+        cmpi.b  #'s',2(a0)
+        bne     TrUsage
+        cmpi.b  #'k',3(a0)
+        bne     TrUsage
+        bra     TrMaskCmd
+TrNotM:
         cmpi.b  #'c',d0
         beq.s   TrClear
         cmpi.b  #$0d,d0
@@ -59,6 +93,12 @@ TrNotO:
         bra     TrUsage
 
 TrOn:
+        moveq   #5,d0
+        moveq   #2,d1                           * Detailstufe 2: Register und Namen mitschreiben
+        moveq   #0,d2                           * Ausgabe: nur Ringpuffer
+        trap    #0
+        dc.w    $7f                             * F$Q9Dbg: Detailstufe/Modus setzen
+        bcs     TrErr
         moveq   #1,d0
         moveq   #1,d1
         trap    #0
@@ -82,6 +122,313 @@ TrClear:
         bcs     TrErr
         lea     TrMsgClr(pc),a0
         bra     TrSay
+
+*******************************************************************************
+* TrMaskCmd -- Syscall-Maske per +Name/-Name aendern.
+* Beispiel: trace mask +I$Open -F$ID
+* Erst die aktuelle Maske lesen, Aenderungen lokal sammeln und zum Schluss
+* genau einmal zurueckschreiben. Bei einem Tippfehler bleibt sie unveraendert.
+TrMaskCmd:
+        cmpi.b  #' ',4(a0)
+        beq.s   TrMaskBegin
+        cmpi.b  #$0d,4(a0)
+        beq.s   TrMaskBegin
+        tst.b   4(a0)
+        bne     TrUsage
+TrMaskBegin:
+        lea     4(a0),a0
+        move.l  a0,-(sp)                         * Parameterzeiger sichern
+        lea     TrMaskBytes(a6),a0
+        moveq   #3,d0                           * aktuelle 32-Byte-Maske holen
+        trap    #0
+        dc.w    $7f
+        bcs     TrErr
+        movea.l (sp)+,a0
+        moveq   #0,d7                           * mindestens eine Aenderung?
+TrMaskNext:
+TrMaskSkip:
+        cmpi.b  #' ',(a0)
+        bne.s   TrMaskAtEnd
+        addq.l  #1,a0
+        bra.s   TrMaskSkip
+TrMaskAtEnd:
+        cmpi.b  #$0d,(a0)
+        beq.s   TrMaskCommit
+        tst.b   (a0)
+        beq.s   TrMaskCommit
+        move.b  (a0)+,d6                        * '+' setzen, '-' loeschen
+        cmpi.b  #'+',d6
+        beq.s   TrMaskToken
+        cmpi.b  #'-',d6
+        bne     TrUsage
+TrMaskToken:
+        bsr     TrFindCallcode
+        cmpi.w  #$ffff,d1
+        beq     TrUsage
+        move.w  d1,d2
+        move.w  d2,d3
+        andi.w  #7,d3
+        lsr.w   #3,d2                            * Byteindex = Code / 8
+        moveq   #1,d4
+        lsl.b   d3,d4                            * Bit = 1 << (Code & 7)
+        lea     TrMaskBytes(a6),a1
+        cmpi.b  #'+',d6
+        bne.s   TrMaskOff
+        or.b    d4,0(a1,d2.w)
+        bra.s   TrMaskChanged
+TrMaskOff:
+        not.b   d4
+        and.b   d4,0(a1,d2.w)
+TrMaskChanged:
+        addq.w  #1,d7
+        bra     TrMaskNext
+TrMaskCommit:
+        tst.w   d7
+        beq     TrUsage
+        lea     TrMaskBytes(a6),a0
+        moveq   #2,d0                           * atomar zurueckschreiben
+        trap    #0
+        dc.w    $7f
+        bcs     TrErr
+        lea     TrMsgMask(pc),a0
+        bra     TrSay
+
+*******************************************************************************
+* TrFilterCmd -- einen Filterwert setzen.
+* Syntax (ein Wert je Aufruf): trace filter pid=7 | user=0.5 | path=3 | error=on|off | detail=1..3
+* Pfadnamen -> Datei-ID bleibt offen, weil der RBF-FD-Sektor erst aus
+* dem echten I$GetStt-Vertrag beschafft werden muss.
+TrFilterCmd:
+        cmpi.b  #'i',1(a0)
+        bne     TrUsage
+        cmpi.b  #'l',2(a0)
+        bne     TrUsage
+        cmpi.b  #'t',3(a0)
+        bne     TrUsage
+        cmpi.b  #'e',4(a0)
+        bne     TrUsage
+        cmpi.b  #'r',5(a0)
+        bne     TrUsage
+        cmpi.b  #' ',6(a0)
+        bne     TrUsage
+        lea     7(a0),a0
+        cmpi.b  #'p',(a0)
+        bne.s   TrFiltNotP
+        cmpi.b  #'i',1(a0)
+        beq.s   TrFiltPID
+        cmpi.b  #'a',1(a0)
+        beq     TrFiltPath
+        bra     TrUsage
+TrFiltPID:
+        cmpi.b  #'d',2(a0)
+        bne     TrUsage
+        cmpi.b  #'=',3(a0)
+        bne     TrUsage
+        lea     4(a0),a0
+        moveq   #1,d6                           * PID
+        bsr     TrParseDecimal
+        bra     TrFiltValidate
+TrFiltNotP:
+        cmpi.b  #'u',(a0)
+        bne.s   TrFiltNotU
+        cmpi.b  #'s',1(a0)
+        bne     TrUsage
+        cmpi.b  #'e',2(a0)
+        bne     TrUsage
+        cmpi.b  #'r',3(a0)
+        bne     TrUsage
+        cmpi.b  #'=',4(a0)
+        bne     TrUsage
+        lea     5(a0),a0
+        moveq   #2,d6                           * Gruppe.Benutzer
+        bsr     TrParseDecimal
+        move.l  d1,d2                           * Gruppe
+        cmpi.l  #255,d2
+        bhi     TrUsage
+        cmpi.b  #'.',(a0)
+        bne     TrUsage
+        addq.l  #1,a0
+        bsr     TrParseDecimal
+        cmpi.l  #255,d1
+        bhi     TrUsage
+        lsl.w   #8,d2
+        or.w    d1,d2                           * gepackte Gruppe.Benutzer
+        move.l  d2,d1
+        bra     TrFiltValidate
+TrFiltNotU:
+        cmpi.b  #'d',(a0)
+        bne.s   TrFiltNotD
+        cmpi.b  #'e',1(a0)
+        bne     TrUsage
+        cmpi.b  #'t',2(a0)
+        bne     TrUsage
+        cmpi.b  #'a',3(a0)
+        bne     TrUsage
+        cmpi.b  #'i',4(a0)
+        bne     TrUsage
+        cmpi.b  #'l',5(a0)
+        bne     TrUsage
+        cmpi.b  #'=',6(a0)
+        bne     TrUsage
+        lea     7(a0),a0
+        moveq   #6,d6                           * Detailstufe 1..3
+        bsr     TrParseDecimal
+        tst.l   d1
+        beq     TrUsage
+        cmpi.l  #3,d1
+        bhi     TrUsage
+        bra     TrFiltValidate
+TrFiltNotD:
+        cmpi.b  #'e',(a0)
+        bne     TrUsage
+        cmpi.b  #'r',1(a0)
+        bne     TrUsage
+        cmpi.b  #'r',2(a0)
+        bne     TrUsage
+        cmpi.b  #'o',3(a0)
+        bne     TrUsage
+        cmpi.b  #'r',4(a0)
+        bne     TrUsage
+        cmpi.b  #'=',5(a0)
+        bne     TrUsage
+        lea     6(a0),a0
+        moveq   #5,d6                           * nur Fehler
+        cmpi.b  #'o',(a0)
+        bne.s   TrFiltErrOff
+        cmpi.b  #'n',1(a0)
+        bne     TrUsage
+        addq.l  #2,a0
+        moveq   #1,d1
+        bra     TrFiltValidate
+TrFiltErrOff:
+        cmpi.b  #'o',(a0)
+        bne     TrUsage
+        cmpi.b  #'f',1(a0)
+        bne     TrUsage
+        cmpi.b  #'f',2(a0)
+        bne     TrUsage
+        addq.l  #3,a0
+        moveq   #0,d1
+        bra     TrFiltValidate
+TrFiltPath:
+        cmpi.b  #'t',2(a0)
+        bne     TrUsage
+        cmpi.b  #'h',3(a0)
+        bne     TrUsage
+        cmpi.b  #'=',4(a0)
+        bne     TrUsage
+        lea     5(a0),a0
+        moveq   #3,d6                           * Pfadnummer; 65535 = keiner
+        bsr     TrParseDecimal
+TrFiltValidate:
+        cmpi.b  #' ',(a0)
+        bne.s   TrFiltValidateEnd
+        addq.l  #1,a0
+        bra     TrFiltValidate
+TrFiltValidateEnd:
+        cmpi.b  #$0d,(a0)
+        beq.s   TrFiltApply
+        tst.b   (a0)
+        bne     TrUsage
+TrFiltApply:
+        move.l  d1,d2                           * Wert
+        move.l  d6,d1                           * Filterart
+        moveq   #4,d0                           * F$Q9Dbg: Filter setzen
+        trap    #0
+        dc.w    $7f
+        bcs     TrErr
+        lea     TrMsgFilter(pc),a0
+        bra     TrSay
+
+* Liest eine Dezimalzahl aus a0, begrenzt auf 0..65535.
+* Rueckgabe d1=Zahl, a0=erstes Zeichen danach. Fehler -> TrUsage.
+TrParseDecimal:
+        movem.l d2-d3,-(sp)
+        moveq   #0,d1
+        moveq   #0,d3
+TrPDLoop:
+        moveq   #0,d0
+        move.b  (a0),d0
+        cmpi.b  #'0',d0
+        bcs.s   TrPDEnd
+        cmpi.b  #'9',d0
+        bhi.s   TrPDEnd
+        subi.b  #'0',d0
+        mulu.w  #10,d1
+        andi.l  #$ff,d0
+        add.l   d0,d1
+        cmpi.l  #65535,d1
+        bhi     TrPDError
+        addq.l  #1,a0
+        addq.w  #1,d3
+        bra.s   TrPDLoop
+TrPDEnd:
+        tst.w   d3
+        beq     TrPDError
+        movem.l (sp)+,d2-d3
+        rts
+TrPDError:
+        movem.l (sp)+,d2-d3
+        bra     TrUsage
+
+*******************************************************************************
+* TrFindCallcode -- a0 zeigt auf einen Syscall-Namen. Rueckgabe d1=Code,
+* a0 zeigt auf Tokenende. TrMaskNames enthaelt alle bekannten Syscalls.
+TrFindCallcode:
+        movem.l d2-d5/a2-a5,-(sp)
+        movea.l a0,a4
+        movea.l a0,a2
+        moveq   #0,d5
+TrFCLen:
+        move.b  (a2),d0
+        cmpi.b  #' ',d0
+        beq.s   TrFCLenDone
+        cmpi.b  #$0d,d0
+        beq.s   TrFCLenDone
+        tst.b   d0
+        beq.s   TrFCLenDone
+        addq.w  #1,d5
+        addq.l  #1,a2
+        cmpi.w  #10,d5
+        bhi.s   TrFCFail
+        bra.s   TrFCLen
+TrFCLenDone:
+        tst.w   d5
+        beq.s   TrFCFail
+        movea.l a2,a0                           * Rueckgabeposition
+        lea     TrMaskNames(pc),a3
+TrFCEntry:
+        cmpi.b  #$ff,(a3)
+        beq.s   TrFCFail
+        movea.l a4,a2
+        lea     1(a3),a5
+        move.w  d5,d3
+TrFCChar:
+        tst.w   d3
+        beq.s   TrFCExact
+        move.b  (a2)+,d0
+        cmp.b   (a5)+,d0
+        bne.s   TrFCNext
+        subq.w  #1,d3
+        bra.s   TrFCChar
+TrFCExact:
+        cmpi.w  #10,d5
+        beq.s   TrFCFound
+        cmpi.b  #' ',(a5)
+        bne.s   TrFCNext
+TrFCFound:
+        moveq   #0,d1
+        move.b  (a3),d1
+        movem.l (sp)+,d2-d5/a2-a5
+        rts
+TrFCNext:
+        lea     9(a3),a3
+        bra     TrFCEntry
+TrFCFail:
+        moveq   #0,d1
+        move.w  #$ffff,d1
+        movem.l (sp)+,d2-d5/a2-a5
+        rts
 
 TrDump:
         moveq   #1,d0
@@ -212,18 +559,49 @@ TrNmNo:
         bsr     TrHex
 TrNmE:
         btst    #4,3(a2)                        * Carry = Fehler
-        beq.s   TrFmtEnd
+        beq.s   TrPay
         lea     TrMsgCarry(pc),a3
 TrCaC:
         move.b  (a3)+,d0
-        beq.s   TrFmtEnd
+        beq.s   TrPay
         move.b  d0,(a1)+
         bra.s   TrCaC
+* Nutzdaten (Detailstufe 2): d0,d1,d2,a0,a1 je 4 Byte ab Offset 12, danach
+* optional Namenslaenge + Name (q9kernel_dbg.c, Q9DBG_PAY_REGS).
+TrPay:
+        cmpi.w  #32,d5
+        bcs.s   TrFmtEnd                        * Satz ohne Nutzdaten
+        lea     12(a2),a4
+        lea     TrRegLbl(pc),a3
+        moveq   #4,d3
+TrPayL:
+        moveq   #3,d0
+TrPayC:
+        move.b  (a3)+,(a1)+
+        dbra    d0,TrPayC
+        move.l  (a4)+,d1
+        moveq   #8,d2
+        bsr     TrHex
+        dbra    d3,TrPayL
+        cmpi.w  #33,d5
+        bcs.s   TrFmtEnd                        * kein Name
+        move.b  #' ',(a1)+
+        move.b  #'"',(a1)+
+        moveq   #0,d0
+        move.b  32(a2),d0                       * Namenslaenge
+        lea     33(a2),a4
+        subq.w  #1,d0
+        bmi.s   TrNameQ
+TrNameC:
+        move.b  (a4)+,(a1)+
+        dbra    d0,TrNameC
+TrNameQ:
+        move.b  #'"',(a1)+
 TrFmtEnd:
         move.b  #$0d,(a1)+
         lea     TrLine(a6),a0
         moveq   #1,d0
-        moveq   #96,d1
+        move.l  #160,d1
         trap    #0
         dc.w    $008c                           * I$WritLn
         movem.l (sp)+,d4-d5/a2
@@ -271,11 +649,138 @@ TrNames:
         dc.b    $8c,"I$WritLn",$8d,"I$GetStt",$8e,"I$SetStt",$8f,"I$Close "
         dc.b    $ff
 
+* Vollstaendige Syscall-Namen fuer trace mask: Code + 10 Zeichen.
+TrMaskNames:
+        dc.b    $00,"F$Link    "
+        dc.b    $01,"F$Load    "
+        dc.b    $02,"F$UnLink  "
+        dc.b    $03,"F$Fork    "
+        dc.b    $04,"F$Wait    "
+        dc.b    $05,"F$Chain   "
+        dc.b    $06,"F$Exit    "
+        dc.b    $07,"F$Mem     "
+        dc.b    $08,"F$Send    "
+        dc.b    $09,"F$Icpt    "
+        dc.b    $0a,"F$Sleep   "
+        dc.b    $0b,"F$SSpd    "
+        dc.b    $0c,"F$ID      "
+        dc.b    $0d,"F$SPrior  "
+        dc.b    $0e,"F$STrap   "
+        dc.b    $0f,"F$PErr    "
+        dc.b    $10,"F$PrsNam  "
+        dc.b    $11,"F$CmpNam  "
+        dc.b    $12,"F$SchBit  "
+        dc.b    $13,"F$AllBit  "
+        dc.b    $14,"F$DelBit  "
+        dc.b    $15,"F$Time    "
+        dc.b    $16,"F$STime   "
+        dc.b    $17,"F$CRC     "
+        dc.b    $18,"F$GPrDsc  "
+        dc.b    $19,"F$GBlkMp  "
+        dc.b    $1a,"F$GModDr  "
+        dc.b    $1b,"F$CpyMem  "
+        dc.b    $1c,"F$SUser   "
+        dc.b    $1d,"F$UnLoad  "
+        dc.b    $1e,"F$RTE     "
+        dc.b    $1f,"F$GPrDBT  "
+        dc.b    $20,"F$Julian  "
+        dc.b    $21,"F$TLink   "
+        dc.b    $22,"F$DFork   "
+        dc.b    $23,"F$DExec   "
+        dc.b    $24,"F$DExit   "
+        dc.b    $25,"F$DatMod  "
+        dc.b    $26,"F$SetCRC  "
+        dc.b    $27,"F$SetSys  "
+        dc.b    $28,"F$SRqMem  "
+        dc.b    $29,"F$SRtMem  "
+        dc.b    $2a,"F$IRQ     "
+        dc.b    $2b,"F$IOQu    "
+        dc.b    $2c,"F$AProc   "
+        dc.b    $2d,"F$NProc   "
+        dc.b    $2e,"F$VModul  "
+        dc.b    $2f,"F$FindPD  "
+        dc.b    $30,"F$AllPD   "
+        dc.b    $31,"F$RetPD   "
+        dc.b    $32,"F$SSvc    "
+        dc.b    $33,"F$IODel   "
+        dc.b    $37,"F$GProcP  "
+        dc.b    $38,"F$Move    "
+        dc.b    $39,"F$AllRAM  "
+        dc.b    $3a,"F$Permit  "
+        dc.b    $3b,"F$Protect "
+        dc.b    $3c,"F$SetImg  "
+        dc.b    $3d,"F$FreeLB  "
+        dc.b    $3e,"F$FreeHB  "
+        dc.b    $3f,"F$AllTsk  "
+        dc.b    $40,"F$DelTsk  "
+        dc.b    $41,"F$SetTsk  "
+        dc.b    $42,"F$ResTsk  "
+        dc.b    $43,"F$RelTsk  "
+        dc.b    $44,"F$DATLog  "
+        dc.b    $45,"F$DATTmp  "
+        dc.b    $46,"F$LDAXY   "
+        dc.b    $47,"F$LDAXYP  "
+        dc.b    $48,"F$LDDDXY  "
+        dc.b    $49,"F$LDABX   "
+        dc.b    $4a,"F$STABX   "
+        dc.b    $4b,"F$AllPrc  "
+        dc.b    $4c,"F$DelPrc  "
+        dc.b    $4d,"F$ELink   "
+        dc.b    $4e,"F$FModul  "
+        dc.b    $4f,"F$MapBlk  "
+        dc.b    $50,"F$ClrBlk  "
+        dc.b    $51,"F$DelRAM  "
+        dc.b    $52,"F$SysDbg  "
+        dc.b    $53,"F$Event   "
+        dc.b    $54,"F$Gregor  "
+        dc.b    $55,"F$SysID   "
+        dc.b    $56,"F$Alarm   "
+        dc.b    $57,"F$SigMask "
+        dc.b    $58,"F$ChkMem  "
+        dc.b    $59,"F$UAcct   "
+        dc.b    $5a,"F$CCtl    "
+        dc.b    $5b,"F$GSPUMp  "
+        dc.b    $5c,"F$SRqCMem "
+        dc.b    $5d,"F$POSK    "
+        dc.b    $5e,"F$Panic   "
+        dc.b    $5f,"F$MBuf    "
+        dc.b    $60,"F$Trans   "
+        dc.b    $61,"F$FIRQ    "
+        dc.b    $62,"F$Sema    "
+        dc.b    $63,"F$SigReset"
+        dc.b    $64,"F$DAttach "
+        dc.b    $65,"F$Flash   "
+        dc.b    $66,"F$PwrMan  "
+        dc.b    $67,"F$Crypt   "
+        dc.b    $70,"F$HLProto "
+        dc.b    $80,"I$Attach  "
+        dc.b    $81,"I$Detach  "
+        dc.b    $82,"I$Dup     "
+        dc.b    $83,"I$Create  "
+        dc.b    $84,"I$Open    "
+        dc.b    $85,"I$MakDir  "
+        dc.b    $86,"I$ChgDir  "
+        dc.b    $87,"I$Delete  "
+        dc.b    $88,"I$Seek    "
+        dc.b    $89,"I$Read    "
+        dc.b    $8a,"I$Write   "
+        dc.b    $8b,"I$ReadLn  "
+        dc.b    $8c,"I$WritLn  "
+        dc.b    $8d,"I$GetStt  "
+        dc.b    $8e,"I$SetStt  "
+        dc.b    $8f,"I$Close   "
+        dc.b    $92,"I$SGetSt  "
+        dc.b    $7f,"F$Q9Dbg   "
+        dc.b    $ff
+
+TrRegLbl:   dc.b    " d0= d1= d2= a0= a1="
 TrMsgOn:    dc.b    "trace: an",$0d
 TrMsgOff:   dc.b    "trace: aus",$0d
 TrMsgClr:   dc.b    "trace: Puffer geleert",$0d
+TrMsgMask:  dc.b    "trace: Syscall-Maske aktualisiert",$0d
+TrMsgFilter: dc.b   "trace: Filter aktualisiert",$0d
 TrMsgEnd:   dc.b    "trace: Ende (Trace ist jetzt aus)",$0d
-TrMsgUse:   dc.b    "Aufruf: trace [on|off|clear]",$0d
+TrMsgUse:   dc.b    "Aufruf: trace [on|off|clear|show|mask|filter]",$0d
 TrMsgLost:  dc.b    "!! verloren: ",0
 TrMsgCarry: dc.b    " CARRY",0
         align

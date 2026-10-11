@@ -61,6 +61,11 @@ static unsigned char g_cells[0x400];
 #define Q9DBG_A_DISPATCH_CODE_LOW CELL(0x370)
 #define Q9DBG_A_CUR_PROC          CELL(0x380) /* Fortsetzung 119: D_Proc, 0 = unbekannt */
 #define Q9DBG_A_TICKS             CELL(0x390) /* Fortsetzung 119: Tickzaehler */
+#define Q9DBG_A_REGS              CELL(0x3A0) /* Fortsetzung 123: Zeiger auf d0,d1,d2,a0,a1 */
+
+static unsigned long g_testNamePtr;
+#define Q9DBG_SAVED_A0(regs) ((Q9_u32)g_testNamePtr)
+#define Q9DBG_NAME_ADDR_LIMIT (~0UL)
 
 /* Fake-Allokator: liefert IMMER den angeforderten Puffer aus einem
  * statischen Testarray -- reicht fuer diesen Hosttest, der nur die
@@ -391,6 +396,130 @@ static void test_pid_depthreset_selfskip(void)
     Q9K_PutU32(Q9DBG_A_TICKS, 0);
 }
 
+/* Fortsetzung 123: Nutzdaten (Register + Name) ab Detailstufe 2 */
+static void putBE32(unsigned char *p, unsigned long v)
+{
+    p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16);
+    p[2] = (unsigned char)(v >> 8);  p[3] = (unsigned char)v;
+}
+
+static void readAll(Q9_u8 *buf, Q9_u32 size)
+{
+    Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_RING_READ);
+    Q9K_PutU32(Q9DBG_A_SVC_D2, size);
+    Q9K_PutU32(Q9DBG_A_SVC_D3, Q9DBG_RING_TRACE);
+    Q9K_PutU32(Q9DBG_A_SVC_A0, (Q9_u32)(unsigned long)buf);
+    Q9K_SysFQ9DbgImpl();
+}
+
+static void test_payload_registers_and_name(void)
+{
+    unsigned char regs[20];
+    static const char path[] = "/dd/CMDS/echo extra";
+    Q9_u8 buf[256];
+    Q9TraceRecHdr hdr;
+    Q9_u32 pos;
+
+    Q9K_DbgInit();
+    Q9K_PutU32(Q9DBG_A_CUR_PROC, 0);
+    Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_TRACE_ONOFF);
+    Q9K_PutU32(Q9DBG_A_SVC_D1, 1);
+    Q9K_SysFQ9DbgImpl();
+
+    putBE32(regs + 0, 0x0000010dUL);                 /* d0 */
+    putBE32(regs + 4, 0x00000042UL);                 /* d1 */
+    putBE32(regs + 8, 0x00000007UL);                 /* d2 */
+    g_testNamePtr = (unsigned long)path;             /* a0 (Host: 64 Bit, s. Q9DBG_SAVED_A0) */
+    putBE32(regs + 12, 0x1000UL);
+    putBE32(regs + 16, 0xdeadbeefUL);                /* a1 */
+    Q9K_PutU32(Q9DBG_A_REGS, (Q9_u32)(unsigned long)regs);
+
+    /* Stufe 1 (Standard): keine Nutzdaten, Satz bleibt 12 Byte */
+    Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x84);
+    Q9K_DbgLogEntryImpl();
+    Q9K_PutU32(Q9DBG_A_RET_CARRY, 0);
+    Q9K_DbgLogReturnImpl();
+    readAll(buf, sizeof buf);
+    Q9TraceDecodeHeader(buf, &hdr);
+    checkInt("Stufe 1: Eintrittssatz ohne Nutzdaten (12 Byte)", hdr.recLen, 12);
+
+    /* Stufe 2 */
+    Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_FILTER_SET);
+    Q9K_PutU32(Q9DBG_A_SVC_D1, Q9DBG_FILTER_DETAIL);
+    Q9K_PutU32(Q9DBG_A_SVC_D2, 2);
+    Q9K_SysFQ9DbgImpl();
+    Q9K_DbgLogEntryImpl();
+    Q9K_PutU32(Q9DBG_A_RET_CARRY, 0);
+    Q9K_DbgLogReturnImpl();
+    readAll(buf, sizeof buf);
+    Q9TraceDecodeHeader(buf, &hdr);
+    checkInt("Stufe 2: I$Open-Eintritt hat Register + Name", hdr.recLen, 12 + 20 + 1 + 13);
+    checkInt("Stufe 2: d0 im Satz", (buf[12] << 24 | buf[13] << 16 | buf[14] << 8 | buf[15]), 0x10d);
+    checkInt("Stufe 2: d1 im Satz", buf[19], 0x42);
+    checkInt("Stufe 2: a1 im Satz (Byte 0)", buf[28], 0xde);
+    checkInt("Stufe 2: Namenslaenge 13 (bis zum Blank)", buf[32], 13);
+    checkInt("Stufe 2: Name beginnt mit '/dd/CMDS/ec'", memcmp(buf + 33, "/dd/CMDS/ech", 12), 0);
+    pos = hdr.recLen;
+    Q9TraceDecodeHeader(buf + pos, &hdr);
+    checkInt("Stufe 2: Rueckkehr hat nur Register (32 Byte)", hdr.recLen, 12 + 20);
+
+    /* kein Registerblock -> keine Nutzdaten, kein Absturz */
+    Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_RING_CLEAR);
+    Q9K_PutU32(Q9DBG_A_SVC_D3, Q9DBG_RING_TRACE);
+    Q9K_SysFQ9DbgImpl();
+    Q9K_PutU32(Q9DBG_A_REGS, 0);
+    Q9K_DbgLogEntryImpl();
+    Q9K_PutU32(Q9DBG_A_RET_CARRY, 0);
+    Q9K_DbgLogReturnImpl();
+    readAll(buf, sizeof buf);
+    Q9TraceDecodeHeader(buf, &hdr);
+    checkInt("Stufe 2 ohne Registerblock: 12 Byte", hdr.recLen, 12);
+}
+
+static void test_path_filter_uses_saved_d0(void)
+{
+    unsigned char regs[20];
+    Q9_u8 buf[64];
+    Q9TraceRecHdr hdr;
+    Q9_u32 n;
+
+    Q9K_DbgInit();
+    Q9K_PutU32(Q9DBG_A_CUR_PROC, 0);
+    Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_TRACE_ONOFF);
+    Q9K_PutU32(Q9DBG_A_SVC_D1, 1);
+    Q9K_SysFQ9DbgImpl();
+    Q9K_PutU32(Q9DBG_A_SVC_FN, Q9DBG_FN_FILTER_SET);
+    Q9K_PutU32(Q9DBG_A_SVC_D1, Q9TRACE_FILTER_PATH);
+    Q9K_PutU32(Q9DBG_A_SVC_D2, 3);
+    Q9K_SysFQ9DbgImpl();
+
+    putBE32(regs + 0, 3); /* D0.w = lokaler Pfad */
+    Q9K_PutU32(Q9DBG_A_REGS, (Q9_u32)(unsigned long)regs);
+    checkU32("Pfadfilter-Test: D0.w wird als Pfad 3 gelesen",
+             Q9K_DbgPath(Q9TRACE_REC_ENTRY, 0x89, 0, Q9K_GetU32(Q9DBG_A_REGS)), 3);
+    checkU32("Pfadfilter-Test: Filterwert gespeichert",
+             Q9K_GetU32(Q9DBG_A_FILT_PATH), 3);
+    Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x89); /* I$Read */
+    Q9K_DbgLogEntryImpl();
+    Q9K_PutU32(Q9DBG_A_RET_CARRY, 0);
+    Q9K_DbgLogReturnImpl();
+
+    putBE32(regs + 0, 4);
+    Q9K_PutU32(Q9DBG_A_DISPATCH_CODE_LOW, 0x89);
+    Q9K_DbgLogEntryImpl();
+    Q9K_PutU32(Q9DBG_A_RET_CARRY, 0);
+    Q9K_DbgLogReturnImpl();
+
+    readAll(buf, sizeof buf);
+    n = Q9K_GetU32(Q9DBG_A_SVC_OUT_D0);
+    checkU32("Pfadfilter 3: nur Eintritt/Rueckkehr fuer I$Read-Pfad 3", n, 24);
+    Q9TraceDecodeHeader(buf, &hdr);
+    checkInt("Pfadfilter: erster Satz ist I$Read", hdr.code, 0x89);
+    Q9TraceDecodeHeader(buf + hdr.recLen, &hdr);
+    checkInt("Pfadfilter: zweiter Satz ist Rueckkehr", hdr.recType, Q9TRACE_REC_RETURN);
+    Q9K_PutU32(Q9DBG_A_REGS, 0);
+}
+
 int main(void)
 {
     test_init_allocates_buffer();
@@ -403,6 +532,8 @@ int main(void)
     test_svc_ring_clear();
     test_trace_fn_internal();
     test_pid_depthreset_selfskip();
+    test_payload_registers_and_name();
+    test_path_filter_uses_saved_d0();
 
     if (failures == 0) {
         printf("\nALLE TESTS OK\n");

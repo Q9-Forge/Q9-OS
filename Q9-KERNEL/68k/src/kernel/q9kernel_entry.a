@@ -2062,6 +2062,86 @@ Q9K_TestQ9DbgIdLoop:
         move.l  8(sp),d5
         bsr     Q9K_DiagWriteHex32
         lea     16(sp),sp
+* Fortsetzung 123: Lebensbeweis fuer die Nutzdaten (Detailstufe 2). Puffer
+* leeren, Stufe 2, Trace an, ein F$PrsNam("ioman") mit Namenszeiger in a0,
+* Trace aus, Stufe 1 zurueck (alle spaeteren Pruefungen erwarten 12-Byte-
+* Saetze). Ausgabe "P<gelesene Byte>:<erste 10 Langworte des ersten Satzes>".
+        moveq   #7,d0
+        moveq   #0,d3
+        trap    #0
+        dc.w    $7f                        * Ringpuffer 0 leeren
+        moveq   #5,d0
+        moveq   #2,d1
+        moveq   #0,d2
+        trap    #0
+        dc.w    $7f                        * Detailstufe 2, Ausgabe Ringpuffer
+        moveq   #1,d0
+        moveq   #1,d1
+        trap    #0
+        dc.w    $7f                        * Trace an
+        lea     Q9K_TestIOManName(pc),a0
+        trap    #0
+        dc.w    $10                        * F$PrsNam
+        moveq   #1,d0
+        moveq   #0,d1
+        trap    #0
+        dc.w    $7f                        * Trace aus
+        moveq   #5,d0
+        moveq   #1,d1
+        moveq   #0,d2
+        trap    #0
+        dc.w    $7f                        * Detailstufe 1 zurueck
+        lea     -64(sp),sp
+        movea.l sp,a0
+        moveq   #6,d0
+        moveq   #0,d1
+        moveq   #64,d2
+        moveq   #0,d3
+        trap    #0
+        dc.w    $7f                        * Ringpuffer lesen
+        move.l  d0,d5
+        moveq   #'P',d7
+        bsr     Q9K_DiagWriteD7
+        bsr     Q9K_DiagWriteHex32
+        moveq   #':',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  0(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  4(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  8(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  12(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  16(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  20(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  24(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  28(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  32(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        move.l  36(sp),d5
+        bsr     Q9K_DiagWriteHex32
+        lea     64(sp),sp
+        moveq   #'Q',d7                    * eindeutiger Marker: Probe vollstaendig ausgegeben
+        bsr     Q9K_DiagWriteD7
+        moveq   #'9',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'D',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'B',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'G',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'E',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'N',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'D',d7
+        bsr     Q9K_DiagWriteD7
         endc
 * Die frueheren Testbloecke fuer F$Link/F$UnLink, F$Fork, F$Wait und
 * F$ID/F$GProcP standen hier bis 2026-09-04. Sie haben ihren Zweck erfuellt --
@@ -3322,6 +3402,7 @@ Q9K_TrapDispatch:
 * gesichert. (Der Absturz beim Start mit Trace war ein Stackueberlauf, s.
 * Q9DbgScratch in q9kernel_dbg.c.)
         movem.l d0-d2/a0-a1,-(sp)
+        move.l  sp,Q9K_DbgRegsPtr          * Fortsetzung 123: Zeiger auf d0,d1,d2,a0,a1 des Aufrufers (Nutzdaten der Trace-Saetze)
         move.l  a6,-(sp)
         move.w  sr,-(sp)                   * Interrupts sperren: Arbeitsbereich $2200 ist global (Fortsetzung 119)
         ori.w   #$0700,sr
@@ -3875,6 +3956,7 @@ Q9K_TrapAfterCall:
 * gesichert. (Der Absturz beim Start mit Trace war ein Stackueberlauf, s.
 * Q9DbgScratch in q9kernel_dbg.c.)
         movem.l d0-d2/a0-a1,-(sp)
+        move.l  sp,Q9K_DbgRegsPtr          * Fortsetzung 123: Zeiger auf d0,d1,d2,a0,a1 des Aufrufers (Nutzdaten der Trace-Saetze)
         move.l  a6,-(sp)
         move.w  sr,-(sp)                   * Interrupts sperren: Arbeitsbereich $2200 ist global (Fortsetzung 119)
         ori.w   #$0700,sr
@@ -8339,7 +8421,8 @@ Q9K_DbgSvcOutErr      equ $2108      * Q9_u32, 0 = Erfolg, sonst Fehlercode
 * Q9K_JulianImplPtr usw.
 Q9K_DbgLogEntryPtr    equ $210C      * Q9_u32, Q9K_DbgLogEntryImpl
 Q9K_DbgLogReturnPtr   equ $2110      * Q9_u32, Q9K_DbgLogReturnImpl
-Q9K_DbgSvcImplPtr     equ $2114      * Q9_u32, Q9K_SysFQ9DbgImpl -- naechste freie Adresse $2118
+Q9K_DbgSvcImplPtr     equ $2114      * Q9_u32, Q9K_SysFQ9DbgImpl
+Q9K_DbgRegsPtr        equ $2118      * Q9_u32, von den Trace-Haken gesetzt: Stackadresse der gesicherten d0,d1,d2,a0,a1 -- naechste freie Adresse $211C
 Q9K_DbgScratch        equ $2200      * 512 Byte Arbeitsbereich der Trace-Haken (q9kernel_dbg.c, Q9DbgScratch) -- naechste freie Adresse $2400
 
 Q9K_SysStartProc:

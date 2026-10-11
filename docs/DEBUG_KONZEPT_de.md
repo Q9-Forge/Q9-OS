@@ -178,13 +178,47 @@ mit kleinen Funktionen (`q9dbg_on()`, `q9dbg_mask_set(...)`,
 > **Stand 2026-10-06 (Fortsetzung 121):** umgesetzt sind das OS-9-Kommando
 > `trace [on|off|clear]` (Assembler, `Q9-KERNEL/68k/src/kernel/trace.a`) und
 > der Host-Dekoder `tools/q9trace_decode.py` fuer Q9-Flux-Dumps.
+>
+> **Fortsetzung 123 (2026-10-09):** ab Detailstufe 2 tragen Eintritts- und
+> Rueckkehrsaetze `d0,d1,d2,a0,a1` und bei Namensparametern den Namen; `trace on`
+> setzt Stufe 2, der Dekoder kennt Fehlernamen und Filter.
+>
+> **Fortsetzung 124 (2026-10-11):** `trace mask +/-<Syscall>` und `trace show`
+> sind im OS-9-Programm umgesetzt. Die Maskenaufloesung kennt die 119 F$/I$-Namen
+> plus F$Q9Dbg aus dem Host-Dekoder. `trace filter pid=N | user=G.U | path=N | error=on|off | detail=1..3`
+> setzt jeweils einen Filter pro Aufruf. `path=N` ist eine lokale Pfadnummer;
+> Datei-ID und Namensaufloesung per Pfad sind offen. Im 68000-Developer-Build
+> assembliert und gelinkt; die neuen Kommandozweige wurden noch nicht separat
+> im Emulator geprueft.
+>
+> Offen bleiben Feinzeit/Zeitbasis, gemeinsame Beschreibungstabelle,
+> Datei-ID-Ermittlung und passende Dekoderdarstellung. Gruppe/Benutzer und die
+> lokale Pfadnummer werden für Filter aus dem aktuellen Deskriptor bzw. D0.w
+> der I$-Aufrufe ermittelt.
 
-- **`trace`** (OS-9-Programm): `trace on|off`, `trace mask +I$Open -F$SRqMem`,
-  `trace filter -p=7 -u=0.5 -f=/dd/SYS/startup -e`, `trace show`,
-  `trace clear`. Läuft auch aus einer `startup`-Datei.
-- **Host-Tool** (Python, im Repo): dekodiert den Puffer aus einem
-  Emulator-Dump oder einer gespeicherten Datei mit derselben
-  Beschreibungstabelle.
+- **`trace`** (OS-9-Programm): `trace on|off|clear|show`, `trace mask +I$Open -F$SRqMem`,
+  `trace filter pid=7`, `trace filter user=0.5`, `trace filter path=3`,
+  `trace filter error=on`, `trace filter detail=3`. Laeuft auch aus einer
+  `startup`-Datei.
+- **Host-Tool** (Python, im Repo): `tools/q9trace_decode.py <dump>` dekodiert
+  den Puffer aus einem Q9-Flux-Dump. Standardmaessig stehen zusammengehoerige
+  Eintritts-/Rueckkehrsaetze als eine kompakte Zeile pro Syscall; der Aufruf
+  enthaelt Name und erkannte Parameter, Ergebnis/Pfadnummer sowie Laufzeit.
+  `--events` zeigt Eintritt und Rueckkehr getrennt, `--regs` ergaenzt die
+  Rohregister. Filter sind `--last N`, `--pid P`, `--code +I$Open -F$ID`,
+  `--err` und `--name TEXT`. Ohne Argumente gibt das Skript seine Hilfe aus.
+  Beispiel: `python3 tools/q9trace_decode.py local_images/q9dbg_dump.txt --pid 7`.
+
+> **Fortsetzung 143 (2026-10-12):** Emulator-Regression für den Detailstufe-2-
+> Satz ergänzt und bestanden: nach drei F$ID-Aufrufen werden bei F$PrsNam
+> Callcode, A0 und `ioman` im Ringpuffer geprüft. Der Test wartet auf den
+> eindeutigen Marker `Q9DBGEND`; der vorherige Ein-Zeichen-Marker konnte den
+> Ablauf vor Ende der Ausgabe abbrechen. `trace mask`/`trace filter` im
+> OS-9-Kommando sind damit noch nicht separat live geprüft.
+
+> **Fortsetzung 144 (2026-10-12):** Der Kernel füllt den Pfadfilter für lokale
+> I$-Pfade aus D0.w; I$Create/I$Open liefern ihn im erfolgreichen Rückkehrsatz.
+> Der C89-Hosttest bestätigt Treffer und Unterdrückung für Pfade 3 und 4.
 
 ### 2.8 Ringpuffer als allgemeiner Baustein
 
