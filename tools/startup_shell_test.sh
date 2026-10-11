@@ -27,7 +27,11 @@ CMDSDIR=${CMDSDIR:-/Volumes/SSD1TB/projects/MWOS/OS9/68000/CMDS}
 # ein zufaelliges grosses "W" darin (mktemp) loeste den Marker zu frueh aus.
 WORK="${TMPDIR:-/tmp}/q9_startup_shell_$$"
 rm -rf "$WORK"; mkdir -p "$WORK"
-trap 'rm -rf "$WORK"' EXIT
+if [ "${Q9_KEEP_TEST_WORK:-0}" = 1 ]; then
+    echo "KEEP_WORK=$WORK"
+else
+    trap 'rm -rf "$WORK"' EXIT
+fi
 
 [ -x "$FLUX/build/macos/q9.exe" ] || { echo "Emulator fehlt: $FLUX/build/macos/q9.exe" >&2; exit 1; }
 [ -f "$REFBOOT" ] || { echo "Referenz-Bootdatei fehlt: $REFBOOT" >&2; exit 1; }
@@ -71,20 +75,22 @@ Q9K_BUILD_DIR="$WORK/kb" "$HERE/tools/mkbootfile.sh" "$WORK/ref.boot" "$WORK/img
 "$OS9" makdir "$WORK/img.hda,SYS"
 "$OS9" copy "$V/vendor_mshell.mod" "$WORK/img.hda,CMDS/mshell" >/dev/null
 "$OS9" attr -q -e -pe "$WORK/img.hda,CMDS/mshell" >/dev/null 2>&1 || true
+"$OS9" copy "$WORK/kb/trace" "$WORK/img.hda,CMDS/trace" >/dev/null
+"$OS9" attr -q -e -pe "$WORK/img.hda,CMDS/trace" >/dev/null 2>&1 || true
 # Fortsetzung 111: ein externer Befehl, den mshell aus dem
 # Ausfuehrungsverzeichnis nachladen und forken muss.
 "$OS9" copy "$CMDSDIR/echo" "$WORK/img.hda,CMDS/echo" >/dev/null
 "$OS9" attr -q -e -pe "$WORK/img.hda,CMDS/echo" >/dev/null 2>&1 || true
-printf '* Q9 startup test\rchd /dd\recho q9\r' > "$WORK/startup"
+printf '* Q9 startup test\rchd /dd\recho q9\rtrace show\r' > "$WORK/startup"
 "$OS9" copy "$WORK/startup" "$WORK/img.hda,SYS/startup" >/dev/null
 
-# 4. Laufen lassen bis "W" (F$Wait der Startup-Shell zurueck). K und W stehen
-#    nicht zwingend nebeneinander: dazwischen schreibt mshell seine Ausgabe.
-#    Ein grosses W kommt in den Boot- und Emulatormeldungen sonst nicht vor.
+# 4. Bis zum eindeutigen Abschlussmarker warten. Ein einzelnes W ist nicht
+#    eindeutig: die Trace-Probe schreibt bereits VW, bevor der Startup-Zweig
+#    überhaupt erreicht wird.
 dump="$FLUX/local_images/q9dbg_dump.txt"
 rm -f "$dump"
 ( cd "$FLUX" && Q9_TEST_TIMEOUT="${Q9_TEST_TIMEOUT:-60}" \
-    expect -f "$HERE/tools/run_kernel_test.exp" "$FLUX" "$WORK/img.hda" 'W' "$WORK/console.log" \
+    expect -f "$HERE/tools/run_kernel_test.exp" "$FLUX" "$WORK/img.hda" 'Q9SHELLDONE' "$WORK/console.log" \
     > "$WORK/expect.out" 2>&1 ) || true
 
 [ -f "$dump" ] || { echo "FAIL  kein Debug-Dump geschrieben"; exit 1; }
@@ -95,23 +101,26 @@ python3 - "$WORK/console.log" <<'PY'
 import re, sys
 s = open(sys.argv[1], 'rb').read().decode('latin1').replace('\r', '').replace('\n', '')
 s = re.sub(r'\]F\$S[A-Za-z]+ [^]]*?C=[0-9]( D0-L=0x[0-9A-F]+ A2-P=0x[0-9A-F]+)?', '', s)
-after = s[s.find('RT'):] if 'RT' in s else ''
-if not after:
-    print('FAIL  Marker T (Startup-Zweig) nicht erreicht'); sys.exit(1)
-k = after.find('K')
-if k < 0 or after.find('W', k) < 0:
+start = s.find('Q9STARTUP')
+if start < 0:
+    print('FAIL  Marker Q9STARTUP (Startup-Zweig) nicht erreicht'); sys.exit(1)
+k = s.find('Q9SHELLK', start)
+w = s.find('Q9SHELLW', k) if k >= 0 else -1
+end = s.find('Q9SHELLDONE', w) if w >= 0 else -1
+if k < 0 or w < 0 or end < 0:
     what = {'l': 'F$Load', 'd': 'I$Dup', 'c': 'I$Close', 'o': 'I$Open', 'f': 'F$Fork'}
-    m = re.search(r'([ldcof])([0-9A-F]{8})', after)
+    m = re.search(r'([ldcof])([0-9A-F]{8})', s[start:])
     if m:
         print(f'FAIL  {what[m.group(1)]} fehlgeschlagen, d1={m.group(2)}')
     else:
-        print('FAIL  K/W nicht erreicht')
+        print('FAIL  Q9SHELLK/Q9SHELLW/Q9SHELLDONE nicht erreicht')
     sys.exit(1)
+body = s[k:w]
 # Fortsetzung 110: mshell (-npt) gibt jede gelesene Zeile wieder aus. Beide
 # startup-Zeilen zwischen K und W belegen, dass mshell seine Parameter
 # (a5 = Parameteranfang) UND stdin (IOMan-Pfad, I$ReadLn weitergeleitet)
 # korrekt bekommt; vorher stand dort "syntax error" mit Speichermuell.
-body = after[k:after.find('W', k)]
+body = s[k:w]
 for line in ('* Q9 startup test', 'chd /dd'):
     if line not in body:
         print(f'FAIL  mshell hat die startup-Zeile "{line}" nicht ausgegeben (stdin/Parameter?)')
@@ -123,6 +132,6 @@ if 'syntax error' in body:
 for bad in ("can't execute", 'Error #'):
     if bad in body:
         print(f'FAIL  mshell meldet beim externen Befehl: {bad}'); sys.exit(1)
-print('ok    mshell geladen, stdin umgeleitet, startup-Datei abgearbeitet, beendet (T ... K W), keine Exception')
+print('ok    mshell geladen, stdin umgeleitet, startup-Datei abgearbeitet, beendet; keine Exception')
 PY
 echo "ALLE TESTS OK (startup_shell_test.sh)"

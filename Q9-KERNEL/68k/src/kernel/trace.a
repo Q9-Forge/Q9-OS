@@ -422,7 +422,7 @@ TrFCFound:
         movem.l (sp)+,d2-d5/a2-a5
         rts
 TrFCNext:
-        lea     9(a3),a3
+        lea     11(a3),a3
         bra     TrFCEntry
 TrFCFail:
         moveq   #0,d1

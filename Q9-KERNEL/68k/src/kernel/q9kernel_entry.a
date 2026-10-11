@@ -2301,6 +2301,24 @@ Q9K_TestAttachForkFail:
 * use the explicit equivalent here.
         moveq   #'T',d7
         bsr     Q9K_DiagWriteD7
+        moveq   #'Q',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'9',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'S',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'T',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'A',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'R',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'T',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'U',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'P',d7
+        bsr     Q9K_DiagWriteD7
 * Fortsetzung 111: wie sysgo vor dem Shellstart Daten- und
 * Ausfuehrungsverzeichnis setzen ("chd /dd", "chx /dd/CMDS"). Ohne
 * Ausfuehrungsverzeichnis findet mshell externe Befehle nicht
@@ -2349,8 +2367,40 @@ Q9K_TestAttachForkFail:
         bcs     Q9K_BootStartupForkFail
         moveq   #'K',d7
         bsr     Q9K_DiagWriteD7
+        moveq   #'Q',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'9',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'S',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'H',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'E',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'L',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'L',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'K',d7
+        bsr     Q9K_DiagWriteD7
         trap    #0
         dc.w    4                             * F$Wait for startup shell
+        moveq   #'W',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'Q',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'9',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'S',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'H',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'E',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'L',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'L',d7
+        bsr     Q9K_DiagWriteD7
         moveq   #'W',d7
         bsr     Q9K_DiagWriteD7
         moveq   #0,d0
@@ -2360,7 +2410,30 @@ Q9K_TestAttachForkFail:
         trap    #0
         dc.w    $0082                         * I$Dup original stdin
 Q9K_BootStartupDone:
-        bra     Q9K_BootStartupDone
+        moveq   #'Q',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'9',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'S',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'H',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'E',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'L',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'L',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'D',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'O',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'N',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'E',d7
+        bsr     Q9K_DiagWriteD7
+Q9K_BootStartupIdle:
+        bra     Q9K_BootStartupIdle
 Q9K_BootStartupOpenFail:
         moveq   #'o',d7
         bra     Q9K_BootStartupFail
