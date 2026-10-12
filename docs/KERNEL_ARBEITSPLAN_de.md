@@ -244,8 +244,8 @@ Kann jederzeit eingeschoben werden, wenn eine Fehlersuche es verlangt.
 | Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
 |---|---|---|---|---|---|
 | H1 | ✅ | **Emulator-Debugger mit Symbolen** aus Linkkarte und Moduldirectory (`DEBUG_KONZEPT_de.md`, Abschnitt 5) | PC wird als `Funktion+Offset` angezeigt | — | Q9-Flux: Modul-Header-Hinweis aus A3/PD; Live-Breakpoints in `echo` und dynamischem `trace` zeigen `echo+0x4e` bzw. `TrStart+0x0`. `trace.map` wird beim Kernel-Build erzeugt. |
-| H2 | 🔄 | **Quelltextzeilen** aus den entschlüsselten `xcc -g`-Sätzen (Abschnitt 5.3) | PC wird als `datei.c:zeile` angezeigt | H1, A3 | Q9-Flux: Modulzeilen-Resolver greift auch auf Prozesskopien zu; Live-PC in dynamischem `trace` mit passendem `.lines`-Eintrag zeigte `trace.a:42:1`. Echter `xcc -g`-C-Modul-Live-Test bleibt offen. |
-| H3 | ✅ | **GDB-Stub** (Debug-Paket 5) | Breakpoint und Einzelschritt aus gdb | H1 | Q9-Flux `8790ca6`; `make test-gdbstub`/`make test` mit RSP-Breakpoint und Einzelschritt bestanden; OS-9-Live-Attach mit Register-/Speicherzugriff und Detach bestanden. Dynamischer Modul-PC ist jetzt für Symbole und vorbereitete Zeileninformation live belegt. |
+| H2 | ✅ | **Quelltextzeilen** aus den entschlüsselten `xcc -g`-Sätzen (Abschnitt 5.3) | PC wird als `datei.c:zeile` angezeigt | H1, A3 | Echter `xcc -g`-C-Befehl als dynamische private Prozesskopie live geprüft: `PC=00083916 main+0x1e [h2probe.c:6:4]`. Endmarken verhindern falsche Zeilen in nicht instrumentiertem Laufzeitcode; Q9K-Quelltext-Debug-Build plus Startup-Emulatorregression bestanden. |
+| H3 | ✅ | **GDB-Stub** (Debug-Paket 5) | Breakpoint und Einzelschritt aus gdb | H1 | Q9-Flux `8790ca6`; `make test-gdbstub`/`make test` mit RSP-Breakpoint und Einzelschritt bestanden; OS-9-Live-Attach mit Register-/Speicherzugriff und Detach bestanden. Dynamischer Modul-PC live mit Symbolen und echter `xcc -g`-Zeilentabelle (`h2probe`) belegt. |
 | H4 | ⬜ | **Doku-Hygiene**: `OWN_KERNEL_STATUS.md` (über 11.000 Zeilen) archivieren und kürzen; `KERNEL_NEXT_SESSION_de.md` ins Archiv | Kurzer aktueller Status plus Archiv | — | |
 
 # Teil 2 — Userland

@@ -178,7 +178,7 @@ def load_symbols(path: Path) -> list[tuple[int, str]]:
 def annotate_symbols(lines: list[Line], symbols: list[tuple[int, str]],
                      module_offset: int = 0) -> list[Line]:
     for index, line in enumerate(lines):
-        if line.runtime is None:
+        if line.runtime is None or line.source == "!":
             continue
         offset = module_offset + line.offset
         best = None
@@ -202,6 +202,8 @@ def main(argv: list[str]) -> int:
                     help="Ladeadresse; ergänzt runtime zu jeder Zeile")
     ap.add_argument("--module-offset", type=lambda x: int(x, 0), default=0,
                     help="P-Segment-Offset des ROF im gelinkten Modul")
+    ap.add_argument("--end-module-offset", type=lambda x: int(x, 0),
+                    help="exklusives Ende des instrumentierten P-Segments im Modul; erzeugt eine !-Endmarke")
     ap.add_argument("--symbols", type=Path,
                     help="l68 -s Linkmap fuer die Symbolspalte")
     ap.add_argument("--format", choices=("table", "flux", "json"), default="table")
@@ -217,6 +219,15 @@ def main(argv: list[str]) -> int:
                 raise exc
             print(f"q9rof_lines.py: Hinweis: strukturierter Parser stoppte ({exc}); "
                   "Typ-1-Fallback verwendet", file=sys.stderr)
+        if ns.end_module_offset is not None:
+            if ns.base is None:
+                raise ValueError("--end-module-offset braucht --base")
+            last_module_offset = ns.module_offset + max(
+                (line.offset for line in lines), default=0)
+            if ns.end_module_offset <= last_module_offset:
+                raise ValueError("--end-module-offset liegt nicht hinter allen Zeilensaetzen")
+            lines.append(Line(ns.end_module_offset, 0, 0, "!",
+                              ns.base + ns.end_module_offset))
         if ns.symbols:
             lines = annotate_symbols(lines, load_symbols(ns.symbols), ns.module_offset)
     except ValueError as exc:

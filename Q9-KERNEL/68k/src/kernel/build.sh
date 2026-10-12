@@ -249,12 +249,33 @@ if [ -n "${Q9K_SRCDEBUG:-}" ] && [ -f q9kernel_debug.map ]; then
             echo "WARNUNG: kein PSECT-Offset fuer $r in q9kernel_debug.map gefunden" >&2
             continue
         fi
+        module_end_offset="$(python3 - q9kernel_debug.map "$r" "$module_offset" <<'PYMAP'
+import re, sys
+path, target, start = sys.argv[1], sys.argv[2], int(sys.argv[3], 0)
+text = open(path, encoding="latin-1").read()
+psects = [(name.strip(), int(code, 16)) for name, code in re.findall(
+    r"psect from file:\s*(.*?)\r?\n\s*C:([0-9a-fA-F]+)", text)]
+if not any(name == target and code == start for name, code in psects):
+    raise SystemExit(1)
+ends = [code for _, code in psects if code > start]
+if ends:
+    print(min(ends))
+PYMAP
+        )" || module_end_offset=""
+        if [ -n "$module_end_offset" ]; then
+            END_MAP_OPT="--end-module-offset $module_end_offset"
+        else
+            END_MAP_OPT=""
+            echo "WARNUNG: kein Ende des PSECT fuer $r gefunden; Zeilenkarte ohne Endmarke" >&2
+        fi
+        # END_MAP_OPT enthaelt ausschliesslich eine von uns oben erzeugte
+        # numerische CLI-Option (oder ist leer).
         python3 "$Q9OS_ROOT/tools/q9rof_lines.py" "$r" \
             --base "${Q9K_SYMBOL_BASE:-0x7100}" \
-            --module-offset "$module_offset" \
+            --module-offset "$module_offset" $END_MAP_OPT \
             --symbols q9kernel_debug.map --format flux \
             > "${f%.c}.lines"
-        echo "  ${f%.c}.lines (Moduloffset $module_offset)"
+        echo "  ${f%.c}.lines (Moduloffset $module_offset, Ende ${module_end_offset:-unbegrenzt})"
     done
 fi
 

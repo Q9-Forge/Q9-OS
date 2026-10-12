@@ -324,15 +324,21 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   `q9rof_lines.py --base 0 --module-offset <psect> --format flux`-Ausgabe
   auf. Q9-Flux addiert zur Laufzeit die Modul-Headeradresse. Kernelzeilen
   bleiben ueber `Q9_LINE_MAP` konfiguriert. Der GDB-Stub ist umgesetzt;
-  Ein Live-Breakpoint in der privaten Prozesskopie von `trace` wurde mit
-  Linkmap als `TrStart+0x0` und einer passenden Zeilenkarte als
-  `trace.a:42:1` angezeigt. Die Zeilenkarte war fuer diesen Assembly-Test
-  temporaer vorbereitet; ein dynamischer C-Modul-Live-Test mit einer echten
-  `xcc -g`-Zeilentabelle steht noch aus.
-- **Trace-Linkmap:** `Q9-KERNEL/68k/src/kernel/build.sh` schreibt beim Linken
-  zusaetzlich `trace.map`; der Dateiname der Ausgabedatei bleibt dabei exakt
-  `trace`, damit Linkerlayout und modulrelative Offsets mit dem geladenen
-  Modul uebereinstimmen.
+  Ein Live-Breakpoint in der privaten Prozesskopie von `trace` zeigte
+  `TrStart+0x0` und `trace.a:42:1`. Der C-Live-Test verwendete ein echtes
+  `xcc -g`-Programm als dynamisch geladene Prozesskopie und zeigte
+  `main+0x1e [h2probe.c:6:4]`. Der Test bestaetigte zugleich, dass die
+  Zeilenkarte mit einer Endmarke am Ende des instrumentierten P-Segments
+  abbrechen muss: dahinterliegende, nicht instrumentierte Laufzeitfunktionen
+  erhalten sonst faelschlich die letzte C-Quellzeile.
+- **Linkmaps und Zeilenkarten:** `Q9-KERNEL/68k/src/kernel/build.sh`
+  schreibt beim Trace-Link zusaetzlich `trace.map`; der Dateiname der
+  Ausgabedatei bleibt dabei exakt `trace`, damit Linkerlayout und
+  modulrelative Offsets mit dem geladenen Modul uebereinstimmen. Bei
+  `Q9K_SRCDEBUG` ermittelt der Build ausserdem die naechste P-Segmentgrenze
+  aus der Linkmap und gibt `q9rof_lines.py --end-module-offset` mit. Der
+  Generator schreibt dort `!:0:0`; Q9-Flux beendet die Quellzeilenzuordnung an
+  dieser Marke statt sie in den uninstrumentierten Laufzeitcode fortzusetzen.
 
 ### 5.3 Quelltext-Debugging (gemessen)
 
@@ -404,10 +410,10 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   target remote localhost:1234. Register D0-D7/A0-A7/SR/PC, Speicher,
   Software-Breakpoints, Continue, Single-Step, vCont, No-Ack-Modus und
   Ctrl-C sind enthalten. make test-gdbstub prüft den Datenweg mit einem
-  Test-ROM. Die Symbolauflösung ist mit Live-PCs in privaten dynamischen
-  Prozesskopien (`echo`, `trace`) verifiziert. Die Quellzeilenauflösung
-  funktioniert dort mit bereitgestellter `.lines`-Datei; ein Live-Test mit
-  einer aus echtem `xcc -g`-C-Code erzeugten Zeilentabelle bleibt offen.
+  Test-ROM. Symbol- und Quellzeilenauflösung sind mit Live-PCs in privaten
+  dynamischen Prozesskopien (`echo`, `trace`, `h2probe`) verifiziert. Das
+  C-Beispiel `h2probe` nutzte eine echte `xcc -g`-ROF-Zeilentabelle; der
+  Q9K-Quelltext-Debug-Build erzeugte zusaetzlich eine begrenzte Kernelkarte.
 
 ### 5.5 Reihenfolge
 
