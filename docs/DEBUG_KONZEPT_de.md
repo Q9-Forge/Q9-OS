@@ -444,6 +444,24 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
    (Q9-Flux `5ebf5b5`).
 6. QCC-Zeilentabellen (QCC-Repo).
 
+### 5.5 QCC-Zeilentabellen: Integrationsstand
+
+Der aktuelle QCC-Pfad erzeugt noch keine verwertbaren Quellzeilen. Die
+Preprocessor-Stufe `qcpp` kann mit `-lines` bereits `#line`-Marker in die
+`.i`-Datei schreiben; `Q9-QCC/src/qcc.c` ruft `qcpp` derzeit jedoch ohne diese
+Option auf. `qcir` übersetzt anschließend die `.i`-Datei in Stack-IR, dessen
+Format keine Datei-/Zeilenmarker enthält. Am Ende schreibt `qr68` im ROF-Kopf
+`debugsiz=0`; es gibt also auch keinen Debugabschnitt, den der vorhandene
+`q9rof_lines.py`-Decoder auswerten könnte.
+
+Die Umsetzung muss die Ortsangabe durch die ganze Kette tragen: opt-in
+Debugschalter in `qcc`, `-lines` für `qcpp`, Marker-Erkennung und IR-Ausgabe in
+`qcir`, Erhalt dieser Marker durch `qir68k`/`qo68k` und deren Zuordnung zu
+Assembler-/ROF-Codeoffsets in `qr68`. Der bestehende Q9-Flux-`.lines`-Resolver
+und `q9rof_lines.py` können danach wiederverwendet werden. Ein bloßes
+Durchreichen von `-lines` reicht nicht: der derzeitige `qcir`-Parser konsumiert
+diese Marker nicht als Debug-Metadaten.
+
 ## 6. Arbeitspakete
 
 1. Bauschalter für C und Assembler; vorhandenen Debug- und Testcode
