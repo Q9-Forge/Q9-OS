@@ -449,8 +449,10 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
 Der aktuelle QCC-Pfad erzeugt noch keine verwertbaren Quellzeilen. Die
 Preprocessor-Stufe `qcpp` kann mit `-lines` bereits `#line`-Marker in die
 `.i`-Datei schreiben; `Q9-QCC/src/qcc.c` ruft `qcpp` derzeit jedoch ohne diese
-Option auf. `qcir` übersetzt anschließend die `.i`-Datei in Stack-IR, dessen
-Format keine Datei-/Zeilenmarker enthält. Am Ende schreibt `qr68` im ROF-Kopf
+Option auf. Ein isolierter Probe-Quelltext bestätigt: `qcpp -lines` schreibt
+`#line 1 "/private/tmp/qcc_lineprobe.c"`; das aktuelle `qcir` bricht bei
+solcher Eingabe mit `FAIL` ab. Es übersetzt die `.i`-Datei daher noch nicht in
+Stack-IR mit Datei-/Zeilenmarkern. Am Ende schreibt `qr68` im ROF-Kopf
 `debugsiz=0`; es gibt also auch keinen Debugabschnitt, den der vorhandene
 `q9rof_lines.py`-Decoder auswerten könnte.
 
