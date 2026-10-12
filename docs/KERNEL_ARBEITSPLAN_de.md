@@ -1,6 +1,6 @@
 # Kernel- und Userland-Arbeitsplan
 
-Stand: 07.10.2026, Grundlage `main` `2ea3c3c` (Fortsetzung 122).
+Stand: 12.10.2026, Grundlage `main` `7653580` (Fortsetzung 144).
 
 Dieser Plan zerlegt alle offenen Arbeiten am Q9-System in Schritte, die
 jeweils **in einer Session** erledigt werden können:
@@ -11,8 +11,7 @@ jeweils **in einer Session** erledigt werden können:
   Laufzeitbibliotheken, Entwicklungswerkzeuge und alle übrigen
   Systemprogramme. Der Code dafür liegt überwiegend im Repo `Q9-Tools`.
 
-Er ersetzt die Roadmap in `KERNEL_NEXT_SESSION_de.md` (Stand 14.09.2026,
-überholt).
+Er ersetzt die Roadmap in `KERNEL_NEXT_SESSION_de.md`; deren Analyse liegt im Archiv (Stand 14.09.2026).
 
 ## So wird der Plan benutzt
 
@@ -245,8 +244,8 @@ Kann jederzeit eingeschoben werden, wenn eine Fehlersuche es verlangt.
 |---|---|---|---|---|---|
 | H1 | ✅ | **Emulator-Debugger mit Symbolen** aus Linkkarte und Moduldirectory (`DEBUG_KONZEPT_de.md`, Abschnitt 5) | PC wird als `Funktion+Offset` angezeigt | — | Q9-Flux: Modul-Header-Hinweis aus A3/PD; Live-Breakpoints in `echo` und dynamischem `trace` zeigen `echo+0x4e` bzw. `TrStart+0x0`. `trace.map` wird beim Kernel-Build erzeugt. |
 | H2 | ✅ | **Quelltextzeilen** aus den entschlüsselten `xcc -g`-Sätzen (Abschnitt 5.3) | PC wird als `datei.c:zeile` angezeigt | H1, A3 | Echter `xcc -g`-C-Befehl als dynamische private Prozesskopie live geprüft: `PC=00083916 main+0x1e [h2probe.c:6:4]`. Endmarken verhindern falsche Zeilen in nicht instrumentiertem Laufzeitcode; Q9K-Quelltext-Debug-Build plus Startup-Emulatorregression bestanden. |
-| H3 | ✅ | **GDB-Stub** (Debug-Paket 5) | Breakpoint und Einzelschritt aus gdb | H1 | Q9-Flux `8790ca6`; `make test-gdbstub`/`make test` mit RSP-Breakpoint und Einzelschritt bestanden; OS-9-Live-Attach mit Register-/Speicherzugriff und Detach bestanden. GDB-RSP `Z0`-Breakpoint in dynamischem `h2probe` bei `0x83916` live getroffen; PC/A3=`00083916`/`000836e0`, gueltiger Modulheader. `vCont;s` stoppt danach bei `0x8391a` innerhalb derselben instrumentierten C-Zeile. Host-Dump zeigt `main+0x1e [h2probe.c:6:4]`. |
-| H4 | ⬜ | **Doku-Hygiene**: `OWN_KERNEL_STATUS.md` (über 11.000 Zeilen) archivieren und kürzen; `KERNEL_NEXT_SESSION_de.md` ins Archiv | Kurzer aktueller Status plus Archiv | — | |
+| H3 | ✅ | **GDB-Stub** (Debug-Paket 5) | RSP-Breakpoint und Einzelschritt | H1 | Q9-Flux `8790ca6`; `make test-gdbstub`/`make test` mit RSP-Breakpoint und Einzelschritt bestanden; OS-9-Live-Attach mit Register-/Speicherzugriff und Detach bestanden. GDB-RSP `Z0`-Breakpoint in dynamischem `h2probe` bei `0x83916` live getroffen; PC/A3=`00083916`/`000836e0`, gueltiger Modulheader. `vCont;s` stoppt danach bei `0x8391a` innerhalb derselben instrumentierten C-Zeile. Host-Dump zeigt `main+0x1e [h2probe.c:6:4]`. |
+| H4 | ✅ | **Doku-Hygiene**: lange Statuschronik und alte Übergabe archivieren; kurze Einstiegspunkte behalten | Historie bleibt unverändert auffindbar; aktuelle Statusquellen sind verlinkt | — | Chronik bis Fortsetzung 144 und Übergabe vom 14.09.2026 unter `docs/archive/`; Kurzseiten verweisen auf `Q9-KERNEL/STATUS.md` und diesen Plan. |
 
 # Teil 2 — Userland
 
@@ -352,10 +351,10 @@ ordnet ihren Inhalt ein und schneidet sie danach neu.
 
 ## Quellen
 
-- `Q9-KERNEL/STATUS.md` — Kopf (Stand Fortsetzung 122), Syscall-Tabellen,
+- `Q9-KERNEL/STATUS.md` — Kopf (Stand Fortsetzung 144), Syscall-Tabellen,
   „Remaining kernel work outside the SysCalls"
-- `docs/KERNEL_NEXT_SESSION_de.md` — „Technische Schulden" (Stand 14.09.2026)
-- `docs/OWN_KERNEL_STATUS.md` — Fortsetzung 122 (FARCALL-Bisektion)
+- `docs/archive/KERNEL_NEXT_SESSION_de_2026-09-14.md` — „Technische Schulden" (Stand 14.09.2026)
+- `docs/archive/OWN_KERNEL_STATUS_chronik_2026-10-12.md` — Fortsetzungen 1–144
 - `docs/DEBUG_KONZEPT_de.md` — Abschnitte 5–7
 - `Q9-IOMAN/STATUS.md` — Abschnitte 5, 7 und 8
 - `Q9-Tools/System/PORT_STATUS.md`, `Q9-Tools/Network/NETWORK_STATUS.md`

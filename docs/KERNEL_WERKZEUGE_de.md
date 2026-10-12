@@ -10,7 +10,7 @@ Emulator-Debugger) beschreibt `docs/DEBUG_KONZEPT_de.md`.
 Diese Datei sammelt Wissen, das bis 2026-09-20 nur in privaten Notizen
 stand und dadurch für andere nicht auffindbar war. Der Stand der
 einzelnen Systemaufrufe steht in `STATUS.md`, der Arbeitsstand in
-`docs/OWN_KERNEL_STATUS.md`.
+`docs/archive/OWN_KERNEL_STATUS_chronik_2026-10-12.md`.
 
 > **Pfadhinweis:** Einige Angaben stammen aus älteren Sitzungen. Das Repo
 > wurde seither mehrfach umgebaut — der Kernel liegt unter

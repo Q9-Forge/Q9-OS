@@ -284,7 +284,7 @@ damit ebenfalls sofort aufgefallen.
 ## 5. Debugger im Emulator (Q9-Flux)
 
 Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
-`docs/OWN_KERNEL_STATUS.md`. Die Emulator-Basis ist im Q9-Flux-Commit
+`docs/archive/OWN_KERNEL_STATUS_chronik_2026-10-12.md`. Die Emulator-Basis ist im Q9-Flux-Commit
 8790ca6 umgesetzt und per synthetischem ROM Ende-zu-Ende getestet.
 
 ### 5.1 Ziele

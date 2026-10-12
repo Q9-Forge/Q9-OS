@@ -19,7 +19,7 @@ The call-code names and the complete call-code set are based on
 mean that every OS-9 corner case or every hardware device is already
 supported.
 
-## Current state (2026-10-06, continuation 122)
+## Current state (2026-10-12, continuation 144)
 
 - Real boot via sysgo works in both kernel variants (atomic and development):
   sysgo -> startup file -> tsmon -> login -> mshell; `echo`, `dir`, `pd` run.
@@ -27,11 +27,15 @@ supported.
   console via IOMan/SCF, syscall nesting depth $3AC, a1/d2 preservation in
   wrappers, F$SUser module cases, zeroed process memory, F$Chain releases
   trap handlers, F$Sleep/F$Wait clear the signal mask.
-- Syscall trace (development kernel): `trace [on|off|clear]` command,
-  `Q9K_TRACEBOOT=1` build switch, host decoder `tools/q9trace_decode.py`.
-- Source-level debugging per file: `Q9K_SRCDEBUG="file.c ..."`; far-call
-  macro `Q9K_FARCALL` ready but not yet used (bisection pending).
-- Details: `docs/OWN_KERNEL_STATUS.md` (continuations 113-122),
+- Syscall trace (development kernel): `trace [on|off|clear]`, filters and
+  host decoder `tools/q9trace_decode.py`; live emulator output confirmed
+  `F$PrsNam` parameters and path filtering for local `I$` calls.
+- Emulator debugging: monitor disassembly, symbols and source lines; GDB-RSP
+  breakpoint and single-step verified in a dynamic `xcc -g` guest module.
+- Source-level kernel debugging per file: `Q9K_SRCDEBUG="file.c ..."`; the
+  far-call macro `Q9K_FARCALL` is ready but deployment is still pending.
+- Details: `docs/OWN_KERNEL_STATUS.md` (short overview),
+  `docs/archive/OWN_KERNEL_STATUS_chronik_2026-10-12.md` (continuations 1-144),
   `docs/DEBUG_KONZEPT_de.md`.
 
 ## Legacy IOMan integration branch
