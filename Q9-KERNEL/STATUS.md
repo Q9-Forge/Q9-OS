@@ -32,6 +32,9 @@ supported.
   `F$PrsNam` parameters and path filtering for local `I$` calls.
 - Emulator debugging: monitor disassembly, symbols and source lines; GDB-RSP
   breakpoint and single-step verified in a dynamic `xcc -g` guest module.
+  Q9-Flux prefers `.map` files and reads v1 Microware `.stb` code symbols as
+  fallback (Q9-Flux `6271936`); matching the stored STB CRC to the running
+  guest remains open.
 - Source-level kernel debugging per file: `Q9K_SRCDEBUG="file.c ..."`; the
   far-call macro `Q9K_FARCALL` is ready but deployment is still pending.
 - Details: `docs/OWN_KERNEL_STATUS.md` (short overview),

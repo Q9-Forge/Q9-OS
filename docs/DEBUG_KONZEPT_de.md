@@ -308,7 +308,15 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
 - **Microware-Module** (ioman, scf, rbf, sysgo ...): MWOS enthaelt
   `*.stb`/`*.map` (z. B. `OS9/68000/CMDS/BOOTOBJS/STB/`). Die `.map`-Dateien
   sind lesbare l68-Linkkarten; der Symbolresolver verarbeitet deren
-  `COD`-Eintraege. Das `.stb`-Format ist weiterhin nicht entschluesselt.
+  `COD`-Eintraege bevorzugt. Als Fallback liest Q9-Flux jetzt v1-`.stb`-Module:
+  `M$Symbol` zeigt auf den Symbolblock, dessen Records aus Wert (u32), Klasse
+  (u16) und absolutem Namensoffset (u32) bestehen. Der Recordzeiger und die
+  Anzahl stehen im Block bei +8 und +12; Codeklassen haben im unteren Nibble
+  den Wert 4. Das Format wurde gegen 78 lokale Module geprüft; vier
+  Code-/`.stb`-Paare stimmten für gemeinsame Namen und Offsets mit den
+  Linkkarten überein. Die im `.stb` gespeicherte CRC des Code-Moduls wird noch
+  nicht gegen das laufende Gastmodul geprüft; lokale und statische Symbole
+  werden nicht aufgelöst. Umsetzung: Q9-Flux `6271936`.
 - **Laufzeit-Zuordnung (Q9-Flux umgesetzt):** Der Debugger liest das
   Q9-Moduldirectory ab `Q9K_MODDIR_HEAD_ADDR` ($1238), validiert Syncwort,
   Groesse und Namen und ordnet den PC der echten Headeradresse zu. Eine
@@ -430,7 +438,9 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
 3. ROF-Debug-Abschnitt (`xcc -g`) entschluesseln -> Zeilentabelle.
 4. Monitor und GDB-Stub im Emulator; dynamische Modul-PCs, Symbole,
    Quellzeilen, Breakpoint und Einzelschritt live im Gast verifiziert.
-5. `.stb`-Format der Microware-Module.
+5. `.stb`-Symbolblock v1 dekodieren und als Fallback anbinden: erledigt für
+   globale Code-Symbole. Offen bleibt der CRC-Abgleich mit dem geladenen
+   Gastmodul.
 6. QCC-Zeilentabellen (QCC-Repo).
 
 ## 6. Arbeitspakete
