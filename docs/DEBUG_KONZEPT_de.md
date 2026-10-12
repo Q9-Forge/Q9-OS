@@ -412,8 +412,11 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   Ctrl-C sind enthalten. make test-gdbstub prüft den Datenweg mit einem
   Test-ROM. Symbol- und Quellzeilenauflösung sind mit Live-PCs in privaten
   dynamischen Prozesskopien (`echo`, `trace`, `h2probe`) verifiziert. Das
-  C-Beispiel `h2probe` nutzte eine echte `xcc -g`-ROF-Zeilentabelle; der
-  Q9K-Quelltext-Debug-Build erzeugte zusaetzlich eine begrenzte Kernelkarte.
+  C-Beispiel `h2probe` nutzte eine echte `xcc -g`-ROF-Zeilentabelle. Der
+  GDB-RSP-Befehl `Z0,83916,2` hielt den Gast am dynamischen C-PC an; Register
+  PC=`00083916`, A3=`000836e0` und das Modul-Syncwort `4afc` wurden live
+  bestaetigt. Der Q9K-Quelltext-Debug-Build erzeugte zusaetzlich eine
+  begrenzte Kernelkarte.
 
 ### 5.5 Reihenfolge
 
