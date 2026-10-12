@@ -314,9 +314,10 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   Anzahl stehen im Block bei +8 und +12; Codeklassen haben im unteren Nibble
   den Wert 4. Das Format wurde gegen 78 lokale Module geprüft; vier
   Code-/`.stb`-Paare stimmten für gemeinsame Namen und Offsets mit den
-  Linkkarten überein. Die im `.stb` gespeicherte CRC des Code-Moduls wird noch
-  nicht gegen das laufende Gastmodul geprüft; lokale und statische Symbole
-  werden nicht aufgelöst. Umsetzung: Q9-Flux `6271936`.
+  Linkkarten überein. Q9-Flux prüft die gespeicherte 24-Bit-CRC zur Laufzeit
+  gegen das geladene Gastmodul und verwirft veraltete `.stb`-Dateien. Lokale
+  und statische Symbole werden weiterhin nicht aufgelöst. Umsetzung: Q9-Flux
+  `6271936`, CRC-Prüfung `5ebf5b5`.
 - **Laufzeit-Zuordnung (Q9-Flux umgesetzt):** Der Debugger liest das
   Q9-Moduldirectory ab `Q9K_MODDIR_HEAD_ADDR` ($1238), validiert Syncwort,
   Groesse und Namen und ordnet den PC der echten Headeradresse zu. Eine
@@ -439,8 +440,8 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
 4. Monitor und GDB-Stub im Emulator; dynamische Modul-PCs, Symbole,
    Quellzeilen, Breakpoint und Einzelschritt live im Gast verifiziert.
 5. `.stb`-Symbolblock v1 dekodieren und als Fallback anbinden: erledigt für
-   globale Code-Symbole. Offen bleibt der CRC-Abgleich mit dem geladenen
-   Gastmodul.
+   globale Code-Symbole; CRC-Abgleich mit dem geladenen Gastmodul umgesetzt
+   (Q9-Flux `5ebf5b5`).
 6. QCC-Zeilentabellen (QCC-Repo).
 
 ## 6. Arbeitspakete

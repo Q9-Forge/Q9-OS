@@ -16,8 +16,8 @@ in [`KERNEL_ARBEITSPLAN_de.md`](KERNEL_ARBEITSPLAN_de.md).
   bei `0x8391a` schrittweise fortgesetzt.
 - Q9K-Quellzeilenkarten sind auf das instrumentierte Kernelmodul begrenzt.
   Microware-`.map`-Dateien haben Vorrang; Q9-Flux liest v1-`.stb`-Module als
-  Fallback für globale Code-Symbole (Q9-Flux `6271936`). Der Gastmodul-
-  CRC-Abgleich bleibt offen.
+  Fallback für globale Code-Symbole (Q9-Flux `6271936`); die gespeicherte
+  24-Bit-CRC wird gegen das geladene Gastmodul geprüft (Q9-Flux `5ebf5b5`).
 
 ## Historische Befunde
 
