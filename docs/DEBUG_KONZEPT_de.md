@@ -1,6 +1,7 @@
 # Debug-Konzept für den Q9-Kernel
 
-Stand: 2026-10-06. Abgestimmt mit Andreas; noch nicht umgesetzt.
+Stand: 2026-10-12. Abgestimmt mit Andreas; die Trace- und Debugger-Bausteine
+sind umgesetzt und live geprüft (Details in Abschnitt 5.4 und im Arbeitsplan).
 Ergänzt am selben Tag: Zeit bei Eintritt und Ende (2.2), Ringpuffer als
 
 Ziel: Fehler im Kernel und im Zusammenspiel mit fremden Modulen (IOMan,
@@ -415,7 +416,9 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   C-Beispiel `h2probe` nutzte eine echte `xcc -g`-ROF-Zeilentabelle. Der
   GDB-RSP-Befehl `Z0,83916,2` hielt den Gast am dynamischen C-PC an; Register
   PC=`00083916`, A3=`000836e0` und das Modul-Syncwort `4afc` wurden live
-  bestaetigt. Der Q9K-Quelltext-Debug-Build erzeugte zusaetzlich eine
+  bestaetigt. Anschließend hielt `vCont;s` nach genau einem Schritt bei
+  PC=`0008391a`; der Schritt blieb innerhalb derselben instrumentierten
+  C-Zeile. Der Q9K-Quelltext-Debug-Build erzeugte zusaetzlich eine
   begrenzte Kernelkarte.
 
 ### 5.5 Reihenfolge
@@ -425,8 +428,8 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
 2. Fernaufruf-Makro pruefen (l68-Label-Differenz); bei Erfolg `bsr` aus
    q9kernel_entry.a nach C darauf umstellen -- loest die 32-KB-Grenze.
 3. ROF-Debug-Abschnitt (`xcc -g`) entschluesseln -> Zeilentabelle.
-4. Monitor und GDB-Stub im Emulator (Grundfunktionen umgesetzt); danach
-   Modul-PC/Symbole/Quellzeilen live im Gast verifizieren.
+4. Monitor und GDB-Stub im Emulator; dynamische Modul-PCs, Symbole,
+   Quellzeilen, Breakpoint und Einzelschritt live im Gast verifiziert.
 5. `.stb`-Format der Microware-Module.
 6. QCC-Zeilentabellen (QCC-Repo).
 
@@ -440,7 +443,8 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
 4. Beschreibungstabelle für die wichtigsten Syscalls, Programm `trace`,
    Host-Dekoder.
 5. Emulator-Debugger: Monitor, GDB-RSP und Modul-Symbolauflösung sind
-   umgesetzt; Live-Verifikation im dynamisch geladenen Gastmodul ist offen.
+   umgesetzt; dynamisches C-Gastmodul mit Quellzeile, Breakpoint und
+   Einzelschritt live verifiziert (siehe Abschnitt 5.4).
 
 ## 7. Offene Punkte
 
@@ -452,7 +456,5 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   Repo, damit Kernel und Tool übereinstimmen).
 - Ermittlung der FD-Nummer: genaue `I$GetStt`-Unterfunktion bei RBF
   prüfen, bevor das Tool sie benutzt.
-- GDB-Live-Test: Haltepunkt auf einer Adresse in einem dynamisch geladenen
-  Q9-/Microware-Modul mit Symbol- und Quellzeilenanzeige.
 - Timing: Konsolenausgabe verändert das Zeitverhalten deutlich; für
   zeitkritische Fehler nur den Ringpuffer verwenden.
