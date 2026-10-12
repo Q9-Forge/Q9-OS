@@ -310,8 +310,11 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   `COD`-Eintraege. Das `.stb`-Format ist weiterhin nicht entschluesselt.
 - **Laufzeit-Zuordnung (Q9-Flux umgesetzt):** Der Debugger liest das
   Q9-Moduldirectory ab `Q9K_MODDIR_HEAD_ADDR` ($1238), validiert Syncwort,
-  Groesse und Namen und ordnet den PC der echten Headeradresse zu. Fuer
-  geladene Module zeigt er ohne Karte `modul+offset`.
+  Groesse und Namen und ordnet den PC der echten Headeradresse zu. Eine
+  laufende Prozesskopie kann bereits aus dem globalen Moduldirectory entfernt
+  sein; deshalb prueft der Resolver zusaetzlich den Header-Hinweis aus A3
+  (Breakpoint/Instruktionsspur) beziehungsweise `PD+0x38` (Prozessliste).
+  Fuer geladene Module zeigt er ohne Karte `modul+offset`.
 - **Linkkarten:** `Q9_SYMBOL_DIR/<modulname>.map` nimmt die normale
   Microware-Linkkarte (`COD`-Eintraege) auf. Der Resolver verwendet die
   modulrelativen Offsets aus `l68 -s`; Modulnamen werden fuer den Dateinamen
@@ -321,7 +324,15 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   `q9rof_lines.py --base 0 --module-offset <psect> --format flux`-Ausgabe
   auf. Q9-Flux addiert zur Laufzeit die Modul-Headeradresse. Kernelzeilen
   bleiben ueber `Q9_LINE_MAP` konfiguriert. Der GDB-Stub ist umgesetzt;
-  der Live-Test mit einem PC in einem dynamisch geladenen Modul bleibt offen.
+  Ein Live-Breakpoint in der privaten Prozesskopie von `trace` wurde mit
+  Linkmap als `TrStart+0x0` und einer passenden Zeilenkarte als
+  `trace.a:42:1` angezeigt. Die Zeilenkarte war fuer diesen Assembly-Test
+  temporaer vorbereitet; ein dynamischer C-Modul-Live-Test mit einer echten
+  `xcc -g`-Zeilentabelle steht noch aus.
+- **Trace-Linkmap:** `Q9-KERNEL/68k/src/kernel/build.sh` schreibt beim Linken
+  zusaetzlich `trace.map`; der Dateiname der Ausgabedatei bleibt dabei exakt
+  `trace`, damit Linkerlayout und modulrelative Offsets mit dem geladenen
+  Modul uebereinstimmen.
 
 ### 5.3 Quelltext-Debugging (gemessen)
 
@@ -393,8 +404,10 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   target remote localhost:1234. Register D0-D7/A0-A7/SR/PC, Speicher,
   Software-Breakpoints, Continue, Single-Step, vCont, No-Ack-Modus und
   Ctrl-C sind enthalten. make test-gdbstub prüft den Datenweg mit einem
-  Test-ROM. Die Symbol- und Quellzeilenauflösung für dynamische Module muss
-  noch mit einem Live-PC im Gast verifiziert werden.
+  Test-ROM. Die Symbolauflösung ist mit Live-PCs in privaten dynamischen
+  Prozesskopien (`echo`, `trace`) verifiziert. Die Quellzeilenauflösung
+  funktioniert dort mit bereitgestellter `.lines`-Datei; ein Live-Test mit
+  einer aus echtem `xcc -g`-C-Code erzeugten Zeilentabelle bleibt offen.
 
 ### 5.5 Reihenfolge
 
