@@ -349,6 +349,8 @@ Umgebung: `FLUX` (Q9-Flux-68k) und `REFBOOT` (Referenz-Bootdatei); ohne Angabe g
 | `tools/hosttests.sh` | baut und startet **alle** `test_q9kernel_*.c` auf dem Host. Flags `-DQ9K_KERNEL_DEVELOPMENT -DQ9K_ALLOC_STANDARD`; Suiten mit `dbg`, `trace`, `ringbuf` im Namen zusätzlich `-DQ9K_DEBUG` (ohne dieses Flag ist z. B. `dbg_live` rot — die frühere Angabe „zwei Pflichtschalter“ war unvollständig) |
 | `tools/login_shell_test.sh [atomic\|development]` | Bau mit `Q9K_BOOT=sysgo`, Boot, startup (mit `setime`), tsmon, login, mshell; prüft `echo`, `pd`, `dir /dd/SYS`, `date` und den Q9-Flux-Dump (`Vektor=0`). ~2 min je Variante |
 | `tools/build_honesty_test.sh` | prüft, dass `build.sh` bei C-, Assembler- und Linkfehlern abbricht und kein veraltetes `q9kernel` liegen lässt |
+| `tools/fcbisect.sh [--mode farcall\|far2\|pad] <Stellen>` | stellt gewaehlte `bsr`-Aufrufe einer Quellkopie um und fuehrt den Login-Test aus (`--list` nummeriert die 43 Stellen); `tools/fcddmin.py` sucht damit per Delta-Debugging die kleinste rote Stellenmenge |
+| `tools/q9_farcall_check.py` | meldet jedes `bsr` auf eine C-Funktion in `q9kernel_entry.a`; `build.sh` ruft es vor dem Bau auf |
 | `tools/q9_scratch_map.py` | Belegungsprüfung der Scratch-Zellen, erzeugt `docs/KERNEL_SPEICHERBELEGUNG_de.md`; `build.sh` ruft `--check --doc` vor dem Bau auf |
 
 Eingabe in Emulator-Tests: nur nach der Eingabeaufforderung tippen (`\n$ `), das Zeichen `@` meiden,

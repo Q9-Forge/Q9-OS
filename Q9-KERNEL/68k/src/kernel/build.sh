@@ -81,6 +81,13 @@ wine_tool() {
     return $rc
 }
 
+# A3 (2026-10-15): jeder Aufruf einer C-Funktion aus q9kernel_entry.a muss Q9K_FARCALL sein
+# (bsr reicht nur +-32 KB). Ein vergessenes bsr wuerde erst beim naechsten Wachstum brechen.
+if [ -f "$Q9OS_ROOT/tools/q9_farcall_check.py" ]; then
+    python3 "$Q9OS_ROOT/tools/q9_farcall_check.py" "$SRCDIR/q9kernel_entry.a" || {
+        echo "== BUILD ABGEBROCHEN: bsr auf C-Funktion statt Q9K_FARCALL =="; exit 1; }
+fi
+
 # B3 (2026-10-15): Belegung der Scratch-Zellen pruefen, BEVOR gebaut wird. Zwei Zellen auf
 # derselben Adresse ergeben einen Kernel, der baut und trotzdem still falsch arbeitet.
 # Die Pruefung braucht tools/ aus dem Repo (in Wegwerfbaeumen ohne tools/ entfaellt sie).

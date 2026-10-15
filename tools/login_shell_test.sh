@@ -25,7 +25,7 @@ VARIANT=${1:-development}
 case "$VARIANT" in atomic|development) ;; *) echo "FEHLER: Variante muss atomic oder development sein" >&2; exit 2 ;; esac
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-KDIR="$HERE/Q9-KERNEL/68k/src/kernel"
+KDIR="${Q9K_KERNEL_SRC:-$HERE/Q9-KERNEL/68k/src/kernel}"
 FLUX=${FLUX:-$HERE/../Q9-Flux/Q9-Flux-68k}
 [ -x "$FLUX/build/macos/q9.exe" ] || FLUX=/Volumes/SSD1TB/projects/Q9-Forge/Q9-SDK/SRC/SYSTEM/Q9-Flux/Q9-Flux-68k
 REFBOOT=${REFBOOT:-$FLUX/../.hide/OS9Boot.noprot.test}

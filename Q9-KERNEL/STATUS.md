@@ -36,7 +36,7 @@ supported.
   fallback (Q9-Flux `6271936`). STB symbols are accepted only when their stored
   24-bit CRC matches the loaded guest module (Q9-Flux `5ebf5b5`).
 - Source-level kernel debugging per file: `Q9K_SRCDEBUG="file.c ..."`; the
-  far-call macro `Q9K_FARCALL` is ready but deployment is still pending.
+  all 43 kernel calls from `q9kernel_entry.a` into C functions now use the register-neutral far-call macro `Q9K_FARCALL` (15.10.2026; `build.sh` rejects a plain `bsr` to a C function).
 - Details: `docs/OWN_KERNEL_STATUS.md` (short overview),
   `docs/archive/OWN_KERNEL_STATUS_chronik_2026-10-12.md` (continuations 1-144),
   `docs/DEBUG_KONZEPT_de.md`.

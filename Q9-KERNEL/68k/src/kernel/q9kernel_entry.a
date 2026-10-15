@@ -895,17 +895,30 @@ Q9K_SRqMemFrameScratch    equ $13A4      * Q9_u32, Rahmenbasis oder 0
 * FALSCH -- genau der Fund vom vorherigen Kernel-Link). Ein fehlender
 * Parameter ergibt dagegen echte 0, passend zum verifizierten M$Excpt=0
 * am realen Referenzkernel.
-* Q9K_FARCALL <Ziel> (Fortsetzung 121) -- lageunabhaengiger Aufruf ohne
-* die +-32-KB-Grenze von bsr (68000 kennt nur 16-Bit-PC-Distanzen). l68
-* loest die Label-Differenz "Ziel-*" als Konstante auf, auch ueber
-* Dateigrenzen (an einem 40-KB-Beispiel geprueft). Benutzt a0 -- in der
-* Microware-C-Konvention ohnehin ein freies Arbeitsregister; deshalb NUR fuer
-* Aufrufe in C-Funktionen. 12 statt 4 Byte. Noetig, seit der Kernel an der
-* bsr-Grenze sitzt (schon zwei unoptimierte -g-Dateien sprengten sie).
+* Q9K_FARCALL <Ziel> (Fortsetzung 121, umgestellt 2026-10-15 = Arbeitsplan A3) --
+* lageunabhaengiger Aufruf ohne die +-32-KB-Grenze von bsr (68000 kennt nur
+* 16-Bit-PC-Distanzen). l68 loest die Label-Differenz "Ziel-*" als Konstante auf,
+* auch ueber Dateigrenzen.
+*
+* REGISTERNEUTRAL (A2): die erste Fassung (lea/adda/jsr (a0)) ueberschrieb a0.
+* In den Trap-Pfaden ist noch der Registersatz des Aufrufers aktiv, und der
+* Blockierpfad von F$Wait sichert ihn als Wiederaufnahme-Rahmen -- der Aufrufer
+* bekam a0 zerstoert zurueck. Gemessen (fcbisect/fcddmin, 15.10.2026): schon die
+* eine Stelle Q9K_SysWaitImpl liess den Boot mit Vektor 4 (PC im Datenbereich)
+* scheitern; dieselbe Stelle als bsr plus vier NOPs (gleiche Codegroesse) war
+* gruen, also kein Layout-Effekt. Mit dieser Fassung laufen alle 43 Stellen.
+* Ablauf: Ruecksprungadresse und a0 auf den Stack, a0 = Ziel berechnen, Ziel
+* an die Stelle des geretteten a0 schreiben, a0 zurueckholen, per rts springen.
+* 26 Byte statt 4; veraendert nur das CCR (wie vorher lea/adda).
 Q9K_FARCALL macro
+        pea     *+26(pc)            * Ruecksprungadresse = Befehl hinter dem rts
+        move.l  a0,-(sp)            * a0 des Aufrufers retten
         lea     *(pc),a0
-        adda.l  #\1-*+4,a0
-        jsr     (a0)
+        adda.l  #\1-*+4,a0          * a0 = Ziel
+        move.l  a0,-(sp)
+        move.l  4(sp),a0            * a0 des Aufrufers zurueck
+        move.l  (sp)+,(sp)          * Ziel an die Stelle des geretteten a0
+        rts                         * Sprung ins Ziel, Ruecksprung hinter dieses Makro
         endm
 
         psect   q9kernel,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,Q9K_Edition,0,Q9K_Entry
@@ -1517,7 +1530,7 @@ Q9K_NoRomDebugger:
         move.l  #$7FFFFFFF,_stklimit(a6)
         moveq   #'Y',d7                * DIAGNOSE TEMP: _stklimit gesetzt
         bsr     Q9K_DiagWriteD7
-        bsr     Q9K_CInit
+        Q9K_FARCALL     Q9K_CInit
 
 *******************************************************************************
 * Q9K_KernelPanic/Q9K_SysFPanic -- echte F$Panic-Implementierung
@@ -3319,7 +3332,7 @@ Q9K_TimerIRQHandler:
         move.w  Q9K_InTrapPath,Q9K_PROCDESC_RESUMETRAP_OFF(a0)
 
         lea     Q9K_CRuntimeData(pc),a6           * a6 fuer den C-Aufruf (Q9K_SchedReschedule) auf den Kernel-Laufzeitpuffer setzen
-        bsr     Q9K_SchedReschedule                 * -> d0 = 0 (kein Wechsel) / neuer Deskriptorzeiger
+        Q9K_FARCALL     Q9K_SchedReschedule                 * -> d0 = 0 (kein Wechsel) / neuer Deskriptorzeiger
 
         movea.l Q9_D_Proc,a0                          * fortgesetzter Prozess (neu oder derselbe)
         tst.l   d0
@@ -4204,7 +4217,7 @@ Q9K_SysFSend:
         move.l  d0,Q9K_SendScratch_Pid
         andi.l  #$0000ffff,d1                  * dito d1.w
         move.l  d1,Q9K_SendScratch_Signal
-        bsr     Q9K_SysSendImpl
+        Q9K_FARCALL     Q9K_SysSendImpl
         movem.l (sp)+,d0-d7/a0-a6              * Aufrufer sieht seine Register unveraendert
 
         tst.w   Q9K_SendScratch_Success+2
@@ -4596,7 +4609,7 @@ Q9K_SysFUnLink:
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  a2,d0                    * d0 = 1. C-Parameter (Modulkopfadresse)
-        bsr     Q9K_ModDirUnlinkByHeader   * -> d0 = 0 (Erfolg) / 1 (nicht gefunden)
+        Q9K_FARCALL     Q9K_ModDirUnlinkByHeader   * -> d0 = 0 (Erfolg) / 1 (nicht gefunden)
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         tst.l   d0
         beq     Q9K_SysFUnLink_Ok
@@ -4702,7 +4715,7 @@ Q9K_SysFForkOnce:
         move.l  d1,-(sp)              * echten Aufrufer-d1 sichern (s. Kopfkommentar)
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
-        bsr     Q9K_SysForkImpl
+        Q9K_FARCALL     Q9K_SysForkImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         move.l  (sp)+,d1              * echten Aufrufer-d1 zurueckholen
 
@@ -4821,7 +4834,7 @@ Q9K_TraceHandler:
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
         move.l  sp,d0
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_ProcDebugTrace
+        Q9K_FARCALL     Q9K_ProcDebugTrace
         tst.l   d0
         beq     Q9K_TraceResume
         movea.l d0,a0
@@ -4853,7 +4866,7 @@ Q9K_SysFWait:
 * Assembler, braucht kein korrektes A6.
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
-        bsr     Q9K_SysWaitImpl
+        Q9K_FARCALL     Q9K_SysWaitImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
 
 * FIX (2026-10-06, Fortsetzung 112): Ergebnis im Speicher vergleichen, NICHT
@@ -4913,9 +4926,9 @@ Q9K_SysFWait:
 * (Marker 'S', gemessen: a6=$6D5B0, Ruecksprung in Q9K_WaitQInsert). Der
 * Registersatz des Aufrufers liegt bereits gesichert auf seinem Stack.
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_WaitQInsert                      * in die eigene Wait-Queue einhaengen (q9kernel_sched.c)
+        Q9K_FARCALL     Q9K_WaitQInsert                      * in die eigene Wait-Queue einhaengen (q9kernel_sched.c)
 
-        bsr     Q9K_SchedFirstPick                        * -> d0 = neuer Deskriptor oder 0 (kein aktueller zum Wiedereinreihen)
+        Q9K_FARCALL     Q9K_SchedFirstPick                        * -> d0 = neuer Deskriptor oder 0 (kein aktueller zum Wiedereinreihen)
 
         tst.l   d0
         bne     Q9K_SysFWait_SwitchTo
@@ -4978,7 +4991,7 @@ Q9K_SysFExit:
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.w  d1,Q9K_ExitScratch_Status
-        bsr     Q9K_SysExitImpl
+        Q9K_FARCALL     Q9K_SysExitImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         move.l  Q9K_ExitScratch_Next,d0
 
@@ -5093,7 +5106,7 @@ Q9K_SysFSleep_Block:
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
 
         lea     Q9K_CRuntimeData(pc),a6              * fuer den folgenden C-Aufruf, gleiches Muster wie oben
-        bsr     Q9K_SysSleepImpl                        * -> Q9K_SleepScratch_Next = naechster Deskriptor oder 0
+        Q9K_FARCALL     Q9K_SysSleepImpl                        * -> Q9K_SleepScratch_Next = naechster Deskriptor oder 0
 
         move.l  Q9K_SleepScratch_Next,d0
         tst.l   d0
@@ -5129,7 +5142,7 @@ Q9K_SysFPrsNam_InputReady:
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
         move.l  a0,Q9K_PrsNamScratch_Path
-        bsr     Q9K_SysPrsNamImpl
+        Q9K_FARCALL     Q9K_SysPrsNamImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         tst.w   Q9K_PrsNamScratch_Ok+2
@@ -5384,7 +5397,7 @@ Q9K_SysFIRQ:
         move.l  a0,Q9K_IRQScratch_Isr
         move.l  a2,Q9K_IRQScratch_Static
         move.l  a3,Q9K_IRQScratch_Port
-        bsr     Q9K_SysIRQImpl
+        Q9K_FARCALL     Q9K_SysIRQImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         tst.w   Q9K_IRQScratch_Success+2
@@ -5407,7 +5420,7 @@ Q9K_SysFFIRQ:
         move.l  d1,Q9K_FIRQScratch_Reserved
         move.l  a0,Q9K_FIRQScratch_Isr
         move.l  a2,Q9K_FIRQScratch_Static
-        bsr     Q9K_SysFFIRQImpl
+        Q9K_FARCALL     Q9K_SysFFIRQImpl
         movea.l (sp)+,a6
         tst.w   Q9K_FIRQScratch_Success+2
         beq     Q9K_SysFFIRQ_Fail
@@ -5477,7 +5490,7 @@ Q9K_SysFAllPD_FrameDone:
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
         move.l  a0,Q9K_AllPDScratch_DbtIn
-        bsr     Q9K_SysAllPDImpl
+        Q9K_FARCALL     Q9K_SysAllPDImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         tst.w   Q9K_AllPDScratch_Success+2
@@ -5556,7 +5569,7 @@ Q9K_SysFSRqMem_FrameDone:
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf, sonst Q9K_CRuntimeData)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  d0,Q9K_SRqMemScratch_SizeIn
-        bsr     Q9K_SysSRqMemImpl
+        Q9K_FARCALL     Q9K_SysSRqMemImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen -- WICHTIG fuer externe Aufrufer wie IOMan
         movem.l (sp)+,d1/a0-a1                 * unveraenderte D1/A0/A1-Werte wiederherstellen
         movem.l (sp)+,d2-d7/a3-a5
@@ -5621,7 +5634,7 @@ Q9K_SysFSRqCMem_FrameDone:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_SRqMemScratch_SizeIn
-        bsr     Q9K_SysSRqMemImpl
+        Q9K_FARCALL     Q9K_SysSRqMemImpl
         movea.l (sp)+,a6
         movem.l (sp)+,d1/a0-a1
         movem.l (sp)+,d2-d7/a3-a5
@@ -5685,7 +5698,7 @@ Q9K_SysFVModul:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_VModulScratch_Hdr
         move.l  d1,Q9K_VModulScratch_Size
-        bsr     Q9K_SysVModulImpl
+        Q9K_FARCALL     Q9K_SysVModulImpl
         movea.l (sp)+,a6
 
         tst.l   Q9K_VModulScratch_Success
@@ -5934,7 +5947,7 @@ Q9K_SysFSRtMem:
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  a2,Q9K_SRtMemScratch_AddrIn
         move.l  d0,Q9K_SRtMemScratch_SizeIn
-        bsr     Q9K_SysSRtMemImpl
+        Q9K_FARCALL     Q9K_SysSRtMemImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         movem.l (sp)+,d1-d7/a0-a1/a3-a5
 
@@ -6898,7 +6911,7 @@ Q9K_SysFIRead_NativeFile:
         move.l  d3,Q9K_NATIVE_READ_SCRATCH_COUNT
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysNativeReadImpl
+        Q9K_FARCALL     Q9K_SysNativeReadImpl
         movea.l (sp)+,a6
         tst.l   Q9K_NATIVE_READ_SCRATCH_OK
         beq     Q9K_SysFIRead_NativeFile_Fail
@@ -7435,7 +7448,7 @@ Q9K_SysFIOpen:
         clr.l   Q9K_IOpenScratch_Mode           * oberes 3 Byte definiert nullen (nur d0.b ist echte Eingabe)
         move.b  d0,Q9K_IOpenScratch_Mode+3    * unteres Byte (d0.b)
         move.l  a0,Q9K_IOpenScratch_NamePtr
-        bsr     Q9K_SysIOpenImpl
+        Q9K_FARCALL     Q9K_SysIOpenImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         move.l  Q9K_IOpenScratch_PathNum,d0
@@ -7482,7 +7495,7 @@ Q9K_SysFIOpen_FailHaveError:
 Q9K_SysFID:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysIDImpl
+        Q9K_FARCALL     Q9K_SysIDImpl
         movea.l (sp)+,a6
         tst.w   Q9K_IDScratch_Success
         beq     Q9K_SysFID_Fail
@@ -7510,7 +7523,7 @@ Q9K_SysFSPrior:
         lea     Q9K_CRuntimeData(pc),a6
         move.w  d0,Q9K_SPriorScratch_PID
         move.w  d1,Q9K_SPriorScratch_Priority
-        bsr     Q9K_SysSPriorImpl
+        Q9K_FARCALL     Q9K_SysSPriorImpl
         movea.l (sp)+,a6
         tst.w   Q9K_SPriorScratch_Success
         beq     Q9K_SysFSPrior_Fail
@@ -7537,7 +7550,7 @@ Q9K_SysFCmpNam:
         move.l  a1,Q9K_CmpNamScratch_Target
         clr.l   Q9K_CmpNamScratch_PatLen        * oberes Wort nullen, C liest 32 Bit
         move.w  d1,Q9K_CmpNamScratch_PatLen+2
-        bsr     Q9K_SysCmpNamImpl
+        Q9K_FARCALL     Q9K_SysCmpNamImpl
         movea.l (sp)+,a6
         tst.w   Q9K_CmpNamScratch_Success+2
         beq     Q9K_SysFCmpNam_Fail
@@ -7559,7 +7572,7 @@ Q9K_SysFSUser:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d1,Q9K_SUserScratch_GroupUser
-        bsr     Q9K_SysSUserImpl
+        Q9K_FARCALL     Q9K_SysSUserImpl
         movea.l (sp)+,a6
         tst.w   Q9K_SUserScratch_Success+2
         beq     Q9K_SysFSUser_Fail
@@ -7585,7 +7598,7 @@ Q9K_SysFCpyMem:
         move.l  d1,Q9K_CpyMemScratch_Count
         move.l  a0,Q9K_CpyMemScratch_Src
         move.l  a1,Q9K_CpyMemScratch_Dst
-        bsr     Q9K_SysCpyMemImpl
+        Q9K_FARCALL     Q9K_SysCpyMemImpl
         movea.l (sp)+,a6
         tst.w   Q9K_CpyMemScratch_Success+2
         beq     Q9K_SysFCpyMem_Fail
@@ -7608,7 +7621,7 @@ Q9K_SysFFModul:
         clr.l   Q9K_FModulScratch_TyLang
         move.w  d0,Q9K_FModulScratch_TyLang+2
         move.l  a0,Q9K_FModulScratch_Name
-        bsr     Q9K_SysFModulImpl
+        Q9K_FARCALL     Q9K_SysFModulImpl
         movea.l (sp)+,a6
         tst.w   Q9K_FModulScratch_Ok+2
         beq     Q9K_SysFFModul_Fail
@@ -7694,7 +7707,7 @@ Q9K_SysFUnLoad:
         clr.l   Q9K_UnloadScratch_TyLang        * oberes Wort nullen, C liest 32 Bit
         move.w  d0,Q9K_UnloadScratch_TyLang+2
         move.l  a0,Q9K_UnloadScratch_Name
-        bsr     Q9K_SysUnloadImpl
+        Q9K_FARCALL     Q9K_SysUnloadImpl
         movea.l (sp)+,a6
         tst.w   Q9K_UnloadScratch_Success+2
         beq     Q9K_SysFUnLoad_Fail
@@ -7733,7 +7746,7 @@ Q9K_SysFCRC:
         move.l  d0,Q9K_CrcScratch_Count
         move.l  d1,Q9K_CrcScratch_Accum
         move.l  a0,Q9K_CrcScratch_Addr
-        bsr     Q9K_SysCrcImpl
+        Q9K_FARCALL     Q9K_SysCrcImpl
         movea.l (sp)+,a6
         move.l  Q9K_CrcScratch_Accum,d1
         andi    #$fe,ccr
@@ -7748,7 +7761,7 @@ Q9K_SysFSetCRC:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_SetCRCScratch_Addr
-        bsr     Q9K_SysSetCRCImpl
+        Q9K_FARCALL     Q9K_SysSetCRCImpl
         movea.l (sp)+,a6
         tst.w   Q9K_SetCRCScratch_Success+2
         beq     Q9K_SysFSetCRC_Fail
@@ -7770,7 +7783,7 @@ Q9K_SysFGModDr:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_GModDrScratch_Buf
         move.l  d1,Q9K_GModDrScratch_Count
-        bsr     Q9K_SysGModDrImpl
+        Q9K_FARCALL     Q9K_SysGModDrImpl
         movea.l (sp)+,a6
         move.l  Q9K_GModDrScratch_Count,d1
         andi    #$fe,ccr
@@ -7789,7 +7802,7 @@ Q9K_SysFGPrDsc:
         clr.l   Q9K_GPrDscScratch_Count
         move.w  d1,Q9K_GPrDscScratch_Count+2
         move.l  a0,Q9K_GPrDscScratch_Buf
-        bsr     Q9K_SysGPrDscImpl
+        Q9K_FARCALL     Q9K_SysGPrDscImpl
         movea.l (sp)+,a6
         tst.w   Q9K_GPrDscScratch_Success+2
         beq     Q9K_SysFGPrDsc_Fail
@@ -7864,7 +7877,7 @@ Q9K_SysFAProc:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_AProcScratch_Desc
-        bsr     Q9K_SysAProcImpl
+        Q9K_FARCALL     Q9K_SysAProcImpl
         movea.l (sp)+,a6
         tst.w   Q9K_AProcScratch_Success+2
         beq     Q9K_SysFAProc_Fail
@@ -7877,7 +7890,7 @@ Q9K_SysFAProc:
         move.l  Q9K_AProcScratch_Desc,d0
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SchedCommitPreempt
+        Q9K_FARCALL     Q9K_SchedCommitPreempt
         movea.l (sp)+,a6
         tst.l   d0
         beq     Q9K_SysFAProc_FailSaved
@@ -7909,7 +7922,7 @@ Q9K_SysFGPrDBT:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_GPrDBTScratch_Buf
         move.l  d1,Q9K_GPrDBTScratch_Count
-        bsr     Q9K_SysGPrDBTImpl
+        Q9K_FARCALL     Q9K_SysGPrDBTImpl
         movea.l (sp)+,a6
         move.l  Q9K_GPrDBTScratch_Count,d1
         andi    #$fe,ccr
@@ -7923,7 +7936,7 @@ Q9K_SysFGPrDBT:
 Q9K_SysFAllPrc:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysAllPrcImpl
+        Q9K_FARCALL     Q9K_SysAllPrcImpl
         movea.l (sp)+,a6
         tst.w   Q9K_AllPrcScratch_Success+2
         beq     Q9K_SysFAllPrc_Fail
@@ -7945,7 +7958,7 @@ Q9K_SysFDelPrc:
         lea     Q9K_CRuntimeData(pc),a6
         clr.l   Q9K_DelPrcScratch_PID           * oberes Wort nullen, C liest 32 Bit
         move.w  d0,Q9K_DelPrcScratch_PID+2
-        bsr     Q9K_SysDelPrcImpl
+        Q9K_FARCALL     Q9K_SysDelPrcImpl
         movea.l (sp)+,a6
         tst.w   Q9K_DelPrcScratch_Success+2
         beq     Q9K_SysFDelPrc_Fail
@@ -7968,7 +7981,7 @@ Q9K_SysFFindPD:
         clr.l   Q9K_FindPDScratch_Num           * oberes Wort nullen, C liest 32 Bit
         move.w  d0,Q9K_FindPDScratch_Num+2
         move.l  a0,Q9K_FindPDScratch_Dbt
-        bsr     Q9K_SysFindPDImpl
+        Q9K_FARCALL     Q9K_SysFindPDImpl
         movea.l (sp)+,a6
         tst.w   Q9K_FindPDScratch_Success+2
         beq     Q9K_SysFFindPD_Fail
@@ -7992,7 +8005,7 @@ Q9K_SysFSigMask:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d1,Q9K_SigMaskScratch_Level
-        bsr     Q9K_SysSigMaskImpl
+        Q9K_FARCALL     Q9K_SysSigMaskImpl
         movea.l (sp)+,a6
         tst.w   Q9K_SigMaskScratch_Success+2
         beq     Q9K_SysFSigMask_Fail
@@ -8021,7 +8034,7 @@ Q9K_SysFIcpt:
         move.l  a0,Q9K_IcptScratch_Vec
         move.l  a6,Q9K_IcptScratch_Dat          * noch VOR dem Umschalten ablegen
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysIcptImpl
+        Q9K_FARCALL     Q9K_SysIcptImpl
         movea.l (sp)+,a6
         move.l  Q9K_IcptScratch_Pending,d0
         andi    #$fe,ccr
@@ -8040,7 +8053,7 @@ Q9K_SysFTrans:
         move.l  d0,Q9K_TransScratch_Size
         move.l  d1,Q9K_TransScratch_Mode
         move.l  a0,Q9K_TransScratch_Addr
-        bsr     Q9K_SysTransImpl
+        Q9K_FARCALL     Q9K_SysTransImpl
         movea.l (sp)+,a6
         tst.w   Q9K_TransScratch_Mode+2
         beq     Q9K_SysFTrans_Fail
@@ -8073,7 +8086,7 @@ Q9K_SysFDatMod:
         clr.l   Q9K_DatModScratch_TyLang
         move.w  d3,Q9K_DatModScratch_TyLang+2
         move.l  a0,Q9K_DatModScratch_Name
-        bsr     Q9K_SysDatModImpl
+        Q9K_FARCALL     Q9K_SysDatModImpl
         movea.l (sp)+,a6
         tst.w   Q9K_DatModScratch_Success+2
         beq     Q9K_SysFDatMod_Fail
@@ -8278,7 +8291,7 @@ Q9K_SysFGProcP:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.w  d0,Q9K_GProcPScratch_PID
-        bsr     Q9K_SysGProcPImpl
+        Q9K_FARCALL     Q9K_SysGProcPImpl
         movea.l (sp)+,a6
         tst.w   Q9K_GProcPScratch_Success
         beq     Q9K_SysFGProcP_Fail

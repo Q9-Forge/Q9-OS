@@ -46,7 +46,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
-| A | Kernel-Fundament | 2 / 9 | 🔄 |
+| A | Kernel-Fundament | 4 / 9 | 🔄 |
 | B | Technische Schulden | 1 / 4 | 🔄 |
 | C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
@@ -54,7 +54,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **4 / 48** | |
+| **Teil 1 Kernel** | | **6 / 48** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -149,8 +149,8 @@ an die `bsr`-Reichweite (±32 KB bei 62 KB Kernel).
 | Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
 |---|---|---|---|---|---|
 | A1 | ✅ | **Ein-Kommando-Regressionslauf**: frischer Build → Image-Klon → Login → `echo`/`dir`/`pd`/`date` mit Ausgabevergleich | Ein Skript meldet grün/rot für beide Varianten; vorhandene Einzelskripte (`startup_shell_test.sh`, `mgrpath_probe_test.sh`) eingebunden | — | `0c5addd`: `tools/kernel_regress.sh` 5 Stufen grün (Hosttests 30/30, Login-Test development 53 s + atomic 52 s, startup_shell_test, mgrpath_probe_test), 15.10.2026; fand zwei rote Suiten (moddir, dbg_live ohne `-DQ9K_DEBUG`) |
-| A2 | ⬜ | **FARCALL-Bisektion**: Stellen 1–21 mit `fcbisect.sh` weiter halbieren | Schuldige Stelle(n) und Ursache benannt. Zuerst prüfen, ob dort `a0` beim Aufruf noch gebraucht wird — `Q9K_FARCALL` überschreibt `a0` | A1 | |
-| A3 | ⬜ | **FARCALL ausrollen**: alle 42 `bsr` auf C-Funktionen in `q9kernel_entry.a` umstellen; Reichweitenprüfung im Build | Login grün in beiden Varianten; `Q9K_SRCDEBUG` mit mehreren Dateien baut und bootet | A2 | |
+| A2 | ✅ | **FARCALL-Bisektion**: Stellen 1–21 mit `fcbisect.sh` weiter halbieren | Schuldige Stelle(n) und Ursache benannt. Zuerst prüfen, ob dort `a0` beim Aufruf noch gebraucht wird — `Q9K_FARCALL` überschreibt `a0` | A1 | `fcddmin.py`: einzige schuldige Stelle Nr. 7 = `Q9K_SysWaitImpl` in `Q9K_SysFWait` (Boot bricht mit Vektor 4, PC im Datenbereich); dieselbe Stelle als `bsr`+4 NOPs grün, also kein Layout-Effekt; **Ursache: das alte FARCALL zerstört `a0`, das in den Trap-Pfaden noch dem Aufrufer gehört** (F$Wait sichert es als Wiederaufnahme-Rahmen). Registerneutrale Fassung an allen 43 Stellen grün, 15.10.2026 |
+| A3 | ✅ | **FARCALL ausrollen**: alle 42 `bsr` auf C-Funktionen in `q9kernel_entry.a` umstellen; Reichweitenprüfung im Build | Login grün in beiden Varianten; `Q9K_SRCDEBUG` mit mehreren Dateien baut und bootet | A2 | alle 43 Stellen auf registerneutrales `Q9K_FARCALL`; `kernel_regress.sh` 5/5 grün (development 65.298 Byte, atomic 61.084 Byte); `Q9K_SRCDEBUG="q9kernel_date.c q9kernel_sched.c q9kernel_clock.c"` baut (67.368 Byte) und bootet; `q9_farcall_check.py` im Build, Negativprobe schlägt an, 15.10.2026 |
 | A4 | ✅ | **`build.sh` ehrlich machen**: `mwos-build`-Fehler werden heute ignoriert, alte Objekte täuschen Erfolg vor | Ein absichtlich eingebauter Fehler bricht den Build ab | — | `4eeebe1`: `tools/build_honesty_test.sh` 11/11 grün (C-, Assembler-, Linkfehler); gegen altes `build.sh` 5 von 10 rot (C-Fehler lieferte Exit 0, alter `q9kernel` blieb liegen) |
 | A5 | ⬜ | **Register-Erhaltungsprüfung** im Developer-Kernel (Debug-Paket 3, `DEBUG_KONZEPT_de.md`) | Login plus Befehlsfolge ohne Meldung, oder eine Fundliste als neue Zeilen in Phase A | A1 | |
 | A6 | ⬜ | **Stresstest verschachtelter externer Traps**: mehrere Prozesse mit gleichzeitigem I/O über IOMan, Filemanager und Treiber bei laufendem Timer | N Durchläufe ohne Exception; Szenario eingecheckt und schaltbar wie `Q9K_TestNestedTrapStress` | A1 | |

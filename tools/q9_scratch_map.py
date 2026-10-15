@@ -238,6 +238,8 @@ def gaps(cells):
 
 
 def render(cells, shared):
+    # Zeilennummern stehen bewusst NICHT in der Datei: jede Verschiebung im Quelltext wuerde die Tabelle
+    # sonst "veraltet" machen und den Bau stoppen (nur Namen, Adressen, Groessen und Bemerkungen zaehlen).
     lines = ["# Kernel-Speicherbelegung (absolute Zellen)", "",
              "Diese Datei wird von `tools/q9_scratch_map.py --write` erzeugt und im Build",
              "gegen die Quellen geprueft (`--check`). Nicht von Hand aendern.", "",
@@ -250,7 +252,7 @@ def render(cells, shared):
         shared_mark = " (gemeinsam, s. shared)" if e["addr"] in shared else ""
         al = ("; C: " + ", ".join(x.split(" (")[0] for x in e.get("aliases", [])[:3])) if e.get("aliases") else ""
         lines.append("| `$%06X` | %d | `%s`%s | %s%s | %s |" % (
-            e["addr"], e["size"], e["name"], shared_mark, ", ".join(e["srcs"][:1]), al, e["note"].replace("|", "/")[:70]))
+            e["addr"], e["size"], e["name"], shared_mark, re.sub(r":\d+", "", ", ".join(e["srcs"][:1])), al, e["note"].replace("|", "/")[:70]))
     lines += ["", "## Freie Luecken (>= 16 Byte)", "", "| Bereich | Byte | Fenster |", "|---|---:|---|"]
     for size, a, b, w in sorted(gaps(cells), reverse=True):
         if size >= 16:
