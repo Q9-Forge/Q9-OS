@@ -7,7 +7,8 @@
 #   1. Hosttests     tools/hosttests.sh               (alle test_q9kernel_*.c, ~5 s)
 #   2. Login-Test    tools/login_shell_test.sh <V>    (Boot -> sysgo -> startup -> tsmon -> login
 #                                                      -> mshell -> echo/pd/dir/date, ~2 min je Variante)
-#   3. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
+#   3. Langlauf      tools/leak_test.sh 64 8          (192 Forks, Speicherbilanz; ~2 min)
+#   4. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
 #                    (nur Standardvariante, laufen mit dem Kernel, den build.sh ohne Schalter baut)
 # --quick: nur Stufe 1 (ohne Emulator, ohne Wine-Bau).
 #
@@ -50,6 +51,8 @@ if [ "$QUICK" = 0 ]; then
     for v in $vars; do
         stufe "Login-Test [$v]" bash "$HERE/login_shell_test.sh" "$v"
     done
+    # Langlauf (A8/A12): 192 Forks mit Speicherbilanz; stuerzte vor der RaceRing-Korrektur in 60-80 % der Laeufe ab.
+    stufe "Langlauf 192 Forks, Speicherbilanz" bash "$HERE/leak_test.sh" 64 8
     for t in startup_shell_test.sh mgrpath_probe_test.sh; do
         if [ -f "$HERE/$t" ]; then stufe "$t" bash "$HERE/$t"
         else echo "(uebersprungen, fehlt: $t)"; fi

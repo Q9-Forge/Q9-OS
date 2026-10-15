@@ -464,12 +464,13 @@ hinzufuegt, erzeugt diese Tabelle neu und prueft die Luecken unten.
 | `$1541B0` | 4 | `Q9K_FLinkFrame_PostPC` | q9kernel_entry.a | PC-Feld des Frames nach der C-Suche |
 | `$1541B4` | 4 | `Q9K_FLinkFrame_RTEPC` | q9kernel_entry.a | PC-Feld unmittelbar vor RTE |
 | `$1541B8` | 4 | `Q9K_FLinkFrame_RTESR` | q9kernel_entry.a | SR-Feld unmittelbar vor RTE |
+| `$1541C0` | 4 | `Q9K_RACERING_HI` | q9kernel_cinit.c | Ring bis $1540BF, Indexzelle $1540C0, Trace-Zellen bis $1541BB |
 
 ## Freie Luecken (>= 16 Byte)
 
 | Bereich | Byte | Fenster |
 |---|---:|---|
-| `$1541BC`-`$15FFFF` | 48708 | Diagnose |
+| `$1541C4`-`$15FFFF` | 48700 | Diagnose |
 | `$150000`-`$1540BF` | 16576 | Diagnose |
 | `$002488`-`$003FFF` | 7032 | Scratch |
 | `$001004`-`$0011FF` | 508 | Scratch |
