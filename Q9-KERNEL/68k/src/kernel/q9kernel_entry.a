@@ -551,6 +551,11 @@ Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
 Q9K_IOpenScratch_PathNum  equ $136C      * Q9_u32, d0.w AUS (0 = Fehlschlag)
 Q9K_IOpenScratch_Error    equ $1374      * Q9_u32, d1.w AUS bei Fehler
 Q9K_DispatchCallCode      equ $1370      * Q9_u16, Callcode des laufenden Traps: schreibt Q9K_TrapDispatch bei JEDEM Trap (move.w d7,($1370).w), gelesen u. a. von F$-Wrappern und q9kernel_dbg.c (unteres Byte bei +1). B3: vorher teilte sich die Zelle der native I$Open mit Q9K_IOpenScratch_Error (Langwort) und loeschte so den Callcode.
+* A5 (2026-10-15): Register-Erhaltungspruefung, nur Q9K_DEBUG (s. Q9K_RegChkReturn).
+Q9K_RegChkSnap            equ $2440      * 15 x Q9_u32, d0-d7/a0-a6 des Aufrufers beim Handlereintritt
+Q9K_RegChkSP              equ $247C      * Q9_u32, sp beim Eintritt (= Adresse des Hardware-Frames; Schluessel gegen Verschachtelung)
+Q9K_RegChkCode            equ $2480      * Q9_u16, Callcode des Schnappschusses
+Q9K_RegChkCount           equ $2484      * Q9_u32, Anzahl gemeldeter Abweichungen seit dem Boot
 * (entfernt, B3: Q9K_FLinkCall_TyLang/_Name auf $1A00/$1A04 wurden nirgends benutzt und
 *  lagen auf Eintrag 0 der Alarmtabelle.)
 Q9K_FLinkSearch_TyLang    equ $154170
@@ -1064,6 +1069,113 @@ Q9K_DiagHexWait:
         dbra    d4,Q9K_DiagHexLoop
         movem.l (sp)+,d4/d6/d7/a4
         rts
+
+        ifne    Q9K_DEBUG
+* Q9K_RegChkReturn (Arbeitsplan A5) -- laeuft unmittelbar vor dem RTE eines Syscalls.
+* Die Register d2-d7 und a2-a6 muss der Aufrufer unveraendert zurueckbekommen, ausser
+* dem, was die Beschreibung des Syscalls als Ausgabe nennt (Q9K_RegChkExempt). d0/d1 sind
+* Ergebnisregister, a0/a1 C-Arbeitsregister und werden nicht geprueft. Eine Abweichung
+* erscheint als Zeile  "!R c=<Callcode> <Reg> <vorher> <nachher>"  auf der Konsole (hoechstens 32).
+* Anlass: d7 (Fortsetzung 111) und a0 (FARCALL, A2) wurden von Syscalls zerstoert und blieben lange unentdeckt.
+* Erhaelt alle Register; sperrt Interrupts, weil Schnappschuss und Zaehler globale Zellen sind.
+Q9K_RegChkReturn:
+        movem.l d0-d7/a0-a6,-(sp)           * 60 Byte: so sieht der Aufrufer die Register gleich
+        move.w  sr,-(sp)
+        ori.w   #$0700,sr
+        moveq   #0,d0
+        move.w  Q9K_RegChkCode,d0
+        moveq   #0,d3                       * d3 = Maske der als Ausgabe erlaubten Register (Bit n = Register n)
+        lea     Q9K_RegChkExempt(pc),a0
+Q9K_RegChkFind:
+        move.w  (a0)+,d1
+        cmpi.w  #$ffff,d1
+        beq.s   Q9K_RegChkCmp
+        move.w  (a0)+,d2
+        cmp.w   d0,d1
+        bne.s   Q9K_RegChkFind
+        or.w    d2,d3
+        bra.s   Q9K_RegChkFind
+Q9K_RegChkCmp:
+        moveq   #2,d4                       * Registernummer 0..14 = d0..d7,a0..a6
+Q9K_RegChkLoop:
+        cmpi.w  #8,d4
+        blt.s   Q9K_RegChkDo                * d2-d7
+        cmpi.w  #10,d4
+        blt   Q9K_RegChkNext              * a0/a1 auslassen
+Q9K_RegChkDo:
+        btst    d4,d3
+        bne   Q9K_RegChkNext
+        move.w  d4,d5
+        lsl.w   #2,d5
+        lea     2(sp,d5.w),a1               * sp -> [SR.w][Register ...]
+        move.l  (a1),d6                     * nachher
+        lea     Q9K_RegChkSnap,a2
+        move.l  0(a2,d5.w),d7               * vorher
+        cmp.l   d6,d7
+        beq   Q9K_RegChkNext
+        addq.l  #1,Q9K_RegChkCount
+        cmpi.l  #32,Q9K_RegChkCount
+        bhi.s   Q9K_RegChkNext
+        movem.l d4/d6/d7,-(sp)              * Index, nachher, vorher fuer die Ausgabe
+        moveq   #'!',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'R',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'c',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'=',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  d0,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  (sp),d4                     * Registerindex
+        cmpi.w  #8,d4
+        bge.s   Q9K_RegChkAReg
+        moveq   #'d',d7
+        add.w   #'0',d4
+        bra.s   Q9K_RegChkName
+Q9K_RegChkAReg:
+        moveq   #'a',d7
+        add.w   #'0'-8,d4
+Q9K_RegChkName:
+        bsr     Q9K_DiagWriteD7
+        move.b  d4,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  8(sp),d5                    * vorher
+        bsr     Q9K_DiagWriteHex32
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  4(sp),d5                    * nachher
+        bsr     Q9K_DiagWriteHex32
+        moveq   #13,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #10,d7
+        bsr     Q9K_DiagWriteD7
+        movem.l (sp)+,d4/d6/d7
+Q9K_RegChkNext:
+        addq.w  #1,d4
+        cmpi.w  #15,d4
+        blt     Q9K_RegChkLoop
+        move.w  (sp)+,sr
+        movem.l (sp)+,d0-d7/a0-a6
+        rts
+
+* Registerausgaben der Syscalls: dc.w Callcode, dc.w Maske (Bit n = Register n: d0-d7 = 0-7, a0-a6 = 8-14).
+* Jeder Eintrag steht hier mit Beleg (Beschreibung des Syscalls bzw. gemessener Fund); Ende = $FFFF.
+Q9K_RegChkExempt:
+        dc.w    $00,$0400               * F$Link:    Ausgabe (a2) = Modulkopf  (syscall-reference.md, F$Link)
+        dc.w    $21,$0400               * F$TLink:   Ausgabe (a2) = Modulkopf  (ebd.)
+        dc.w    $27,$0004               * F$SetSys:  Ausgabe d2 = Wert         (q9kernel_setsys.c, Kopfkommentar)
+        dc.w    $28,$0400               * F$SRqMem:  Ausgabe (a2) = Block      (syscall-reference.md)
+        dc.w    $5c,$0400               * F$SRqCMem: Ausgabe (a2) = Block      (Kommentar bei Q9K_SysFSRqCMem)
+        dc.w    $8d,$0004               * I$GetStt:  SS.Size (Code 2) liefert das Ergebnis in d2 (syscall-reference.md, I$GetStt)
+        dc.w    $ffff
+        endc
 
 * Q9K_MemTraceConsoleBackend -- first memory-event backend.  It emits a
 * compact, machine-readable line directly through the DUART and does not
@@ -3523,6 +3635,13 @@ Q9K_DbgLogEntryImpl_Skip:
 * gesicherte Registerkopie verwerfen -- sp zeigt jetzt wieder GENAU auf
 * den echten Hardware-Frame.
         lea     36(sp),sp
+        ifne    Q9K_DEBUG
+* A5: voller Registersatz des Aufrufers (alle Register sind jetzt wieder seine eigenen).
+* movem aendert das CCR nicht, der Handler sieht es unveraendert.
+        movem.l d0-d7/a0-a6,Q9K_RegChkSnap
+        move.l  sp,Q9K_RegChkSP
+        move.w  ($1370).w,Q9K_RegChkCode
+        endc
 * echter Syscall-Aufruf -- Handler bekommt/aendert a0/a1/a2/d0/d1 frei
 * (reale F$-Konvention), MUSS d2-d7/a3-a5 unangetastet lassen (gleiche
 * Disziplin wie schon bei den Diagnose-Routinen gefunden+gefixt).
@@ -4057,6 +4176,12 @@ Q9K_DbgLogReturnImpl_Skip:
         move.w  (sp)+,sr
         movea.l (sp)+,a6
         movem.l (sp)+,d0-d2/a0-a1
+        endc
+        ifne    Q9K_DEBUG
+        cmpa.l  Q9K_RegChkSP,sp             * A5: nur wenn der Schnappschuss zu DIESEM Aufruf gehoert
+        bne.s   Q9K_RegChkSkip              *     (verschachtelte Traps ueberschreiben ihn -- dann keine Aussage)
+        bsr     Q9K_RegChkReturn
+Q9K_RegChkSkip:
         endc
         move.l  2(sp),Q9K_FLinkFrame_RTEPC
         move.l  (sp),Q9K_FLinkFrame_RTESR
@@ -5787,6 +5912,10 @@ Q9K_SysFTLink:
         tst.l   Q9K_TLinkScratch_Success
         beq     Q9K_SysFTLink_Fail
 
+* A5 (2026-10-15): die Register-Erhaltungspruefung meldete a4 = M$Init-Einsprung und ein veraendertes d2 im
+* Aufrufer nach F$TLink. M$Init laeuft mit den Aufruferregistern; d2-d7/a3-a5 gehoeren nach dem Aufruf wieder dem
+* Aufrufer (F$TLink hat laut Beschreibung nur (a0),(a1),(a2) als Ausgabe).
+        movem.l d2-d7/a3-a5,-(sp)
         movea.l Q9K_TLinkScratch_InitEntry,a4
         tst.l   Q9K_TLinkScratch_InitEntry
         beq     Q9K_SysFTLink_NoInit             * kein M$Init -- selten, aber laut Manual erlaubt
@@ -5808,10 +5937,12 @@ Q9K_SysFTLink_AfterInit:
         move.l  a3,Q9K_TLinkTrace_PostInitA3
         move.l  a6,Q9K_TLinkTrace_PostInitA6
         movea.l (sp)+,a6                            * restore caller data base
+        movem.l (sp)+,d2-d7/a3-a5                   * A5: Aufruferregister zurueck (movem aendert das CCR nicht)
         andi    #$fe,ccr                            * Carry loeschen -- Erfolg (a0/a1/a2 unveraendert von M$Init erwartet)
         rts
 
 Q9K_SysFTLink_NoInit:
+        movem.l (sp)+,d2-d7/a3-a5                   * A5: Aufruferregister zurueck (a4 trug InitEntry = 0)
         movea.l Q9K_TLinkScratch_PastName,a0
         movea.l Q9K_TLinkScratch_ExecEntry,a1
         movea.l Q9K_TLinkScratch_ModPtr,a2

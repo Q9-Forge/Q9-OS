@@ -46,7 +46,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
-| A | Kernel-Fundament | 4 / 9 | 🔄 |
+| A | Kernel-Fundament | 5 / 9 | 🔄 |
 | B | Technische Schulden | 1 / 4 | 🔄 |
 | C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
@@ -54,7 +54,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **6 / 48** | |
+| **Teil 1 Kernel** | | **7 / 48** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -152,7 +152,7 @@ an die `bsr`-Reichweite (±32 KB bei 62 KB Kernel).
 | A2 | ✅ | **FARCALL-Bisektion**: Stellen 1–21 mit `fcbisect.sh` weiter halbieren | Schuldige Stelle(n) und Ursache benannt. Zuerst prüfen, ob dort `a0` beim Aufruf noch gebraucht wird — `Q9K_FARCALL` überschreibt `a0` | A1 | `fcddmin.py`: einzige schuldige Stelle Nr. 7 = `Q9K_SysWaitImpl` in `Q9K_SysFWait` (Boot bricht mit Vektor 4, PC im Datenbereich); dieselbe Stelle als `bsr`+4 NOPs grün, also kein Layout-Effekt; **Ursache: das alte FARCALL zerstört `a0`, das in den Trap-Pfaden noch dem Aufrufer gehört** (F$Wait sichert es als Wiederaufnahme-Rahmen). Registerneutrale Fassung an allen 43 Stellen grün, 15.10.2026 |
 | A3 | ✅ | **FARCALL ausrollen**: alle 42 `bsr` auf C-Funktionen in `q9kernel_entry.a` umstellen; Reichweitenprüfung im Build | Login grün in beiden Varianten; `Q9K_SRCDEBUG` mit mehreren Dateien baut und bootet | A2 | alle 43 Stellen auf registerneutrales `Q9K_FARCALL`; `kernel_regress.sh` 5/5 grün (development 65.298 Byte, atomic 61.084 Byte); `Q9K_SRCDEBUG="q9kernel_date.c q9kernel_sched.c q9kernel_clock.c"` baut (67.368 Byte) und bootet; `q9_farcall_check.py` im Build, Negativprobe schlägt an, 15.10.2026 |
 | A4 | ✅ | **`build.sh` ehrlich machen**: `mwos-build`-Fehler werden heute ignoriert, alte Objekte täuschen Erfolg vor | Ein absichtlich eingebauter Fehler bricht den Build ab | — | `4eeebe1`: `tools/build_honesty_test.sh` 11/11 grün (C-, Assembler-, Linkfehler); gegen altes `build.sh` 5 von 10 rot (C-Fehler lieferte Exit 0, alter `q9kernel` blieb liegen) |
-| A5 | ⬜ | **Register-Erhaltungsprüfung** im Developer-Kernel (Debug-Paket 3, `DEBUG_KONZEPT_de.md`) | Login plus Befehlsfolge ohne Meldung, oder eine Fundliste als neue Zeilen in Phase A | A1 | |
+| A5 | ✅ | **Register-Erhaltungsprüfung** im Developer-Kernel (Debug-Paket 3, `DEBUG_KONZEPT_de.md`) | Login plus Befehlsfolge ohne Meldung, oder eine Fundliste als neue Zeilen in Phase A | A1 | Prüfung `Q9K_RegChkReturn` (nur Q9K_DEBUG): Schnappschuss d0–d7/a0–a6 beim Handlereintritt, Vergleich von d2–d7/a2–a6 vor dem `rte`, Ausgabe `!R c=<Code> <Reg> <vorher> <nachher>`. Erstlauf: 26 Meldungen in 5 Callcodes. Belegte Ausgaben (a2 bei F$Link/F$TLink/F$SRqMem/F$SRqCMem, d2 bei F$SetSys und I$GetStt/SS.Size) stehen mit Beleg in `Q9K_RegChkExempt`; **echter Fund: F$TLink hinterließ a4 = M$Init-Einsprung und ein verändertes d2 im Aufrufer** — behoben (d2–d7/a3–a5 um M$Init gesichert). Danach Login-Test beider Varianten ohne Meldung (`login_shell_test.sh` prüft `!R`), `kernel_regress.sh` 5/5, 15.10.2026. Grenze: verschachtelte Traps überschreiben den Schnappschuss, der Schlüssel `sp` unterdrückt dann die Aussage (keine Fehlalarme, aber Lücken bei I/O über IOMan) |
 | A6 | ⬜ | **Stresstest verschachtelter externer Traps**: mehrere Prozesse mit gleichzeitigem I/O über IOMan, Filemanager und Treiber bei laufendem Timer | N Durchläufe ohne Exception; Szenario eingecheckt und schaltbar wie `Q9K_TestNestedTrapStress` | A1 | |
 | A7 | ⬜ | **IRQ während Queue- und Kontextübergabe**: kritische Abschnitte inventarisieren, gezielt Interrupts injizieren | Jeder Abschnitt ist abgesichert oder seine Sicherheit schriftlich begründet | A6 | |
 | A8 | ⬜ | **Langlauf und Ressourcenbilanz**: ~1000 Zyklen `F$Fork`/`F$Exit`/`F$TLink` | Freispeicher, Modul-Linkzähler und Trap-Slots kehren auf den Ausgangswert zurück | A1 | |

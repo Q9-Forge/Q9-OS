@@ -73,8 +73,10 @@ wine_tool() {
     local tool="$1" log rc
     shift
     log=$(mktemp "${TMPDIR:-/tmp}/q9build_${tool}.XXXXXX")
-    arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\${tool}.exe" "$@" < /dev/null > "$log" 2>&1
-    rc=$?
+    rc=0
+    # "|| rc=$?": r68/l68 liefern bei Fehlern Exit 1; unter "set -e" wuerde das Skript sonst still enden,
+    # bevor die Ausgabe gezeigt wird (so gesehen bei A5: Abbruch ohne eine einzige Fehlermeldung).
+    arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\${tool}.exe" "$@" < /dev/null > "$log" 2>&1 || rc=$?
     cat "$log"
     if ! scan_log "$tool" "$tool $*" "$log"; then rc=1; fi
     rm -f "$log"

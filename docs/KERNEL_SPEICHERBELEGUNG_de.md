@@ -422,6 +422,10 @@ hinzufuegt, erzeugt diese Tabelle neu und prueft die Luecken unten.
 | `$002428` | 4 | `Q9K_FModulScratch_Entry` | q9kernel_entry.a; C: Q9K_FMODUL_SCRATCH_ENTRY | Q9_u32, a2 AUS |
 | `$00242C` | 4 | `Q9K_FModulScratch_Error` | q9kernel_entry.a; C: Q9K_FMODUL_SCRATCH_ERROR | Q9_u32, d1.w AUS bei Fehler |
 | `$002430` | 4 | `Q9K_FModulScratch_Ok` | q9kernel_entry.a; C: Q9K_FMODUL_SCRATCH_OK | Q9_u32, 0/1 |
+| `$002440` | 60 | `Q9K_RegChkSnap` | q9kernel_entry.a | 15 x Q9_u32, d0-d7/a0-a6 des Aufrufers beim Handlereintritt |
+| `$00247C` | 4 | `Q9K_RegChkSP` | q9kernel_entry.a | Q9_u32, sp beim Eintritt (= Adresse des Hardware-Frames; Schluessel ge |
+| `$002480` | 2 | `Q9K_RegChkCode` | q9kernel_entry.a | Q9_u16, Callcode des Schnappschusses |
+| `$002484` | 4 | `Q9K_RegChkCount` | q9kernel_entry.a | Q9_u32, Anzahl gemeldeter Abweichungen seit dem Boot |
 | `$1540C0` | 4 | `Q9K_RaceRingIdx` | q9kernel_entry.a | Base + Slots*EntSz (8192*8=$10000), Literal wegen r68 |
 | `$154100` | 4 | `Q9K_TLinkTrace_Proc` | q9kernel_entry.a |  |
 | `$154104` | 4 | `Q9K_TLinkTrace_EntryA3` | q9kernel_entry.a |  |
@@ -467,7 +471,7 @@ hinzufuegt, erzeugt diese Tabelle neu und prueft die Luecken unten.
 |---|---:|---|
 | `$1541BC`-`$15FFFF` | 48708 | Diagnose |
 | `$150000`-`$1540BF` | 16576 | Diagnose |
-| `$002434`-`$003FFF` | 7116 | Scratch |
+| `$002488`-`$003FFF` | 7032 | Scratch |
 | `$001004`-`$0011FF` | 508 | Scratch |
 | `$00211C`-`$0021FF` | 228 | Scratch |
 | `$1540C4`-`$1540FF` | 60 | Diagnose |

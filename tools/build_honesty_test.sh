@@ -69,7 +69,7 @@ for s in $SCEN; do
         A) restore; printf '\nthis is not valid C ;;; @@\n' >> "$SRC/q9kernel_clock.c"
            expect_bad "A (C-Fehler)" 'q9kernel_clock|mwos-build' ;;
         B) restore; printf '\n        bogusop d0,d1\n' >> "$SRC/q9kernel_entry.a"
-           expect_bad "B (Assemblerfehler)" 'r68|Errors|q9kernel_entry' ;;
+           expect_bad "B (Assemblerfehler)" 'Errors: 0*[1-9]|error - ' ;;
         C) restore; printf '\nextern int Q9K_DoesNotExist(void);\nint Q9K_BreakLink(void) { return Q9K_DoesNotExist(); }\n' >> "$SRC/q9kernel_clock.c"
            expect_bad "C (Linkfehler)" 'l68|[Uu]ndefined|Q9K_DoesNotExist' ;;
         Z) restore; expect_good "Z" ;;

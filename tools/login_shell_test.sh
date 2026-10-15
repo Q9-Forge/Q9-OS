@@ -109,6 +109,8 @@ check('pd: gibt das Datenverzeichnis /dd aus', b2 is not None and any(l.strip() 
 names = set(re.findall(r'[A-Za-z0-9_.]+', b3 or ''))
 check('dir /dd/SYS: motd, password, startup', {'motd', 'password', 'startup'} <= names, repr(b3))
 check('date: Jahreszahl und Uhrzeit', b4 is not None and re.search(r'20\d\d', b4) and re.search(r'\d+:\d\d', b4), repr(b4))
+regchk = [l.strip() for l in raw.split('\n') if l.startswith('!R ')]
+check('keine Register-Erhaltungsmeldung (!R, Arbeitsplan A5)', not regchk, '; '.join(regchk[:3]))
 body = '\n'.join(x for x in (b1, b2, b3, b4) if x)
 errs = [e for e in ('Error #', "can't", 'Unhandled', 'syntax error', 'E$') if e in body]
 check('keine Fehlermeldung in den Befehlsausgaben', not errs, ' '.join(errs))
