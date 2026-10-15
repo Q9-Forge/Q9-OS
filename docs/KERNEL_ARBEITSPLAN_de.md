@@ -48,13 +48,13 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 |---|---|---|---|
 | A | Kernel-Fundament | 2 / 9 | 🔄 |
 | B | Technische Schulden | 1 / 4 | 🔄 |
-| C | Teilweise Syscalls abschließen | 0 / 8 | ⬜ |
+| C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
 | E | Eigene Filemanager | 0 / 7 | ⬜ |
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **3 / 48** | |
+| **Teil 1 Kernel** | | **4 / 48** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -173,7 +173,7 @@ Aus `KERNEL_NEXT_SESSION_de.md`, Abschnitt „Technische Schulden".
 
 | Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
 |---|---|---|---|---|---|
-| C1 | ⬜ | **`date` und `F$VModul`**: Status-Hinweis „`date` erreicht `F$VModul` nie" ist vermutlich seit dem `F$Load`-Fix (Fortsetzung 108) überholt | Neu gemessen, Status korrigiert | A1 | |
+| C1 | ✅ | **`date` und `F$VModul`**: Status-Hinweis „`date` erreicht `F$VModul` nie" ist vermutlich seit dem `F$Load`-Fix (Fortsetzung 108) überholt | Neu gemessen, Status korrigiert | A1 | `date` allein aus `/dd/CMDS` gebootet: `F$VModul`-Zellen im Q9-Flux-Dump hdr=`$ab3f0` size=`$c70` success=1 (Modul `$c64`, 16 Byte aufgerundet; `echo` ergibt `$c90`), 15.10.2026; `STATUS.md` korrigiert |
 | C2 | ⬜ | **Debugger-Aufrufe live**: `F$DFork`/`F$DExec`/`F$DExit` mit Einzelschritt-Testprogramm | Im Emulator verifiziert, 🟢 → ✅ | A1 | |
 | C3 | ⬜ | **`F$Sema` P live** mit zwei Prozessen; **`F$Alarm`-Matrix** live | Beide ✅ | A1 | |
 | C4 | ⬜ | **`M$Extens`-Kaltstart-Scan** (OS9P2-Erweiterungen); damit wird `F$UAcct` möglich | Ein Testmodul installiert sich beim Boot | A1 | |
