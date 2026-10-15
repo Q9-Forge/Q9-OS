@@ -33,6 +33,62 @@ Q9OS_ROOT="$(cd "$SRCDIR/../../../../" && pwd)"
 mkdir -p "$OUTDIR"
 cd "$OUTDIR"
 
+# --- Ehrlicher Bau (Arbeitsplan A4) -----------------------------------------
+# Vorher blieben Ergebnisse frueherer Laeufe im Ausgabeverzeichnis liegen, und
+# Fehler von xcc/r68/l68 wurden verschluckt (mwos-build mit "|| true", Wine-
+# Aufrufe ohne verlaesslichen Exit-Status): ein kaputter Quelltext konnte so
+# mit einem alten .r "erfolgreich" bauen. Jetzt wird zuerst aufgeraeumt, und
+# jede Werkzeugausgabe wird auf Fehlermeldungen durchsucht.
+rm -f ./*.r ./*.map ./*.lines makefile q9kernel forkchild trace hellosvc \
+      chaintgt nproctgt evsigtgt iattachsvc
+rm -rf srcdebug
+
+# scan_log <Modus> <Beschreibung> <Logdatei>: 0 = keine Fehlermeldung gefunden.
+# Je Werkzeug ein eigenes, ENGES Muster -- ein allgemeines "error" trifft Quell-
+# zeilen im Assemblerlisting (z. B. "move.l Q9K_TLinkScratch_Error,...").
+#   r68   nur die Zaehlerzeile "Errors: <Zahl>" (0 = fehlerfrei)
+#   l68   operand size, undefined, multiply defined, "**** fatal/error"
+#   mw    mwos-build: jeder Teilschritt meldet "exit status = <Zahl>"; zusaetzlich
+#         "**** fatal". Bekannt und harmlos: os9make versucht am Ende ein Programm
+#         "all" zu linken (l68: fatal - can't open file, all.r / "aborted due to
+#         errors"), s. den Kommentar bei mwos-build weiter unten.
+scan_log() {
+    local mode="$1" what="$2" file="$3" pat hits
+    case "$mode" in
+        r68) pat='Errors: *0*[1-9]' ;;
+        l68) pat='[Oo]perand size|[Uu]ndefined|[Mm]ultiply defined|\*\*\*\* (fatal|error)' ;;
+        mw)  pat='exit status = *[1-9]|\*\*\*\* (fatal|error)' ;;
+        *)   echo "FEHLER: scan_log: unbekannter Modus $mode" >&2; return 1 ;;
+    esac
+    hits=$(grep -aE "$pat" "$file" | grep -avE 'all\.r|aborted due to errors|xcc +all' | head -8) || true
+    [ -z "$hits" ] && return 0
+    echo "FEHLER: $what meldet Fehler:" >&2
+    echo "$hits" | sed 's/^/    /' >&2
+    return 1
+}
+
+# wine_tool <r68|l68> <Argumente...>: das DOS-Werkzeug unter Wine ausfuehren,
+# Ausgabe zeigen und auf Fehlermeldungen pruefen.
+wine_tool() {
+    local tool="$1" log rc
+    shift
+    log=$(mktemp "${TMPDIR:-/tmp}/q9build_${tool}.XXXXXX")
+    arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\${tool}.exe" "$@" < /dev/null > "$log" 2>&1
+    rc=$?
+    cat "$log"
+    if ! scan_log "$tool" "$tool $*" "$log"; then rc=1; fi
+    rm -f "$log"
+    return $rc
+}
+
+# B3 (2026-10-15): Belegung der Scratch-Zellen pruefen, BEVOR gebaut wird. Zwei Zellen auf
+# derselben Adresse ergeben einen Kernel, der baut und trotzdem still falsch arbeitet.
+# Die Pruefung braucht tools/ aus dem Repo (in Wegwerfbaeumen ohne tools/ entfaellt sie).
+if [ -f "$Q9OS_ROOT/tools/q9_scratch_map.py" ] && [ -f "$Q9OS_ROOT/docs/KERNEL_SPEICHERBELEGUNG_de.md" ]; then
+    python3 "$Q9OS_ROOT/tools/q9_scratch_map.py" --check --doc "$Q9OS_ROOT/docs/KERNEL_SPEICHERBELEGUNG_de.md" || {
+        echo "== BUILD ABGEBROCHEN: Scratch-Belegung (s. docs/KERNEL_SPEICHERBELEGUNG_de.md) =="; exit 1; }
+fi
+
 cp "$SRCDIR"/q9kernel_entry.a "$SRCDIR"/q9kernel_cinit.c "$SRCDIR"/q9kernel_modcheck.c \
    "$SRCDIR"/q9kernel_modsearch.c "$SRCDIR"/q9kernel_initext.c "$SRCDIR"/q9kernel_arena.c \
    "$SRCDIR"/q9kernel_exctable.c "$SRCDIR"/q9kernel_tables.c "$SRCDIR"/q9kernel_firstproc.c \
@@ -191,7 +247,9 @@ echo "== C-Dateien kompilieren ($KERNEL_VARIANT/Standard-Variante, s. q9kernel_c
 # "all" selbst schlaegt am Ende fehl (os9make versucht danach ein
 # Programm "all" zu linken) -- das ist erwartet, die acht echten .r-
 # Ziele sind zu diesem Zeitpunkt schon fertig. Deshalb || true.
-mwos-build . all < /dev/null || true
+mwos-build . all < /dev/null > mwbuild.log 2>&1 || true
+cat mwbuild.log
+scan_log mw "mwos-build (C-Dateien)" mwbuild.log || exit 1
 
 if [ -n "${Q9K_SRCDEBUG:-}" ]; then
     echo "== Quelltext-Debug: $Q9K_SRCDEBUG mit -g (unoptimiert) neu uebersetzen =="
@@ -200,7 +258,9 @@ if [ -n "${Q9K_SRCDEBUG:-}" ]; then
         rm -rf srcdebug && mkdir srcdebug
         cp ./*.h "$f" srcdebug/
         printf 'CFLAGS = -b -O7 -cq -cw %s -g\nall: %s\n%s: %s\n' "$CDEFS" "$r" "$r" "$f" > srcdebug/makefile
-        ( cd srcdebug && mwos-build . all < /dev/null ) || true
+        ( cd srcdebug && mwos-build . all < /dev/null > mwbuild.log 2>&1 ) || true
+        cat srcdebug/mwbuild.log
+        scan_log mw "mwos-build -g ($f)" srcdebug/mwbuild.log || exit 1
         [ -f "srcdebug/$r" ] && cp "srcdebug/$r" "$r" || echo "FEHLER: $r mit -g nicht erzeugt" >&2
     done
 fi
@@ -212,11 +272,11 @@ echo "== Assembler-Einstieg assemblieren =="
 WINE_BIN="$HOME/.local/wine-stable/Wine Stable.app/Contents/Resources/wine/bin/wine"
 export WINEPREFIX="$HOME/.local/wineprefix-os9"
 export WINEDEBUG=-all
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+wine_tool r68 \
     "$R68_CPU_OPT" "$R68_VARIANT_OPT" "-a=Q9K_TRACEBOOT=${Q9K_TRACEBOOT:-0}" -o=q9kernel_entry.r "q9kernel_entry.a" < /dev/null
 
 echo "== Verlinken (kein csl.l/acstart.r -- eigener Assembler-Einstieg) =="
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+wine_tool l68 \
     -o=q9kernel -s=q9kernel_debug.map -f=orowoe \
     q9kernel_entry.r q9kernel_cinit.r q9kernel_modcheck.r q9kernel_modsearch.r q9kernel_initext.r \
     q9kernel_arena.r q9kernel_exctable.r q9kernel_tables.r q9kernel_firstproc.r q9kernel_moddir.r q9kernel_mmu.r \
@@ -284,63 +344,68 @@ file q9kernel || true
 
 echo "== forkchild.a bauen (eigenstaendiges Testmodul fuer F\$Fork, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/forkchild.a .
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+wine_tool r68 \
     "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=forkchild.r "forkchild.a" < /dev/null
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+wine_tool l68 \
     -o=forkchild -f=orowoe forkchild.r < /dev/null
 echo "== Fertig: $OUTDIR/forkchild =="
 file forkchild || true
 
 echo "== trace.a bauen (Kommando zum Steuern/Anzeigen des Syscall-Trace, Fortsetzung 121) =="
 cp "$SRCDIR"/trace.a .
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+wine_tool r68 \
     "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=trace.r "trace.a" < /dev/null
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+wine_tool l68 \
     -s=trace.map -o=trace -f=orowoe trace.r < /dev/null
 echo "== Fertig: $OUTDIR/trace =="
 file trace || true
 
 echo "== hellosvc.a bauen (eigenstaendiges Testmodul fuer F\$Fork, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/hellosvc.a .
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+wine_tool r68 \
     "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=hellosvc.r "hellosvc.a" < /dev/null
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+wine_tool l68 \
     -o=hellosvc -f=orowoe hellosvc.r < /dev/null
 echo "== Fertig: $OUTDIR/hellosvc =="
 file hellosvc || true
 
 echo "== chaintgt.a bauen (Zielmodul fuer den F\$Chain-Test, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/chaintgt.a .
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+wine_tool r68 \
     "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=chaintgt.r "chaintgt.a" < /dev/null
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+wine_tool l68 \
     -o=chaintgt -f=orowoe chaintgt.r < /dev/null
 echo "== Fertig: $OUTDIR/chaintgt =="
 file chaintgt || true
 
 echo "== nproctgt.a bauen (Zielmodul fuer den F\$NProc-Test, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/nproctgt.a .
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+wine_tool r68 \
     "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=nproctgt.r "nproctgt.a" < /dev/null
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+wine_tool l68 \
     -o=nproctgt -f=orowoe nproctgt.r < /dev/null
 echo "== Fertig: $OUTDIR/nproctgt =="
 file nproctgt || true
 
 echo "== evsigtgt.a bauen (Zielmodul fuer den blockierenden Ev\$Wait-Test, s. dortigen Kopfkommentar) =="
 cp "$SRCDIR"/evsigtgt.a .
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+wine_tool r68 \
     "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=evsigtgt.r "evsigtgt.a" < /dev/null
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+wine_tool l68 \
     -o=evsigtgt -f=orowoe evsigtgt.r < /dev/null
 echo "== Fertig: $OUTDIR/evsigtgt =="
 file evsigtgt || true
 
 echo "== iattachsvc.a bauen (I\$Attach/I\$Detach-Regressionstest) =="
 cp "$SRCDIR"/iattachsvc.a .
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\r68.exe" \
+wine_tool r68 \
     "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=iattachsvc.r "iattachsvc.a" < /dev/null
-arch -x86_64 "$WINE_BIN" "Z:\\Volumes\\SSD1TB\\projects\\MWOS\\DOS\\BIN\\l68.exe" \
+wine_tool l68 \
     -o=iattachsvc -f=orowoe iattachsvc.r < /dev/null
 echo "== Fertig: $OUTDIR/iattachsvc =="
 file iattachsvc || true
+
+for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc; do
+    [ -s "$f" ] || { echo "FEHLER: Ergebnis $f fehlt oder ist leer" >&2; exit 1; }
+done
+echo "== BUILD OK: alle Ergebnisse frisch erzeugt, keine Werkzeugfehler =="
