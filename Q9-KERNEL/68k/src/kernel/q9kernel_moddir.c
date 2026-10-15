@@ -120,22 +120,25 @@ extern void Q9K_MemTraceEmit(Q9_u32 operation, Q9_u32 requested,
 #define Q9K_E_BMCRC  0x00E8U /* errno.h: Bad Module CRC */
 #define Q9K_E_MEMFUL 0x00CFU /* errno.h: Process/descriptor memory full */
 
-/* F$FModul scratch: result block for the assembler bridge. */
-#define Q9K_FMODUL_SCRATCH_TYLANG 0x1A00UL
-#define Q9K_FMODUL_SCRATCH_NAME   0x1A04UL
-#define Q9K_FMODUL_SCRATCH_OUTTY  0x1A08UL
-#define Q9K_FMODUL_SCRATCH_OUTAR  0x1A0CUL
-#define Q9K_FMODUL_SCRATCH_ENTRY  0x1A10UL
-#define Q9K_FMODUL_SCRATCH_ERROR  0x1A14UL
-#define Q9K_FMODUL_SCRATCH_OK     0x1A18UL
+/* F$FModul scratch: result block for the assembler bridge.
+ * B3 (2026-10-15): $2418-$2433; vorher $1A00-$1A1B = Eintrag 0 der Alarmtabelle. */
+#define Q9K_FMODUL_SCRATCH_TYLANG 0x2418UL
+#define Q9K_FMODUL_SCRATCH_NAME   0x241CUL
+#define Q9K_FMODUL_SCRATCH_OUTTY  0x2420UL
+#define Q9K_FMODUL_SCRATCH_OUTAR  0x2424UL
+#define Q9K_FMODUL_SCRATCH_ENTRY  0x2428UL
+#define Q9K_FMODUL_SCRATCH_ERROR  0x242CUL
+#define Q9K_FMODUL_SCRATCH_OK     0x2430UL
 
 /* F$Link-Suchdiagnose: bewusst im bestehenden Debug-Erweiterungsbereich.
  * Diese Felder machen einen verketteten Listenfehler sichtbar, statt den
  * Kernel bei einer zyklischen Moduldirectory endlos in C laufen zu lassen. */
+#ifndef Q9K_FLINK_DIAG_ITER
 #define Q9K_FLINK_DIAG_ITER       0x154180UL
 #define Q9K_FLINK_DIAG_SLOT       0x154184UL
 #define Q9K_FLINK_DIAG_HEADER     0x154188UL
 #define Q9K_FLINK_DIAG_GUARD      0x15418CUL
+#endif
 #define Q9K_FLINK_DIAG_MAX        256UL
 
 /* F$DatMod-Scratch (2026-09-18): hinter dem F$Trans-Block

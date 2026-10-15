@@ -1,0 +1,104 @@
+#!/usr/bin/expect -f
+# run_login_test.exp -- bootet ein Testabbild mit dem echten Startprozess
+# (sysgo -> startup -> tsmon -> login), meldet sich an und fuehrt
+# Befehle zwischen eindeutigen Marken aus.
+#
+# Aufruf: run_login_test.exp <flux-root> <image> <logfile>
+# Umgebung: Q9_TEST_TIMEOUT (Sekunden je Warteschritt, Standard 90)
+#
+# WICHTIG (Chronik, Fortsetzung 120): Es wird nie mit "sleep" gewartet,
+# solange der Emulator Ausgabe erzeugt -- der Pty-Puffer lief sonst voll und
+# Q9-Flux verwarf Zeichen. Jeder Schritt wartet LESEND mit "expect".
+#
+# Ablauf der Marken: jeder Block heisst zq9b<n> ... zq9e<n> (nur Buchstaben/Ziffern: "@" wird von
+# Shell/Terminal selbst gedeutet, es kam nur "B1" an). Die Marke zaehlt
+# nur am ZEILENANFANG (\nzq9b..): das Terminalecho der eingetippten Zeile
+# beginnt mit "echo", die Ausgabe des Befehls mit "zq9".
+#
+# Ausgang: 0 = alle Schritte erreicht, 2 = Boot/Login haengt, 3 = Befehle
+# haengen. Details stehen im Log ("LOGIN-TEST: ...").
+
+set flux  [lindex $argv 0]
+set image [lindex $argv 1]
+set logfile [lindex $argv 2]
+set timeout 90
+if {[info exists env(Q9_TEST_TIMEOUT)]} { set timeout $env(Q9_TEST_TIMEOUT) }
+set user q9test
+# Zeichenweise mit Pause senden: der Emulator speist ganze Zeilen schneller ein,
+# als die serielle Schnittstelle des Kernels sie abnimmt (nur das erste Zeichen
+# kam an; Chronik: "lange Befehlszeilen verlieren Zeichen").
+set send_slow {1 0.04}
+set pause_s [expr {[info exists ::env(Q9K_LOGIN_PAUSE)] ? $::env(Q9K_LOGIN_PAUSE) : 1}]
+
+log_file -noappend $logfile
+spawn "$flux/build/macos/q9.exe" --rom "$flux/local_images/roms/romimage.dev.running.BIN" --cf $image
+
+proc fail {code msg} {
+    puts "\nLOGIN-TEST: FEHLER: $msg"
+    catch {send "\x1e"}
+    expect -timeout 2 eof
+    catch {exec kill -TERM [exp_pid]}
+    exit $code
+}
+
+# 1. Boot bis tsmon.
+expect {
+    -re {devices online}  {}
+    timeout               { fail 2 "kein 'devices online' (tsmon) nach ${timeout}s" }
+    eof                   { fail 2 "Emulator beendet sich waehrend des Boots" }
+}
+# 2. tsmon wartet auf Return, dann startet login.
+send -s "\r"
+expect {
+    -re {User name\?:}    {}
+    timeout               { fail 2 "kein 'User name?:' nach Return" }
+    eof                   { fail 2 "Emulator beendet sich vor dem Login" }
+}
+send -s "$user\r"
+expect {
+    -re {logged on}       {}
+    -re {Who\?}           { fail 2 "login kennt den Benutzer $user nicht (Who?)" }
+    timeout               { fail 2 "kein 'logged on' nach der Anmeldung" }
+    eof                   { fail 2 "Emulator beendet sich bei der Anmeldung" }
+}
+
+# Auf die erste Eingabeaufforderung warten: direkt nach "logged on" startet
+# mshell noch (Speicher anfordern, Modul binden). Frueh getippte Zeichen gehen
+# sonst verloren (gemessen: nur das erste Zeichen kam an).
+expect {
+    -re {\n\$ }          {}
+    timeout               { fail 2 "keine Shell-Eingabeaufforderung nach der Anmeldung" }
+    eof                   { fail 2 "Emulator endet vor der Eingabeaufforderung" }
+}
+
+# 3. Befehle zwischen Marken. Jede Eingabe wird erst abgeschickt, wenn die
+#    vorige ihre Eingabeaufforderung zurueckgebracht hat: tippt man waehrend
+#    ein Befehl laeuft, gehen die Zeichen verloren (gemessen: nur das erste
+#    Zeichen kam an). Die Ausgabe selbst steht im Log und wird dort ausgewertet.
+proc run {cmd} {
+    expect -timeout $::pause_s eof
+    send -s "$cmd\r"
+    expect {
+        -re {\n\$ }          {}
+        timeout               { fail 3 "keine Eingabeaufforderung nach '$cmd'" }
+        eof                   { fail 3 "Emulator endet nach '$cmd'" }
+    }
+}
+proc block {n cmd} {
+    run "echo zq9b$n"
+    run $cmd
+    run "echo zq9e$n"
+}
+block 1 "echo q9 regress ok"
+block 2 "pd"
+block 3 "dir /dd/SYS"
+block 4 "date"
+
+# 4. Debug-Dump anfordern (Ctrl-^), dann den Emulator beenden. Das Lesen
+#    mit Zeitlimit statt "sleep" laesst die Dump-Zeile noch ankommen.
+send "\x1e"
+expect -timeout 3 eof
+catch {exec kill -TERM [exp_pid]}
+expect -timeout 3 eof
+puts "\nLOGIN-TEST: alle Schritte erreicht"
+exit 0

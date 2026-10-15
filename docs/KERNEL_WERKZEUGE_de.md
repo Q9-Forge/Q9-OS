@@ -332,3 +332,25 @@ Anfangsadresse. Es gibt keine automatische Kollisionsprüfung.
 **ABI nie raten.** Fehlercodes, Strukturoffsets und Aufrufkonventionen aus
 `68k_tech.pdf` belegen — und wo das Handbuch schweigt, durch Beobachtung am
 Referenzsystem bestimmen (erprobt mit `F$Sema`, `F$FModul`, `F$Mem`).
+
+## Regressionslauf mit einem Kommando (Arbeitsplan A1/A4/B3, 15.10.2026)
+
+```
+tools/kernel_regress.sh [--variant atomic|development|both] [--quick]
+```
+
+Stufen nacheinander (Wine-Bauten dürfen nicht parallel laufen): `hosttests.sh`, dann
+`login_shell_test.sh` je Variante, dann `startup_shell_test.sh` und `mgrpath_probe_test.sh`.
+`--quick` führt nur die Hosttests aus (~5 s, ohne Emulator). Exit 0 nur, wenn alles grün ist.
+Umgebung: `FLUX` (Q9-Flux-68k) und `REFBOOT` (Referenz-Bootdatei); ohne Angabe gelten die kanonischen Mac-Pfade.
+
+| Werkzeug | Zweck |
+|---|---|
+| `tools/hosttests.sh` | baut und startet **alle** `test_q9kernel_*.c` auf dem Host. Flags `-DQ9K_KERNEL_DEVELOPMENT -DQ9K_ALLOC_STANDARD`; Suiten mit `dbg`, `trace`, `ringbuf` im Namen zusätzlich `-DQ9K_DEBUG` (ohne dieses Flag ist z. B. `dbg_live` rot — die frühere Angabe „zwei Pflichtschalter“ war unvollständig) |
+| `tools/login_shell_test.sh [atomic\|development]` | Bau mit `Q9K_BOOT=sysgo`, Boot, startup (mit `setime`), tsmon, login, mshell; prüft `echo`, `pd`, `dir /dd/SYS`, `date` und den Q9-Flux-Dump (`Vektor=0`). ~2 min je Variante |
+| `tools/build_honesty_test.sh` | prüft, dass `build.sh` bei C-, Assembler- und Linkfehlern abbricht und kein veraltetes `q9kernel` liegen lässt |
+| `tools/q9_scratch_map.py` | Belegungsprüfung der Scratch-Zellen, erzeugt `docs/KERNEL_SPEICHERBELEGUNG_de.md`; `build.sh` ruft `--check --doc` vor dem Bau auf |
+
+Eingabe in Emulator-Tests: nur nach der Eingabeaufforderung tippen (`\n$ `), das Zeichen `@` meiden,
+Marker nur aus Buchstaben und Ziffern. Der Login-Test wartet vor jeder Eingabe `Q9K_LOGIN_PAUSE`
+Sekunden (Standard 1); mit `0` tritt der offene Absturz aus `KERNEL_IRQ_SPERRE_de.md` auf.
