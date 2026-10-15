@@ -94,6 +94,7 @@ block 2 "pd"
 block 3 "dir /dd/SYS"
 block 4 "date"
 block 5 "icptsleep"
+block 6 "icptrte"
 
 # 4. Debug-Dump anfordern (Ctrl-^), dann den Emulator beenden. Das Lesen
 #    mit Zeitlimit statt "sleep" laesst die Dump-Zeile noch ankommen.

@@ -6521,6 +6521,18 @@ Q9K_SysFRTE:
 
         movea.l Q9_D_Proc,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+* A10 (2026-10-15): jetzt steht sp auf dem Rahmen des Hauptprogramms, der Stack der Intercept-Routine ist tot.
+* Steht noch ein Signal an, wird es HIER zugestellt (Q9K_SysRTERedeliverImpl), mit 68 Byte Luft unter dem Rahmen --
+* in Q9K_IcptReturn geschah das, solange die Routine und die C-Aufrufkette von F$RTE noch auf genau diesem
+* Bereich liefen (Absturz: Ruecksprung nach PC=0). Beleg: icptrte.a.
+        tst.w   $26(a0)                     * P$Signal
+        beq.s   Q9K_SysFRTE_Resume
+        lea     -Q9K_IcptFrameGap(sp),sp
+        lea     Q9K_CRuntimeData(pc),a6
+        Q9K_FARCALL Q9K_SysRTERedeliverImpl
+        movea.l Q9_D_Proc,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp   * Rahmen der erneut aufgerufenen Routine
+Q9K_SysFRTE_Resume:
         bsr     Q9K_ResumeTrapFlag          * resumed intercept owns its context (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte

@@ -67,6 +67,8 @@ done
 # icptsleep: eigenes Testprogramm aus dem Kernelbau (A9: Signal steht an, wenn F$Sleep gerufen wird).
 "$OS9" copy "$WORK/kb/icptsleep" "$IMG,CMDS/icptsleep" >/dev/null 2>&1 || die "[$VARIANT] copy icptsleep"
 "$OS9" attr -q -e -pe "$IMG,CMDS/icptsleep" >/dev/null 2>&1 || true
+"$OS9" copy "$WORK/kb/icptrte" "$IMG,CMDS/icptrte" >/dev/null 2>&1 || die "[$VARIANT] copy icptrte"
+"$OS9" attr -q -e -pe "$IMG,CMDS/icptrte" >/dev/null 2>&1 || true
 # Textdateien mit CR-Zeilenende (OS-9). Passwort leer: Benutzer q9test.
 printf '* Q9 regress startup\rchx /dd/CMDS\rchd /dd\rsetime 26/10/15 12:00:00\r' > "$WORK/startup"
 printf 'q9test,,0.0,128,/dd/CMDS,/dd,mshell -l\r' > "$WORK/password"
@@ -106,16 +108,17 @@ def check(name, cond, detail=''):
     print(('ok    ' if cond else 'FAIL  ') + '[%s] %s%s' % (variant, name, (' -- ' + detail) if (detail and not cond) else ''))
     if not cond: bad.append(name)
 check('Kernelbau (%s Byte), Boot, tsmon, login' % ksize, 'logged on' in raw)
-b1, b2, b3, b4, b5 = block(1), block(2), block(3), block(4), block(5)
+b1, b2, b3, b4, b5, b6 = block(1), block(2), block(3), block(4), block(5), block(6)
 check('echo: Ausgabe "q9 regress ok"', b1 is not None and any(l.strip() == 'q9 regress ok' for l in b1.split('\n')), repr(b1))
 check('pd: gibt das Datenverzeichnis /dd aus', b2 is not None and any(l.strip() == '/dd' for l in b2.split('\n')), repr(b2))
 names = set(re.findall(r'[A-Za-z0-9_.]+', b3 or ''))
 check('dir /dd/SYS: motd, password, startup', {'motd', 'password', 'startup'} <= names, repr(b3))
 check('date: Jahreszahl und Uhrzeit', b4 is not None and re.search(r'20\d\d', b4) and re.search(r'\d+:\d\d', b4), repr(b4))
 check('icptsleep: anstehendes Signal bei F$Sleep wird zugestellt (A9)', b5 is not None and 'intercept ok' in b5 and 'sleep done' in b5, repr(b5))
+check('icptrte: zweites Signal bei F$RTE wird zugestellt (A10)', b6 is not None and all(w in b6 for w in ('h32', 'h33', 'main done')), repr(b6))
 regchk = [l.strip() for l in raw.split('\n') if l.startswith('!R ')]
 check('keine Register-Erhaltungsmeldung (!R, Arbeitsplan A5)', not regchk, '; '.join(regchk[:3]))
-body = '\n'.join(x for x in (b1, b2, b3, b4, b5) if x)
+body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6) if x)
 errs = [e for e in ('Error #', "can't", 'Unhandled', 'syntax error', 'E$') if e in body]
 check('keine Fehlermeldung in den Befehlsausgaben', not errs, ' '.join(errs))
 sys.exit(1 if bad else 0)

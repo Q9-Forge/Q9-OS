@@ -46,7 +46,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
-| A | Kernel-Fundament | 6 / 10 | 🔄 |
+| A | Kernel-Fundament | 7 / 11 | 🔄 |
 | B | Technische Schulden | 1 / 4 | 🔄 |
 | C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
@@ -54,7 +54,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **8 / 49** | |
+| **Teil 1 Kernel** | | **9 / 50** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -157,7 +157,8 @@ an die `bsr`-Reichweite (±32 KB bei 62 KB Kernel).
 | A7 | ⬜ | **IRQ während Queue- und Kontextübergabe**: kritische Abschnitte inventarisieren, gezielt Interrupts injizieren | Jeder Abschnitt ist abgesichert oder seine Sicherheit schriftlich begründet | A6 | |
 | A8 | ⬜ | **Langlauf und Ressourcenbilanz**: ~1000 Zyklen `F$Fork`/`F$Exit`/`F$TLink` | Freispeicher, Modul-Linkzähler und Trap-Slots kehren auf den Ausgangswert zurück | A1 | |
 | A9 | ✅ | **Absturz bei schnell aufeinanderfolgenden Eingaben** (Fund aus A1) | Ursache benannt und behoben; deterministischer Test `icptsleep` | A1 | **Ursache: `F$Sleep` mit bereits anstehendem Signal.** `Q9K_ProcSleep` stellt es dem Aufrufer selbst zu; `Q9K_IcptDeliver` baut den 68-Byte-Rahmen bei `P$SavedSP-68`, genau dort läuft aber die C-Aufrufkette des Sleep-Aufrufs — der Rahmen überschrieb ihre Rücksprungadresse (Instruktionsspur: `Q9K_IcptDeliver+0xe8` kehrt nach `PC=1` zurück, danach Nullspeicher bis zum ersten ungültigen Opcode `$128c`; daher immer derselbe Absturz-PC). Auslöser in der Praxis: ein Tastendruck zwischen `SS_SSig` und `F$Sleep` von mshell, deshalb zeitabhängig. **Korrektur:** `Q9K_SysFSleep_Block` hält vor dem C-Aufruf 68 Byte unter `P$SavedSP` frei (`Q9K_IcptFrameGap`). **Beleg:** neues Testprogramm `icptsleep.a` (Intercept anmelden, Signal an sich selbst, `F$Sleep`; erwartet `intercept ok`/`sleep done`) — ohne Korrektur rot mit genau dem A9-Absturz (Vektor 4, SR `$2708`, PC `$128c`), mit Korrektur grün; Teil von `login_shell_test.sh`, `kernel_regress.sh` 5/5 in beiden Varianten, 15.10.2026 |
-| A10 | ⬜ | **Gleiche Fehlerklasse prüfen: Rahmen über dem C-Stack.** Andere Stellen, die einen Prozessrahmen bei `P$SavedSP` schreiben, während der Kernel auf demselben Stack läuft: `Q9K_IcptReturn` (F$RTE liefert bei weiteren anstehenden Signalen erneut zu), `F$Wait` mit anstehendem Signal, `F$SigMask`-Freigabe (`Q9K_ProcSigMask`) | Jede Stelle benannt, mit Lücke abgesichert oder als unkritisch begründet; je ein Test wie `icptsleep` | A9 | |
+| A10 | ✅ | **Gleiche Fehlerklasse prüfen: Rahmen über dem C-Stack.** Stellen, die einen Prozessrahmen bei `P$SavedSP` schreiben, während der Kernel auf demselben Stack läuft | Jede Stelle benannt, abgesichert oder als unkritisch begründet; je ein Test | A9 | Drei Stellen rufen `Q9K_IcptDeliver`: (1) `Q9K_ProcSleep` an den Aufrufer = A9, behoben. (2) **`Q9K_IcptReturn` (F$RTE) bei weiterem anstehendem Signal: gleicher Fehler** — der neue Rahmen entstand bei `P$SavedSP-68`, wo die Intercept-Routine samt C-Aufrufkette lief; Instruktionsspur: `Q9K_IcptDeliver` läuft durch, danach kehrt `Q9K_IcptReturn` nach `PC=0` zurück. Behoben: der Kernelpfad räumt nur ab (`Q9K_IcptPop`), `Q9K_SysFRTE` wechselt auf den Stack des Hauptprogramms, lässt 68 Byte Luft und stellt erst dann zu (`Q9K_SysRTERedeliverImpl`); `Q9K_IcptReturn` bleibt für die Host-Tests unverändert. (3) `Q9K_ProcSend` stellt nur an einen NICHT laufenden Empfänger zu — unkritisch. `F$SigMask` schreibt keinen Rahmen (nur `Q9K_SchedWake`), `F$Wait` stellt nicht zu — unkritisch. **Beleg:** `icptrte.a` (Signal 32, die Routine sendet sich Signal 33, `F$RTE`; erwartet `h32`/`h33`/`main done`) — vor der Korrektur rot (Kernel hält mit Vektor 4, PC `$48`), danach grün; Hosttests 30/30, `kernel_regress.sh` 5/5, 15.10.2026 |
+| A11 | ⬜ | **`F$Wait` mit anstehendem Signal**: laut Handbuch kehrt `F$Wait` (wie `F$Sleep`) sofort zur Intercept-Routine zurück, wenn ein Signal ansteht; `Q9K_SysFWait` stellt nicht zu und blockiert | Test wie `icptsleep` für `F$Wait`; Zustellung nach dem Muster von A9/A10 (Lücke unter `P$SavedSP`, nie auf dem laufenden C-Stack) | A10 | |
 
 ## Phase B — Technische Schulden
 
