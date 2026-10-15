@@ -128,6 +128,8 @@ static unsigned char g_fakePathPoolCell[16];
 static unsigned char g_fakePathPoolFreeCell[16];
 #define Q9K_PATHPOOL_BASE_ADDR ((unsigned long)g_fakePathPoolCell)
 #define Q9K_PATHPOOL_FREE_ADDR ((unsigned long)g_fakePathPoolFreeCell)
+static unsigned char g_fakeMgrRefs[64];   /* A13 */
+#define Q9K_MGRREF_ADDR ((unsigned long)g_fakeMgrRefs)
 #include "q9kernel_procend.c"
 
 static int failures = 0;
@@ -391,6 +393,22 @@ int main(void)
         checkU32("R: nativer Deskriptor 2 -> 1 Referenz", Q9K_GetU16(poolAddr + Q9K_PATHDESC_REF_OFF), 1);
         checkU32("R: IOMan-Eintrag geraeumt", Q9K_GetU16(desc + Q9K_PROCDESC_PATH_OFF + 5UL * 2UL), 0);
         checkU32("R: zweiter Pool-Deskriptor unberuehrt", Q9K_GetU16(poolAddr + 256UL + Q9K_PATHDESC_REF_OFF), 0);
+    }
+
+    /* Fall R2 (A13): IOMan-Eintrag mit Ueberschuss-Zaehler (per F$Fork kopiert) -- das Prozessende zaehlt ihn herunter;
+     * ohne Ueberschuss bleibt der Zaehler bei 0 (kein Unterlauf). */
+    {
+        static unsigned char bigDesc2[0x200];
+        Q9_u32 desc2 = (Q9_u32)(unsigned long)bigDesc2;
+        memset(bigDesc2, 0, sizeof(bigDesc2));
+        memset(g_fakeMgrRefs, 0, sizeof(g_fakeMgrRefs));
+        g_fakeMgrRefs[1] = 2;                                                  /* PD 1: zwei kopierte Mitbenutzer */
+        Q9K_SetU16(desc2 + Q9K_PROCDESC_PATH_OFF + 0UL * 2UL, 0x8001);
+        Q9K_SetU16(desc2 + Q9K_PROCDESC_PATH_OFF + 1UL * 2UL, 0x8003);         /* PD 3: ohne Ueberschuss */
+        Q9K_ProcReleasePaths(desc2);
+        checkU32("R2: Ueberschuss von PD 1 um 1 gesenkt", g_fakeMgrRefs[1], 1);
+        checkU32("R2: PD 3 ohne Ueberschuss bleibt 0 (kein Unterlauf)", g_fakeMgrRefs[3], 0);
+        checkU32("R2: Eintraege geraeumt", Q9K_GetU16(desc2 + Q9K_PROCDESC_PATH_OFF), 0);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

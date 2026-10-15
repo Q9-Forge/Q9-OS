@@ -39,6 +39,8 @@ static unsigned long g_fakePoolNext;
 static unsigned char g_fakePathPoolCellF[16];
 static unsigned char g_fakePathPoolF[8 * 256];
 #define Q9K_FORK_PATHPOOL_BASE_ADDR ((unsigned long)g_fakePathPoolCellF)
+static unsigned char g_fakeMgrRefsF[64];   /* A13 */
+#define Q9K_FORK_MGRREF_ADDR ((unsigned long)g_fakeMgrRefsF)
 
 /* State/Priority/Age/Next/Prev/SavedSP/EntryPC liegen im echten Deskriptor
  * nur wenige Byte auseinander (+0x00/+0x01/+0x02/+0x30/+0x34/+0x38/+0x3C)

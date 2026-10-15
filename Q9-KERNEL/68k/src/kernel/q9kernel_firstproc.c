@@ -197,6 +197,11 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_PROCDESC_DIO_SIZE    32UL
 /* Nativer Pfad-Pool (s. q9kernel_procend.c / q9kernel_tables.c) -- fuer die
  * Referenzzaehlung geerbter Pfade (Fortsetzung 112); per #define umlenkbar. */
+/* A13: Ueberschuss-Zaehler der IOMan-Pfade (s. q9kernel_procend.c, Q9K_MGRREF_ADDR). */
+#ifndef Q9K_FORK_MGRREF_ADDR
+#define Q9K_FORK_MGRREF_ADDR 0x2500UL
+#endif
+
 #ifndef Q9K_FORK_PATHPOOL_BASE_ADDR
 #define Q9K_FORK_PATHPOOL_BASE_ADDR 0x1214UL
 #endif
@@ -1133,6 +1138,15 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
                             ((Q9_u32)v - 3UL) * Q9K_FORK_PATHDESC_SIZE;
                 Q9K_SetU16(pd + Q9K_FORK_PATHDESC_REF_OFF,
                            (Q9_u16)(Q9K_GetU16(pd + Q9K_FORK_PATHDESC_REF_OFF) + 1U));
+            } else if (v != 0U && (v & 0x8000U) != 0U) {
+                /* A13: IOMan-eigener Pfad, nur kopiert. IOMans Zaehler steigt dadurch nicht; ohne Gegenmassnahme
+                 * gibt der fruehe I$Close des Erzeugers (Shell-Umleitung: Datei oeffnen, forken, Pfad 0 schliessen)
+                 * den Deskriptor frei, waehrend das Kind ihn noch liest (E$BPNUM). Der Ueberschuss-Zaehler merkt sich
+                 * den zusaetzlichen Mitbenutzer; Q9K_TrapTryManagerPathIO und das Prozessende zaehlen ihn herunter. */
+                Q9_u32 cell = Q9K_FORK_MGRREF_ADDR + (Q9_u32)(v & 0x3FU);
+                Q9_u8 r = Q9K_GetU8(cell);
+                if (r < 255U)
+                    Q9K_SetU8(cell, (Q9_u8)(r + 1U));
             }
         }
         /* FIX (2026-10-05, Fortsetzung 111): auch die Standardverzeichnisse

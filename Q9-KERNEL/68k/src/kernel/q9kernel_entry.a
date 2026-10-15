@@ -558,6 +558,7 @@ Q9K_RegChkSP              equ $247C      * Q9_u32, sp beim Eintritt (= Adresse d
 Q9K_RegChkCode            equ $2480      * Q9_u16, Callcode des Schnappschusses
 Q9K_RegChkCount           equ $2484      * Q9_u32, Anzahl gemeldeter Abweichungen seit dem Boot
 Q9K_SchedNoSwitch         equ $2488      * Q9_u32, A7: <> 0, wenn der vom Timer Unterbrochene selbst eine Interrupt-Maske hatte (q9kernel_sched.c)
+Q9K_MgrRefs               equ $2500      * 64 Byte, A13: Ueberschuss-Zaehler je IOMan-Pfad (Index = PD-Nummer & $3F), s. q9kernel_firstproc.c
 * (entfernt, B3: Q9K_FLinkCall_TyLang/_Name auf $1A00/$1A04 wurden nirgends benutzt und
 *  lagen auf Eintrag 0 der Alarmtabelle.)
 Q9K_FLinkSearch_TyLang    equ $154170
@@ -3747,6 +3748,26 @@ Q9K_TrapTryManagerPathIO:
         adda.w  d0,a1
         btst    #7,(a1)                    * high byte bit 7 = P$Path word bit 15
         beq.s   Q9K_TrapCheckManagerPath_Own
+* A13 (2026-10-15): F$Fork kopiert IOMan-eigene P$Path-Eintraege, ohne IOMans Zaehler zu erhoehen. Schliesst der
+* Erzeuger seinen Eintrag, waehrend ein Kind ihn noch benutzt (Shell-Umleitung "mshell <datei": Datei oeffnen,
+* forken, Pfad 0 schliessen), gaebe IOMan den Deskriptor frei und das Kind laese E$BPNUM. Deshalb merkt sich
+* Q9K_MgrRefs je PD den Ueberschuss an Eintraegen; solange er > 0 ist, zaehlt ein I$Close ($8F) nur herunter, raeumt den
+* Eintrag des Aufrufers und gelingt, ohne IOMan zu rufen. Erst der letzte Mitbenutzer schliesst wirklich.
+        cmpi.w  #$8f,($1370).w
+        bne.s   Q9K_TrapMgrNotClose
+        moveq   #0,d0
+        move.w  (a1),d0
+        andi.w  #$003f,d0                  * PD-Nummer (ohne Bit 15)
+        movea.l #Q9K_MgrRefs,a0
+        adda.w  d0,a0
+        tst.b   (a0)
+        beq.s   Q9K_TrapMgrNotClose        * kein kopierter Mitbenutzer: Close geht an IOMan
+        subq.b  #1,(a0)
+        clr.w   (a1)                       * Eintrag des Aufrufers frei, IOMan sieht den Close nicht
+        movem.l (sp)+,d0-d1/a0-a1          * Eingaberegister zurueck (Stack wieder auf dem Frame)
+        andi    #$fe,ccr                   * Erfolg
+        bra     Q9K_TrapAfterCall
+Q9K_TrapMgrNotClose:
         move.w  ($1370).w,d0
         subi.w  #$80,d0
         lsl.w   #2,d0

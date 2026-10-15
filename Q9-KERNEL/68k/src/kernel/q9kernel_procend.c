@@ -146,6 +146,13 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #define Q9K_TRAPTBL_OFF_EXECENTRY   4UL
 #define Q9K_TRAPTBL_OFF_STATICPTR   8UL
 #define Q9K_TRAPTBL_SIZE_BASE       0x280UL
+/* A13 (2026-10-15): Ueberschuss-Zaehler fuer IOMan-Pfade, die per F$Fork kopiert wurden (je 64 Byte, Index = PD-Nummer
+ * & $3F). refs = Zahl der P$Path-Eintraege ueber IOMans eigene Zaehlung hinaus. Ein I$Close mit refs > 0 zaehlt nur
+ * herunter (Q9K_TrapTryManagerPathIO), das Prozessende ebenso. */
+#ifndef Q9K_MGRREF_ADDR
+#define Q9K_MGRREF_ADDR 0x2500UL
+#endif
+
 #ifndef Q9K_PATHPOOL_BASE_ADDR             /* per #define vor dem #include umlenkbar (Hosttest) */
 #define Q9K_PATHPOOL_BASE_ADDR      0x1214UL
 #endif
@@ -220,9 +227,15 @@ static void Q9K_ProcReleasePaths(Q9_u32 desc)
          * nativen Pfad-Pool -- frueher wurde hier ($80xx - 3) * 256 als
          * Pool-Deskriptor gedeutet und dessen "Referenzzaehler" irgendwo im
          * Speicher heruntergezaehlt. IOMans eigener Deskriptor wird hier
-         * (noch) nicht geschlossen; der Eintrag wird nur geraeumt. */
-        if (pathNum & 0x8000U)
+         * (noch) nicht geschlossen; der Eintrag wird nur geraeumt.
+         * A13: war der Eintrag per F$Fork kopiert (Ueberschuss-Zaehler > 0), zaehlt das Prozessende ihn herunter. */
+        if (pathNum & 0x8000U) {
+            Q9_u32 cell = Q9K_MGRREF_ADDR + (Q9_u32)(pathNum & 0x3FU);
+            Q9_u8 r = Q9K_GetU8(cell);
+            if (r > 0)
+                Q9K_SetU8(cell, (Q9_u8)(r - 1));
             continue;
+        }
 
         pathDesc = Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR) +
                    ((Q9_u32)pathNum - 3UL) * Q9K_PATHDESC_SIZE;

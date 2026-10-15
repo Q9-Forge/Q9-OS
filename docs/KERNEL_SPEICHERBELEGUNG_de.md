@@ -427,6 +427,7 @@ hinzufuegt, erzeugt diese Tabelle neu und prueft die Luecken unten.
 | `$002480` | 2 | `Q9K_RegChkCode` | q9kernel_entry.a | Q9_u16, Callcode des Schnappschusses |
 | `$002484` | 4 | `Q9K_RegChkCount` | q9kernel_entry.a | Q9_u32, Anzahl gemeldeter Abweichungen seit dem Boot |
 | `$002488` | 4 | `Q9K_SchedNoSwitch` | q9kernel_entry.a; C: Q9K_SCHED_NOSWITCH_ADDR | Q9_u32, A7: <> 0, wenn der vom Timer Unterbrochene selbst eine Interru |
+| `$002500` | 64 | `Q9K_MgrRefs` | q9kernel_entry.a; C: Q9K_FORK_MGRREF_ADDR, Q9K_MGRREF_ADDR | 64 Byte, A13: Ueberschuss-Zaehler je IOMan-Pfad (Index = PD-Nummer & $ |
 | `$1540C0` | 4 | `Q9K_RaceRingIdx` | q9kernel_entry.a | Base + Slots*EntSz (8192*8=$10000), Literal wegen r68 |
 | `$154100` | 4 | `Q9K_TLinkTrace_Proc` | q9kernel_entry.a |  |
 | `$154104` | 4 | `Q9K_TLinkTrace_EntryA3` | q9kernel_entry.a |  |
@@ -473,9 +474,10 @@ hinzufuegt, erzeugt diese Tabelle neu und prueft die Luecken unten.
 |---|---:|---|
 | `$1541C4`-`$15FFFF` | 48700 | Diagnose |
 | `$150000`-`$1540BF` | 16576 | Diagnose |
-| `$00248C`-`$003FFF` | 7028 | Scratch |
+| `$002540`-`$003FFF` | 6848 | Scratch |
 | `$001004`-`$0011FF` | 508 | Scratch |
 | `$00211C`-`$0021FF` | 228 | Scratch |
+| `$00248C`-`$0024FF` | 116 | Scratch |
 | `$1540C4`-`$1540FF` | 60 | Diagnose |
 | `$0012F4`-`$001327` | 52 | Scratch |
 | `$0012A4`-`$0012D7` | 52 | Scratch |
