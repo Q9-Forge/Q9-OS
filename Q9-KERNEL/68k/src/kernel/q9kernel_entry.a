@@ -557,6 +557,7 @@ Q9K_RegChkSnap            equ $2440      * 15 x Q9_u32, d0-d7/a0-a6 des Aufrufer
 Q9K_RegChkSP              equ $247C      * Q9_u32, sp beim Eintritt (= Adresse des Hardware-Frames; Schluessel gegen Verschachtelung)
 Q9K_RegChkCode            equ $2480      * Q9_u16, Callcode des Schnappschusses
 Q9K_RegChkCount           equ $2484      * Q9_u32, Anzahl gemeldeter Abweichungen seit dem Boot
+Q9K_SchedNoSwitch         equ $2488      * Q9_u32, A7: <> 0, wenn der vom Timer Unterbrochene selbst eine Interrupt-Maske hatte (q9kernel_sched.c)
 * (entfernt, B3: Q9K_FLinkCall_TyLang/_Name auf $1A00/$1A04 wurden nirgends benutzt und
 *  lagen auf Eintrag 0 der Alarmtabelle.)
 Q9K_FLinkSearch_TyLang    equ $154170
@@ -3444,6 +3445,15 @@ Q9K_TimerIRQHandler:
 * (gemessen nach dem Login: mshell/pd weg, nur noch Idle).
         move.w  Q9K_InTrapPath,Q9K_PROCDESC_RESUMETRAP_OFF(a0)
 
+* A7 (2026-10-15): lief der UNTERBROCHENE Code selbst mit einer Interrupt-Maske (SR & $0700 <> 0 = z. B. die UART-ISR
+* auf Level 3), darf der Tick nur die Buchfuehrung machen, aber nicht umschalten: sonst bliebe die ISR halb ausgefuehrt
+* auf dem Stack des alten Prozesses liegen, waehrend ihr Level wieder frei ist und sie erneut betreten werden kann.
+* Das gesicherte SR liegt hinter dem 60-Byte-Registerblock (60(sp)).
+        moveq   #0,d1
+        move.w  60(sp),d1
+        andi.w  #$0700,d1
+        move.l  d1,Q9K_SchedNoSwitch
+
         lea     Q9K_CRuntimeData(pc),a6           * a6 fuer den C-Aufruf (Q9K_SchedReschedule) auf den Kernel-Laufzeitpuffer setzen
         Q9K_FARCALL     Q9K_SchedReschedule                 * -> d0 = 0 (kein Wechsel) / neuer Deskriptorzeiger
 
@@ -4955,6 +4965,10 @@ Q9K_SysDExec_Fail:
 *******************************************************************************
 * Q9K_TraceHandler -- vector 9, single-step continuation for F$DExec.
 Q9K_TraceHandler:
+* A7 (2026-10-15): die Trace-Ausnahme ist kein Systemaufruf und laeuft mit der Maske des Unterbrochenen (meist 0);
+* Q9K_ProcDebugTrace fasst Queues an und waere gegen den Timer ungeschuetzt. Wie im Trap-Dispatch: am Eintritt
+* sperren, die Sperre endet mit dem rte (massgeblich ist das gesicherte SR im Frame).
+        ori.w   #$0700,sr
         movem.l d0-d7/a0-a6,-(sp)
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)

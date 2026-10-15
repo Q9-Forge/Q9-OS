@@ -174,6 +174,15 @@ typedef unsigned char  Q9_u8;
 
 /* Eigene Kernel-Global-Erweiterung -- Restticks der aktuellen Zeitscheibe.
  * Direkt hinter Q9K_MODDIR_HEAD_ADDR ($1238, q9kernel_moddir.c). */
+/* A7 (2026-10-15): Q9K_TimerIRQHandler setzt diese Zelle <> 0, wenn der UNTERBROCHENE Code selbst mit einer
+ * Interrupt-Maske lief (gesichertes SR & $0700 <> 0), also in einem Interrupt-Behandler niedrigerer Stufe (z. B. der
+ * UART-ISR auf Level 3) oder in einem gesperrten Abschnitt. Dann gibt es nur die Tick-Buchfuehrung, KEINEN
+ * Prozesswechsel: ein Wechsel liesse die unterbrochene ISR halb ausgefuehrt auf dem Stack des alten Prozesses liegen,
+ * waehrend der Level wieder frei ist und die ISR erneut betreten werden kann. */
+#ifndef Q9K_SCHED_NOSWITCH_ADDR
+#define Q9K_SCHED_NOSWITCH_ADDR 0x2488UL   /* Q9_u32 */
+#endif
+
 #ifndef Q9K_SCHED_SLICE_ADDR
 #define Q9K_SCHED_SLICE_ADDR 0x123CUL
 #endif
@@ -472,6 +481,9 @@ Q9_u32 Q9K_SchedReschedule(void)
     Q9K_ClockTick();            /* NACHTRAG 2026-09-18, Systemuhr -- VOR den Alarmen waere falsch: ein absoluter
                                  * Alarm soll den Zeitpunkt sehen, der beim Eintragen galt, nicht den um einen
                                  * Tick vorgerueckten (s. q9kernel_clock.c) */
+
+    if (Q9K_GetU32(Q9K_SCHED_NOSWITCH_ADDR) != 0UL)
+        return 0;               /* A7: Unterbrochener ist selbst ein Interrupt -- kein Wechsel, Zeitscheibe bleibt */
 
     slice = Q9K_GetU16(Q9K_SCHED_SLICE_ADDR);
     if (slice > 0) {

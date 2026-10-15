@@ -54,3 +54,29 @@ dann mit einem einzelnen `E` an (`Q9K_ExcTrapSpin`, Zeile 1901). Mit einer Sekun
 Eingabe läuft derselbe Test in beiden Varianten durch. Ursache **nicht geklärt**; verdächtig sind
 das SR-Fenster zwischen Handler-Rückkehr und Epilog (Regel 3) und Eingabe-Interrupts, die während
 eines Forks einschlagen. Eigener Arbeitsschritt (Trap-Stresstest), kein Teil von B3.
+
+## A7 — Inventur der Queue-Zugriffe und IRQ-Fenster (15.10.2026)
+
+Schutzregel: **Queues, Prozessdeskriptoren und die Freiliste ändert nur Code, den kein anderer Interrupt unterbrechen
+kann.** Wer sie anfasst, läuft entweder (a) im Trap-Dispatch mit Maske `$0700` (Einstieg Zeile 3426, endet mit dem `rte`),
+(b) im Timer-Interrupt (Level 6, höher als jede Geräte-ISR), (c) im Boot vor dem ersten Interrupt oder (d) unter
+`Q9K_IntLock` (Arena).
+
+| Kontext | Wer fasst Queues/Listen an | Schutz |
+|---|---|---|
+| **Trap-Dispatch** (`TRAP #0`) | alle `Q9K_Sys*Impl` über `Q9K_FARCALL`: `Q9K_SchedInsert`, `Q9K_WaitQInsert`, `Q9K_SleepQInsert`, `Q9K_SchedWake`, `Q9K_ProcSend`, `Q9K_ProcExit`, `Q9K_SchedCommitPreempt` (aus `F$AProc`) | Maske `$0700` ab Einstieg. Ausnahme: **externe Handler** (IOMan, Treiber) öffnen sie absichtlich; ein Systemaufruf aus ihnen maskiert am eigenen Einstieg erneut. Der Rückweg wird erneut gesperrt (Zeile 3824). |
+| **Timer-IRQ** (Level 6, 10 ms) | `Q9K_SchedReschedule`: Ready-Queue, Sleep-Queue (`Q9K_SleepQDecrementAll`), Alarme, Uhr | Kein anderer Interrupt (außer NMI) kann ihn unterbrechen. **Neu:** schaltet nicht um, wenn der Unterbrochene selbst eine Interrupt-Maske hatte (`Q9K_SchedNoSwitch`, s. unten). |
+| **Geräte-ISR** (Level 3, `sc68681`) | keine direkt; Weckpfade (`F$Send`) gehen über den Trap-Dispatch | Der Timer darf sie unterbrechen. **Vorher:** er konnte dabei umschalten und die halb ausgeführte ISR auf dem Stack des alten Prozesses liegen lassen, während Level 3 wieder frei war (Wiedereintritt möglich). **Jetzt:** kein Wechsel, nur Tick-Buchführung. |
+| **Trace-Ausnahme** (Vektor 9, `F$DExec`-Einzelschritt) | `Q9K_ProcDebugTrace` | **Vorher ungeschützt** (Maske des Unterbrochenen, meist 0). **Jetzt:** `ori.w #$0700,sr` am Eintritt, endet mit dem `rte`. |
+| **Arena** (`Q9K_AllocMem`/`Q9K_FreeMem`/`Q9K_AllocLargest`) | Freiliste | `Q9K_IntLock`/`Q9K_IntUnlock` um jede Funktion; im Developer-Kernel zusätzlich `Q9K_ArenaAudit`. |
+| **Boot** (`Q9K_CInit`) | Pools, Queues anlegen | Interrupts aus, bis der Start fertig ist. |
+
+**Änderungen aus dieser Inventur:** (1) `Q9K_TimerIRQHandler` trägt `SR & $0700` des unterbrochenen Codes in `Q9K_SchedNoSwitch`
+(`$2488`) ein; `Q9K_SchedReschedule` gibt dann nach der Tick-Buchführung 0 zurück, die Zeitscheibe bleibt. Hosttest
+`test_q9kernel_sched` Fall 4b. (2) `Q9K_TraceHandler` sperrt am Eintritt.
+
+**Nicht getan / offen:** Das gezielte Einspielen von Interrupts (Injektion) fehlt: belegt ist die Wirksamkeit nur durch die
+Lasttests mit dem normalen 10-ms-Takt (`leak_test.sh`, A6, A12). Ein Test mit stark verkürzter Tickzeit im Emulator würde
+die Fenster häufiger treffen. Außerdem unverändert: `Q9K_RaceRing`-Marker werden in jedem Trap geschrieben und sind
+kein Schutzmechanismus.
+

@@ -22,6 +22,7 @@ static unsigned char g_fakeGlobals[0x2000];
  * umgebogen, sonst greift der Scheduler auf die echte Adresse $55E zu. */
 #define Q9K_SCHED_MINPTY_ADDR                ((unsigned long)(g_fakeGlobals + 0x1F00))
 #define Q9K_SCHED_SLICE_ADDR    ((unsigned long)(g_fakeGlobals + 0x010))
+#define Q9K_SCHED_NOSWITCH_ADDR ((unsigned long)(g_fakeGlobals + 0x1F10))   /* A7 */
 #define Q9K_WAITQ_SENTINEL_ADDR ((unsigned long)(g_fakeGlobals + 0x018))   /* NACHTRAG 2026-08-22 */
 #define Q9K_SLEEPQ_SENTINEL_ADDR ((unsigned long)(g_fakeGlobals + 0x020))  /* NACHTRAG 2026-08-30 */
 /* Real nur 2 Byte (Deskriptor-Offset 0x0E) -- grosszuegig auf einen
@@ -149,6 +150,15 @@ int main(void)
     checkU16("Slice danach = 1", Q9K_GetU16(Q9K_SCHED_SLICE_ADDR), 1);
     checkU32("Reschedule mit Slice=1 -> kein Wechsel (0)", Q9K_SchedReschedule(), 0);
     checkU16("Slice danach = 0", Q9K_GetU16(Q9K_SCHED_SLICE_ADDR), 0);
+
+    /* Fall 4b (A7): Slice ist 0 und es sind Prozesse bereit, aber der Unterbrochene war selbst ein Interrupt
+     * (Q9K_SCHED_NOSWITCH_ADDR <> 0) -- KEIN Wechsel, Zeitscheibe bleibt 0, Q9_D_PROC unveraendert, die Queue
+     * unberuehrt. Danach (Zelle 0) wechselt der naechste Aufruf wie gewohnt (Fall 5). */
+    Q9K_SetU32(Q9K_SCHED_NOSWITCH_ADDR, 1UL);
+    checkU32("Reschedule im Interrupt-Kontext -> kein Wechsel (0)", Q9K_SchedReschedule(), 0);
+    checkU16("... Zeitscheibe bleibt 0", Q9K_GetU16(Q9K_SCHED_SLICE_ADDR), 0);
+    checkU32("... Q9_D_PROC unveraendert (0)", Q9K_GetU32(Q9_D_PROC), 0);
+    Q9K_SetU32(Q9K_SCHED_NOSWITCH_ADDR, 0UL);
 
     /* Fall 5: Slice ist jetzt 0 -- naechster Reschedule-Aufruf waehlt
      * den Prozess mit dem hoechsten Alter (p3, aktuell 12 nach der
