@@ -5019,6 +5019,8 @@ Q9K_SysFWait:
         beq     Q9K_SysFWait_Reaped
         cmpi.w  #2,Q9K_WaitScratch_Outcome
         beq     Q9K_SysFWait_NoChld
+        cmpi.w  #3,Q9K_WaitScratch_Outcome
+        beq     Q9K_SysFWait_Signal             * A11: Signal steht an und eine Intercept-Routine ist eingetragen
 
 * Outcome 0: Kinder vorhanden, aber keins Zombie -- der Aufrufer muss
 * blockieren. GENAU WIE Q9K_TimerIRQHandler: kompletten Registersatz DES
@@ -5053,6 +5055,11 @@ Q9K_SysFWait:
 * in diesem Kernel nach dem Blockieren nie fehl (kein Fehlerpfad fuer
 * den bereits-blockierten Fall vorgesehen).
         andi.w  #$fffe,60(sp)             * Carry im gesicherten SR-Wort explizit loeschen (60 = Registersatzgroesse, s. o.)
+* A11: wird der wartende Prozess durch ein SIGNAL geweckt (nicht durch ein Kind), muss d0.w = 0 zurueckkommen
+* (68k_tech.pdf F$Wait: "d0.w contains zero, since no child process has terminated"). Ein Kind, das endet,
+* ueberschreibt d0/d1 im gesicherten Rahmen mit Kind-ID und Status (Q9K_ProcExit), der Vorbelegung schadet das nicht.
+        clr.l   (sp)                      * d0 im gesicherten Rahmen
+        clr.l   4(sp)                     * d1 im gesicherten Rahmen
 
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
@@ -5074,6 +5081,25 @@ Q9K_SysFWait:
         bne     Q9K_SysFWait_SwitchTo
 * Kein Prozess mehr bereit -- nicht mehr automatisch K$Idle, s.
 * Q9K_IdleFallback-Kopfkommentar weiter unten im File.
+        bsr     Q9K_IdleFallback
+        bra     Q9K_SysFWait_SwitchTo
+
+* A11: Signal steht an, Intercept-Routine eingetragen: nicht blockieren, sondern zustellen. Wie F$Sleep (A9):
+* Registersatz sichern, P$SavedSP setzen, 68 Byte Luft unter dem Rahmen lassen (dort entsteht der Rahmen der Routine),
+* dann den C-Teil rufen. d0/d1 = 0 im gesicherten Rahmen: "kein Kind beendet" (Handbuch).
+Q9K_SysFWait_Signal:
+        addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen, wie im Blockierpfad
+        movem.l d0-d7/a0-a6,-(sp)
+        andi.w  #$fffe,60(sp)            * Carry loeschen: F$Wait gelingt
+        clr.l   (sp)
+        clr.l   4(sp)
+        movea.l Q9_D_Proc,a0
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
+        lea     -Q9K_IcptFrameGap(sp),sp
+        lea     Q9K_CRuntimeData(pc),a6
+        Q9K_FARCALL     Q9K_ProcWaitDeliver      * -> d0 = naechster Deskriptor oder 0
+        tst.l   d0
+        bne     Q9K_SysFWait_SwitchTo
         bsr     Q9K_IdleFallback
         bra     Q9K_SysFWait_SwitchTo
 

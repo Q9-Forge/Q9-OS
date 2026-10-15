@@ -70,6 +70,15 @@ unsigned long Q9K_SchedFirstPick(void)
 
 static int g_waitQRemoveCalls = 0;
 static unsigned long g_waitQRemoveLastDesc = 0;
+/* A11: Q9K_ProcWaitDeliver stellt ein anstehendes Signal zu (q9kernel_icpt.c) -- hier nur ein Zaehl-Stub. */
+static unsigned long g_icptDeliverCalls = 0;
+int Q9K_IcptDeliver(unsigned long desc, unsigned short signal)
+{
+    (void)desc; (void)signal;
+    g_icptDeliverCalls++;
+    return 1;
+}
+
 void Q9K_WaitQRemove(unsigned long desc)
 {
     g_waitQRemoveCalls++;

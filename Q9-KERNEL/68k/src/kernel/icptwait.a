@@ -1,0 +1,119 @@
+*******************************************************************************
+* icptwait.a -- Regressionstest fuer Arbeitsplan A11: F$Wait, wenn schon ein Signal ansteht.
+*
+* Ablauf: F$Icpt, Signal 32 an sich selbst (der Prozess laeuft: es wird nur abgelegt), das Kind waitkid starten
+* (lebt rund 0,5 s), F$Wait. Laut Handbuch kehrt F$Wait dann sofort zurueck (die Intercept-Routine laeuft zuerst) mit
+* d0.w = 0, "since no child process has terminated". Danach ein zweites F$Wait: es blockiert, bis das Kind endet, und
+* liefert dessen ID (<> 0).
+*
+* Erwartete Ausgabe (je eine Zeile):
+*     w intercept
+*     wait signal ok
+*     child reaped
+*******************************************************************************
+Q9Prgrm                 equ     1
+Q9Objct                 equ     1
+Q9K_WaitEdition         equ     1
+Q9K_WaitStackSize       equ     $1000
+
+        psect   icptwait,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_WaitEdition,Q9K_WaitStackSize,Q9K_WaitStart
+
+        vsect
+Q9K_WaitData:
+        ds.l    1
+        ends
+
+Q9K_WaitStart:
+        lea     Q9K_WaitHandler(pc),a0
+        trap    #0
+        dc.w    $09                              * F$Icpt
+        bcs     Q9K_WaitFail
+        trap    #0
+        dc.w    $0c                              * F$ID -> d0.w = eigene ID
+        bcs     Q9K_WaitFail
+        move.w  #32,d1
+        trap    #0
+        dc.w    $08                              * F$Send Signal 32 an sich selbst
+        bcs     Q9K_WaitFail
+        lea     Q9K_WaitKidName(pc),a0           * Modul laden (ein Fehler -- schon geladen -- stoert nicht)
+        moveq   #0,d0
+        trap    #0
+        dc.w    $01                              * F$Load
+        lea     Q9K_WaitKidName(pc),a0           * Kind starten
+        lea     Q9K_WaitKidParam(pc),a1
+        moveq   #0,d0
+        moveq   #0,d1
+        moveq   #1,d2
+        moveq   #3,d3
+        moveq   #0,d4
+        trap    #0
+        dc.w    3                                * F$Fork
+        bcs     Q9K_WaitFail
+        trap    #0
+        dc.w    4                                * F$Wait #1: Signal steht an -> Intercept, dann d0.w = 0
+        bcs     Q9K_WaitFail
+        tst.w   d0
+        bne.s   Q9K_WaitBadD0
+        lea     Q9K_WaitTextOk(pc),a0
+        move.l  #Q9K_WaitOkLen,d1
+        bra.s   Q9K_WaitSay1
+Q9K_WaitBadD0:
+        lea     Q9K_WaitTextBad(pc),a0
+        move.l  #Q9K_WaitBadLen,d1
+Q9K_WaitSay1:
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        trap    #0
+        dc.w    4                                * F$Wait #2: blockiert, bis das Kind endet
+        bcs     Q9K_WaitFail
+        tst.w   d0
+        beq.s   Q9K_WaitNoKid
+        lea     Q9K_WaitTextKid(pc),a0
+        move.l  #Q9K_WaitKidLen,d1
+        bra.s   Q9K_WaitSay2
+Q9K_WaitNoKid:
+        lea     Q9K_WaitTextNoKid(pc),a0
+        move.l  #Q9K_WaitNoKidLen,d1
+Q9K_WaitSay2:
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+Q9K_WaitFail:
+        trap    #0
+        dc.w    6                                * F$Exit, d1 = Fehlercode
+
+Q9K_WaitHandler:
+        lea     Q9K_WaitTextHit(pc),a0
+        move.l  #Q9K_WaitHitLen,d1
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        trap    #0
+        dc.w    $1e                              * F$RTE
+
+Q9K_WaitKidName:
+        dc.b    "waitkid",$0d
+Q9K_WaitKidParam:
+        dc.b    $0d
+Q9K_WaitTextHit:
+        dc.b    "w intercept",$0d
+Q9K_WaitHitLen          equ     12
+Q9K_WaitTextOk:
+        dc.b    "wait signal ok",$0d
+Q9K_WaitOkLen           equ     15
+Q9K_WaitTextBad:
+        dc.b    "wait d0 falsch",$0d
+Q9K_WaitBadLen          equ     15
+Q9K_WaitTextKid:
+        dc.b    "child reaped",$0d
+Q9K_WaitKidLen          equ     13
+Q9K_WaitTextNoKid:
+        dc.b    "child fehlt",$0d
+Q9K_WaitNoKidLen        equ     12
+
+        endsect

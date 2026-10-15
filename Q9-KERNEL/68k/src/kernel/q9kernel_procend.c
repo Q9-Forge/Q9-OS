@@ -87,6 +87,7 @@ extern Q9_u32 Q9K_SchedFirstPick(void);             /* q9kernel_sched.c -- "naec
                                                        * kein aktueller zum Wiedereinreihen", exakt das,
                                                        * was F$Exits erzwungener Wechsel braucht */
 extern void   Q9K_WaitQRemove(Q9_u32 desc);         /* q9kernel_sched.c */
+extern int    Q9K_IcptDeliver(Q9_u32 desc, Q9_u16 signal);  /* q9kernel_icpt.c */
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr); /* q9kernel_moddir.c */
 extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size); /* q9kernel_arena.c */
 extern void   Q9K_ProcMemReleaseAll(Q9_u32 owner);   /* q9kernel_sysmem.c */
@@ -531,6 +532,9 @@ int Q9K_ProcDebugExit(Q9_u16 childPid, Q9_u16 *outError)
 #ifndef Q9K_WAIT_SIGLVL_OFF
 #define Q9K_WAIT_SIGLVL_OFF  0x210UL   /* P$SigLvl (Byte) */
 #endif
+#ifndef Q9K_WAIT_SIGVEC_OFF
+#define Q9K_WAIT_SIGVEC_OFF  0x28UL    /* P$SigVec: eingetragene Intercept-Routine (0 = keine) */
+#endif
 /* Maske loeschen (F$Wait-Regel) und melden, ob ein Signal ansteht. */
 static int Q9K_WaitSignalPending(Q9_u32 desc)
 {
@@ -558,14 +562,37 @@ void Q9K_SysWaitImpl(void)
     } else if (Q9K_WaitSignalPending(callerDesc)) {
         /* Fortsetzung 120, 68k_tech.pdf F$SigMask: F$Wait loescht die
          * Signalmaske; steht schon ein Signal an, kehrt der Aufruf sofort
-         * zurueck (Kind-ID 0) statt zu blockieren. OFFEN: die Zustellung an
-         * die Intercept-Routine aus diesem Pfad (F$Sleep macht sie bereits). */
-        Q9K_SetU16(Q9K_WAIT_SCRATCH_CHILDPID, 0);
-        Q9K_SetU16(Q9K_WAIT_SCRATCH_EXITSTATUS, 0);
-        Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 1);
+         * zurueck (Kind-ID 0) statt zu blockieren.
+         * A11 (2026-10-15): hat der Prozess eine Intercept-Routine eingetragen, wird das Signal jetzt auch
+         * ZUGESTELLT (Ausgang 3: Q9K_SysFWait_Signal baut dafuer wie bei F$Sleep den Rahmen unter P$SavedSP und
+         * wechselt; die Routine laeuft zuerst, danach kehrt F$Wait mit d0=0 zurueck). Ohne Routine bleibt es beim
+         * sofortigen Ruecksprung (Ausgang 1). */
+        if (Q9K_GetU32(callerDesc + Q9K_WAIT_SIGVEC_OFF) != 0UL) {
+            Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 3);
+        } else {
+            Q9K_SetU16(Q9K_WAIT_SCRATCH_CHILDPID, 0);
+            Q9K_SetU16(Q9K_WAIT_SCRATCH_EXITSTATUS, 0);
+            Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 1);
+        }
     } else {
         Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 0);   /* Aufrufer (Trampolin) muss blockieren */
     }
+}
+
+/* Q9K_ProcWaitDeliver (A11) -- vom Assembler-Pfad Q9K_SysFWait_Signal gerufen, NACHDEM der Registersatz des
+ * Aufrufers gesichert, P$SavedSP gesetzt und 68 Byte Luft darunter gelassen wurden (Q9K_IcptFrameGap, wie bei
+ * F$Sleep, A9). Legt den Aufrufer zurueck in die Ready-Queue, stellt das anstehende Signal zu (der Rahmen der
+ * Intercept-Routine entsteht bei P$SavedSP-68) und liefert den als naechsten zu startenden Deskriptor
+ * (0 = keiner). Rueckgabe in d0, wie Q9K_SchedFirstPick. */
+Q9_u32 Q9K_ProcWaitDeliver(void)
+{
+    Q9_u32 desc = Q9K_GetU32(Q9_D_PROC);
+    Q9_u16 pending = Q9K_GetU16(desc + Q9K_WAIT_SIGNAL_OFF);
+
+    Q9K_SchedInsert(desc);
+    if (pending != 0U)
+        (void)Q9K_IcptDeliver(desc, pending);
+    return Q9K_SchedFirstPick();
 }
 
 /* Q9K_SysExitImpl -- gleiches Bruecken-Muster wie Q9K_SysWaitImpl oben,
