@@ -551,6 +551,7 @@ Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
 Q9K_IOpenScratch_PathNum  equ $136C      * Q9_u32, d0.w AUS (0 = Fehlschlag)
 Q9K_IOpenScratch_Error    equ $1374      * Q9_u32, d1.w AUS bei Fehler
 Q9K_DispatchCallCode      equ $1370      * Q9_u16, Callcode des laufenden Traps: schreibt Q9K_TrapDispatch bei JEDEM Trap (move.w d7,($1370).w), gelesen u. a. von F$-Wrappern und q9kernel_dbg.c (unteres Byte bei +1). B3: vorher teilte sich die Zelle der native I$Open mit Q9K_IOpenScratch_Error (Langwort) und loeschte so den Callcode.
+Q9K_IcptFrameGap          equ 68         * = Q9K_FAKEFRAME_SIZE (q9kernel_icpt.c): Groesse eines Intercept-Rahmens, s. Q9K_SysFSleep_Block
 * A5 (2026-10-15): Register-Erhaltungspruefung, nur Q9K_DEBUG (s. Q9K_RegChkReturn).
 Q9K_RegChkSnap            equ $2440      * 15 x Q9_u32, d0-d7/a0-a6 des Aufrufers beim Handlereintritt
 Q9K_RegChkSP              equ $247C      * Q9_u32, sp beim Eintritt (= Adresse des Hardware-Frames; Schluessel gegen Verschachtelung)
@@ -5230,6 +5231,12 @@ Q9K_SysFSleep_Block:
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
 
+* A9 (2026-10-15): Platz fuer einen Intercept-Rahmen UNTER P$SavedSP freihalten. Steht beim F$Sleep schon ein
+* Signal an, stellt Q9K_ProcSleep es dem Aufrufer selbst zu, und Q9K_IcptDeliver baut dort einen 68-Byte-
+* Rahmen (SavedSP - 68). Ohne diese Luecke lief die C-Aufrufkette genau in diesem Bereich: der Rahmen
+* ueberschrieb ihre Ruecksprungadresse, der Kernel sprang nach PC=1 und rutschte durch Nullspeicher bis zum
+* ersten ungueltigen Opcode ($128c). Beleg: icptsleep.a; Instruktionsspur des Absturzes (Q9_TRACE_INSTR).
+        lea     -Q9K_IcptFrameGap(sp),sp
         lea     Q9K_CRuntimeData(pc),a6              * fuer den folgenden C-Aufruf, gleiches Muster wie oben
         Q9K_FARCALL     Q9K_SysSleepImpl                        * -> Q9K_SleepScratch_Next = naechster Deskriptor oder 0
 

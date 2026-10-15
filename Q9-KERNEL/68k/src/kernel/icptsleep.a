@@ -1,0 +1,74 @@
+*******************************************************************************
+* icptsleep.a -- Regressionstest fuer A9 / Arbeitsplan A6: Signal, das schon ansteht,
+* wenn der Prozess F$Sleep ruft.
+*
+* Ablauf: F$Icpt (Intercept-Routine anmelden), F$ID (eigene ID), F$Send an sich selbst
+* (der Prozess laeuft, das Signal wird nur in P$Signal abgelegt), F$Sleep. Q9K_ProcSleep
+* findet das anstehende Signal und stellt es dem AUFRUFER selbst zu -- Q9K_IcptDeliver
+* baut dabei einen 68-Byte-Rahmen unter P$SavedSP. Dort lag zugleich der C-Stack der
+* laufenden Funktion: der Rahmen ueberschrieb deren Ruecksprungadresse, und der Kernel
+* sprang ins Nichts (PC=1, danach Illegal Instruction bei $128c). In der Praxis traf es
+* mshell, wenn ein Tastendruck zwischen der Anmeldung von SS_SSig und F$Sleep eintraf.
+*
+* Erwartete Ausgabe (je eine Zeile):
+*     intercept ok
+*     sleep done
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_IcptEdition         equ     1
+Q9K_IcptStackSize       equ     $1000
+
+        psect   icptsleep,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_IcptEdition,Q9K_IcptStackSize,Q9K_IcptStart
+
+        vsect
+Q9K_IcptData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_IcptStart:
+        lea     Q9K_IcptHandler(pc),a0          * (a0) = Intercept-Routine, a6 bleibt der Datenbereich
+        trap    #0
+        dc.w    $09                              * F$Icpt
+        bcs     Q9K_IcptFail
+        trap    #0
+        dc.w    $0c                              * F$ID -> d0.w = eigene Prozess-ID
+        bcs     Q9K_IcptFail
+        move.w  #32,d1                          * d1.w = Signalcode (benutzerdefiniert)
+        trap    #0
+        dc.w    $08                              * F$Send an sich selbst: wird nur abgelegt
+        bcs     Q9K_IcptFail
+        moveq   #10,d0                          * d0.l = 10 Ticks schlafen -- mit anstehendem Signal sofort zurueck
+        trap    #0
+        dc.w    $0a                              * F$Sleep
+        lea     Q9K_IcptTextDone(pc),a0
+        move.l  #Q9K_IcptDoneLen,d1
+        moveq   #1,d0                           * Pfad 1 = Standardausgabe
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        moveq   #0,d1                           * Exit-Status 0
+        trap    #0
+        dc.w    6                                * F$Exit
+
+Q9K_IcptFail:
+        trap    #0
+        dc.w    6                                * F$Exit, d1 = Fehlercode des Syscalls
+
+* Intercept-Routine: d1.w = Signalcode, a6 = Datenbereich. Meldet sich und kehrt per F$RTE zurueck.
+Q9K_IcptHandler:
+        lea     Q9K_IcptTextHit(pc),a0
+        move.l  #Q9K_IcptHitLen,d1
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        trap    #0
+        dc.w    $1e                              * F$RTE
+
+Q9K_IcptTextHit:
+        dc.b    "intercept ok",$0d
+Q9K_IcptHitLen          equ     13               * 12 Zeichen + CR
+Q9K_IcptTextDone:
+        dc.b    "sleep done",$0d
+Q9K_IcptDoneLen         equ     11               * 10 Zeichen + CR
+
+        endsect

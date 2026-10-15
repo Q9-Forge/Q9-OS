@@ -46,7 +46,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
-| A | Kernel-Fundament | 5 / 9 | 🔄 |
+| A | Kernel-Fundament | 6 / 10 | 🔄 |
 | B | Technische Schulden | 1 / 4 | 🔄 |
 | C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
@@ -54,7 +54,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **7 / 48** | |
+| **Teil 1 Kernel** | | **8 / 49** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -156,7 +156,8 @@ an die `bsr`-Reichweite (±32 KB bei 62 KB Kernel).
 | A6 | ⬜ | **Stresstest verschachtelter externer Traps**: mehrere Prozesse mit gleichzeitigem I/O über IOMan, Filemanager und Treiber bei laufendem Timer | N Durchläufe ohne Exception; Szenario eingecheckt und schaltbar wie `Q9K_TestNestedTrapStress` | A1 | |
 | A7 | ⬜ | **IRQ während Queue- und Kontextübergabe**: kritische Abschnitte inventarisieren, gezielt Interrupts injizieren | Jeder Abschnitt ist abgesichert oder seine Sicherheit schriftlich begründet | A6 | |
 | A8 | ⬜ | **Langlauf und Ressourcenbilanz**: ~1000 Zyklen `F$Fork`/`F$Exit`/`F$TLink` | Freispeicher, Modul-Linkzähler und Trap-Slots kehren auf den Ausgangswert zurück | A1 | |
-| A9 | ⬜ | **Absturz bei schnell aufeinanderfolgenden Eingaben** (Fund aus A1): `Q9K_LOGIN_PAUSE=0 tools/login_shell_test.sh development` → Kernel hält in `Q9K_ExcTrapSpin` (Vektor 4, PC `$128c` im Kerneldatenbereich, Rücksprungadressen in `mshell`); mit 1 s Pause grün | Ursache benannt und behoben; Login-Test mit `Q9K_LOGIN_PAUSE=0` grün (Verdacht: SR-Fenster nach externem Handler, s. `KERNEL_IRQ_SPERRE_de.md`) | A1 | **Nicht behoben, nur layoutabhängig.** `Q9K_LOGIN_PAUSE=0`, development, je 2 Läufe (15.10.2026): Stand `0c5addd` (A1) grün, `5b16faa` (B3) **rot** (`pd`/`echo zq9e2` ohne Prompt), `91f6800` (A2/A3) grün, beide Varianten. Eine Quelländerung ohne Bezug kippt das Verhalten, also ein latentes Rennen. **Reproduktionsstand: `git worktree add <pfad> 5b16faa`, dann `Q9K_LOGIN_PAUSE=0 tools/login_shell_test.sh development`** (für A6/A7) |
+| A9 | ✅ | **Absturz bei schnell aufeinanderfolgenden Eingaben** (Fund aus A1) | Ursache benannt und behoben; deterministischer Test `icptsleep` | A1 | **Ursache: `F$Sleep` mit bereits anstehendem Signal.** `Q9K_ProcSleep` stellt es dem Aufrufer selbst zu; `Q9K_IcptDeliver` baut den 68-Byte-Rahmen bei `P$SavedSP-68`, genau dort läuft aber die C-Aufrufkette des Sleep-Aufrufs — der Rahmen überschrieb ihre Rücksprungadresse (Instruktionsspur: `Q9K_IcptDeliver+0xe8` kehrt nach `PC=1` zurück, danach Nullspeicher bis zum ersten ungültigen Opcode `$128c`; daher immer derselbe Absturz-PC). Auslöser in der Praxis: ein Tastendruck zwischen `SS_SSig` und `F$Sleep` von mshell, deshalb zeitabhängig. **Korrektur:** `Q9K_SysFSleep_Block` hält vor dem C-Aufruf 68 Byte unter `P$SavedSP` frei (`Q9K_IcptFrameGap`). **Beleg:** neues Testprogramm `icptsleep.a` (Intercept anmelden, Signal an sich selbst, `F$Sleep`; erwartet `intercept ok`/`sleep done`) — ohne Korrektur rot mit genau dem A9-Absturz (Vektor 4, SR `$2708`, PC `$128c`), mit Korrektur grün; Teil von `login_shell_test.sh`, `kernel_regress.sh` 5/5 in beiden Varianten, 15.10.2026 |
+| A10 | ⬜ | **Gleiche Fehlerklasse prüfen: Rahmen über dem C-Stack.** Andere Stellen, die einen Prozessrahmen bei `P$SavedSP` schreiben, während der Kernel auf demselben Stack läuft: `Q9K_IcptReturn` (F$RTE liefert bei weiteren anstehenden Signalen erneut zu), `F$Wait` mit anstehendem Signal, `F$SigMask`-Freigabe (`Q9K_ProcSigMask`) | Jede Stelle benannt, mit Lücke abgesichert oder als unkritisch begründet; je ein Test wie `icptsleep` | A9 | |
 
 ## Phase B — Technische Schulden
 

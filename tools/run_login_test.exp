@@ -93,6 +93,7 @@ block 1 "echo q9 regress ok"
 block 2 "pd"
 block 3 "dir /dd/SYS"
 block 4 "date"
+block 5 "icptsleep"
 
 # 4. Debug-Dump anfordern (Ctrl-^), dann den Emulator beenden. Das Lesen
 #    mit Zeitlimit statt "sleep" laesst die Dump-Zeile noch ankommen.

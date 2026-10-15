@@ -40,7 +40,7 @@ cd "$OUTDIR"
 # mit einem alten .r "erfolgreich" bauen. Jetzt wird zuerst aufgeraeumt, und
 # jede Werkzeugausgabe wird auf Fehlermeldungen durchsucht.
 rm -f ./*.r ./*.map ./*.lines makefile q9kernel forkchild trace hellosvc \
-      chaintgt nproctgt evsigtgt iattachsvc
+      chaintgt nproctgt evsigtgt iattachsvc icptsleep
 rm -rf srcdebug
 
 # scan_log <Modus> <Beschreibung> <Logdatei>: 0 = keine Fehlermeldung gefunden.
@@ -405,6 +405,15 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/evsigtgt =="
 file evsigtgt || true
 
+echo "== icptsleep.a bauen (Regressionstest: Signal steht an, wenn F\$Sleep gerufen wird, A9) =="
+cp "$SRCDIR"/icptsleep.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=icptsleep.r "icptsleep.a" < /dev/null
+wine_tool l68 \
+    -o=icptsleep -f=orowoe icptsleep.r < /dev/null
+echo "== Fertig: $OUTDIR/icptsleep =="
+file icptsleep || true
+
 echo "== iattachsvc.a bauen (I\$Attach/I\$Detach-Regressionstest) =="
 cp "$SRCDIR"/iattachsvc.a .
 wine_tool r68 \
@@ -414,7 +423,7 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/iattachsvc =="
 file iattachsvc || true
 
-for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc; do
+for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep; do
     [ -s "$f" ] || { echo "FEHLER: Ergebnis $f fehlt oder ist leer" >&2; exit 1; }
 done
 echo "== BUILD OK: alle Ergebnisse frisch erzeugt, keine Werkzeugfehler =="
