@@ -8,7 +8,8 @@
 #   2. Login-Test    tools/login_shell_test.sh <V>    (Boot -> sysgo -> startup -> tsmon -> login
 #                                                      -> mshell -> echo/pd/dir/date, ~2 min je Variante)
 #   3. Langlauf      tools/leak_test.sh 64 8          (192 Forks, Speicherbilanz; ~2 min)
-#   4. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
+#   4. Parallellauf  tools/leak_test.sh 24 2 mit 5 gleichzeitigen Prozessen (~1,5 min)
+#   5. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
 #                    (nur Standardvariante, laufen mit dem Kernel, den build.sh ohne Schalter baut)
 # --quick: nur Stufe 1 (ohne Emulator, ohne Wine-Bau).
 #
@@ -53,6 +54,11 @@ if [ "$QUICK" = 0 ]; then
     done
     # Langlauf (A8/A12): 192 Forks mit Speicherbilanz; stuerzte vor der RaceRing-Korrektur in 60-80 % der Laeufe ab.
     stufe "Langlauf 192 Forks, Speicherbilanz" bash "$HERE/leak_test.sh" 64 8
+    # Parallellauf (A6): fuenf gleichzeitige Prozesse je Zyklus (zwei dir mit Dateizugriff ueber IOMan/RBF/Treiber,
+    # date, pd, echo; "&" und "wait") bei laufendem Timer. 24 Zyklen = 120 Forks; die lange Fassung (96 Zyklen) steht
+    # im Arbeitsplan.
+    stufe "Parallellauf 5 Prozesse, Speicherbilanz" env Q9K_LEAK_PER=2 \
+        'Q9K_LEAK_CMDS=dir /dd/CMDS&dir /dd/SYS&date&pd&echo a&wait;' bash "$HERE/leak_test.sh" 24 2
     for t in startup_shell_test.sh mgrpath_probe_test.sh; do
         if [ -f "$HERE/$t" ]; then stufe "$t" bash "$HERE/$t"
         else echo "(uebersprungen, fehlt: $t)"; fi

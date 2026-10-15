@@ -31,7 +31,7 @@ die() { echo "FAIL  $*"; exit 1; }
 [ -x "$FLUX/build/macos/q9.exe" ] || die "Emulator fehlt: $FLUX/build/macos/q9.exe"
 [ -f "$REFBOOT" ] || die "Referenz-Bootdatei fehlt: $REFBOOT"
 [ -x "$OS9" ] || die "ToolShed os9 fehlt: $OS9"
-for c in echo date pd setime; do [ -f "$CMDSDIR/$c" ] || die "Befehl fehlt: $CMDSDIR/$c"; done
+for c in echo date pd dir setime; do [ -f "$CMDSDIR/$c" ] || die "Befehl fehlt: $CMDSDIR/$c"; done
 command -v expect >/dev/null 2>&1 || die "expect fehlt"
 [ "$WARMUP" -lt "$CYCLES" ] || die "WARMUP muss kleiner als CYCLES sein"
 
@@ -52,7 +52,7 @@ Q9K_BUILD_DIR="$WORK/kb" "$HERE/tools/mkbootfile.sh" "$REFBOOT" "$IMG" > "$WORK/
     || { tail -5 "$WORK/mkboot.log"; die "mkbootfile.sh"; }
 "$OS9" makdir "$IMG,CMDS" >/dev/null 2>&1 || die "makdir CMDS"
 "$OS9" makdir "$IMG,SYS" >/dev/null 2>&1 || die "makdir SYS"
-for c in echo date pd setime; do
+for c in echo date pd dir setime; do
     "$OS9" copy "$CMDSDIR/$c" "$IMG,CMDS/$c" >/dev/null 2>&1 || die "copy $c"
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
@@ -81,7 +81,9 @@ import re, sys
 log, cycles, warm, maxbytes = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 raw = open(log, 'rb').read().decode('latin1').replace('\r', '')
 EV = re.compile(r'^M ([APFL]) r=([0-9A-F]+) a=([0-9A-F]+) s=([0-9A-F]+) e=([0-9A-F]+)', re.M)
-MARK = re.compile(r'^zq(mid1|end1)\s*$', re.M)
+# Ohne Zeilenanfang-Anker: bei verschraenkter Ausgabe mehrerer Prozesse steht die Marke mitten in der Zeile.
+# Das Terminalecho der getippten Zeile endet ebenfalls so, die Ausgabe des Befehls folgt aber spaeter und gewinnt.
+MARK = re.compile(r'zq(mid1|end1)\s*$', re.M)
 events = [(m.start(), m.group(1), int(m.group(3), 16), int(m.group(4), 16), int(m.group(5), 16)) for m in EV.finditer(raw)]
 marks = {m.group(1): m.start() for m in MARK.finditer(raw)}
 if 'mid1' not in marks or 'end1' not in marks:
