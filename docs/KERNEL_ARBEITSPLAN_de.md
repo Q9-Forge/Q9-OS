@@ -46,7 +46,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
-| A | Kernel-Fundament | 8 / 14 | 🔄 |
+| A | Kernel-Fundament | 9 / 14 | 🔄 |
 | B | Technische Schulden | 1 / 4 | 🔄 |
 | C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
@@ -54,7 +54,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **10 / 53** | |
+| **Teil 1 Kernel** | | **11 / 53** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -161,7 +161,7 @@ an die `bsr`-Reichweite (±32 KB bei 62 KB Kernel).
 | A11 | ⬜ | **`F$Wait` mit anstehendem Signal**: laut Handbuch kehrt `F$Wait` (wie `F$Sleep`) sofort zur Intercept-Routine zurück, wenn ein Signal ansteht; `Q9K_SysFWait` stellt nicht zu und blockiert | Test wie `icptsleep` für `F$Wait`; Zustellung nach dem Muster von A9/A10 (Lücke unter `P$SavedSP`, nie auf dem laufenden C-Stack) | A10 | |
 | A12 | ✅ | **Absturz im Fork-Langlauf** (Fund aus A8) | Ursache benannt und behoben; `leak_test.sh 333 8` (≈1000 Forks) läuft durch | A9 | **Ursache: die Arena überdeckte feste Diagnoseadressen.** Die Zellen `Q9K_ExcInfo_*` (`$144020`…), der `Q9K_RaceRing` des Trap-Dispatchers (`$1440C0`, 8192×8 Byte, Indexzelle `$1540C0`) und die Trace-Zellen bis `$1541BB` liegen an festen Adressen im oberen RAM, die Arena reichte aber bis zum RAM-Ende. Sobald der Heap `$144000` erreichte (rund 25 Fork-Zyklen), überschrieb jeder Trap (zwei Schreibzugriffe, `pc=$8CAC/$8CAE`) Freilistenknoten und Prozessspeicher: Knoten mit Müll (`next=$41/$5404`), Allocator ohne Block (`M A … a=0`), `date` sprang neben seinen Stack, die CPU lief durch Nullspeicher. Das Zeitverhalten (nur manche Läufe) kam vom Heap-Layout. **Wie gefunden:** Instruktionsspur (Sprung ins Leere) → Freilisten-Prüfung `Q9K_ArenaAudit` im Developer-Kernel (hält beim ersten beschädigten Knoten an) → `Q9_WATCH_ADDR` auf den Knoten nannte den Schreiber. **Korrektur:** `Q9K_ArenaInitSkipRing` in `q9kernel_cinit.c` spart `[$144000, $1541C0)` aus (zwei Freiblöcke). **Beleg:** vor der Korrektur Absturz in 60–80 % der Läufe bei 72 Forks; danach 3×192 Forks und 1×1001 Prozessenden ohne Absturz, Bilanz 0 Byte; `kernel_regress.sh` 6/6 in beiden Varianten. **Nebenfunde:** (a) eine erste, zu kleine Aussparung (bis `$1540D0`) ließ die atomare Variante schon im Boot sterben — die Diagnosezellen bis `$1541BB` wurden von der ersten Belegung überschrieben; (b) `Q9K_RaceRing` ist laut eigenem Kommentar „TEMPORÄR“, läuft aber in jedem Kernel — hinter `Q9K_DEBUG` stellen oder ganz entfernen (Zeitverhalten ändert sich, danach A9/A10-Tests wiederholen) |
 | A13 | ⬜ | **`mshell <datei` scheitert**: das Kind meldet endlos „error getting path options!“ — `I$GetStt` (SS_Opt) auf dem vom Elternprozess umgeleiteten Eingabepfad | `mshell <skript` führt das Skript aus (so wie der Startup-Pfad es kann) | A1 | Fund aus A8, nicht untersucht. Test: `printf 'echo a\r' > loop; mshell <loop` nach der Anmeldung |
-| A14 | ⬜ | **`F$SRtMem` gibt Blöcke teils ungerundet zurück**: gesehen `M F r=00000101` beim Boot (257 Byte) — der Allocator rundet beim Belegen auf 16, die Freiliste bekommt aber die ungerundete Größe zurück (kleiner Verlust je Freigabe, ungerade Knotengrößen). Außerdem verliert `Q9K_FreeMem` Blöcke unter 16 Byte ganz | Größe beim Freigeben wie beim Belegen aufrunden (in `Q9K_SysSRtMemImpl`/`Q9K_FreeMem`); Hosttest dazu | A12 | Fund aus A12, klein. Die Prüfung `Q9K_ArenaAudit` erlaubt ungerade Größen bewusst |
+| A14 | ✅ | **`F$SRtMem` gibt Blöcke teils ungerundet zurück**: gesehen `M F r=00000101` beim Boot (257 Byte) — der Allocator rundet beim Belegen auf 16, die Freiliste bekommt aber die ungerundete Größe zurück (kleiner Verlust je Freigabe, ungerade Knotengrößen). Außerdem verliert `Q9K_FreeMem` Blöcke unter 16 Byte ganz | Größe beim Freigeben wie beim Belegen aufrunden (in `Q9K_SysSRtMemImpl`/`Q9K_FreeMem`); Hosttest dazu | A12 | `Q9K_FreeMem` rundet jetzt wie das Belegen auf 16 Byte auf (alle Aufrufer geben die Größe unverändert zurück, die sie angefordert haben); Hosttest `test_q9kernel_arena` Fall 11 — vor der Korrektur rot (257-Byte- und 4-Byte-Block), danach grün; `kernel_regress.sh` 6/6, 15.10.2026. Die Prüfung `Q9K_ArenaAudit` erlaubt ungerade Größen weiterhin, schadet aber nicht |
 
 ## Phase B — Technische Schulden
 

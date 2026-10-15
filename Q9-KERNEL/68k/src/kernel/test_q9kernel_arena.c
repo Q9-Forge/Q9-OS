@@ -204,6 +204,28 @@ int main(void)
         checkU32("... *outSize wird auf 0 gesetzt", outSize, 0);
     }
 
+    /* Fall 11 (Arbeitsplan A14, 2026-10-15): Q9K_AllocMem rundet auf 16 Byte auf, die Aufrufer geben aber die
+     * UNGERUNDETE Groesse zurueck (gesehen: M F r=0x101 beim Boot). Q9K_FreeMem muss genauso aufrunden, sonst
+     * kommt ein zu kleiner Knoten in die Freiliste (257 statt 272 Byte) und Bloecke unter 16 Byte gehen ganz
+     * verloren. */
+    {
+        static unsigned char pool2[1024] __attribute__((aligned(16)));
+        Q9_u32 base2 = (Q9_u32)(unsigned long)pool2;
+        Q9_u32 big, tiny, again;
+
+        g_fakeArenaHead = 0;
+        g_fakeArenaTail = 0;
+        Q9K_ArenaInit(base2, sizeof(pool2));
+        big = Q9K_AllocMem(257);
+        Q9K_FreeMem(big, 257);
+        again = Q9K_AllocMem(257);
+        checkU32("Freigabe mit ungerundeter Groesse (257): gleicher Block wieder verfuegbar", again, big);
+        tiny = Q9K_AllocMem(4);
+        Q9K_FreeMem(tiny, 4);
+        again = Q9K_AllocMem(4);
+        checkU32("Freigabe eines 4-Byte-Blocks geht nicht verloren", again, tiny);
+    }
+
     /* Fall 10 (NACHTRAG 2026-09-13, Fortsetzung 56): Q9K_IntLock/
      * Q9K_IntUnlock-Aufrufbilanz -- jeder Lock aus den obigen Faellen
      * muss durch genau einen Unlock ausgeglichen sein (Tiefe zurueck auf

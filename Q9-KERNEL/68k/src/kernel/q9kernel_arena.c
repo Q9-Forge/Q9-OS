@@ -327,8 +327,12 @@ void Q9K_FreeMem(Q9_u32 addr, Q9_u32 size)
     Q9_u32 oldHead;
     Q9_u32 savedSr;
 
+    /* A14 (2026-10-15): Q9K_AllocMem rundet auf 16 Byte auf; die Aufrufer geben die UNGERUNDETE Groesse zurueck
+     * (gesehen: 0x101 beim Boot). Ohne Aufrunden kaeme ein zu kleiner Knoten in die Liste, und Bloecke unter
+     * 16 Byte gingen ganz verloren. Gleiche Rundung wie beim Belegen ist fuer alle Aufrufer exakt. */
+    size = Q9K_RoundUp16(size);
     if (size < Q9K_MIN_SPLIT_REMAINDER)
-        return; /* zu klein, um selbst als Freiblock zu dienen -- verloren, TODO
+        return; /* size == 0 -- nichts freizugeben; zu klein, um selbst als Freiblock zu dienen -- verloren, TODO
                   * (ruehrt die Freiliste noch nicht an, deshalb VOR dem
                   * Q9K_IntLock -- s. Kopfkommentar bei Q9K_AllocMem) */
 
