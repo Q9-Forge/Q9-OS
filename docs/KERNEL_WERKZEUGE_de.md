@@ -351,6 +351,7 @@ Umgebung: `FLUX` (Q9-Flux-68k) und `REFBOOT` (Referenz-Bootdatei); ohne Angabe g
 | `tools/build_honesty_test.sh` | prüft, dass `build.sh` bei C-, Assembler- und Linkfehlern abbricht und kein veraltetes `q9kernel` liegen lässt |
 | `tools/fcbisect.sh [--mode farcall\|far2\|pad] <Stellen>` | stellt gewaehlte `bsr`-Aufrufe einer Quellkopie um und fuehrt den Login-Test aus (`--list` nummeriert die 43 Stellen); `tools/fcddmin.py` sucht damit per Delta-Debugging die kleinste rote Stellenmenge |
 | Register-Erhaltungsprüfung (Developer-Kernel) | `!R c=<Callcode> <Reg> <vorher> <nachher>` auf der Konsole = ein Syscall hat ein Register verändert, das der Aufrufer unverändert zurückbekommen muss (d2–d7, a2–a6). Erlaubte Ausgaben stehen mit Beleg in `Q9K_RegChkExempt` (q9kernel_entry.a). `login_shell_test.sh` schlägt bei jeder Meldung an. Verschachtelte Traps werden nicht geprüft |
+| `tools/leak_test.sh [Zyklen] [Warmup]` | Langlauf (Fork/Exit mit Laden und F$TLink) mit Speicherbilanz aus den `M A`/`M F`-Zeilen; `Q9K_LEAK_CMDS="date;"` wählt die Befehle, `Q9_LEAK_TIMEOUT` die Wartezeit. Bricht derzeit bei der Dreiermischung ab (Arbeitsplan A12); gehört deshalb nicht zu `kernel_regress.sh` |
 | `tools/q9_farcall_check.py` | meldet jedes `bsr` auf eine C-Funktion in `q9kernel_entry.a`; `build.sh` ruft es vor dem Bau auf |
 | `tools/q9_scratch_map.py` | Belegungsprüfung der Scratch-Zellen, erzeugt `docs/KERNEL_SPEICHERBELEGUNG_de.md`; `build.sh` ruft `--check --doc` vor dem Bau auf |
 
