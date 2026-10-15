@@ -1,0 +1,7 @@
+# Grosse Tabellen im Kernel-Scratchbereich (Ausdehnung = SLOTS * STRIDE aus dem C-Code).
+# Format: name $ADRESSE bytes   # Quelle
+alarm      $1A00 228   # q9kernel_alarm.c: 8 x 28 Byte + 4 Byte NEXTID direkt dahinter
+memowner   $1710 384   # q9kernel_sysmem.c: 32 x 12 Byte
+event      $1C10 512   # q9kernel_event.c: 16 x 32 Byte
+irqtab     $1500 240   # q9kernel_exctable.c: 12 x 20 Byte, endet bei $15F0
+ssvcext    $1400 256   # q9kernel_ssvc.c: 256-Byte-Markierungstabelle (Q9K_SSVC_EXTERNAL_BASE)

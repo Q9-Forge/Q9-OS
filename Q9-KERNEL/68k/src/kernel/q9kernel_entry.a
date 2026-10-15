@@ -445,19 +445,20 @@ Q9K_TLinkScratch_StaticPtr equ $16AC     * Q9_u32, AUS -- wird a6 beim M$Init-Au
 Q9K_TLinkScratch_Error     equ $16B0     * Q9_u32, d1.w AUS bei Fehler
 Q9K_TLinkScratch_Success   equ $16B4     * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 
-* Q9K_TCallDispatch (TRAP #1-15, s. dort) -- eigene Scratch-Zellen,
-* freier Bereich direkt dahinter.
-Q9K_TCallScratch_TrapNum   equ $16C0     * Q9_u32
-Q9K_TCallScratch_ModPtr    equ $16C4     * Q9_u32
-Q9K_TCallScratch_ExecEntry equ $16C8     * Q9_u32
-Q9K_TCallScratch_StaticPtr equ $16CC     * Q9_u32
-Q9K_TCallScratch_RetPC     equ $16D0     * Q9_u32
+* Q9K_TCallDispatch (TRAP #1-15, s. dort) -- eigene Scratch-Zellen.
+* B3 (2026-10-15): vorher auf $16C0-$16D7 und damit auf den Zellen von
+* Q9K_MemTrace*; jetzt hinter dem Debug-Block (naechste freie Adresse $2434).
+Q9K_TCallScratch_TrapNum   equ $2400     * Q9_u32
+Q9K_TCallScratch_ModPtr    equ $2404     * Q9_u32
+Q9K_TCallScratch_ExecEntry equ $2408     * Q9_u32
+Q9K_TCallScratch_StaticPtr equ $240C     * Q9_u32
+Q9K_TCallScratch_RetPC     equ $2410     * Q9_u32
 * NEU (Fortsetzung 35, s. Kopfkommentar bei Q9K_TCallDispatch): Vektorwort
 * und Funktionscode werden jetzt VOR der Aufrufer-Registerwiederherstellung
 * in eigenen Zellen zwischengelagert, statt d0/a4 spaeter nochmal als
 * Rechenregister zu missbrauchen.
-Q9K_TCallScratch_VectorWord equ $16D4    * Q9_u16
-Q9K_TCallScratch_FuncCode   equ $16D6    * Q9_u16
+Q9K_TCallScratch_VectorWord equ $2414    * Q9_u16
+Q9K_TCallScratch_FuncCode   equ $2416    * Q9_u16
 Q9K_PROCDESC_TRAPTBL_OFF   equ $1CC      * s. q9kernel_traplink.c Kopfkommentar, 15x12 Byte
 
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
@@ -548,9 +549,10 @@ Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte re
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
 Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
 Q9K_IOpenScratch_PathNum  equ $136C      * Q9_u32, d0.w AUS (0 = Fehlschlag)
-Q9K_IOpenScratch_Error    equ $1370      * Q9_u32, d1.w AUS bei Fehler
-Q9K_FLinkCall_TyLang      equ $1A00
-Q9K_FLinkCall_Name        equ $1A04
+Q9K_IOpenScratch_Error    equ $1374      * Q9_u32, d1.w AUS bei Fehler
+Q9K_DispatchCallCode      equ $1370      * Q9_u16, Callcode des laufenden Traps: schreibt Q9K_TrapDispatch bei JEDEM Trap (move.w d7,($1370).w), gelesen u. a. von F$-Wrappern und q9kernel_dbg.c (unteres Byte bei +1). B3: vorher teilte sich die Zelle der native I$Open mit Q9K_IOpenScratch_Error (Langwort) und loeschte so den Callcode.
+* (entfernt, B3: Q9K_FLinkCall_TyLang/_Name auf $1A00/$1A04 wurden nirgends benutzt und
+*  lagen auf Eintrag 0 der Alarmtabelle.)
 Q9K_FLinkSearch_TyLang    equ $154170
 Q9K_FLinkSearch_Name      equ $154174
 Q9K_FLinkSearch_Slot      equ $154178
@@ -618,13 +620,13 @@ Q9K_UnloadScratch_TyLang   equ $18E8      * Q9_u32, d0.w EIN
 Q9K_UnloadScratch_Name     equ $18EC      * Q9_u32, (a0) EIN
 Q9K_UnloadScratch_Error    equ $18F0      * Q9_u32, d1.w AUS bei Fehler
 Q9K_UnloadScratch_Success  equ $18F4      * Q9_u32, 0/1
-Q9K_FModulScratch_TyLang   equ $1A00      * Q9_u32, d0.w EIN
-Q9K_FModulScratch_Name     equ $1A04      * Q9_u32, (a0) EIN
-Q9K_FModulScratch_OutTy    equ $1A08      * Q9_u32, d0.w AUS
-Q9K_FModulScratch_OutAR    equ $1A0C      * Q9_u32, d1.w AUS
-Q9K_FModulScratch_Entry    equ $1A10      * Q9_u32, a2 AUS
-Q9K_FModulScratch_Error    equ $1A14      * Q9_u32, d1.w AUS bei Fehler
-Q9K_FModulScratch_Ok       equ $1A18      * Q9_u32, 0/1
+Q9K_FModulScratch_TyLang   equ $2418      * Q9_u32, d0.w EIN
+Q9K_FModulScratch_Name     equ $241C      * Q9_u32, (a0) EIN
+Q9K_FModulScratch_OutTy    equ $2420      * Q9_u32, d0.w AUS
+Q9K_FModulScratch_OutAR    equ $2424      * Q9_u32, d1.w AUS
+Q9K_FModulScratch_Entry    equ $2428      * Q9_u32, a2 AUS
+Q9K_FModulScratch_Error    equ $242C      * Q9_u32, d1.w AUS bei Fehler
+Q9K_FModulScratch_Ok       equ $2430      * Q9_u32, 0/1
 Q9K_MemScratch_Request     equ $1E74      * Q9_u32, d0.l EIN
 Q9K_MemScratch_OutSize     equ $1E78      * Q9_u32, d0.l AUS
 Q9K_MemScratch_OutUpper    equ $1E7C      * Q9_u32, a1 AUS

@@ -130,7 +130,7 @@ static void   Q9K_PutU8(Q9_u32 addr, Q9_u8 v) { *(volatile Q9_u8 *)addr = v; }
  * (big-endian). NICHT meine eigene Zelle, nur hier gelesen -- ebenfalls
  * ueberschreibbar fuer Hosttests. */
 #ifndef Q9DBG_A_DISPATCH_CODE_LOW
-#define Q9DBG_A_DISPATCH_CODE_LOW 0x1371UL
+#define Q9DBG_A_DISPATCH_CODE_LOW 0x1371UL   /* 1 Byte, unteres Byte von Q9K_DispatchCallCode ($1370) */
 #endif
 
 /* Von den Assembler-Stubs gesetzte Ein-/Ausgabezellen (gleiche
