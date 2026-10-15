@@ -1,6 +1,6 @@
 # Kernel- und Userland-Arbeitsplan
 
-Stand: 12.10.2026, Grundlage `main` `7653580` (Fortsetzung 144).
+Stand: 15.10.2026, Branch `kernel/phase-a-fundament` (A1, A4, B3 erledigt), Grundlage `main` `7653580` (Fortsetzung 144).
 
 Dieser Plan zerlegt alle offenen Arbeiten am Q9-System in Schritte, die
 jeweils **in einer Session** erledigt werden können:
@@ -46,15 +46,15 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
-| A | Kernel-Fundament | 0 / 8 | ⬜ |
-| B | Technische Schulden | 0 / 4 | ⬜ |
+| A | Kernel-Fundament | 2 / 9 | 🔄 |
+| B | Technische Schulden | 1 / 4 | 🔄 |
 | C | Teilweise Syscalls abschließen | 0 / 8 | ⬜ |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
 | E | Eigene Filemanager | 0 / 7 | ⬜ |
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **0 / 47** | |
+| **Teil 1 Kernel** | | **3 / 48** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -148,14 +148,15 @@ an die `bsr`-Reichweite (±32 KB bei 62 KB Kernel).
 
 | Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
 |---|---|---|---|---|---|
-| A1 | ⬜ | **Ein-Kommando-Regressionslauf**: frischer Build → Image-Klon → Login → `echo`/`dir`/`pd`/`date` mit Ausgabevergleich | Ein Skript meldet grün/rot für beide Varianten; vorhandene Einzelskripte (`startup_shell_test.sh`, `mgrpath_probe_test.sh`) eingebunden | — | |
+| A1 | ✅ | **Ein-Kommando-Regressionslauf**: frischer Build → Image-Klon → Login → `echo`/`dir`/`pd`/`date` mit Ausgabevergleich | Ein Skript meldet grün/rot für beide Varianten; vorhandene Einzelskripte (`startup_shell_test.sh`, `mgrpath_probe_test.sh`) eingebunden | — | `0c5addd`: `tools/kernel_regress.sh` 5 Stufen grün (Hosttests 30/30, Login-Test development 53 s + atomic 52 s, startup_shell_test, mgrpath_probe_test), 15.10.2026; fand zwei rote Suiten (moddir, dbg_live ohne `-DQ9K_DEBUG`) |
 | A2 | ⬜ | **FARCALL-Bisektion**: Stellen 1–21 mit `fcbisect.sh` weiter halbieren | Schuldige Stelle(n) und Ursache benannt. Zuerst prüfen, ob dort `a0` beim Aufruf noch gebraucht wird — `Q9K_FARCALL` überschreibt `a0` | A1 | |
 | A3 | ⬜ | **FARCALL ausrollen**: alle 42 `bsr` auf C-Funktionen in `q9kernel_entry.a` umstellen; Reichweitenprüfung im Build | Login grün in beiden Varianten; `Q9K_SRCDEBUG` mit mehreren Dateien baut und bootet | A2 | |
-| A4 | ⬜ | **`build.sh` ehrlich machen**: `mwos-build`-Fehler werden heute ignoriert, alte Objekte täuschen Erfolg vor | Ein absichtlich eingebauter Fehler bricht den Build ab | — | |
+| A4 | ✅ | **`build.sh` ehrlich machen**: `mwos-build`-Fehler werden heute ignoriert, alte Objekte täuschen Erfolg vor | Ein absichtlich eingebauter Fehler bricht den Build ab | — | `4eeebe1`: `tools/build_honesty_test.sh` 11/11 grün (C-, Assembler-, Linkfehler); gegen altes `build.sh` 5 von 10 rot (C-Fehler lieferte Exit 0, alter `q9kernel` blieb liegen) |
 | A5 | ⬜ | **Register-Erhaltungsprüfung** im Developer-Kernel (Debug-Paket 3, `DEBUG_KONZEPT_de.md`) | Login plus Befehlsfolge ohne Meldung, oder eine Fundliste als neue Zeilen in Phase A | A1 | |
 | A6 | ⬜ | **Stresstest verschachtelter externer Traps**: mehrere Prozesse mit gleichzeitigem I/O über IOMan, Filemanager und Treiber bei laufendem Timer | N Durchläufe ohne Exception; Szenario eingecheckt und schaltbar wie `Q9K_TestNestedTrapStress` | A1 | |
 | A7 | ⬜ | **IRQ während Queue- und Kontextübergabe**: kritische Abschnitte inventarisieren, gezielt Interrupts injizieren | Jeder Abschnitt ist abgesichert oder seine Sicherheit schriftlich begründet | A6 | |
 | A8 | ⬜ | **Langlauf und Ressourcenbilanz**: ~1000 Zyklen `F$Fork`/`F$Exit`/`F$TLink` | Freispeicher, Modul-Linkzähler und Trap-Slots kehren auf den Ausgangswert zurück | A1 | |
+| A9 | ⬜ | **Absturz bei schnell aufeinanderfolgenden Eingaben** (Fund aus A1): `Q9K_LOGIN_PAUSE=0 tools/login_shell_test.sh development` → Kernel hält in `Q9K_ExcTrapSpin` (Vektor 4, PC `$128c` im Kerneldatenbereich, Rücksprungadressen in `mshell`); mit 1 s Pause grün | Ursache benannt und behoben; Login-Test mit `Q9K_LOGIN_PAUSE=0` grün (Verdacht: SR-Fenster nach externem Handler, s. `KERNEL_IRQ_SPERRE_de.md`) | A1 | |
 
 ## Phase B — Technische Schulden
 
@@ -165,7 +166,7 @@ Aus `KERNEL_NEXT_SESSION_de.md`, Abschnitt „Technische Schulden".
 |---|---|---|---|---|---|
 | B1 | ⬜ | **`Q9K_ApplyInitializedData`**: Grenzprüfungen für Modul und Zielspeicher; das verworfene IRefs-Gruppenwort klären; unterstützten Relokationsumfang festlegen | Hosttests mit kaputten Modulen und Grenzfällen grün | — | |
 | B2 | ⬜ | **Fehlerpfade von `F$TLink`**: erworbene Modulreferenzen, Static-Speicher und Trap-Slots zurückgeben | Negativtest ohne Ressourcenverlust | A8 | |
-| B3 | ⬜ | **Scratch-Adressen und IRQ-Sperre im Trap-Pfad**: zentrale Belegungstabelle, Regel für Verschachtelung und Kontextwechsel | Keine Überlappung; Prüfskript läuft im Build mit (vgl. behobener `$3F0`/`$3F8`-Konflikt aus Fortsetzung 122) | — | |
+| B3 | ✅ | **Scratch-Adressen und IRQ-Sperre im Trap-Pfad**: zentrale Belegungstabelle, Regel für Verschachtelung und Kontextwechsel | Keine Überlappung; Prüfskript läuft im Build mit (vgl. behobener `$3F0`/`$3F8`-Konflikt aus Fortsetzung 122) | — | `5b16faa`: 450 Zellen geprüft, drei Doppelbelegungen behoben (F$FModul zerstörte Alarm 0; TRAP-#1-15-Zellen auf dem Speicherprotokoll; Callcode-Wort von I$Open überschrieben); Prüfung läuft in `build.sh`; `docs/KERNEL_SPEICHERBELEGUNG_de.md`, `docs/KERNEL_IRQ_SPERRE_de.md` |
 | B4 | ⬜ | **`Q9K_PatchCslFreelistBug`** prüfen: greift er überhaupt (erwartetes Bytemuster fehlte am 16.09.)? | Entscheidung belegt: als Kompatibilitätsmaßnahme gekennzeichnet oder entfernt | A1 | |
 
 ## Phase C — Teilweise Syscalls abschließen
