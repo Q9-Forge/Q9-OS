@@ -6502,18 +6502,17 @@ Q9K_SysFSema_Wait:
 
         move.l  Q9K_SemaScratch_Next,d0
         tst.l   d0
-        beq     Q9K_SysFSema_Idle
+        bne     Q9K_SysFSema_SwitchTo
+* C3 (2026-10-16): kein Prozess mehr bereit -- das ist KEIN Deadlock, solange ein anderer Prozess schlaeft (Elternprozess in
+* F$Sleep, Kind blockiert in F$Sema(P)): der naechste Tick weckt ihn. Frueher stand hier ein Kernel-Halt (K_IDLE, "P00000001H",
+* live gemessen mit semtest.a); F$Sleep/F$Wait/F$Exit nutzen seit A-Phase Q9K_IdleFallback, F$Sema blieb auf dem alten Stand.
+        bsr     Q9K_IdleFallback
+Q9K_SysFSema_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         bsr     Q9K_ResumeTrapFlag          * wake the next process cleanly (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
-Q9K_SysFSema_Idle:
-* Kein Prozess mehr bereit -- gleiche reale K$Idle-Semantik wie bei
-* F$Sleep. Dass ALLE Prozesse auf Semaphore warten, waere ein Deadlock im
-* Anwendungsentwurf; der Kernel meldet ihn, statt still stehenzubleiben.
-        moveq   #K_IDLE,d0
-        bra     Q9K_KernelPanic
 
 * Gemeinsamer Einsprung fuer die Wartepfade weiter unten (Ev$Wait,
 * F$NProc).  Sie liegen so weit hinten im Modul, dass ein "bra

@@ -40,7 +40,7 @@ cd "$OUTDIR"
 # mit einem alten .r "erfolgreich" bauen. Jetzt wird zuerst aufgeraeumt, und
 # jede Werkzeugausgabe wird auf Fehlermeldungen durchsucht.
 rm -f ./*.r ./*.map ./*.lines makefile q9kernel forkchild trace hellosvc \
-      chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest
+      chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest
 rm -rf srcdebug
 
 # scan_log <Modus> <Beschreibung> <Logdatei>: 0 = keine Fehlermeldung gefunden.
@@ -459,6 +459,33 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/dbgtest =="
 file dbgtest || true
 
+echo "== semchild.a bauen (Testprogramm: wartendes Kind, C3) =="
+cp "$SRCDIR"/semchild.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=semchild.r "semchild.a" < /dev/null
+wine_tool l68 \
+    -o=semchild -f=orowoe semchild.r < /dev/null
+echo "== Fertig: $OUTDIR/semchild =="
+file semchild || true
+
+echo "== semtest.a bauen (Regressionstest: F\$Sema P/V live, C3) =="
+cp "$SRCDIR"/semtest.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=semtest.r "semtest.a" < /dev/null
+wine_tool l68 \
+    -o=semtest -f=orowoe semtest.r < /dev/null
+echo "== Fertig: $OUTDIR/semtest =="
+file semtest || true
+
+echo "== alarmtest.a bauen (Regressionstest: F\$Alarm-Matrix live, C3) =="
+cp "$SRCDIR"/alarmtest.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=alarmtest.r "alarmtest.a" < /dev/null
+wine_tool l68 \
+    -o=alarmtest -f=orowoe alarmtest.r < /dev/null
+echo "== Fertig: $OUTDIR/alarmtest =="
+file alarmtest || true
+
 echo "== icptrte.a bauen (Regressionstest: zweites Signal waehrend der Intercept-Routine, A10) =="
 cp "$SRCDIR"/icptrte.a .
 wine_tool r68 \
@@ -495,7 +522,7 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/iattachsvc =="
 file iattachsvc || true
 
-for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest; do
+for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest; do
     [ -s "$f" ] || { echo "FEHLER: Ergebnis $f fehlt oder ist leer" >&2; exit 1; }
 done
 echo "== BUILD OK: alle Ergebnisse frisch erzeugt, keine Werkzeugfehler =="

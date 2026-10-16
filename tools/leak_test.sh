@@ -57,7 +57,7 @@ for c in echo date pd dir setime; do
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
 # openleak: Testprogramm aus dem Kernelbau (A16: Prozessende mit offenem IOMan-Pfad), Q9K_LEAK_CMDS="openleak;"
-for c in trapfail tlinkerr dbgchild dbgtest; do   # B2: Fehlerpfade von F$TLink (Q9K_LEAK_CMDS="tlinkerr;")
+for c in trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest; do   # B2: Fehlerpfade von F$TLink (Q9K_LEAK_CMDS="tlinkerr;")
     "$OS9" copy "$WORK/kb/$c" "$IMG,CMDS/$c" >/dev/null 2>&1 || die "copy $c"
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
@@ -94,6 +94,9 @@ fi
 if grep -aE '^tlink (init|init again|mem) err=' "$WORK/console.log" | tr -d '\r' | grep -avE '^tlink (init|init again) err=A5$|^tlink mem err=CF$' | grep -aq .; then
     echo "FAIL  tlinkerr: unerwartete Fehlercodes: $(grep -aE '^tlink (init|init again|mem) err=' "$WORK/console.log" | tr -d '\r' | grep -avE '^tlink (init|init again) err=A5$|^tlink mem err=CF$' | sort | uniq -c | tr '\n' ';')"
     exit 1
+fi
+if grep -aqE '(semtest|alarmtest) failed' "$WORK/console.log"; then   # C3: F$Sema und F$Alarm
+    echo "FAIL  $(grep -aE '(semtest|alarmtest) failed' "$WORK/console.log" | tr -d '\r' | sort | uniq -c | head -2 | tr '\n' ';')"; exit 1
 fi
 if grep -aq 'dbgtest failed' "$WORK/console.log"; then   # C2: Debugger-Aufrufe
     echo "FAIL  dbgtest: $(grep -a 'dbgtest failed' "$WORK/console.log" | tr -d '\r' | sort | uniq -c | head -2 | tr '\n' ';')"; exit 1

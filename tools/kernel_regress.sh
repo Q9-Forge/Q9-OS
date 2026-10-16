@@ -13,7 +13,8 @@
 #   6. Interrupt-Injektion (A15): Langlauf, Parallellauf und Login-Test mit Q9_TIMER_PERIOD_MS=1 (zehnfacher Takt; ~5 min)
 #   7. F$TLink-Fehler tools/leak_test.sh 12 4 mit tlinkerr (B2: Rueckbau bei M$Init-Fehler und Speichermangel; ~1 min)
 #   8. Debugger-Aufrufe tools/leak_test.sh 8 2 mit dbgtest (C2: F$DFork/F$DExec/F$DExit, Ressourcenbilanz; ~1 min)
-#   9. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
+#   9. Semaphore/Alarme tools/leak_test.sh mit semtest (8/2) und alarmtest (3/1) (C3: F$Sema P/V, F$Alarm-Matrix; ~3 min)
+#  10. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
 #                    (nur Standardvariante, laufen mit dem Kernel, den build.sh ohne Schalter baut)
 # --quick: nur Stufe 1 (ohne Emulator, ohne Wine-Bau).
 #
@@ -51,6 +52,13 @@ stufe "Hosttests (alle test_q9kernel_*)" bash "$HERE/hosttests.sh"
 
 if [ "$QUICK" = 0 ]; then
     [ -x "$FLUX/build/macos/q9.exe" ] || { echo "FEHLER: Emulator fehlt: $FLUX/build/macos/q9.exe (FLUX setzen oder --quick)" >&2; exit 2; }
+    # Eigenes Exemplar des Emulators unter anderem Namen: auf diesem Rechner arbeiten mehrere Sitzungen mit q9.exe, und ein
+    # "pkill q9.exe" einer davon beendete die Emulatoren dieses Laufs mitten im Test ("Emulator endet ..." an wechselnden Stellen,
+    # kein Absturzbericht). Ein Exemplar mit anderem Namen wird davon nicht getroffen und ist gegen einen Neubau im Flux-Baum
+    # waehrend des Laufs geschuetzt.
+    EMU_DIR=$(mktemp -d "${TMPDIR:-/tmp}/q9kreg.XXXXXX")
+    cp "$FLUX/build/macos/q9.exe" "$EMU_DIR/kernelregress-emu" && export Q9K_EMU="$EMU_DIR/kernelregress-emu"
+    trap 'rm -rf "$EMU_DIR"' EXIT
     [ -f "$REFBOOT" ] || { echo "FEHLER: REFBOOT fehlt: $REFBOOT" >&2; exit 2; }
     vars=$VARIANT; [ "$VARIANT" = both ] && vars="development atomic"
     for v in $vars; do
@@ -85,6 +93,11 @@ if [ "$QUICK" = 0 ]; then
     # muessen Link-Zaehler, Modulverzeichnis und Freispeicher unveraendert sein (frueher blieb der Modul-Link des Kindes stehen).
     # Voraussetzung: ein Emulator mit eingeschaltetem Trace-Bit (Q9-Flux Makefile, M68K_EMULATE_TRACE).
     stufe "Debugger-Aufrufe, Ressourcenbilanz" env Q9K_LEAK_PER=2 'Q9K_LEAK_CMDS=dbgtest;' bash "$HERE/leak_test.sh" 8 2
+    # Semaphore und Alarme (C3): Werte und Reihenfolge pruefen die Login-Test-Bloecke 11/12; hier die Ressourcenbilanz ueber mehrere
+    # Laeufe (blockierte Kinder, Wartequeue, Alarmtabelle duerfen nichts zurueckhalten). alarmtest dauert ~30 s je Lauf (Messung in
+    # Sekunden der Systemuhr), deshalb nur drei Laeufe.
+    stufe "Semaphore (F\$Sema P/V), Ressourcenbilanz" env Q9K_LEAK_PER=2 'Q9K_LEAK_CMDS=semtest;' bash "$HERE/leak_test.sh" 8 2
+    stufe "Alarme (F\$Alarm-Matrix), Ressourcenbilanz" env Q9K_LEAK_PER=1 Q9_LEAK_TIMEOUT=400 'Q9K_LEAK_CMDS=alarmtest;' bash "$HERE/leak_test.sh" 3 1
     for t in startup_shell_test.sh mgrpath_probe_test.sh; do
         if [ -f "$HERE/$t" ]; then stufe "$t" bash "$HERE/$t"
         else echo "(uebersprungen, fehlt: $t)"; fi

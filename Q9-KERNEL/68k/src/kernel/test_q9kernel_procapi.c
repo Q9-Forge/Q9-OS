@@ -126,6 +126,11 @@ int main(void)
     check("PID 0 wird abgewiesen", Q9K_ProcLookup(0), 0);
     check("PID ausserhalb des Prozesspools wird abgewiesen", Q9K_ProcLookup(5), 0);
     check("Freier Slot wird nicht als Prozess ausgegeben", Q9K_ProcLookup(4), 0);
+    /* C3: ein auf einen Semaphor wartender Prozess (State p) ist belegt -- sonst scheitert F$AProc im F$Sema(V) mit E$PrcID. */
+    *(Q9_u8 *)(base + 3UL * Q9K_PROCDESC_SIZE + Q9K_PROCDESC_STATE_OFF) = 'p';
+    check("PID 4 akzeptiert einen auf einen Semaphor wartenden Prozess (State p)",
+          Q9K_ProcLookup(4), base + 3UL * Q9K_PROCDESC_SIZE);
+    *(Q9_u8 *)(base + 3UL * Q9K_PROCDESC_SIZE + Q9K_PROCDESC_STATE_OFF) = 0;
     check("Slot 2 ergibt wieder die 1-basierte PID 2", Q9K_ProcIdForDesc(second), 2);
     check("Fremder Zeiger ergibt keine PID", Q9K_ProcIdForDesc(base + 1), 0);
 

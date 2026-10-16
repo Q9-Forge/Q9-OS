@@ -48,13 +48,13 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 |---|---|---|---|
 | A | Kernel-Fundament | 16 / 16 | ✅ |
 | B | Technische Schulden | 4 / 6 | 🔄 |
-| C | Teilweise Syscalls abschließen | 2 / 8 | 🔄 |
+| C | Teilweise Syscalls abschließen | 3 / 9 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
 | E | Eigene Filemanager | 0 / 7 | ⬜ |
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **22 / 57** | |
+| **Teil 1 Kernel** | | **23 / 58** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -63,7 +63,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | N | Netzwerk | 0 / 7 | ⬜ |
 | O | Grafik und übrige Programme | 0 / 6 | ⬜ |
 | **Teil 2 Userland** | | **0 / 43** | |
-| **Gesamt** | | **22 / 92** | |
+| **Gesamt** | | **23 / 93** | |
 
 | Meilenstein | Status |
 |---|---|
@@ -107,7 +107,7 @@ Zur Orientierung, damit nichts davon erneut angegangen wird.
 - **Syscalls** (101 Aufrufe laut `Q9-KERNEL/STATUS.md`): 52 voll umgesetzt,
   3 nur hostgetestet, 17 teilweise, 24 nur über den Microware-IOMan,
   1 fehlt (`F$MBuf`), 4 bewusst nicht (in OS-9/68K selbst zurückgezogen).
-  *(Stand 16.10.2026, nach C2: `F$DFork`, `F$DExec`, `F$DExit` sind live belegt — 55 voll umgesetzt, keiner mehr nur hostgetestet.)*
+  *(Stand 16.10.2026, nach C2/C3: `F$DFork`, `F$DExec`, `F$DExit` und `F$Sema` sind live belegt, `F$Alarm` jetzt ebenfalls — 57 voll umgesetzt, keiner mehr nur hostgetestet.)*
 - **I/O hängt vollständig an Microware.** Alle 16 `I$`-Aufrufe sowie
   `F$PErr`, `F$IOQu`, `F$IODel` laufen über den Microware-IOMan.
 - **Eigener IOMan** (`Q9-IOMAN`): Modul baut, Start und `F$SSvc`-Registrierung
@@ -185,12 +185,13 @@ Aus `KERNEL_NEXT_SESSION_de.md`, Abschnitt „Technische Schulden".
 |---|---|---|---|---|---|
 | C1 | ✅ | **`date` und `F$VModul`**: Status-Hinweis „`date` erreicht `F$VModul` nie" ist vermutlich seit dem `F$Load`-Fix (Fortsetzung 108) überholt | Neu gemessen, Status korrigiert | A1 | `date` allein aus `/dd/CMDS` gebootet: `F$VModul`-Zellen im Q9-Flux-Dump hdr=`$ab3f0` size=`$c70` success=1 (Modul `$c64`, 16 Byte aufgerundet; `echo` ergibt `$c90`), 15.10.2026; `STATUS.md` korrigiert |
 | C2 | ✅ | **Debugger-Aufrufe live**: `F$DFork`/`F$DExec`/`F$DExit` mit Einzelschritt-Testprogramm | Im Emulator verifiziert, 🟢 → ✅ | A1 | **Live gemessen und behoben (16.10.2026).** Der erste Lauf von `dbgtest` zeigte, dass die „hostgetesteten“ Aufrufe live nicht funktionierten: (1) **`Q9K_SysDExec` setzte `P$SavedSP` des Debuggers nie** — der Elternprozess sprang beim Aufwecken auf einen veralteten Stack und starb (3 von 4 Läufen ohne Ausgabe); (2) die **Ausgaben fehlten**: `d0` blieb die Kind-PID (gemessen `executed=05` statt 2), `d1`/`d2` unbelegt, der **Registerpuffer wurde nie zurückgeschrieben** (`pc+=00`, `d3` blieb das Anfangsabbild); (3) **die Debug-Felder lagen bei `$2A8/$2AC/$2B0` im Bereich der Trap-Größentabelle** (`$280 + 4·(Trap−1)`): Trap 11–13 überschrieb sie, `csl` ist Trap 13 — ein Kind mit `csl` hätte seinen eigenen Befehlszähler zerstört (jetzt `$2C0` ff., s. B6); (4) ein `F$Exit` des Kindes gab es wie ein `F$Wait`-Ende (Kind freigegeben, `d0`=PID) statt wie im Handbuch (Carry, Kind bleibt für `F$DExit` stehen); (5) `F$DExit` gab den Modul-Link des Kindes nicht zurück (Linkzähler +1 je Lauf, Negativprobe +10 in 10 Läufen); (6) der Fehlerpfad von `F$DExec` las das obere Wort des Fehlercodes (`d1.w=0` statt `E$IPrcID`); (7) **der Emulator hatte das Trace-Bit abgeschaltet** (`M68K_EMULATE_TRACE` aus) — kein Einzelschritt möglich. **Umsetzung:** `Q9K_ProcDebugExec` (Budget, Haltepunktliste, `-1` wie fortlaufend), `Q9K_ProcDebugTrace` (zählt, prüft die Haltepunkte, schreibt bei jedem Halt `d0` = ausgeführt gesamt, `d1` = Rest, `d2` = 0 und den Registerpuffer zurück, `a7` nach der Größe des Hardware-Rahmens, Trace-Bit nie im Puffer), `Q9K_ProcDebugChildExit` (Carry + `E$PrcAbt`), `Q9K_SysDExec` rettet den Debugger wie `F$Wait`. **Nicht umgesetzt (Handbuch):** das Patchen der Haltepunkte mit Illegal-Opcodes bei `d1 = -1` (die Liste wirkt trotzdem, langsamer), Haltepunkt am allerersten PC, Zustellung unerwarteter Ausnahmen des Kindes an den Debugger (`d2`/`d3`–`d5` bleiben 0), Ändern von `a7` über den Puffer. **Beleg:** `dbgchild.a` + `dbgtest.a` (Block 10 im Login-Test, beide Varianten): `step1 executed=02 remaining=00 d3=01 pc+=04`, `step2 d3=02 pc+=06`, `run carry=01`, `dexit err=00`, `dexit again err=E0`, Haltepunkt `bp executed=04 remaining=00 d3=03 pc+=08`, mit Budget `bp2 executed=05 remaining=63 pc+=0A`, `bad pid err=E0`; Hosttests (Trace-Stop, Rückschreiben, Format-2-Rahmen, Haltepunkte, Kind-Ende, `F$DExit`, jeweils inkl. AddressSanitizer); Stufe „Debugger-Aufrufe, Ressourcenbilanz“ in `kernel_regress.sh` (Linkzähler/Modulverzeichnis/Freispeicher bleiben gleich). **Emulator:** `Makefile` von Q9-Flux setzt `-DM68K_EMULATE_TRACE=M68K_OPT_ON` für Musashi (**dort uncommittet**, wie die Timer-Änderung aus A15). |
-| C3 | ⬜ | **`F$Sema` P live** mit zwei Prozessen; **`F$Alarm`-Matrix** live | Beide ✅ | A1 | |
+| C3 | ✅ | **`F$Sema` P live** mit zwei Prozessen; **`F$Alarm`-Matrix** live | Beide ✅ | A1 | **Live gemessen und behoben (16.10.2026), drei Fehler:** (1) **`F$Sema(P)` hielt den Kernel an** (`P00000001H`, K_IDLE), sobald das blockierende Kind der einzige bereite Prozess war und der Elternprozess in `F$Sleep` schlief — `Q9K_SysFSema` hatte noch den alten Kernel-Halt statt `Q9K_IdleFallback` (wie `F$Sleep`/`F$Wait`/`F$Exit` seit Phase A); (2) **`F$Sema(V)` meldete `E$PrcID` für den ersten Warter**: der Wartezustand `'p'` fehlte in `Q9K_ProcIsAllocated` (`q9kernel_procapi.c`), der Slot galt als frei — betraf auch `F$GPrDBT`, `F$DelPrc`, die PID-Suche; (3) **die Zeiteinheit von `F$Alarm`**: der Kernel rechnete nur in Ticks und behauptete, das Handbuch nenne die Unterscheidung nicht — es nennt sie: **Bit 31 gesetzt = 256stel Sekunde, sonst Ticks, aufgerundet auf ganze Ticks** (68k_tech.pdf S. 357); jetzt `Q9K_AlarmIntervalToTicks` für `A$Set`, `A$Cycle` und `A$Reset`. **Beleg `F$Sema` (`semtest.a` + `semchild.a`, Login-Test Block 11):** der Semaphor liegt im Stack, das Elternprogramm reserviert per `tas`, zwei Kinder (A, B) scheitern am `tas` und blockieren in `F$Sema(P)` (`queue length=02`), `F$Sema` mit Operation 3 meldet `E$UnkSvc` ($D0), mit Zeiger 0 `E$BPAddr` ($D2); nach `clr.b` + `F$Sema(V)` werden **A und B in dieser Reihenfolge** geweckt (FIFO), jeder holt den Semaphor, gibt ihn frei und weckt den nächsten; `queue length end=00`. **Beleg `F$Alarm` (`alarmtest.a`, Block 12, Messung in Sekunden der Systemuhr, weil `F$Time` keine Ticks liefert):** `A$Set` 200 Ticks → 2 s, Signal $28; **`A$Set` $80000200 (512/256 s) → 2 s** (als Ticks gelesen wären es 5 s); `A$Cycle` 100 Ticks → 3 Signale in 3 s, nach `A$Delete` Ruhe; `A$Reset` 1000 → 100 Ticks mit neuem Signal $29 → 1 s; `A$Delete` mit ID 0 löscht alle; `A$AtJul` und `A$AtDate` (jetzt + 3 s) → 3 s; Fehler: Intervall 0 → `E$BPAddr`, Funktionscode 9 → `E$UnkSvc`, `A$Reset` mit unbekannter ID → `E$BPAddr`. `A$Delete` mit unbekannter ID meldet Erfolg (das Handbuch nennt dafür keinen Fehler: „removes … any unexpired alarm“); `A$Reset` steht nicht im Handbuch, die Semantik stammt aus der DPIO-API. Hosttests für die Umrechnung (Bit 31, Aufrunden, kein Überlauf bei 2^31−1) und für den Zustand `'p'`; Stufen „Semaphore“ und „Alarme“ in `kernel_regress.sh` (Ressourcenbilanz). **Nicht geprüft:** ein auf einen Semaphor wartender Prozess, der durch ein Signal geweckt wird oder endet, bleibt eventuell in der Wartequeue des Semaphors stehen; dafür gibt es keinen Beleg und deshalb keine eigene Zeile. |
 | C4 | ⬜ | **`M$Extens`-Kaltstart-Scan** (OS9P2-Erweiterungen); damit wird `F$UAcct` möglich | Ein Testmodul installiert sich beim Boot | A1 | |
 | C5 | ⬜ | **`F$SetSys`-Restvariablen**, **`F$Panic`**-Feinheiten | Jede Variable klassifiziert: umgesetzt oder begründet offen | — | |
 | C6 | ⬜ | **`F$IRQ`/`F$FIRQ` mit echten Gerätequellen** (DUART, Timer); minimaler FIRQ-Prolog | Live-Zustellung belegt | A7 | |
 | C7 | ⬜ | **`F$SysDbg`/RomBug-Rückkehr** samt `F$PwrMan`-Vorlauf | Einstieg und Rückkehr live verifiziert | A1 | |
 | C8 | ⬜ | **`F$SRqCMem`-Farbspeicher** | Farbauswahl funktioniert oder begründet auf einen Bereich reduziert | — | |
+| C9 | ⬜ | **`F$Time` ignoriert das Formatwort**: `d0.w` = 0 Gregorianisch, 1 Julianisch, 2 Gregorianisch mit Ticks, 3 Julianisch mit Ticks; Ausgabe `d2.w` Wochentag, `d3.l` = Tickrate (obere Hälfte) und aktueller Tick (untere Hälfte). `Q9K_SysFTime` liefert immer nur `d0`/`d1` gregorianisch | Formate 1–3, `d2` und `d3` nach Handbuch (68k_tech.pdf S. 523); Hosttest je Format; Live-Test mit einer Tick-genauen Messung (damit lassen sich Alarm-Zeiten unter einer Sekunde belegen) | C3 | Fund aus C3 (`alarmtest.a` konnte nur in Sekunden messen). Die Softwareuhr (`q9kernel_clock.c`) führt Ticks bereits intern |
 
 `F$MBuf` bleibt bewusst offen: es gibt keine belegte ABI, und die Regel des
 Projekts lautet, keine ABI zu raten.

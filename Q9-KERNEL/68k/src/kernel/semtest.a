@@ -1,0 +1,185 @@
+*******************************************************************************
+* semtest.a -- Regressionstest fuer Arbeitsplan C3: F$Sema (P und V) live mit drei Prozessen.
+*
+* Der Semaphor liegt im Stack dieses Programms (48 Byte, nach semaphore.h: s_value +0, s_lock +4, s_qnext +8, s_qprev +12,
+* s_length +16, s_owner +20). Ablauf (Zeilen "Text XX", XX = Wert hex):
+*   1. "tas" auf s_value: "reserve z=01" (Z gesetzt, die Semaphor war frei und gehoert jetzt diesem Programm)
+*   2. Kind A und Kind B starten (semchild.a), je nach 5 Ticks Schlaf: beide versuchen "tas", scheitern ("child A blocking",
+*      "child B blocking") und rufen F$Sema(P) -- sie werden in die Warteschlange eingereiht und blockieren.
+*   3. "queue length=02" (s_length), "bad op err=D0" (F$Sema mit Operation 3), "bad ptr err=D2" (Semaphorzeiger 0).
+*   4. Freigabe: "clr.b" auf s_value, F$Sema(V) -> "v err=00". Kind A (Kopf der Warteschlange) wird geweckt, holt die Semaphor
+*      ("child A acquired"), gibt sie frei und weckt per F$Sema(V) Kind B ("child B acquired"): FIFO-Reihenfolge.
+*   5. zweimal F$Wait: "wait1 status=00", "wait2 status=00"; "queue length end=00", "semtest done 00".
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_SemTestEdition      equ     1
+Q9K_SemTestStackSize    equ     $1000
+
+        psect   semtest,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_SemTestEdition,Q9K_SemTestStackSize,Q9K_SemTestStart
+
+        vsect
+Q9K_SemTestData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_SemTestStart:
+        lea     -48(sp),sp
+        movea.l sp,a3                           * a3 = Semaphor (a3 bleibt ueber Syscalls erhalten)
+        moveq   #11,d0
+        movea.l a3,a0
+Q9K_SemTestClear:
+        clr.l   (a0)+
+        dbra    d0,Q9K_SemTestClear
+
+        tas     (a3)                            * reservieren
+        seq     d1                              * FF wenn Z gesetzt
+        andi.l  #1,d1
+        lea     Q9K_SemTestTxtRes(pc),a0
+        bsr     Q9K_SemTestReport
+
+        moveq   #'A',d3
+        bsr     Q9K_SemTestSpawn
+        bcs     Q9K_SemTestFail
+        moveq   #5,d0                           * 5 Ticks: das Kind laeuft, scheitert am "tas" und blockiert in F$Sema
+        trap    #0
+        dc.w    $000a                            * F$Sleep
+        moveq   #'B',d3
+        bsr     Q9K_SemTestSpawn
+        bcs     Q9K_SemTestFail
+        moveq   #5,d0
+        trap    #0
+        dc.w    $000a
+
+        move.l  16(a3),d1                       * s_length
+        lea     Q9K_SemTestTxtLen(pc),a0
+        bsr     Q9K_SemTestReport
+
+        move.l  a3,d0                           * unbekannte Operation 3
+        moveq   #3,d1
+        trap    #0
+        dc.w    $0062
+        bcc     Q9K_SemTestFail
+        lea     Q9K_SemTestTxtBadOp(pc),a0
+        bsr     Q9K_SemTestReport
+
+        moveq   #0,d0                           * Semaphorzeiger 0
+        moveq   #2,d1
+        trap    #0
+        dc.w    $0062
+        bcc     Q9K_SemTestFail
+        lea     Q9K_SemTestTxtBadPtr(pc),a0
+        bsr     Q9K_SemTestReport
+
+        clr.b   (a3)                            * freigeben ...
+        move.l  a3,d0                           * ... und den Kopf der Warteschlange wecken
+        moveq   #2,d1
+        trap    #0
+        dc.w    $0062
+        bcs     Q9K_SemTestFail
+        moveq   #0,d1
+        lea     Q9K_SemTestTxtV(pc),a0
+        bsr     Q9K_SemTestReport
+
+        trap    #0
+        dc.w    $0004                            * F$Wait: erstes Kind
+        bcs     Q9K_SemTestFail
+        andi.l  #$ff,d1
+        lea     Q9K_SemTestTxtW1(pc),a0
+        bsr     Q9K_SemTestReport
+        trap    #0
+        dc.w    $0004                            * F$Wait: zweites Kind
+        bcs     Q9K_SemTestFail
+        andi.l  #$ff,d1
+        lea     Q9K_SemTestTxtW2(pc),a0
+        bsr     Q9K_SemTestReport
+
+        move.l  16(a3),d1
+        lea     Q9K_SemTestTxtLenEnd(pc),a0
+        bsr     Q9K_SemTestReport
+        moveq   #0,d1
+        lea     Q9K_SemTestTxtDone(pc),a0
+        bsr     Q9K_SemTestReport
+Q9K_SemTestEnd:
+        lea     48(sp),sp
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+Q9K_SemTestFail:
+        lea     Q9K_SemTestTxtFail(pc),a0       * d1.w = Fehlercode
+        bsr     Q9K_SemTestReport
+        bra     Q9K_SemTestEnd
+
+* d3.b = Kennbuchstabe: semchild mit Parameter (Semaphorzeiger, Buchstabe, CR) starten. Carry bei Fehler.
+Q9K_SemTestSpawn:
+        lea     -8(sp),sp
+        move.l  a3,(sp)
+        move.b  d3,4(sp)
+        move.b  #$0d,5(sp)
+        moveq   #0,d0                           * Typ/Sprache: beliebig
+        moveq   #0,d1                           * kein zusaetzlicher Stack
+        moveq   #6,d2                           * Parametergroesse
+        moveq   #3,d3                           * drei Pfade vererben (Ausgabe)
+        moveq   #0,d4                           * Prioritaet des Aufrufers
+        lea     Q9K_SemTestName(pc),a0
+        movea.l sp,a1
+        trap    #0
+        dc.w    $0003                            * F$Fork
+        lea     8(sp),sp                        * lea beeinflusst das CCR nicht
+        rts
+
+* a0 = Text (0-terminiert), d1 = Wert: schreibt "Text" + zwei Hexziffern + CR auf Pfad 1.
+Q9K_SemTestReport:
+        movem.l d0-d2/a0-a1,-(sp)
+        lea     -48(sp),sp
+        movea.l sp,a1
+Q9K_SemTestCopy:
+        move.b  (a0)+,d2
+        beq.s   Q9K_SemTestCopyEnd
+        move.b  d2,(a1)+
+        bra.s   Q9K_SemTestCopy
+Q9K_SemTestCopyEnd:
+        move.w  d1,d2
+        lsr.w   #4,d2
+        andi.w  #$f,d2
+        move.b  Q9K_SemTestHex(pc,d2.w),(a1)+
+        andi.w  #$f,d1
+        move.b  Q9K_SemTestHex(pc,d1.w),(a1)+
+        move.b  #$0d,(a1)+
+        move.l  a1,d1
+        movea.l sp,a0
+        sub.l   a0,d1                           * d1.l = Laenge
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        lea     48(sp),sp
+        movem.l (sp)+,d0-d2/a0-a1
+        rts
+
+Q9K_SemTestHex:
+        dc.b    "0123456789ABCDEF"
+Q9K_SemTestTxtRes:
+        dc.b    "reserve z=",0
+Q9K_SemTestTxtLen:
+        dc.b    "queue length=",0
+Q9K_SemTestTxtBadOp:
+        dc.b    "bad op err=",0
+Q9K_SemTestTxtBadPtr:
+        dc.b    "bad ptr err=",0
+Q9K_SemTestTxtV:
+        dc.b    "v err=",0
+Q9K_SemTestTxtW1:
+        dc.b    "wait1 status=",0
+Q9K_SemTestTxtW2:
+        dc.b    "wait2 status=",0
+Q9K_SemTestTxtLenEnd:
+        dc.b    "queue length end=",0
+Q9K_SemTestTxtDone:
+        dc.b    "semtest done ",0
+Q9K_SemTestTxtFail:
+        dc.b    "semtest failed err=",0
+Q9K_SemTestName:
+        dc.b    "semchild",0
+
+        endsect

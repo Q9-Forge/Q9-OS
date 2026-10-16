@@ -1,0 +1,92 @@
+*******************************************************************************
+* semchild.a -- Testprogramm fuer Arbeitsplan C3: das Kind, das semtest.a startet und auf den Semaphor warten laesst.
+*
+* Parameter (am Stack-Anfang, wie F$Fork sie ablegt): Zeiger auf den Semaphor (4 Byte), Kennbuchstabe (1 Byte), CR.
+* Ablauf wie die Bibliothek (_os_sema_p/_os_sema_v): erst "tas" auf s_value -- gelingt es, gehoert die Semaphor dem Kind; sonst
+* "child X blocking" und F$Sema(P). Nach dem Aufwachen versucht das Kind das "tas" erneut ("the first process in the queue is
+* activated and retries"). Hat es die Semaphor, meldet es "child X acquired", gibt sie wieder frei und ruft F$Sema(V), wenn
+* noch jemand in der Warteschlange steht (s_length bei +16).
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_SemChildEdition     equ     1
+Q9K_SemChildStackSize   equ     $400
+
+        psect   semchild,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_SemChildEdition,Q9K_SemChildStackSize,Q9K_SemChildStart
+
+        vsect
+Q9K_SemChildData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_SemChildStart:
+        movea.l sp,a2                           * Parameterbereich
+        movea.l (a2),a3                         * a3 = Semaphor (a3 und d4 bleiben ueber Syscalls erhalten)
+        moveq   #0,d4
+        move.b  4(a2),d4                        * Kennbuchstabe
+Q9K_SemChildRetry:
+        tas     (a3)                            * Z gesetzt: s_value war 0 = frei, jetzt belegt
+        beq.s   Q9K_SemChildGot
+        lea     Q9K_SemChildTxtBlock(pc),a0
+        bsr     Q9K_SemChildSay
+        move.l  a3,d0                           * d0.l = Semaphor
+        moveq   #1,d1                           * d1.w = 1: P
+        trap    #0
+        dc.w    $0062                            * F$Sema
+        bcs     Q9K_SemChildFail
+        bra     Q9K_SemChildRetry
+Q9K_SemChildGot:
+        lea     Q9K_SemChildTxtGot(pc),a0
+        bsr     Q9K_SemChildSay
+        clr.b   (a3)                            * freigeben
+        tst.l   16(a3)                          * s_length: wartet noch jemand?
+        beq.s   Q9K_SemChildDone
+        move.l  a3,d0
+        moveq   #2,d1                           * V
+        trap    #0
+        dc.w    $0062
+Q9K_SemChildDone:
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+Q9K_SemChildFail:
+        lea     Q9K_SemChildTxtFail(pc),a0
+        bsr     Q9K_SemChildSay
+        moveq   #1,d1
+        trap    #0
+        dc.w    6
+
+* a0 = Text mit einem Fragezeichen als Platzhalter, d4 = Buchstabe: schreibt die Zeile auf Pfad 1.
+Q9K_SemChildSay:
+        movem.l d0-d2/a0-a1,-(sp)
+        lea     -40(sp),sp
+        movea.l sp,a1
+Q9K_SemChildCopy:
+        move.b  (a0)+,d2
+        beq.s   Q9K_SemChildCopyEnd
+        cmpi.b  #'?',d2
+        bne.s   Q9K_SemChildPut
+        move.b  d4,d2
+Q9K_SemChildPut:
+        move.b  d2,(a1)+
+        bra.s   Q9K_SemChildCopy
+Q9K_SemChildCopyEnd:
+        move.b  #$0d,(a1)+
+        move.l  a1,d1
+        movea.l sp,a0
+        sub.l   a0,d1
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        lea     40(sp),sp
+        movem.l (sp)+,d0-d2/a0-a1
+        rts
+
+Q9K_SemChildTxtBlock:
+        dc.b    "child ? blocking",0
+Q9K_SemChildTxtGot:
+        dc.b    "child ? acquired",0
+Q9K_SemChildTxtFail:
+        dc.b    "child ? sema failed",0
+
+        endsect

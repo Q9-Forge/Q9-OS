@@ -128,7 +128,7 @@ must not replace the later implementation.
 | ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified on both wait paths, the blocking one with a forked second process doing the signalling |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
-| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul, A$AtDate and A$Reset are implemented; cycle intervals now retain full 32-bit ABI values, timer delivery and host regression coverage pass, while complete alarm matrix/live validation remains open |
+| ✅ | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul, A$AtDate and A$Reset; interval unit by bit 31 (256ths of a second, rounded up to ticks) as the manual states; full matrix emulator-verified with signal delivery in seconds of the system clock (`alarmtest`, 16.10.2026). A$Reset is not in the manual (semantics from the DPIO API); A$Delete of an unknown ID succeeds silently |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Native flat-address-space handler follows the OS-9 no-SSM semantics: accepts every non-wrapping range and ignores d1.w permissions, while rejecting 32-bit range wraparound; SSM/MMU permission validation remains open |
 | 🟡 | `0x59` | F$UAcct | Optional OS9P2 extension callback, not a standalone kernel implementation; Q9 natively performs alarm cleanup on Chain/Exit/reap, while accounting-hook installation still requires the `M$Extens` cold-start scan |
@@ -140,7 +140,7 @@ must not replace the later implementation.
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | 🟡 | `0x61` | F$FIRQ | Supervisor-only fast-IRQ registration/removal is implemented with one handler per vector, D1.b reservation, Static-Zeiger-Prüfung and shared exception dispatch; the target's true minimal-latency prologue and hardware/live FIRQ delivery remain open |
-| 🟡 | `0x62` | F$Sema | P and V implemented against the register convention described in the F$Sema notes below; V and the refusals are emulator-verified, P is host-tested only (it blocks by design) |
+| ✅ | `0x62` | F$Sema | P and V against the register convention in the F$Sema notes below; emulator-verified with two blocked children (queue length, FIFO wake-up, refusals; `semtest`, 16.10.2026). P blocks without halting the kernel when the parent sleeps; the wait state `p` counts as an allocated process |
 | ✅ | `0x63` | F$SigReset | Discards the saved intercept context, for a routine left via `longjmp()`; emulator-verified |
 
 ## I$ input/output system calls
@@ -913,10 +913,12 @@ ring lists stay untouched.
 | A$AtJul (4) | Julian day, seconds after midnight; returns ID | Absolute alarm with `>=` due-time semantics | Exact time, missed time, day boundary, range errors | Emulator/live RTC marker |
 | A$Reset (5) | ID, new signal, new relative ticks | Keeps ID, restarts relative deadline, preserves cycle mode | ID preservation, signal/interval replacement | Confirm reference-system edge cases live |
 
-The matrix is complete for the six documented A$ operations. “Remaining” is
-verification scope, not an unimplemented dispatch case; the row stays 🟡 until
-the native path is observed independently of a loaded foreign alarm/clock
-module and the interval unit convention is settled.
+The matrix is complete for the six A$ operations and emulator-verified
+(`alarmtest`, 16.10.2026; delivery measured in seconds of the system clock, as
+`F$Time` offers no ticks). The interval unit is settled by the manual itself:
+bit 31 set means 256ths of a second, otherwise ticks, rounded up to whole ticks.
+The earlier statement that the manual does not say how the two are told apart
+was wrong.
 
 The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+TiyzYe` followed
 by `C` from the chained-to module — the four digits being the kernel's own tick
@@ -1384,10 +1386,12 @@ P is split across two calls into C, which matters: the queueing happens only
 `SavedSP`. Queueing first would leave the waiting process with a stale stack
 pointer, and the wake-up would land nowhere.
 
-The live test covers V and both refusals. **P is host-tested only** — it blocks
-the caller by design until another process releases, so proving it in the
-emulator needs a second process. That gap is named rather than papered over
-with a marker that would suggest otherwise.
+The live test (`semtest`/`semchild`, 16.10.2026) covers P and V with two blocked
+children, the FIFO wake-up order and both refusals. Running it found two faults
+that no host test could: P halted the kernel (`P00000001H`) when the only other
+process was asleep — it used the old K$Idle halt instead of `Q9K_IdleFallback` —
+and V failed with `E$PrcID` for the first waiter because the wait state `p`
+was not counted as an allocated process slot.
 
 **F$GBlkMp** (`0x19`) is the status report that `mfree` and similar tools use:
 the addresses and sizes of the free RAM blocks, copied into the caller's buffer

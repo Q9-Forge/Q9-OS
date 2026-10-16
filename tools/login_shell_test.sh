@@ -72,7 +72,7 @@ done
 # A13: Skript fuer "mshell <loop" (Umleitung der Eingabe aus einer Datei)
 printf 'echo skript eins\recho skript zwei\r' > "$WORK/loop"
 "$OS9" copy "$WORK/loop" "$IMG,loop" >/dev/null 2>&1 || die "[$VARIANT] copy loop"
-for c in icptwait waitkid trapfail tlinkerr dbgchild dbgtest; do
+for c in icptwait waitkid trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest; do
     "$OS9" copy "$WORK/kb/$c" "$IMG,CMDS/$c" >/dev/null 2>&1 || die "[$VARIANT] copy $c"
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
@@ -115,7 +115,7 @@ def check(name, cond, detail=''):
     print(('ok    ' if cond else 'FAIL  ') + '[%s] %s%s' % (variant, name, (' -- ' + detail) if (detail and not cond) else ''))
     if not cond: bad.append(name)
 check('Kernelbau (%s Byte), Boot, tsmon, login' % ksize, 'logged on' in raw)
-b1, b2, b3, b4, b5, b6, b7, b8, b9, b10 = block(1), block(2), block(3), block(4), block(5), block(6), block(7), block(8), block(9), block(10)
+b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12 = block(1), block(2), block(3), block(4), block(5), block(6), block(7), block(8), block(9), block(10), block(11), block(12)
 def rawblock(n):
     # Ungefilterter Text zwischen den Marken. block() wirft Zeilen weg, die mit "$ " beginnen (Terminalecho); die Kindshell von
     # "mshell <loop" schreibt aber selbst "$ " vor jede Ausgabe (Eingabe aus einer Datei, kein Echo).
@@ -137,9 +137,28 @@ check('dbgtest: F$DFork/F$DExec/F$DExit live (C2): Einzelschritt, Haltepunkte, F
           'dfork err=00', 'step1 executed=02', 'step1 remaining=00', 'step1 d3=01', 'step1 pc+=04', 'step2 d3=02', 'step2 pc+=06',
           'run carry=01', 'dexit err=00', 'dexit again err=E0', 'bp executed=04', 'bp remaining=00', 'bp d3=03', 'bp pc+=08',
           'bp2 executed=05', 'bp2 remaining=63', 'bp2 pc+=0A', 'bad pid err=E0', 'dexit2 err=00', 'dbgtest done 00')), repr(b10))
+sem_lines = [l.strip() for l in (b11 or '').split('\n')]
+sem_ok = b11 is not None and all(w in sem_lines for w in (
+    'reserve z=01', 'child A blocking', 'child B blocking', 'queue length=02', 'bad op err=D0', 'bad ptr err=D2', 'v err=00',
+    'child A acquired', 'child B acquired', 'wait1 status=00', 'wait2 status=00', 'queue length end=00', 'semtest done 00'))
+sem_order = sem_ok and sem_lines.index('child A blocking') < sem_lines.index('child B blocking') < sem_lines.index('v err=00') \
+    < sem_lines.index('child A acquired') < sem_lines.index('child B acquired')
+check('semtest: F$Sema P/V live mit zwei wartenden Kindern, FIFO-Weckung (C3)', sem_ok and sem_order, repr(b11))
+def alarm_val(name):
+    m = re.search(r'^' + re.escape(name) + r'=([0-9A-F]{2})$', b12 or '', re.M)
+    return m.group(1) if m else None
+alarm_expect = (('set elapsed', ('02', '03')), ('set sig', ('28',)), ('set256 elapsed', ('02', '03')), ('cycle elapsed', ('03', '04')),
+                ('cycle count', ('03',)), ('cycle stopped', ('01',)), ('reset elapsed', ('01', '02')), ('reset sig', ('29',)),
+                ('delete all stays', ('01',)), ('delete bad err', ('00',)), ('atjul elapsed', ('02', '03', '04')),
+                ('atdate elapsed', ('02', '03', '04')), ('set zero err', ('D2',)), ('bad func err', ('D0',)), ('reset bad err', ('D2',)))
+alarm_bad = [n for n, ok in alarm_expect if alarm_val(n) not in ok]
+if not re.search(r'^alarmtest done 00$', b12 or '', re.M):
+    alarm_bad.append('alarmtest done 00')
+check('alarmtest: F$Alarm-Matrix live (Set, 256stel, Cycle, Delete, Reset, AtJul, AtDate, Fehler) (C3)', b12 is not None and not alarm_bad,
+      'abweichend: %s in %r' % (', '.join('%s=%s' % (n, alarm_val(n)) for n in alarm_bad), b12))
 regchk = [l.strip() for l in raw.split('\n') if l.startswith('!R ')]
 check('keine Register-Erhaltungsmeldung (!R, Arbeitsplan A5)', not regchk, '; '.join(regchk[:3]))
-body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6, b7, b8, b9, b10) if x)
+body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12) if x)
 errs = [e for e in ('Error #', "can't", 'Unhandled', 'syntax error', 'E$') if e in body]
 check('keine Fehlermeldung in den Befehlsausgaben', not errs, ' '.join(errs))
 sys.exit(1 if bad else 0)

@@ -31,7 +31,11 @@ set send_slow {1 0.04}
 set pause_s [expr {[info exists ::env(Q9K_LOGIN_PAUSE)] ? $::env(Q9K_LOGIN_PAUSE) : 1}]
 
 log_file -noappend $logfile
-spawn "$flux/build/macos/q9.exe" --rom "$flux/local_images/roms/romimage.dev.running.BIN" --cf $image
+# Q9K_EMU: eigenes Emulator-Exemplar (kernel_regress.sh legt es unter einem anderen Namen an), damit ein "pkill q9.exe" anderer
+# Sitzungen auf diesem Rechner den Lauf nicht beendet. Ohne die Variable gilt der Emulator im Q9-Flux-Baum.
+set emu "$flux/build/macos/q9.exe"
+if {[info exists env(Q9K_EMU)]} { set emu $env(Q9K_EMU) }
+spawn "$emu" --rom "$flux/local_images/roms/romimage.dev.running.BIN" --cf $image
 
 proc fail {code msg} {
     puts "\nLOGIN-TEST: FEHLER: $msg"
@@ -75,19 +79,29 @@ expect {
 #    vorige ihre Eingabeaufforderung zurueckgebracht hat: tippt man waehrend
 #    ein Befehl laeuft, gehen die Zeichen verloren (gemessen: nur das erste
 #    Zeichen kam an). Die Ausgabe selbst steht im Log und wird dort ausgewertet.
-proc run {cmd} {
+# marker: Zeile, die der Befehl als eigene Ausgabezeile schreibt ("echo zq9eN"). Mit Marker wartet run genau darauf und danach auf den
+# naechsten Prompt. Ohne Marker genuegt der naechste Prompt. Grund (C3): ein Kind-mshell ("mshell <loop", Block 8) schreibt vor jede
+# Ausgabe selbst ein "$ "; diese Prompts blieben im Puffer liegen und wurden von den FOLGENDEN Befehlen als "fertig" gelesen -- der
+# Rahmen lief dem Kernel um ein paar Befehle voraus. Bei kurzen Befehlen fiel das nicht auf, beim ersten langen (alarmtest, ~20 s)
+# endete der Test, bevor dessen Ausgabe da war.
+proc run {cmd {marker ""}} {
     expect -timeout $::pause_s eof
     send -s "$cmd\r"
+    if {$marker eq ""} {
+        set pat {\n\$ }
+    } else {
+        set pat "\n${marker}\r?\n(.*?\n)?\\\$ "
+    }
     expect {
-        -re {\n\$ }          {}
+        -re $pat              {}
         timeout               { fail 3 "keine Eingabeaufforderung nach '$cmd'" }
         eof                   { fail 3 "Emulator endet nach '$cmd'" }
     }
 }
 proc block {n cmd} {
-    run "echo zq9b$n"
+    run "echo zq9b$n" "zq9b$n"
     run $cmd
-    run "echo zq9e$n"
+    run "echo zq9e$n" "zq9e$n"
 }
 block 1 "echo q9 regress ok"
 block 2 "pd"
@@ -99,6 +113,8 @@ block 7 "icptwait"
 block 8 "mshell <loop"
 block 9 "tlinkerr"
 block 10 "dbgtest"
+block 11 "semtest"
+block 12 "alarmtest"
 
 # 4. Debug-Dump anfordern (Ctrl-^), dann den Emulator beenden. Das Lesen
 #    mit Zeitlimit statt "sleep" laesst die Dump-Zeile noch ankommen.

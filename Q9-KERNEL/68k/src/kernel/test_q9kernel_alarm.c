@@ -160,6 +160,30 @@ int main(void)
     check("langes Intervall bleibt nach dem Ausloesen erhalten", Q9K_AlarmTick(), 1);
     check("langes Intervall wird nicht auf 16 Bit gekuerzt", Q9K_GetU32(Q9K_ALARM_CYCLE(0)), 70000UL);
 
+    /* C3: Bit 31 waehlt 256stel Sekunden (68k_tech.pdf S. 357), aufgerundet auf Ticks (100 je Sekunde). */
+    check("Einheit: Ticks bleiben Ticks", Q9K_AlarmIntervalToTicks(20UL), 20UL);
+    check("Einheit: 256/256 s = 100 Ticks", Q9K_AlarmIntervalToTicks(0x80000100UL), 100UL);
+    check("Einheit: 128/256 s = 50 Ticks", Q9K_AlarmIntervalToTicks(0x80000080UL), 50UL);
+    check("Einheit: 1/256 s rundet auf 1 Tick auf", Q9K_AlarmIntervalToTicks(0x80000001UL), 1UL);
+    check("Einheit: 3/256 s = 1,17 Ticks -> 2", Q9K_AlarmIntervalToTicks(0x80000003UL), 2UL);
+    check("Einheit: 257/256 s = 100 + 1 Ticks", Q9K_AlarmIntervalToTicks(0x80000101UL), 101UL);
+    check("Einheit: 0 bleibt 0 (wird als Intervall 0 abgewiesen)", Q9K_AlarmIntervalToTicks(0x80000000UL), 0UL);
+    check("Einheit: 10 s (2560/256) = 1000 Ticks", Q9K_AlarmIntervalToTicks(0x80000A00UL), 1000UL);
+    check("Einheit: grosser Wert ohne Ueberlauf (2^31-1: ceil(n*100/256))", Q9K_AlarmIntervalToTicks(0xFFFFFFFFUL), 838860800UL);
+    reset();
+    err = 0;
+    check("A$Set mit 256steln wird angenommen", (Q9_u32)Q9K_AlarmSet(5, 0x80000080UL, 0, &id, &err), 1);
+    check("A$Set speichert Ticks, nicht 256stel", Q9K_GetU32(Q9K_ALARM_TICKS(0)), 50UL);
+    reset();
+    Q9K_AlarmSet(5, 0x80000080UL, 0x80000080UL, &id, &err);
+    check("A$Cycle: Zyklus in Ticks umgerechnet", Q9K_GetU32(Q9K_ALARM_CYCLE(0)), 50UL);
+    reset();
+    check("A$Set mit 0/256 s wird abgewiesen", (Q9_u32)Q9K_AlarmSet(5, 0x80000000UL, 0, &id, &err), 0);
+    reset();
+    Q9K_AlarmSet(5, 100, 0, &id, &err);
+    check("A$Reset mit 256steln", (Q9_u32)Q9K_AlarmReset(id, 6, 0x80000100UL, &err), 1);
+    check("A$Reset speichert Ticks", Q9K_GetU32(Q9K_ALARM_TICKS(0)), 100UL);
+
     /* A$Delete mit ID: genau dieser Alarm verschwindet. */
     reset();
     Q9K_AlarmSet(1, 5, 0, &id, &err);
