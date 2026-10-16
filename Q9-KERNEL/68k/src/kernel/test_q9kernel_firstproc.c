@@ -610,6 +610,7 @@ int main(void)
             Q9K_SetU32(Q9_D_PROC, 0);
 
             memset(fakeHdr5, 0, sizeof(fakeHdr5));
+            putBE32(fakeHdr5, 0x04, 0x80);   /* M$Size (B1: Tabellen muessen im Modul liegen) */
             putBE32(fakeHdr5, 0x30, 0x20);   /* M$Exec = 0x20 (fiktiv) */
             putBE32(fakeHdr5, 0x38, 0x40);   /* M$Mem  = 64 -- reicht fuer Datenoffset $10/$14 */
             putBE32(fakeHdr5, 0x3C, 256);    /* M$Stack = 256 */
@@ -675,6 +676,7 @@ int main(void)
 
         memset(hdr5b, 0, sizeof(hdr5b));
         memset(area5b, 0xA5, sizeof(area5b));
+        putBE32(hdr5b, 0x04, 0x80);              /* M$Size */
         putBE32(hdr5b, 0x40, 0x50);              /* M$IData */
         putBE32(hdr5b, 0x44, 0x58);              /* M$IRefs */
         putBE32(hdr5b, 0x50, 0x100);             /* IData: Ziel $100 ... */
@@ -682,13 +684,14 @@ int main(void)
         putBE16(hdr5b, 0x58, 0); putBE16(hdr5b, 0x5A, 0);   /* Code-Tabelle: leer */
         putBE16(hdr5b, 0x5C, 0); putBE16(hdr5b, 0x5E, 0);   /* Daten-Tabelle: leer */
         hdr5b[0x60] = 0x00; hdr5b[0x61] = 0x9E; hdr5b[0x62] = 0x94; hdr5b[0x63] = 0x59; /* CRC */
-        Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk);
+        checkU32("F5b: Rueckgabe 0 (gueltig)", Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk, 0x200), 0);
         for (k = 0; k < sizeof(area5b); k++)
             if (area5b[k] != 0xA5) changed++;
         checkU32("F5b: leere M$IRefs-Tabellen (sysgo) -- kein Byte veraendert", changed, 0);
 
         memset(hdr5b, 0, sizeof(hdr5b));
         memset(area5b, 0, sizeof(area5b));
+        putBE32(hdr5b, 0x04, 0x80);              /* M$Size */
         putBE32(hdr5b, 0x44, 0x58);              /* nur M$IRefs */
         putBE16(hdr5b, 0x58, 0); putBE16(hdr5b, 0x5A, 0);   /* Code-Tabelle: leer */
         putBE16(hdr5b, 0x5C, 0); putBE16(hdr5b, 0x5E, 1); putBE16(hdr5b, 0x60, 0x10); /* Lauf 1 */
@@ -696,11 +699,129 @@ int main(void)
         putBE16(hdr5b, 0x68, 0); putBE16(hdr5b, 0x6A, 0);   /* Ende */
         putBE32(area5b + 0x100, 0x10, 7);
         putBE32(area5b + 0x100, 0x20, 9);
-        Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk);
+        checkU32("F5c: Rueckgabe 0 (gueltig)", Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk, 0x100), 0);
         checkU32("F5c: Daten-Tabelle Lauf 1 reloziert (7+block)",
                  (Q9_u32)getBE32(blk + 0x10), (Q9_u32)(unsigned int)(7 + blk));
         checkU32("F5c: Daten-Tabelle Lauf 2 reloziert (9+block)",
                  (Q9_u32)getBE32(blk + 0x20), (Q9_u32)(unsigned int)(9 + blk));
+    }
+
+    /* F5d (B1): Grenzpruefungen. Jeder Fall baut ein Modul, dessen Tabellen etwas Unzulaessiges verlangen; erwartet wird E$BMID
+     * ($CD), und der Bereich HINTER dem erlaubten Datenblock bleibt unberuehrt (Fuellmuster $A5). Der Datenblock ist
+     * [blk, blk+0x100); davor und dahinter liegt Umgebung. */
+    {
+        static unsigned char hdr5d[0x80];
+        static unsigned char area5d[0x400];
+        unsigned long blk = (unsigned long)(area5d + 0x100);
+        Q9_u32 h = (Q9_u32)(unsigned long)hdr5d;
+        unsigned int k, changedOutside;
+
+#define F5D_RESET()                                                          \
+        do {                                                                 \
+            memset(hdr5d, 0, sizeof(hdr5d));                                 \
+            memset(area5d, 0xA5, sizeof(area5d));                            \
+            putBE32(hdr5d, 0x04, 0x80);   /* M$Size */                       \
+        } while (0)
+#define F5D_OUTSIDE()                                                        \
+        do {                                                                 \
+            changedOutside = 0;                                              \
+            for (k = 0; k < 0x100; k++) if (area5d[k] != 0xA5) changedOutside++;          \
+            for (k = 0x200; k < sizeof(area5d); k++) if (area5d[k] != 0xA5) changedOutside++; \
+        } while (0)
+
+        /* a) IData-Eintrag mit Anzahl hinter M$IRefs */
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x50); putBE32(hdr5d, 0x44, 0x58);
+        putBE32(hdr5d, 0x50, 0x10); putBE32(hdr5d, 0x54, 0x100);      /* Anzahl 256, aber nur 0 Byte bis M$IRefs */
+        checkU32("F5d-a: IData-Nutzlast ragt ueber M$IRefs -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_OUTSIDE(); checkU32("F5d-a: nichts ausserhalb des Blocks veraendert", changedOutside, 0);
+
+        /* b) Zieloffset + Anzahl ausserhalb des Datenblocks */
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x50); putBE32(hdr5d, 0x44, 0x60);
+        putBE32(hdr5d, 0x50, 0xF8); putBE32(hdr5d, 0x54, 8);          /* $F8+8 = $100: passt gerade noch */
+        putBE16(hdr5d, 0x60, 0); putBE16(hdr5d, 0x62, 0); putBE16(hdr5d, 0x64, 0); putBE16(hdr5d, 0x66, 0);
+        checkU32("F5d-b: Ziel genau am Blockende -- gueltig", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0);
+        putBE32(hdr5d, 0x50, 0xFC);                                   /* $FC+8 = $104: ueberschreitet */
+        memset(area5d, 0xA5, sizeof(area5d));
+        checkU32("F5d-b: Ziel hinter dem Blockende -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_OUTSIDE(); checkU32("F5d-b: nichts ausserhalb des Blocks veraendert", changedOutside, 0);
+        putBE32(hdr5d, 0x50, 0xFFFFFFF0UL);                           /* Ueberlauf-Versuch: Zieloffset nahe 2^32 */
+        checkU32("F5d-b: Zieloffset nahe 2^32 -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+
+        /* c) relozierbares Zeigerfeld ausserhalb des Datenblocks (Daten-Tabelle, Feld $FE: $FE+4 > $100) */
+        F5D_RESET();
+        putBE32(hdr5d, 0x44, 0x58);
+        putBE16(hdr5d, 0x58, 0); putBE16(hdr5d, 0x5A, 0);             /* Kode-Tabelle leer */
+        putBE16(hdr5d, 0x5C, 0); putBE16(hdr5d, 0x5E, 1); putBE16(hdr5d, 0x60, 0xFE);
+        putBE16(hdr5d, 0x62, 0); putBE16(hdr5d, 0x64, 0);
+        checkU32("F5d-c: Zeigerfeld ragt ueber das Blockende -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_OUTSIDE(); checkU32("F5d-c: nichts ausserhalb des Blocks veraendert", changedOutside, 0);
+        putBE16(hdr5d, 0x5C, 1);                                      /* MS = 1: Offset $100FE, weit hinter dem Block */
+        putBE16(hdr5d, 0x60, 0x00);
+        checkU32("F5d-c: MS-Wort ergibt Offset ueber 64 KByte -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+
+        /* d) Tabelle im Modul nicht abgeschlossen (kein 0/0-Paar vor dem Modulende) */
+        F5D_RESET();
+        putBE32(hdr5d, 0x04, 0x5C);                                   /* M$Size $5C: die Kode-Tabelle ($58-$5B) endet genau am Modulende */
+        putBE32(hdr5d, 0x44, 0x58);
+        putBE16(hdr5d, 0x58, 0); putBE16(hdr5d, 0x5A, 0);             /* Kode-Tabelle abgeschlossen, Daten-Tabelle fehlt */
+        checkU32("F5d-d: Daten-Tabelle faengt hinter dem Modulende an -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+
+        /* e) Lauf mit grosser Anzahl ragt ueber das Modul hinaus */
+        F5D_RESET();
+        putBE32(hdr5d, 0x44, 0x58);
+        putBE16(hdr5d, 0x58, 0); putBE16(hdr5d, 0x5A, 0xFFFF);        /* 65535 Eintraege, Modul nur $80 gross */
+        checkU32("F5d-e: Lauf laenger als das Modul -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_OUTSIDE(); checkU32("F5d-e: nichts ausserhalb des Blocks veraendert", changedOutside, 0);
+
+        /* f) Tabellen ausserhalb des Moduls / M$IData hinter M$IRefs / M$Size = 0 */
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x200);
+        checkU32("F5d-f: M$IData hinter dem Modulende -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x60); putBE32(hdr5d, 0x44, 0x50);
+        checkU32("F5d-f: M$IData hinter M$IRefs -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_RESET();
+        putBE32(hdr5d, 0x04, 0);
+        putBE32(hdr5d, 0x44, 0x58);
+        checkU32("F5d-f: M$Size = 0 mit Tabellen -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+
+        /* g) Fuellbytes (weniger als 8) vor M$IRefs sind erlaubt */
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x50); putBE32(hdr5d, 0x44, 0x5C);
+        putBE32(hdr5d, 0x50, 0x10); putBE32(hdr5d, 0x54, 0);          /* leerer Eintrag, danach 4 Fuellbytes bis $5C */
+        putBE16(hdr5d, 0x5C, 0); putBE16(hdr5d, 0x5E, 0); putBE16(hdr5d, 0x60, 0); putBE16(hdr5d, 0x62, 0);
+        checkU32("F5d-g: Fuellbytes vor M$IRefs -- gueltig", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0);
+#undef F5D_RESET
+#undef F5D_OUTSIDE
+    }
+
+    /* F5e (B1): ProcFork gibt bei ungueltiger M$IData/M$IRefs alles zurueck. */
+    {
+        static unsigned char forkPool5e[Q9K_PROCDESC_SIZE];
+        static unsigned char hdr5e[0x80];
+        Q9_u32 base5e = (Q9_u32)(unsigned long)forkPool5e;
+        Q9_u16 error = 0;
+        Q9_u32 pid;
+        int unlinksBefore = g_stubModDirUnlinkCalls;
+        unsigned long savedHdr5e = g_stubModDirHdr;
+
+        memset(forkPool5e, 0, sizeof(forkPool5e));
+        buildFreeList(base5e, Q9K_PROCDESC_SIZE, 1, Q9K_PROCPOOL_FREE_ADDR);
+        Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, base5e);
+        Q9K_SetU32(Q9_D_PROC, 0);
+        memset(hdr5e, 0, sizeof(hdr5e));
+        putBE32(hdr5e, 0x04, 0x80);
+        putBE32(hdr5e, 0x30, 0x20);  putBE32(hdr5e, 0x38, 0x40); putBE32(hdr5e, 0x3C, 256);
+        putBE32(hdr5e, 0x40, 0x50);  putBE32(hdr5e, 0x44, 0x58);
+        putBE32(hdr5e, 0x50, 0x10);  putBE32(hdr5e, 0x54, 0x200);     /* Nutzlast ragt ueber M$IRefs */
+        g_stubModDirHdr = (unsigned long)hdr5e;
+        pid = Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 1, &error);
+        checkU32("F5e: ProcFork mit ungueltiger M$IData scheitert", pid, 0);
+        checkU32("F5e: Fehlercode E$BMID ($CD)", (Q9_u32)error, 0xCDUL);
+        checkU32("F5e: Modul-Link zurueckgegeben", (Q9_u32)(g_stubModDirUnlinkCalls - unlinksBefore), 1);
+        g_stubModDirHdr = savedHdr5e;
     }
 
     /* F$DFork: the child receives the initial register image but is removed

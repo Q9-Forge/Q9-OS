@@ -114,10 +114,14 @@ int Q9K_ProcSRqMem(unsigned long requestedSize, unsigned long *outAddr, unsigned
     return g_srqmemReturn;
 }
 
+static int           g_srtmemCalls = 0;      /* B1 */
+static unsigned long g_srtmemLastAddr = 0;
+static unsigned long g_srtmemLastSize = 0;
 void Q9K_ProcSRtMem(unsigned long addr, unsigned long size)
 {
-    (void)addr;
-    (void)size;
+    g_srtmemCalls++;
+    g_srtmemLastAddr = addr;
+    g_srtmemLastSize = size;
 }
 
 #include "q9kernel_traplink.c"
@@ -208,6 +212,9 @@ static void resetAll(void)
     g_srqmemCalls = 0;
     g_unlinkCalls = 0;
     g_unlinkLastHdr = 0;
+    g_srtmemCalls = 0;
+    g_srtmemLastAddr = 0;
+    g_srtmemLastSize = 0;
 }
 
 int main(void)
@@ -432,6 +439,7 @@ int main(void)
         unsigned long relocatedData, relocatedCode;
 
         resetAll();
+        setModuleField(0x04UL, 0x100UL);      /* M$Size (B1: Tabellen muessen im Modul liegen) */
         setModuleField(Q9K_MH_EXEC, 0x40UL);
         setModuleField(Q9K_MH_MEM, 0x40UL);   /* 64 -- reicht fuer Datenoffset $10/$14 */
         setModuleField(Q9K_MH_INIT, 0x50UL);
@@ -472,6 +480,37 @@ int main(void)
                  relocatedData, (unsigned long)(unsigned int)(5UL + staticMem));
         checkU32("F9: M\\$IData kopiert UND per M\\$IRefs (Kodezeiger-Gruppe) reloziert (3+hdrAddr)",
                  relocatedCode, (unsigned long)(unsigned int)(3UL + (unsigned long)g_fakeModule));
+    }
+
+    /* F9b (B1): ungueltige M$IData -- F$TLink gibt statischen Speicher und Modul-Link zurueck und meldet E$BMID ($CD). */
+    {
+        unsigned long staticMem = (unsigned long)(g_fakeGlobals + 0x2800);
+
+        resetAll();
+        setModuleField(0x04UL, 0x100UL);
+        setModuleField(Q9K_MH_EXEC, 0x40UL);
+        setModuleField(Q9K_MH_MEM, 0x40UL);
+        setModuleField(Q9K_MH_INIT, 0x50UL);
+        setModuleField(Q9K_MH_IDATA, 0x60UL);
+        setModuleField(Q9K_MH_IREFS, 0x70UL);
+        setModuleField(0x60UL, 0x10UL);
+        setModuleField(0x64UL, 0x1000UL);      /* Anzahl Bytes weit hinter M$IRefs (und hinter dem 64-Byte-Block) */
+        g_modDirHdr = (unsigned long)g_fakeModule;
+        g_srqmemReturn = 1;
+        g_srqmemOutAddr = staticMem;
+        g_srqmemOutSize = 0x40UL;
+
+        ok = Q9K_ProcTLink(6UL, 0UL, (unsigned long)(g_fakeGlobals + 0x1000),
+                            &pastName, &modPtr, &execEntry, &initEntry, &staticPtr, &err);
+        checkU32("F9b: ungueltige M$IData -> Fehlschlag", (unsigned long)ok, 0);
+        checkU32("F9b: E$BMID ($CD)", err, 0x00CDUL);
+        checkU32("F9b: statischer Speicher zurueckgegeben (genau einmal)", (unsigned long)g_srtmemCalls, 1);
+        checkU32("F9b: und zwar der angeforderte Block", g_srtmemLastAddr, staticMem);
+        checkU32("F9b: in der gewaehrten Groesse", g_srtmemLastSize, 0x40UL);
+        checkU32("F9b: Modul-Link zurueckgegeben (genau ein Unlink)", (unsigned long)g_unlinkCalls, 1);
+        checkU32("F9b: kein Modulzeiger an den Aufrufer", modPtr, 0);
+        checkU32("F9b: Trap-Tabelle Slot 6 bleibt frei",
+                 readSlotField(slotAddrFor(6UL), Q9K_TRAPTBL_OFF_MODPTR), 0);
     }
 
     /* Fall 10 (Q9K_PatchCslFreelistBug, F10a-F10d) entfaellt: der Patch ist mit B4 entfernt. */

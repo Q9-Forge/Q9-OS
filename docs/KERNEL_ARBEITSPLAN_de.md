@@ -47,14 +47,14 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
 | A | Kernel-Fundament | 16 / 16 | ✅ |
-| B | Technische Schulden | 3 / 5 | 🔄 |
+| B | Technische Schulden | 4 / 5 | 🔄 |
 | C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
 | E | Eigene Filemanager | 0 / 7 | ⬜ |
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **20 / 56** | |
+| **Teil 1 Kernel** | | **21 / 56** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -63,7 +63,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | N | Netzwerk | 0 / 7 | ⬜ |
 | O | Grafik und übrige Programme | 0 / 6 | ⬜ |
 | **Teil 2 Userland** | | **0 / 43** | |
-| **Gesamt** | | **20 / 91** | |
+| **Gesamt** | | **21 / 91** | |
 
 | Meilenstein | Status |
 |---|---|
@@ -171,7 +171,7 @@ Aus `KERNEL_NEXT_SESSION_de.md`, Abschnitt „Technische Schulden".
 
 | Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
 |---|---|---|---|---|---|
-| B1 | ⬜ | **`Q9K_ApplyInitializedData`**: Grenzprüfungen für Modul und Zielspeicher; das verworfene IRefs-Gruppenwort klären; unterstützten Relokationsumfang festlegen | Hosttests mit kaputten Modulen und Grenzfällen grün | — | |
+| B1 | ✅ | **`Q9K_ApplyInitializedData`**: Grenzprüfungen für Modul und Zielspeicher; das verworfene IRefs-Gruppenwort klären; unterstützten Relokationsumfang festlegen | Hosttests mit kaputten Modulen und Grenzfällen grün | — | **Umgesetzt (16.10.2026):** `Q9K_ApplyInitializedData` (zwei Kopien: `q9kernel_firstproc.c` für `F$Fork`/`F$Chain`, `q9kernel_traplink.c` für `F$TLink`) hat jetzt den Parameter `blockSize` und liefert `E$BMID` ($CD) bei jedem Verstoß. **Geprüft:** M$IData/M$IRefs liegen im Modul (M$Size), M$IData vor M$IRefs; jede IData-Nutzlast liegt vor M$IRefs; jedes Kopierziel und jedes relozierte 32-Bit-Feld liegt im Zielblock `[block, block+blockSize)` (auch gegen Überlauf bei Offsets nahe 2^32); jede Zeigertabelle ist im Modul abgeschlossen, kein Lauf ragt über das Modul. Aufrufer geben bei einem Fehler Block/statischen Speicher und Modul-Link zurück (`F$Fork`, `F$Chain` und `F$TLink`; beim Chain bleibt der Aufrufer unversehrt). **Festgelegt (steht im Kopfkommentar der Funktion):** unterstützt ist M$IData (Einträge bis M$IRefs; ohne M$IRefs wird wie bisher nichts kopiert; Rest unter 8 Byte vor M$IRefs = Füllbytes) und M$IRefs mit genau zwei Tabellen (Kodezeiger + Modulanfang, Datenzeiger + Datenblock), Läufe `[MS, Anzahl, LS…]`, Ende bei MS=0 und Anzahl=0; keine weiteren Relokationsarten. **Das „verworfene IRefs-Gruppenwort“ ist geklärt:** MS sind die oberen 16 Bit des Offsets (Offset = MS<<16 | LS, 68k_tech.pdf Table 1-8), seit Fortsetzung 112 so verarbeitet, der Kopfkommentar sagte noch „verworfen“. **Beleg:** Hosttests F5d (a–g: Nutzlast über M$IRefs, Ziel am/hinter dem Blockende, Offset nahe 2^32, Zeigerfeld über das Blockende, MS-Wort über 64 KByte, Tabelle nicht abgeschlossen, Lauf länger als das Modul, Tabellen außerhalb, M$Size=0, Füllbytes), F5e (`F$Fork` gibt alles zurück), F9b (`F$TLink`: Speicher und Link zurück, E$BMID), Chain-Test (Block und Link zurück, Aufrufer unversehrt), jeweils mit Prüfung, dass außerhalb des Blocks nichts verändert wird; 30/30 Hosttests, 12 Stufen grün, kein echtes Modul abgewiesen (echo, mshell, csl, sysgo, login, tsmon, dir, date, 16.10.2026). |
 | B2 | ✅ | **Fehlerpfade von `F$TLink`**: erworbene Modulreferenzen, Static-Speicher und Trap-Slots zurückgeben | Negativtest ohne Ressourcenverlust | A8 | **Zwei Fehler gefunden und behoben (16.10.2026):** (1) `Q9K_ProcTLink` gab den Modul-Link nicht zurück, wenn die Anforderung des statischen Speichers scheiterte (`Q9K_ModDirUnlinkByHeader(hdr)` fehlte); (2) `Q9K_SysFTLink` (`q9kernel_entry.a`) löschte nach `M$Init` das Carry-Bit (`andi #$fe,ccr`) und meldete immer Erfolg, obwohl das Handbuch (68k_tech.pdf S. 172) für `TrapInit` „carry set, d1.w = error code“ vorsieht. Jetzt: Carry-Test als erste Instruktion nach `M$Init`, bei Fehler Rückbau wie bei `F$TLink` mit Namenszeiger 0 (Link, statischer Speicher, Slot; die Trap-Nummer liegt unter dem `M$Init`-Rahmen auf dem Stack) und Fehlercode an den Aufrufer. Der Rückbau ist unsere Entscheidung, das Handbuch regelt nur die Rückgabe von `M$Init`. **Beleg:** Hosttest `test_q9kernel_traplink` (F7: ein Unlink auf den Modulkopf, rot ohne Korrektur); Live: `trapfail.a` (TrapLib, `M$Init` meldet $A5) und `tlinkerr.a` (drei Runden mit frischem `F$Load`: A5, A5, CF). Mit `leak_test.sh` und `Q9K_LEAK_CMDS=\'tlinkerr;tlinkerr;\'` bleiben Linkzähler (4 → 4), Modulverzeichnis (36 → 36), Trap-Slots (2 → 2) und Freispeicher gleich. **Negativproben:** ohne C-Korrektur Linkzähler +20 und +20 Verzeichniseinträge in 24 Läufen; ohne Assembler-Korrektur meldet `F$TLink` `err=00`. Stufe „F$TLink-Fehlerpfade“ in `kernel_regress.sh` und Block 9 im Login-Test (12 Stufen grün, 16.10.2026). |
 | B3 | ✅ | **Scratch-Adressen und IRQ-Sperre im Trap-Pfad**: zentrale Belegungstabelle, Regel für Verschachtelung und Kontextwechsel | Keine Überlappung; Prüfskript läuft im Build mit (vgl. behobener `$3F0`/`$3F8`-Konflikt aus Fortsetzung 122) | — | `5b16faa`: 450 Zellen geprüft, drei Doppelbelegungen behoben (F$FModul zerstörte Alarm 0; TRAP-#1-15-Zellen auf dem Speicherprotokoll; Callcode-Wort von I$Open überschrieben); Prüfung läuft in `build.sh`; `docs/KERNEL_SPEICHERBELEGUNG_de.md`, `docs/KERNEL_IRQ_SPERRE_de.md` |
 | B4 | ✅ | **`Q9K_PatchCslFreelistBug`** prüfen: greift er überhaupt (erwartetes Bytemuster fehlte am 16.09.)? | Entscheidung belegt: als Kompatibilitätsmaßnahme gekennzeichnet oder entfernt | A1 | **Entscheidung: entfernt (16.10.2026).** Gemessen im Login-Test mit einer vorübergehenden Diagnosezeile im Developer-Kernel (`M C r=<Ausgang> a=<Modulkopf> s=<M$Size>`): bei **jedem** `F$TLink` von `csl` (Modulgröße `$BCEE`, Kopf `$366A0`) stimmte das erwartete Bytemuster an Dateiversatz `$56BC`, der Patch endete aber mit Ausgang 5 = „Sprung außer Reichweite“: der Stub lag im Arena-Speicher weit von `csl` entfernt, die Reichweitenprüfung aus Fortsetzung 109 verwarf ihn. Der Patch war also seit Fortsetzung 109 nie wirksam, und alle bisherigen Läufe (1001 Prozessenden, Parallellauf, Takt 1 ms) liefen ohne ihn. Die damals beobachtete zerstörte Verkettung hatte andere Ursachen (fremd relozierter Speicher, Fortsetzung 112; Arena über festen Diagnoseadressen, A12). Entfernt: `Q9K_PatchCslFreelistBug`, sein Aufruf in `Q9K_ProcTLink`, die Hosttest-Fälle F10a–F10d samt Stubs; im Quelltext steht ein Hinweis mit Fundort in der Git-Historie. 12 Stufen grün, 30/30 Hosttests. |
