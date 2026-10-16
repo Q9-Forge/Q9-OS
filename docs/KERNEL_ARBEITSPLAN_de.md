@@ -46,7 +46,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
-| A | Kernel-Fundament | 13 / 16 | 🔄 |
+| A | Kernel-Fundament | 14 / 16 | 🔄 |
 | B | Technische Schulden | 1 / 4 | 🔄 |
 | C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
@@ -54,7 +54,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **15 / 55** | |
+| **Teil 1 Kernel** | | **16 / 55** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -63,7 +63,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | N | Netzwerk | 0 / 7 | ⬜ |
 | O | Grafik und übrige Programme | 0 / 6 | ⬜ |
 | **Teil 2 Userland** | | **0 / 43** | |
-| **Gesamt** | | **0 / 90** | |
+| **Gesamt** | | **16 / 90** | |
 
 | Meilenstein | Status |
 |---|---|
@@ -163,7 +163,7 @@ an die `bsr`-Reichweite (±32 KB bei 62 KB Kernel).
 | A13 | ✅ | **`mshell <datei` scheitert**: das Kind meldet endlos „error getting path options!“ — `I$GetStt`/`I$ReadLn` auf Pfad 0 liefern `E$BPNUM` | `mshell <skript` führt das Skript aus (so wie der Startup-Pfad es kann) | A1 | **Ursache:** Die Shell öffnet `loop` (IOMan, Pfad 0), forkt `mshell` und schließt danach sofort ihren Pfad 0. `F$Fork` kopiert IOMan-eigene `P$Path`-Einträge (Bit 15) ohne IOMans Zähler zu erhöhen (im Quelltext als „noch nicht“ vermerkt), der Close des Erzeugers gibt den Deskriptor also frei, und das Kind liest `E$BPNUM` (in der Prozessliste: Kind `path=8001 …`). **Korrektur:** Ein Überschuss-Zähler je IOMan-Pfad (`Q9K_MgrRefs`, `$2500`, 64 Byte; `refs = Pfadeinträge − IOMans Zählung`): `F$Fork` erhöht ihn für kopierte Einträge (`q9kernel_firstproc.c`), `Q9K_TrapTryManagerPathIO` lässt ein `I$Close` bei `refs > 0` nur herunterzählen (Eintrag räumen, Erfolg, IOMan sieht es nicht), das Prozessende zählt ebenso (`q9kernel_procend.c`). Erst der letzte Mitbenutzer schließt wirklich. **Beleg:** Hosttests (procend Fall R2) und Login-Test `mshell <loop` (Skript mit zwei `echo`-Zeilen) — mit dem alten Kernel hängt der Test an dieser Stelle (kein Prompt), mit der Korrektur grün in beiden Varianten; `kernel_regress.sh` 7/7, 15.10.2026. **Rest:** IOMan-Pfade, die ein Prozess bei seinem Ende noch offen hat und die kein Mitbenutzer hält, werden weiterhin nicht geschlossen (Leck des PD, wie vorher; eigener Schritt) |
 | A14 | ✅ | **`F$SRtMem` gibt Blöcke teils ungerundet zurück**: gesehen `M F r=00000101` beim Boot (257 Byte) — der Allocator rundet beim Belegen auf 16, die Freiliste bekommt aber die ungerundete Größe zurück (kleiner Verlust je Freigabe, ungerade Knotengrößen). Außerdem verliert `Q9K_FreeMem` Blöcke unter 16 Byte ganz | Größe beim Freigeben wie beim Belegen aufrunden (in `Q9K_SysSRtMemImpl`/`Q9K_FreeMem`); Hosttest dazu | A12 | `Q9K_FreeMem` rundet jetzt wie das Belegen auf 16 Byte auf (alle Aufrufer geben die Größe unverändert zurück, die sie angefordert haben); Hosttest `test_q9kernel_arena` Fall 11 — vor der Korrektur rot (257-Byte- und 4-Byte-Block), danach grün; `kernel_regress.sh` 6/6, 15.10.2026. Die Prüfung `Q9K_ArenaAudit` erlaubt ungerade Größen weiterhin, schadet aber nicht |
 | A15 | ⬜ | **Interrupt-Injektion**: Emulator-Lauf mit stark verkürzter Tickzeit (oder zusätzlichen künstlichen Level-3-Interrupts), damit die IRQ-Fenster aus A7 deutlich häufiger getroffen werden | `kernel_regress.sh`-Stufe mit verkürztem Takt läuft durch (Langlauf, Parallellauf) | A7 | Fund aus A7; braucht eine Einstellung des Board-Timers in Q9-Flux (`m68krt.c`/`BOARD.md` prüfen). Vorsicht: ein kürzerer Takt verschiebt auch das Zeitverhalten von A9/A10 |
-| A16 | ⬜ | **IOMan-Pfade beim Prozessende schließen**: `Q9K_ProcReleasePaths` räumt IOMan-eigene Einträge (Bit 15) nur aus der Tabelle und ruft kein `I$Close` — ein Programm, das beendet wird, ohne seine Dateien zu schließen, lässt den Pfaddeskriptor in IOMan stehen | Beim Prozessende ein `I$Close` über IOMan je offenem IOMan-Pfad (ohne Mitbenutzer); Test: Programm öffnet eine Datei und beendet sich ohne Close, danach ist die Pfadtabelle von IOMan wieder frei | A13 | Fund aus A13 (Kommentar in `q9kernel_procend.c`). Vorsicht: der Aufruf muss im Kontext des beendeten Prozesses laufen |
+| A16 | ✅ | **IOMan-Pfade beim Prozessende schließen**: `Q9K_ProcReleasePaths` räumte IOMan-eigene Einträge (Bit 15) nur aus der Tabelle und rief kein `I$Close` — ein Programm, das beendet wird, ohne seine Dateien zu schließen, ließ den Pfaddeskriptor in IOMan stehen | Beim Prozessende ein `I$Close` über IOMan je offenem IOMan-Pfad (ohne Mitbenutzer); Test: Programm öffnet eine Datei und beendet sich ohne Close, danach ist die Pfadtabelle von IOMan wieder frei | A13 | **Korrektur:** `Q9K_SysFExit` ruft vor dem Aufräumen `Q9K_ExitCloseMgrPaths` (`q9kernel_entry.a`): je P$Path-Eintrag mit Bit 15 ein gewöhnliches `trap #0` / `I$Close` aus dem F$Exit-Handler, der Dispatcher legt einen neuen Exception-Frame darüber und kehrt per RTE zurück. `Q9K_TrapTryManagerPathIO` behandelt dabei den Mitbenutzer-Fall aus A13 (`Q9K_MgrRefs > 0`: nur herunterzählen). Der Schleifenzähler liegt auf dem Stack (externe Handler dürfen d2–d7 ändern); nicht im Trampolin-Pfad (`Q9K_InTrapPath = 0`, IOMan selbst ruft F$Exit). **Beleg:** neues Testprogramm `openleak.a` (öffnet `/dd/SYS/motd`, endet ohne Close) und `leak_test.sh` mit `Q9K_LEAK_CMDS='openleak;openleak;'`: ohne Korrektur scheitert schon der zweite Open mit `$D6` (**23 von 24 Opens misslungen**, die offene Datei bleibt belegt), mit Korrektur kein einziger; Stufe „Prozessende mit offenem IOMan-Pfad“ in `kernel_regress.sh` (8/8 Stufen grün, beide Varianten, 16.10.2026) |
 
 ## Phase B — Technische Schulden
 

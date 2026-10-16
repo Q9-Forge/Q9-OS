@@ -9,7 +9,8 @@
 #                                                      -> mshell -> echo/pd/dir/date, ~2 min je Variante)
 #   3. Langlauf      tools/leak_test.sh 64 8          (192 Forks, Speicherbilanz; ~2 min)
 #   4. Parallellauf  tools/leak_test.sh 24 2 mit 5 gleichzeitigen Prozessen (~1,5 min)
-#   5. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
+#   5. Offener Pfad tools/leak_test.sh 12 4 mit openleak (A16: Prozessende schliesst IOMan-Pfade; ~1 min)
+#   6. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
 #                    (nur Standardvariante, laufen mit dem Kernel, den build.sh ohne Schalter baut)
 # --quick: nur Stufe 1 (ohne Emulator, ohne Wine-Bau).
 #
@@ -59,6 +60,10 @@ if [ "$QUICK" = 0 ]; then
     # im Arbeitsplan.
     stufe "Parallellauf 5 Prozesse, Speicherbilanz" env Q9K_LEAK_PER=2 \
         'Q9K_LEAK_CMDS=dir /dd/CMDS&dir /dd/SYS&date&pd&echo a&wait;' bash "$HERE/leak_test.sh" 24 2
+    # Offener Pfad (A16): openleak oeffnet /dd/SYS/motd und endet ohne I$Close. Bleibt der Pfad in IOMan stehen,
+    # scheitert schon der zweite Open (Fehler $D6, Meldung "open failed"); leak_test.sh wertet die Meldungen aus.
+    stufe "Prozessende mit offenem IOMan-Pfad" env Q9K_LEAK_PER=2 'Q9K_LEAK_CMDS=openleak;openleak;' \
+        bash "$HERE/leak_test.sh" 12 4
     for t in startup_shell_test.sh mgrpath_probe_test.sh; do
         if [ -f "$HERE/$t" ]; then stufe "$t" bash "$HERE/$t"
         else echo "(uebersprungen, fehlt: $t)"; fi

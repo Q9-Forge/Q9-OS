@@ -56,11 +56,15 @@ for c in echo date pd dir setime; do
     "$OS9" copy "$CMDSDIR/$c" "$IMG,CMDS/$c" >/dev/null 2>&1 || die "copy $c"
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
+# openleak: Testprogramm aus dem Kernelbau (A16: Prozessende mit offenem IOMan-Pfad), Q9K_LEAK_CMDS="openleak;"
+"$OS9" copy "$WORK/kb/openleak" "$IMG,CMDS/openleak" >/dev/null 2>&1 || die "copy openleak"
+"$OS9" attr -q -e -pe "$IMG,CMDS/openleak" >/dev/null 2>&1 || true
 printf '* Q9 leak startup\rchx /dd/CMDS\rchd /dd\rsetime 26/10/15 12:00:00\r' > "$WORK/startup"
 printf 'q9test,,0.0,128,/dd/CMDS,/dd,mshell -l\r' > "$WORK/password"
 printf 'Q9 leak image\r' > "$WORK/motd"
 for f in startup password motd; do
     "$OS9" copy "$WORK/$f" "$IMG,SYS/$f" >/dev/null 2>&1 || die "copy SYS/$f"
+    "$OS9" attr -q -r -pr -w -pw "$IMG,SYS/$f" >/dev/null 2>&1 || true   # openleak (A16) oeffnet motd lesend
 done
 
 export Q9K_LEAK_CYCLES="$CYCLES"
@@ -76,6 +80,12 @@ if [ $erc -ne 0 ]; then
     die "Boot/Login/Schleife ($erc)"
 fi
 
+# A16: openleak meldet einen misslungenen Open ("openleak: open failed XX"): ein vom Prozessende nicht
+# geschlossener IOMan-Pfad sperrt die Datei, der naechste Open scheitert.
+if grep -aq 'openleak: open failed' "$WORK/console.log"; then
+    echo "FAIL  openleak: $(grep -ac 'openleak: open failed' "$WORK/console.log") misslungene Opens (IOMan-Pfad nach Prozessende offen)"
+    exit 1
+fi
 python3 - "$WORK/console.log" "$CYCLES" "$WARMUP" "${Q9K_LEAK_MAX_BYTES:-0}" <<'PY' || exit 1
 import re, sys
 log, cycles, warm, maxbytes = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])

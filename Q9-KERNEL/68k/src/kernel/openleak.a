@@ -1,0 +1,63 @@
+*******************************************************************************
+* openleak.a -- Regressionstest fuer Arbeitsplan A16: Prozess endet mit einem offenen IOMan-Pfad.
+*
+* Ablauf: I$Open auf /dd/SYS/motd (ueber IOMan/RBF, der Pfad traegt im P$Path-Wort Bit 15), danach
+* F$Exit OHNE I$Close. Das Prozessende muss den Pfad ueber IOMan schliessen -- sonst bleiben der
+* Pfaddeskriptor und IOMans Zaehler fuer die Datei fuer immer stehen (Speicherverlust je Aufruf).
+* Der Test ist still; die Speicherbilanz misst tools/leak_test.sh (Q9K_LEAK_CMDS="openleak;").
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_OpenLeakEdition     equ     1
+Q9K_OpenLeakStackSize   equ     $1000
+
+        psect   openleak,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_OpenLeakEdition,Q9K_OpenLeakStackSize,Q9K_OpenLeakStart
+
+        vsect
+Q9K_OpenLeakData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_OpenLeakStart:
+        lea     Q9K_OpenLeakName(pc),a0
+        moveq   #1,d0                           * Modus: lesen
+        trap    #0
+        dc.w    $0084                            * I$Open -> d0.w = Pfadnummer
+        bcs.s   Q9K_OpenLeakFailed
+Q9K_OpenLeakExit:
+        moveq   #0,d1                           * Exit-Status 0, Pfad bleibt absichtlich offen
+        trap    #0
+        dc.w    6                                * F$Exit
+
+Q9K_OpenLeakFailed:
+* Fehler melden (sonst bliebe ein misslungener Open unbemerkt): "openleak: open failed XX" mit dem Fehlercode d1.w
+        lea     -32(sp),sp
+        movea.l sp,a1
+        lea     Q9K_OpenLeakText(pc),a0
+        moveq   #Q9K_OpenLeakTextLen-1,d2
+Q9K_OpenLeakCopy:
+        move.b  (a0)+,(a1)+
+        dbra    d2,Q9K_OpenLeakCopy
+        move.w  d1,d2
+        lsr.w   #4,d2
+        andi.w  #$f,d2
+        move.b  Q9K_OpenLeakHex(pc,d2.w),(a1)+
+        andi.w  #$f,d1
+        move.b  Q9K_OpenLeakHex(pc,d1.w),(a1)+
+        move.b  #$0d,(a1)+
+        movea.l sp,a0
+        move.l  #Q9K_OpenLeakTextLen+3,d1
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        bra.s   Q9K_OpenLeakExit
+
+Q9K_OpenLeakText:
+        dc.b    "openleak: open failed "
+Q9K_OpenLeakTextLen     equ     22
+Q9K_OpenLeakHex:
+        dc.b    "0123456789ABCDEF"
+Q9K_OpenLeakName:
+        dc.b    "/dd/SYS/motd",$0d
+
+        endsect

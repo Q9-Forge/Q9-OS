@@ -5162,6 +5162,11 @@ Q9K_SysFWait_NoChld:
 * der Wechsel-Pfad von Q9K_TimerIRQHandler (derselbe "movem.l
 * (sp)+,d0-d7/a0-a6 / rte"-Wiederaufnahme-Mechanismus).
 Q9K_SysFExit:
+* A16 (2026-10-16): offene IOMan-Pfade des endenden Prozesses ueber IOMan schliessen (s. Q9K_ExitCloseMgrPaths).
+* d1.w (Exit-Status) bleibt auf dem Stack, weil die Schliessaufrufe d1 veraendern.
+        move.w  d1,-(sp)
+        bsr     Q9K_ExitCloseMgrPaths
+        move.w  (sp)+,d1
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-01, gleiches Muster wie bei
 * Q9K_SysFLink/SysFUnLink/SysFFork/SysFWait/SysFSRtMem): A6-Schutz fuer
 * den C-Aufruf fehlte hier komplett -- eine fruehere Pruefung hatte das
@@ -5195,6 +5200,46 @@ Q9K_SysFExit_SwitchTo:
         bsr     Q9K_ResumeTrapFlag          * the next process starts outside a trap (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
+
+*******************************************************************************
+* Q9K_ExitCloseMgrPaths -- A16 (2026-10-16): vor dem Aufraeumen jeden IOMan-Pfad (P$Path-Wort mit Bit 15) des endenden
+* Prozesses per I$Close ($8F) ueber IOMan schliessen. Ohne diesen Schritt raeumte Q9K_ProcReleasePaths nur den Eintrag
+* aus der Prozesstabelle; IOMans Pfaddeskriptor und die Sperre der Datei blieben fuer immer stehen (gemessen: der
+* naechste Open derselben Datei scheitert mit $D6).
+*
+* Der Aufruf ist ein gewoehnliches "trap #0" aus dem F$Exit-Handler: der Prozess laeuft im Supervisormodus auf seinem
+* eigenen Stack, der Trap-Dispatcher legt einen neuen Exception-Frame darueber und kehrt per RTE hierher zurueck.
+* Q9K_TrapTryManagerPathIO behandelt dabei auch den Mitbenutzer-Fall aus A13: bei Q9K_MgrRefs > 0 zaehlt der Close nur
+* herunter und raeumt den Eintrag, IOMan sieht ihn erst beim letzten Mitbenutzer.
+* Der Schleifenzaehler liegt auf dem Stack, nicht in einem Register: ein externer Handler darf d2-d7 veraendern.
+* Nicht im Trampolin-Pfad (Q9K_InTrapPath = 0: IOMan selbst ruft F$Exit) -- IOMan wuerde sich dort selbst schliessen.
+* Fehler der Closes sind folgenlos; Q9K_ProcReleasePaths raeumt Reste anschliessend wie bisher.
+Q9K_ExitCloseMgrPaths:
+        tst.w   Q9K_InTrapPath
+        beq.s   Q9K_ExitClose_Done
+        tst.l   Q9_D_Proc
+        beq.s   Q9K_ExitClose_Done
+        movem.l d0/a0,-(sp)
+        clr.w   -(sp)                              * Pfadindex 0..31
+Q9K_ExitClose_Loop:
+        move.w  (sp),d0
+        add.w   d0,d0                              * Wortoffset in P$Path
+        movea.l Q9_D_Proc,a0
+        adda.l  #$168,a0                           * P$Path
+        tst.w   0(a0,d0.w)
+        bpl.s   Q9K_ExitClose_Next                 * Bit 15 nicht gesetzt: kein IOMan-Pfad
+        move.w  (sp),d0                            * d0.w = Pfadnummer (Index)
+        trap    #0
+        dc.w    $008f                               * I$Close
+Q9K_ExitClose_Next:
+        addq.w  #1,(sp)
+        cmpi.w  #32,(sp)
+        bcs.s   Q9K_ExitClose_Loop
+        addq.l  #2,sp
+        move.w  #1,Q9K_InTrapPath                  * der Nested-Trap hat es beim Rueckweg geloescht; wir sind weiter im F$Exit-Trap
+        movem.l (sp)+,d0/a0
+Q9K_ExitClose_Done:
+        rts
 
 *******************************************************************************
 * Q9K_SysFSleep -- TRAP-#0-Handler fuer den echten F$Sleep-Callcode
