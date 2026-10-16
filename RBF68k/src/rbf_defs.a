@@ -1,0 +1,139 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* rbf_defs.a -- Exakte verifizierte Offsets für RBF68k (OS-9/68K)
+*═════════════════════════════════════════════════════════════════════════════════════
+
+* OS-9 Standard Error Codes
+E_BADDVR        equ     $C8             * Bad Device Driver
+E_BMOD          equ     $C9             * Bad Module
+E_PARAM         equ     $CA             * Bad Parameter
+E_NOTRDY        equ     $F8             * Device Not Ready
+E_DEVBSY        equ     $F9             * Device Busy
+E_READ          equ     $FA             * Read Error
+E_WRITE         equ     $FB             * Write Error
+E_EOF           equ     $D3             * End of File
+E_PNNF          equ     $D8             * Path Name Not Found
+E_BPNAM         equ     $D7             * Bad Path Name
+E_BNAM          equ     $D7             * Bad Name (215)
+E_DIRFUL        equ     $D9             * Directory Full
+E_DKFUL         equ     $DA             * Disk Full
+E_BMODE         equ     $D6             * Bad Mode (214)
+E_UNKSVC        equ     $D0             * Unknown Service
+F$PrsNam        equ     $10             * Parse Name Kernel Service
+
+* Device Table Offsets (Devicetbl pointed to by PD_DEV)
+DT_DRIV         equ     0               * Driver module pointer (V_driv)
+DT_STAT         equ     4               * Driver static storage pointer (V_stat)
+DT_DESC         equ     8               * Device descriptor pointer (V_desc)
+DT_FMGR         equ     12              * File manager module pointer (V_fmgr)
+
+* Driver Entry Table Function Offsets
+D_INIT          equ     0               * Driver Initialize
+D_READ          equ     2               * Driver Read Sector(s)
+D_WRIT          equ     4               * Driver Write Sector(s)
+D_GETST         equ     6               * Driver Get Status
+D_SETST         equ     8               * Driver Set Status
+D_TERM          equ     10              * Driver Terminate
+
+* Path Descriptor: Allgemeiner Teil (struct pathcom, 42 Bytes)
+PD_PD           equ     0               * Path number (u_short)
+PD_MOD          equ     2               * Mode (u_char: READ_=1, WRITE_=2, DIR_=$80)
+PD_DEV          equ     4               * Device table pointer (Devicetbl*)
+PD_CPR          equ     8               * Current Process ID (u_short)
+PD_RGS          equ     10              * Caller's register stack pointer (REGISTERS*)
+PD_BUF          equ     14              * Buffer address (u_char*)
+PD_USER         equ     18              * Group/User ID of creator (u_int)
+PD_PATHS        equ     22              * List of open paths on device
+PD_COUNT        equ     26              * Actual open images use count (u_short)
+
+* Path Descriptor: RBF Private Bereich (struct rbf_pvt, ab Offset 42 = $2A)
+PD_SMF          equ     42              * State flags (BUFMOD=1, SINBUF=2, FDBUF=4, DIRIO=8)
+PD_LOCK         equ     43              * Path lockout status
+PD_FDBUF        equ     46              * Pointer to FD buffer (u_char*)
+PD_CP           equ     50              * Current logical file position (u_int, 32-bit)
+PD_SIZ          equ     54              * File size (u_int, 32-bit)
+PD_SBL          equ     58              * Segment beginning LSN (u_int)
+PD_SBP          equ     62              * Segment beginning PSN (u_int)
+PD_SSZ          equ     66              * Segment size in sectors (u_int)
+PD_DSK          equ     70              * Disk ID (u_short)
+PD_DTB          equ     72              * Drive table pointer (Rbfdrive*)
+
+* Path Descriptor: RBF Optionsbereich (struct rbf_opt, ab Offset 128 = $80)
+PD_OPT          equ     128             * Optionsteil Basis
+PD_DTP          equ     128             * Device type (0 = RBF)
+PD_DRV          equ     129             * Drive number
+PD_ATT          equ     181             * File attributes ($B5)
+PD_FD           equ     182             * File descriptor LSN (32-bit, $B6)
+PD_DFD          equ     186             * Parent directory FD LSN (32-bit, $BA)
+PD_DCP          equ     190             * Directory entry offset ptr ($BE)
+PD_DVT          equ     194             * Copy of device table pointer ($C2)
+PD_SctSiz       equ     200             * Sector size (long, $C8)
+PD_NAME         equ     224             * Filename buffer (32 bytes, $E0)
+
+* Caller Register Offsets in a5 (struct REGISTERS)
+REG_D0          equ     0
+REG_D1          equ     4
+REG_D2          equ     8
+REG_D3          equ     12
+REG_A0          equ     32
+REG_A1          equ     36
+
+* Driver Static Storage System Variables (from iodev.a)
+V_PORT          equ     0               * Base port address (long)
+V_LPRC          equ     4               * Last active PID (word)
+V_BUSY          equ     6               * Current active PID, 0=idle (word)
+V_WAKE          equ     8               * Wake-up PID (word)
+V_Paths         equ     10              * Linked list of paths (long)
+
+* LSN0 (Identification Sector) Offsets (from io.a)
+DD_TOT          equ     0               * Total number of sectors (3 bytes, 24-bit)
+DD_TKS          equ     3               * Track size in sectors (1 byte)
+DD_MAP          equ     4               * Allocation map size in bytes (2 bytes)
+DD_BIT          equ     6               * Sectors per cluster bit (2 bytes)
+DD_DIR          equ     8               * Root directory FD LSN (3 bytes, 24-bit)
+DD_OWN          equ     11              * Owner ID (2 bytes)
+DD_ATT          equ     13              * Disk attributes (1 byte)
+DD_DSK          equ     14              * Disk ID (2 bytes)
+DD_FMT          equ     16              * Format byte (density/sides)
+DD_SPT          equ     17              * Sectors per track (2 bytes)
+DD_RES          equ     19              * Reserved (2 bytes)
+DD_BT           equ     21              * Bootstrap starting LSN (3 bytes)
+DD_BSZ          equ     24              * Bootstrap size in bytes (2 bytes)
+DD_DAT          equ     26              * Creation date (5 bytes)
+DD_NAM          equ     31              * Volume name (32 bytes)
+DD_OPT          equ     63              * Path options copy (32 bytes)
+DD_Sync         equ     96              * Media integrity code 'Cruz' ($4372757A)
+DD_MapLSN       equ     100             * Starting LSN of bitmap (4 bytes)
+DD_LSNSize      equ     104             * Logical sector size (2 bytes)
+DD_VersID       equ     106             * Version ID (2 bytes)
+
+* File Descriptor Offsets (from io.a)
+FD_ATT          equ     0               * File attributes (1 byte, DIR=$80)
+FD_OWN          equ     1               * Owner ID (2 bytes)
+FD_DAT          equ     3               * Date modified (5 bytes: YY MM DD HH MM)
+FD_LNK          equ     8               * Link count (1 byte)
+FD_SIZ          equ     9               * File size in bytes (4 bytes, 32-bit)
+FD_Creat        equ     13              * Date created (3 bytes: YY MM DD)
+FD_SEG          equ     16              * Segment list start offset
+
+* Segment Entry Layout
+FDSL_A          equ     0               * Start LSN (3 bytes)
+FDSL_B          equ     3               * Sector count (2 bytes)
+FDSL_S          equ     5               * Segment entry size (5 bytes)
+MAX_SEGS        equ     48              * Max segments in standard FD (256-16)/5
+
+* Directory Record Layout
+DIR_NM          equ     0               * File name (28 bytes)
+DIR_FD          equ     28              * File descriptor LSN (4 bytes, 32-bit)
+DIR_SZ          equ     32              * Directory record size (32 bytes)
+
+* GetStat / SetStat Function Codes
+SS_Opt          equ     $00             * Read/Write Path Descriptor Options
+SS_Ready        equ     $01             * Test for Data Ready
+SS_Size         equ     $02             * File Size
+SS_Pos          equ     $05             * Current Position
+SS_EOF          equ     $06             * End of File
+SS_DevNm        equ     $0E             * Device Name
+SS_FD           equ     $0F             * Read File Descriptor Sector
+SS_Attr         equ     $1C             * Set File Attributes
+SS_FDInf        equ     $20             * FD by Sector Number
+SS_Free         equ     $25             * Free Space

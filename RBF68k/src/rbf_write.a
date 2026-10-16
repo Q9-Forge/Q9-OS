@@ -1,0 +1,729 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* rbf_write.a -- Read-Write Operations for RBF68k (Create, Write, Delete, SetStt)
+*═════════════════════════════════════════════════════════════════════════════════════
+
+* Statischer Bitmap-Puffer für Allokationen
+        align
+Rbf_BitmapBuf:  ds.b    512
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_AllocCluster
+* Alloziert einen freien Cluster (DD_BIT Sektoren) in der Bitmap.
+*
+* Eingabe:
+*   a1   = Pfaddeskriptor
+*
+* Ausgabe:
+*   cc   = Carry gelöscht bei Erfolg
+*   d2.l = Physische Start-LSN des alloziierten Clusters
+*   d4.w = Clustergröße in Sektoren (DD_BIT)
+*
+* Fehler:
+*   cc   = Carry gesetzt bei Disk Full
+*   d1.w = E_DKFUL
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_AllocCluster:
+        movem.l d0/d3/d5-d7/a0/a2,-(sp)
+
+* 1. Sektor 0 lesen um Bitmap-Parameter zu holen
+        moveq   #0,d2
+        lea     Rbf_LSN0Buf(pc),a0
+        bsr     Rbf_ReadSector
+        bcs     Rbf_AllocErr
+
+        bsr     Rbf_ParseLSN0
+        bcs     Rbf_AllocErr
+* d3.l = DD_MapLSN (Bitmap Sektor LSN)
+* d4.w = DD_BIT (Sektoren pro Bit)
+
+* DD_MAP (Anzahl Bytes in der Bitmap) aus Sektor 0 holen
+        lea     Rbf_LSN0Buf(pc),a0
+        moveq   #0,d0
+        move.w  DD_MAP(a0),d0           * d0.l = Gesamtzahl Bytes in Bitmap (z.B. 32768)
+        bne.s   .hasMapBytes
+        move.w  #512,d0                 * Fallback mindestens 1 Sektor
+.hasMapBytes:
+        move.l  d0,-(sp)                * Verbleibende Bitmap-Bytes auf Stack merken
+
+        move.l  d3,d7                   * d7 = Bitmap-Sektor LSN
+        moveq   #0,d5                   * d5 = Kumulativer Cluster-Index (Bit-Zähler)
+
+* Sektor-Schleife: Durchwandere alle Bitmap-Sektoren
+Rbf_BMapSctLoop:
+        tst.l   (sp)                    * Noch Bitmap-Bytes übrig?
+        beq.s   Rbf_BMapNoFreeBits      * Nein -> Disk Full
+
+* Aktuellen Bitmap-Sektor einlesen
+        move.l  d7,d2
+        lea     Rbf_BitmapBuf(pc),a0
+        bsr     Rbf_ReadSector
+        bcs.s   Rbf_AllocErrPopMap
+
+* Byte-Anzahl für diesen Sektor bestimmen (min(512, verbleibend))
+        move.l  (sp),d6
+        cmpi.l  #512,d6
+        bls.s   .curSctBytes
+        move.w  #512,d6
+.curSctBytes:
+        sub.l   d6,(sp)                 * Verbleibende Bytes um d6 reduzieren
+        subq.w  #1,d6                   * dbra Zähler (0..511)
+        lea     Rbf_BitmapBuf(pc),a0
+
+Rbf_BMapByteLoop:
+        cmpi.b  #$FF,(a0)               * Alle 8 Bits belegt?
+        bne.s   Rbf_BMapBitSearch
+        addq.l  #8,d5
+        addq.l  #1,a0
+        dbra    d6,Rbf_BMapByteLoop
+
+* In diesem Sektor waren alle Bytes $FF -> Nächster Sektor
+        addq.l  #1,d7                   * Nächste Bitmap-Sektor LSN
+        bra.s   Rbf_BMapSctLoop
+
+Rbf_BMapNoFreeBits:
+        addq.l  #4,sp                   * Stack bereinigen
+        move.w  #E_DKFUL,d1
+        bra.s   Rbf_AllocErr
+
+Rbf_AllocErrPopMap:
+        addq.l  #4,sp
+        bra.s   Rbf_AllocErr
+
+Rbf_BMapBitSearch:
+* Bit von 7 abwärts prüfen (1 = belegt, 0 = frei)
+        moveq   #7,d3
+Rbf_BMapBitLoop:
+        btst    d3,(a0)
+        beq.s   Rbf_BMapFoundBit
+        addq.l  #1,d5                   * Cluster-Index erhöhen
+        subq.w  #1,d3
+        bpl.s   Rbf_BMapBitLoop
+
+* Sollte nicht erreicht werden falls Byte != $FF
+        addq.l  #1,a0
+        dbra    d6,Rbf_BMapByteLoop
+        addq.l  #1,d7
+        bra.s   Rbf_BMapSctLoop
+
+Rbf_BMapFoundBit:
+* Bit als belegt markieren (bset)
+        bset    d3,(a0)
+        addq.l  #4,sp                   * Verbleibende Bytes vom Stack entfernen
+
+* 4. Bitmap-Sektor zurück auf Disk schreiben
+        move.l  d7,d2                   * LSN des Bitmap-Sektors
+        lea     Rbf_BitmapBuf(pc),a0
+        bsr     Rbf_WriteSector
+        bcs     Rbf_AllocErr
+
+* 5. Start-LSN = Cluster-Index * DD_BIT berechnen
+        move.l  d5,d2                   * d2 = Cluster-Index
+        move.w  d4,d0                   * d0 = DD_BIT
+        ext.l   d0
+        mulu.w  d0,d2
+
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d0/d3/d5-d7/a0/a2
+        rts
+
+Rbf_AllocErr:
+        ori     #$01,ccr
+        movem.l (sp)+,d0/d3/d5-d7/a0/a2
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_Create
+* Erstellt eine neue Datei und öffnet sie zum Schreiben.
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_Create:
+        moveq   #0,d0                   * Datei-Erstellung (kein Dir)
+        bra.s   Rbf_CreateCommon
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_MakDir
+* Erstellt ein neues Verzeichnis.
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_MakDir:
+        moveq   #1,d0                   * Verzeichnis-Erstellung (Dir-Bit setzen)
+
+Rbf_CreateCommon:
+        movem.l d2-d7/a0/a2-a3,-(sp)
+        move.w  d0,-(sp)                * Dir-Flag auf Stack merken
+
+* 1. Pfad auflösen: Elternverzeichnis FD LSN in d7.l, Dateiname bei a2
+        bsr.w   Rbf_ParsePathCreate
+        bcs.w   Rbf_CreateErrPop
+        beq.w   Rbf_CreateErrParamPop   * Z=1 (EQ) bedeutet leerer Pfad / Dir self -> Ungültig
+
+* d7.l = Elternverzeichnis FD LSN
+* a2   = Zeiger auf den reinen Dateinamen
+* d2.l = Ziel-FD LSN falls Datei bereits existiert, oder 0 falls neu
+        move.l  d7,-(sp)                * Elternverzeichnis FD LSN auf Stack sichern
+        move.l  a2,-(sp)                * Dateiname-Zeiger auf Stack sichern
+
+* 2. Neuen Cluster für den File Descriptor (FD) allozieren
+        bsr.w   Rbf_AllocCluster
+        bcs.w   Rbf_CreateErrPopTwo
+        move.l  d2,d7                   * d7 = Neue FD-LSN
+
+* 3. FD-Puffer mit Nullen initialisieren
+        lea     Rbf_FDBuf(pc),a0
+        move.w  #512/4-1,d0
+Rbf_ZeroFD:
+        clr.l   (a0)+
+        dbra    d0,Rbf_ZeroFD
+
+* 4. FD-Header ausfüllen
+        lea     Rbf_FDBuf(pc),a0
+        move.w  8(sp),d0                * Dir-Flag (bei 8(sp) wegen 2 gepushten Longs)
+        tst.w   d0
+        beq.w   Rbf_CreateFileAttr
+
+* --- VERZEICHNIS (I$MakDir) ---
+        move.b  #$BF,FD_ATT(a0)         * Verzeichnis-Attribute: DIR_ ($80) + Read/Write/Exec ($07)
+        move.b  #1,FD_LNK(a0)
+        move.l  #64,FD_SIZ(a0)          * Anfangsgröße: 2 Einträge à 32 Bytes ('.' und '..')
+
+* Cluster für Verzeichnis-Daten allozieren
+        bsr.w   Rbf_AllocCluster
+        bcs.w   Rbf_CreateErrPopTwo
+* d2.l = Neue Dir-Daten-LSN, d4.w = Clustergröße
+* In FD-Segmentliste eintragen
+        move.b  d2,FD_SEG+2(a0)
+        move.l  d2,d0
+        lsr.l   #8,d0
+        move.b  d0,FD_SEG+1(a0)
+        lsr.l   #8,d0
+        move.b  d0,FD_SEG(a0)
+        move.w  d4,FD_SEG+3(a0)         * Sektoranzahl
+
+* Daten-Sektor für das neue Verzeichnis vorbereiten ('.' und '..')
+        move.l  d2,-(sp)                * Dir-Daten-LSN merken
+        lea     Rbf_SectorBuf(pc),a3
+        move.w  #512/4-1,d0
+.zeroDirData:
+        clr.l   (a3)+
+        dbra    d0,.zeroDirData
+
+        lea     Rbf_SectorBuf(pc),a3
+* Eintrag 0: ".." zeigt auf das Elternverzeichnis
+        move.b  #'.',DIR_NM(a3)
+        move.b  #'.'|$80,DIR_NM+1(a3)
+        move.l  4+4(sp),DIR_FD(a3)      * Gesichertes Elternverzeichnis FD LSN
+
+* Eintrag 1: "." zeigt auf das neue Verzeichnis selbst
+        move.b  #'.'|$80,DIR_SZ+DIR_NM(a3)
+        move.l  d7,DIR_SZ+DIR_FD(a3)    * d7 = Neue FD-LSN
+
+* Dir-Daten-Sektor schreiben
+        move.l  (sp)+,d2                * Dir-Daten-LSN zurückholen
+        lea     Rbf_SectorBuf(pc),a0
+        bsr.w   Rbf_WriteSector
+        bcs.w   Rbf_CreateErrPopTwo
+
+* Nun den FD-Sektor des neuen Verzeichnisses schreiben
+        move.l  d7,d2                   * LSN = d7
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_WriteSector
+        bcs.w   Rbf_CreateErrPopTwo
+        bra.s   Rbf_CreateInsertParent
+
+* --- NORMALE DATEI (I$Create) ---
+Rbf_CreateFileAttr:
+        move.b  REG_D1+3(a5),d1
+        tst.b   d1
+        bne.s   Rbf_CreateHasAttr
+        move.b  #$03,d1                 * Standard: Read/Write
+Rbf_CreateHasAttr:
+        andi.b  #$7F,d1                 * Kein Directory-Bit
+        move.b  d1,FD_ATT(a0)
+        move.b  #1,FD_LNK(a0)
+        clr.l   FD_SIZ(a0)
+
+* Datei-FD-Sektor auf Disk schreiben
+        move.l  d7,d2
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_WriteSector
+        bcs.w   Rbf_CreateErrPopTwo
+
+* 5. Eintrag im Elternverzeichnis eintragen
+Rbf_CreateInsertParent:
+        movea.l (sp)+,a2                * a2 = Dateiname-Zeiger
+        move.l  (sp)+,d3                * d3 = Elternverzeichnis FD LSN
+
+* Elternverzeichnis FD einlesen in Rbf_FDBuf
+        move.l  d3,d2
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.w   Rbf_CreateErrPop
+
+* Alle Segmente des Elternverzeichnisses nach einem freien Slot (DIR_NM == 0) durchsuchen
+        lea     FD_SEG(a0),a3
+        moveq   #MAX_SEGS-1,d6          * Max 48 Segmente
+        moveq   #0,d5                   * d5 = kumulativer Byte-Offset in Dir (für FD_SIZ Prüfung)
+
+.createSegLoop:
+* Start-LSN des Segments (3 Bytes)
+        moveq   #0,d4
+        move.b  FDSL_A(a3),d4
+        swap    d4
+        move.b  FDSL_A+1(a3),d4
+        lsl.w   #8,d4
+        move.b  FDSL_A+2(a3),d4         * d4 = Start-LSN
+
+* Sektoranzahl des Segments (2 Bytes)
+        move.w  FDSL_B(a3),d0           * d0 = Sektoren im Segment
+        beq.s   .createNoSlots          * Keine weiteren Segmente
+
+.createSctLoop:
+* Sektor d4 in Rbf_SectorBuf einlesen
+        move.l  d4,d2
+        lea     Rbf_SectorBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.w   Rbf_CreateErrPop
+
+* 16 Einträge à 32 Byte im Sektor prüfen
+        lea     Rbf_SectorBuf(pc),a0
+        moveq   #16-1,d1
+.createEntryLoop:
+        tst.b   DIR_NM(a0)
+        beq.s   .createSlotFound
+        lea     DIR_SZ(a0),a0
+        addi.l  #DIR_SZ,d5              * Byte-Offset vorrücken
+        dbra    d1,.createEntryLoop
+
+* Nächster Sektor im Segment
+        addq.l  #1,d4
+        subq.w  #1,d0
+        bne.s   .createSctLoop
+
+* Nächstes Segment
+        lea     FDSL_S(a3),a3
+        dbra    d6,.createSegLoop
+
+.createNoSlots:
+        move.w  #E_DIRFUL,d1
+        bra.w   Rbf_CreateErrPop
+
+.createSlotFound:
+* a0 zeigt auf den freien 32-Byte Slot in Rbf_SectorBuf
+* d4.l ist die physische LSN dieses Sektors
+* d5.l ist der Byte-Offset dieses Slots im Verzeichnis
+* Dateinamen kopieren (a2 zeigt auf reinen Namen)
+        move.l  a0,-(sp)                * Slot-Adresse sichern
+        moveq   #28-1,d0
+.createNameLoop:
+        move.b  (a2)+,d1
+        beq.s   .createNamePad
+        cmpi.b  #'/',d1
+        beq.s   .createNamePad
+        cmpi.b  #' ',d1
+        beq.s   .createNamePad
+        cmpi.b  #$0D,d1
+        beq.s   .createNamePad
+        move.b  d1,(a0)+
+        dbra    d0,.createNameLoop
+        bra.s   .createSetDirFD
+
+.createNamePad:
+* Letztes Zeichen mit High-Bit markieren
+        bset    #7,-1(a0)
+.createPadLoop:
+        clr.b   (a0)+
+        dbra    d0,.createPadLoop
+
+.createSetDirFD:
+        move.l  d7,(a0)                 * d7 = Neue FD-LSN eintragen
+        movea.l (sp)+,a0                * Slot-Adresse wiederherstellen
+
+* Verzeichnissektor zurück auf Disk schreiben
+        move.l  d4,d2                   * LSN des geänderten Sektors
+        lea     Rbf_SectorBuf(pc),a0
+        bsr.w   Rbf_WriteSector
+        bcs.w   Rbf_CreateErrPop
+
+* Prüfen ob FD_SIZ des Elternverzeichnisses angepasst werden muss (d5 + 32 > FD_SIZ)
+        addi.l  #32,d5
+        lea     Rbf_FDBuf(pc),a0        * Elternverzeichnis FD
+        cmp.l   FD_SIZ(a0),d5
+        bls.s   .parentFDOk
+        move.l  d5,FD_SIZ(a0)           * FD_SIZ aktualisieren
+        move.l  d3,d2                   * Eltern-FD LSN
+        bsr.w   Rbf_WriteSector         * Eltern-FD auf Disk zurückschreiben
+        bcs.w   Rbf_CreateErrPop
+
+.parentFDOk:
+
+* 6. Pfaddeskriptor initialisieren
+        move.l  d7,PD_FD(a1)
+        move.l  d3,PD_DFD(a1)           * Elternverzeichnis FD LSN
+        clr.l   PD_CP(a1)
+        move.w  (sp)+,d0                * Dir-Flag wiederholen
+        tst.w   d0
+        beq.s   .setFileSizes
+        move.l  #64,PD_SIZ(a1)
+        move.b  #$BF,PD_ATT(a1)
+        bra.s   .setCommonSizes
+.setFileSizes:
+        clr.l   PD_SIZ(a1)
+.setCommonSizes:
+        move.l  PD_DEV(a1),PD_DVT(a1)
+        move.b  #1,PD_DTP(a1)           * DT_RBF (1) sicherstellen
+
+        tst.w   PD_SctSiz+2(a1)
+        bne.s   Rbf_CreateSctSizOk
+        move.w  #512,PD_SctSiz+2(a1)
+Rbf_CreateSctSizOk:
+        andi    #$FE,ccr
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+Rbf_CreateErrParamPop:
+        addq.l  #2,sp                   * Pop Dir-Flag
+        move.w  #E_PARAM,d1
+        bra.s   Rbf_CreateErr
+
+Rbf_CreateErrPopTwo:
+        addq.l  #8,sp                   * Pop Name-Ptr und Parent-FD
+Rbf_CreateErrPop:
+        addq.l  #2,sp                   * Pop Dir-Flag
+Rbf_CreateErr:
+        ori     #$01,ccr
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_Write / Rbf_WritLn
+* Schreibt Daten in die geöffnete Datei.
+*
+* Eingabe:
+*   REG_A0(a5) = Quellpuffer des Aufrufers
+*   REG_D1(a5) = Angeforderte Byteanzahl
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_Write:
+Rbf_WritLn:
+        movem.l d2-d7/a0/a2-a3,-(sp)
+
+        move.l  REG_D1(a5),d4           * d4 = Zu schreibende Bytes
+        tst.l   d4
+        beq     Rbf_WriteDoneSuccess
+
+* FD einlesen
+        move.l  PD_FD(a1),d2
+        lea     Rbf_FDBuf(pc),a0
+        bsr     Rbf_ReadSector
+        bcs     Rbf_WriteDoneErr
+
+        move.l  PD_CP(a1),d5            * d5 = Aktuelle Position (PD_CP)
+        movea.l REG_A0(a5),a2           * a2 = Quellpuffer
+        moveq   #0,d7                   * d7 = Geschriebene Bytes
+
+Rbf_WriteLoop:
+        tst.l   d4                      * Noch Bytes zu schreiben?
+        beq.w   Rbf_WriteFlushFD
+
+* Brauchen wir ein neues Segment?
+        move.l  d5,d0                   * Offset
+        move.w  PD_SctSiz+2(a1),d1      * Sektorgröße
+        bne.s   Rbf_WriteHasSctSiz
+        move.w  #512,d1
+        move.w  d1,PD_SctSiz+2(a1)
+Rbf_WriteHasSctSiz:
+        lea     Rbf_FDBuf(pc),a0
+        bsr     Rbf_MapOffsetToLSN
+        bcc.s   Rbf_WriteHasLSN         * Segment vorhanden!
+
+* Kein Segment vorhanden: Neuen Cluster allozieren und an FD anhängen
+        bsr     Rbf_AllocCluster
+        bcs.w   Rbf_WriteDoneErr
+* d2.l = Neue LSN, d4.w = Clustergröße
+        lea     Rbf_FDBuf(pc),a0
+* Freien Segmenteintrag in FD_SEG suchen
+        lea     FD_SEG(a0),a3
+        moveq   #MAX_SEGS-1,d0
+Rbf_FindFreeSeg:
+        tst.b   FDSL_A(a3)
+        bne.s   Rbf_NextFreeSeg
+        tst.b   FDSL_A+1(a3)
+        bne.s   Rbf_NextFreeSeg
+        tst.b   FDSL_A+2(a3)
+        beq.s   Rbf_AppendSeg
+Rbf_NextFreeSeg:
+        lea     FDSL_S(a3),a3
+        dbra    d0,Rbf_FindFreeSeg
+        move.w  #E_DKFUL,d1
+        bra.w   Rbf_WriteDoneErr
+
+Rbf_AppendSeg:
+* Start-LSN eintragen (3 Bytes)
+        move.l  d2,d0
+        move.b  d0,FDSL_A+2(a3)
+        lsr.l   #8,d0
+        move.b  d0,FDSL_A+1(a3)
+        lsr.l   #8,d0
+        move.b  d0,FDSL_A(a3)
+* Sektoranzahl eintragen (2 Bytes)
+        move.w  d4,FDSL_B(a3)
+
+* Logischen Offset erneut abbilden
+        move.l  d5,d0
+        move.w  PD_SctSiz+2(a1),d1
+        lea     Rbf_FDBuf(pc),a0
+        bsr     Rbf_MapOffsetToLSN
+        bcs.w   Rbf_WriteDoneErr
+
+Rbf_WriteHasLSN:
+* d2.l = LSN, d3.w = Offset im Sektor
+        move.l  d2,d6                   * d6 = Ziel-LSN merken
+
+* Bestehenden Sektor einlesen (falls unvollständig überschrieben)
+        lea     Rbf_SectorBuf(pc),a0
+        bsr     Rbf_ReadSector
+        * Fehler beim Lesen ignorieren falls neuer Sektor
+
+* Daten aus Userpuffer in Sektorpuffer kopieren
+        lea     Rbf_SectorBuf(pc),a0
+        adda.w  d3,a0
+        move.w  PD_SctSiz+2(a1),d1
+        sub.w   d3,d1                   * d1 = Platz im Sektor
+
+Rbf_WriteByteCopy:
+        tst.l   d4
+        beq.s   Rbf_WriteCommitSector
+        tst.w   d1
+        beq.s   Rbf_WriteCommitSector
+
+        move.b  (a2)+,(a0)+
+        addq.l  #1,d5
+        addq.l  #1,d7
+        subq.l  #1,d4
+        subq.w  #1,d1
+        bra.s   Rbf_WriteByteCopy
+
+Rbf_WriteCommitSector:
+* Sektor zurück auf Disk schreiben
+        move.l  d6,d2
+        lea     Rbf_SectorBuf(pc),a0
+        bsr     Rbf_WriteSector
+        bcs.w   Rbf_WriteDoneErr
+
+        bra     Rbf_WriteLoop
+
+Rbf_WriteFlushFD:
+* Dateigröße im FD anpassen falls gewachsen
+        lea     Rbf_FDBuf(pc),a0
+        cmp.l   FD_SIZ(a0),d5
+        bcs.s   Rbf_WriteSaveFD
+        move.l  d5,FD_SIZ(a0)           * FD_SIZ aktualisieren
+        move.l  d5,PD_SIZ(a1)           * Auch in Pfaddeskriptor
+
+Rbf_WriteSaveFD:
+* FD auf Disk schreiben
+        move.l  PD_FD(a1),d2
+        lea     Rbf_FDBuf(pc),a0
+        bsr     Rbf_WriteSector
+        bcs.w   Rbf_WriteDoneErr
+
+Rbf_WriteDoneSuccess:
+        move.l  d5,PD_CP(a1)            * Dateiposition aktualisieren
+        move.l  d7,REG_D1(a5)           * Geschriebene Bytes melden
+        andi    #$FE,ccr
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+Rbf_WriteDoneErr:
+        move.l  d7,REG_D1(a5)
+        ori     #$01,ccr
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_Delete
+* Löscht eine Datei aus dem Verzeichnis und gibt Sektoren frei.
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_Delete:
+        movem.l d2-d7/a0/a2-a3,-(sp)
+
+* Datei zuerst öffnen um FD-LSN zu finden
+        bsr.w   Rbf_Open
+        bcs.w   Rbf_DeleteErr
+
+* FD einlesen
+        move.l  PD_FD(a1),d2
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.w   Rbf_DeleteErr
+
+* Segmente in Bitmap freigeben
+* (In Minimalphase: FD invalidieren)
+        lea     Rbf_FDBuf(pc),a0
+        clr.b   FD_ATT(a0)              * Attribute löschen
+        clr.l   FD_SIZ(a0)              * Größe 0
+        move.l  PD_FD(a1),d2
+        bsr     Rbf_WriteSector
+
+* Verzeichniseintrag im Elternverzeichnis nullen
+        move.l  PD_DFD(a1),d3           * d3 = Elternverzeichnis FD LSN
+        beq.s   Rbf_DeleteDone
+
+* Elternverzeichnis FD einlesen
+        move.l  d3,d2
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.s   Rbf_DeleteDone
+
+* Segmente des Elternverzeichnisses nach PD_FD(a1) durchsuchen
+        lea     FD_SEG(a0),a3
+        moveq   #MAX_SEGS-1,d6
+
+.delSegLoop:
+        moveq   #0,d4
+        move.b  FDSL_A(a3),d4
+        swap    d4
+        move.b  FDSL_A+1(a3),d4
+        lsl.w   #8,d4
+        move.b  FDSL_A+2(a3),d4         * d4 = Start-LSN
+
+        move.w  FDSL_B(a3),d0           * d0 = Sektoren im Segment
+        beq.s   Rbf_DeleteDone          * Keine weiteren Segmente
+
+.delSctLoop:
+        move.l  d4,d2
+        lea     Rbf_SectorBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.s   Rbf_DeleteDone
+
+* 16 Einträge im Sektor prüfen
+        lea     Rbf_SectorBuf(pc),a0
+        moveq   #16-1,d5
+.delScanLoop:
+        move.l  DIR_FD(a0),d1
+        cmp.l   PD_FD(a1),d1
+        beq.s   .delFoundEntry
+        lea     DIR_SZ(a0),a0
+        dbra    d5,.delScanLoop
+
+        addq.l  #1,d4
+        subq.w  #1,d0
+        bne.s   .delSctLoop
+
+        lea     FDSL_S(a3),a3
+        dbra    d6,.delSegLoop
+        bra.s   Rbf_DeleteDone
+
+.delFoundEntry:
+        clr.b   DIR_NM(a0)              * Gelöscht
+        clr.l   DIR_FD(a0)
+
+* Dir-Sektor zurückschreiben
+        move.l  d4,d2
+        lea     Rbf_SectorBuf(pc),a0
+        bsr.w   Rbf_WriteSector
+
+Rbf_DeleteDone:
+        andi    #$FE,ccr
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+Rbf_DeleteErr:
+        ori     #$01,ccr
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_SetStt
+* Setzt Dateistatus (SS_Attr, SS_Size).
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_SetStt:
+        move.w  REG_D1+2(a5),d0         * Funktionscode in d0.w
+
+        tst.w   d0                      * SS_Opt ($00)?
+        beq.s   Rbf_SstOpt
+        cmpi.w  #SS_Attr,d0
+        beq.w   Rbf_SstAttr
+        cmpi.w  #SS_Size,d0
+        beq.w   Rbf_SstSize
+        cmpi.w  #SS_FD,d0
+        beq.w   Rbf_SstFD
+
+        move.w  #E_UNKSVC,d1
+        ori     #$01,ccr
+        rts
+
+Rbf_SstOpt:
+* Optionsabschnitt (bis zu 128 Bytes nach PD_OPT) aus Aufrufer-Puffer übernehmen
+        movem.l d0/a0/a2,-(sp)
+        movea.l REG_A0(a5),a0
+        lea     PD_OPT(a1),a2
+        move.l  REG_D2(a5),d0
+        tst.l   d0
+        beq.s   .useDefSstSize
+        cmpi.l  #128,d0
+        bls.s   .sstSizeOk
+.useDefSstSize:
+        move.l  #128,d0
+.sstSizeOk:
+.sstCpyLp:
+        move.b  (a0)+,(a2)+
+        subq.l  #1,d0
+        bne.s   .sstCpyLp
+
+        move.b  #1,PD_DTP(a1)           * DT_RBF sicherstellen
+
+        moveq   #D_SETST,d1
+        bsr.w   Rbf_CallDriver
+        bcc.s   .sstOptDone
+        cmpi.w  #E_UNKSVC,d1
+        beq.s   .sstOptDone
+        movem.l (sp)+,d0/a0/a2
+        ori     #$01,ccr
+        rts
+.sstOptDone:
+        movem.l (sp)+,d0/a0/a2
+        andi    #$FE,ccr
+        rts
+
+Rbf_SstAttr:
+* Dateiattribute setzen
+        movem.l d2/a0/a2,-(sp)
+        bsr.s   .sstReadFD
+        bcs.s   .sstDone
+        move.b  REG_D2+3(a5),FD_ATT(a0) * Neues Attribut
+        move.b  REG_D2+3(a5),PD_ATT(a1)
+        bra.s   .sstWriteFD
+
+Rbf_SstFD:
+* FD-Header aus Puffer REG_A0(a5) übernehmen (für copy / attr)
+        movem.l d2/a0/a2,-(sp)
+        bsr.s   .sstReadFD
+        bcs.s   .sstDone
+        movea.l REG_A0(a5),a2
+        move.l  (a2)+,(a0)+             * FD_ATT, FD_OWN (2B), FD_DAT[0]
+        move.l  (a2)+,(a0)+             * FD_DAT[1..4]
+        lea     Rbf_FDBuf(pc),a0
+        move.b  FD_ATT(a0),PD_ATT(a1)   * Attribut in PD spiegeln
+        bra.s   .sstWriteFD
+
+Rbf_SstSize:
+* Dateigröße setzen (Truncate / Expand)
+        move.l  REG_D2(a5),PD_SIZ(a1)
+        movem.l d2/a0/a2,-(sp)
+        bsr.s   .sstReadFD
+        bcs.s   .sstDone
+        move.l  REG_D2(a5),FD_SIZ(a0)
+
+.sstWriteFD:
+        bsr     Rbf_WriteSector
+.sstDone:
+        movem.l (sp)+,d2/a0/a2
+        rts
+
+.sstReadFD:
+        move.l  PD_FD(a1),d2
+        lea     Rbf_FDBuf(pc),a0
+        bra     Rbf_ReadSector

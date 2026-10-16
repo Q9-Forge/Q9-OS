@@ -1,0 +1,106 @@
+#!/usr/bin/expect -f
+
+set timeout 90
+set send_slow {1 .005}
+set prompt {[#$] ?$}
+
+cd "/Volumes/SSD1TB/projects/Q9-Forge/Q9-SDK/SRC/SYSTEM/Q9-Flux/Q9-Flux-68k"
+
+log_file -noappend "/Volumes/SSD1TB/projects/Q9-Forge/Q9-SDK/SRC/SYSTEM/Q9-OS/RBF68k/tools/rbf_diag.log"
+
+spawn ./build/macos/q9.exe rbf68k-test.q9
+
+set timeout 60
+expect {
+    "devices online" { send_user "\n\[OK\] Q9 Board booted and devices online!\n" }
+    timeout { send_user "\n\[FAIL\] Timeout waiting for devices online!\n"; exit 1 }
+}
+
+set timeout 30
+set logged_in 0
+for {set i 0} {$i < 10 && !$logged_in} {incr i} {
+    expect {
+        "User name?:" { sleep 1; send -s "mshell\r"; exp_continue }
+        -re {Password[^\r\n]*:} { sleep 1; send -s "user\r"; exp_continue }
+        -re $prompt { set logged_in 1 }
+        timeout { send "\r" }
+    }
+}
+
+if {!$logged_in} {
+    send_user "\n\[FAIL\] Login failed!\n"
+    exit 1
+}
+
+send_user "\n\[OK\] Logged in to OS-9 shell successfully!\n"
+
+sleep 1
+send -s "chx /dd/CMDS\r"
+expect -re $prompt
+
+sleep 1
+send -s "chd /dd\r"
+expect -re $prompt
+
+sleep 1
+send -s "dirs\r"
+expect -re $prompt
+
+sleep 1
+send -s "list startup\r"
+expect -re $prompt
+
+sleep 1
+send -s "pd\r"
+expect -re $prompt
+
+sleep 1
+send -s "pd -x\r"
+expect -re $prompt
+
+sleep 1
+send -s "dir\r"
+expect -re $prompt
+
+sleep 1
+send -s "dir -e\r"
+expect -re $prompt
+
+sleep 1
+send -s "dir CMDS\r"
+expect -re $prompt
+
+sleep 1
+send -s "dir RBFDIR\r"
+expect -re $prompt
+
+sleep 1
+send -s "chd /dd/HOME/TOOLS\r"
+expect -re $prompt
+
+sleep 1
+send -s "dir .\r"
+expect -re $prompt
+
+sleep 1
+send -s "dir ..\r"
+expect -re $prompt
+
+sleep 1
+send -s "dir ...\r"
+expect -re $prompt
+
+sleep 1
+send -s "pd\r"
+expect -re $prompt
+
+sleep 1
+send -s "logout\r"
+expect {
+    -re {Logout after} { send_user "\n\[OK\] OS-9 Logout completed.\n" }
+    timeout { send_user "\n\[WARN\] Logout timeout.\n" }
+}
+
+send "\x1d"
+expect eof
+send_user "\n\[DIAG DONE\]\n"

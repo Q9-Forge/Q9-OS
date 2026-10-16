@@ -1,0 +1,427 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* rbf_ops.a -- I/O Operations for RBF68k (Open, Seek, Read, ReadLn, GetStt, Close, ChgDir)
+*═════════════════════════════════════════════════════════════════════════════════════
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_Open
+* Öffnet eine Datei oder ein Verzeichnis.
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*   a6 = System-Globals
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_Open:
+        movem.l d2-d7/a0/a2-a3,-(sp)
+
+        bsr.w   Rbf_ParsePath
+        bcs.s   Rbf_OpenErr
+        beq.s   Rbf_OpenIsRoot          * EQ = Root oder Dir selbst (d2 = FD LSN)
+
+* d2.l ist bereits die gefundene Ziel-FD LSN
+Rbf_OpenFileFound:
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_ReadSector          * Ziel-FD einlesen
+        bcs.s   Rbf_OpenErr
+
+* Prüfen: Stimmt das Verzeichnis-Bit (Bit 7, DIR_) zwischen Anforderung (PD_MOD)
+* und tatsächlichem Dateityp (FD_ATT) überein?
+* Wenn DIR_ angefordert ($80 gesetzt), MUSS das Ziel ein Verzeichnis sein.
+* Wenn DIR_ NICHT angefordert ($80 gelöscht), DARF das Ziel KEIN Verzeichnis sein!
+        move.b  FD_ATT(a0),d0
+        move.b  PD_MOD(a1),d1
+        eor.b   d1,d0                   * Bit 7 vergleichen (Quelle Dn)
+        bpl.s   Rbf_OpenSetupPath       * Bit 7 stimmt überein -> OK
+        move.w  #E_BMODE,d1             * Mismatch: Datei als Dir oder Dir als Datei -> E_BMODE
+        bra.s   Rbf_OpenErr
+
+Rbf_OpenIsRoot:
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.s   Rbf_OpenErr
+
+* Root ist immer ein Verzeichnis: Erfordert DIR_ ($80) in PD_MOD!
+        move.b  PD_MOD(a1),d0
+        btst    #7,d0
+        bne.s   Rbf_OpenSetupPath
+        move.w  #E_BMODE,d1             * Root ohne DIR_ öffnen -> E_BMODE (214)
+        bra.s   Rbf_OpenErr
+
+Rbf_OpenSetupPath:
+* Pfaddeskriptor initialisieren
+        move.b  FD_ATT(a0),PD_ATT(a1)   * Attribute
+        move.l  d2,PD_FD(a1)            * FD LSN
+        move.l  d7,PD_DFD(a1)           * Parent Dir FD LSN
+        move.l  PD_DEV(a1),PD_DVT(a1)   * Device Table Zeiger
+        move.l  FD_SIZ(a0),PD_SIZ(a1)   * Dateigröße
+        clr.l   PD_CP(a1)               * Dateizeiger auf 0
+        move.b  #1,PD_DTP(a1)           * DT_RBF (1) sicherstellen
+
+* Sicherstellen, dass PD_SctSiz initialisiert ist (Standard: 512)
+        tst.w   PD_SctSiz+2(a1)
+        bne.s   Rbf_OpenSctSizOk
+        move.w  #512,PD_SctSiz+2(a1)
+Rbf_OpenSctSizOk:
+
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+Rbf_OpenErr:
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_ChgDir
+* Wechselt das Arbeits- oder Ausführungsverzeichnis des aufrufenden Prozesses.
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers (REG_A0 = Pfad-String)
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_ChgDir:
+        movem.l d2-d7/a0/a2-a3,-(sp)
+
+        ori.b   #$80,PD_MOD(a1)         * Verzeichnis anfordern (DIR_ = Bit 7)
+        bsr.w   Rbf_ParsePath           * Pfad auflösen -> d2.l = Ziel-FD LSN
+        bcs.s   .chdErr
+
+        * FD einlesen um sicherzustellen, dass es ein Verzeichnis ist
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.s   .chdErr
+
+        btst    #7,FD_ATT(a0)           * DIR_-Bit gesetzt?
+        bne.s   .isDir
+        move.w  #E_PARAM,d1             * Kein Verzeichnis -> Fehler
+        bra.s   .chdErr
+
+.isDir:
+        move.l  d2,PD_FD(a1)            * In PD_FD(a1) ablegen
+        cmpa.w  #0,a4                   * Prozessdeskriptor vorhanden?
+        beq.s   .chdDone
+        move.b  PD_MOD(a1),d0           * Modus-Byte prüfen
+        move.b  d0,d3
+        andi.b  #3,d0                   * Read_ oder Write_ gesetzt?
+        beq.s   .checkExec
+        move.l  d2,334(a4)              * P_DIO + 6 = Data Dir FD LSN
+.checkExec:
+        btst    #2,d3                   * Exec_ gesetzt?
+        beq.s   .chdDone
+        move.l  d2,350(a4)              * P_DIO_EXEC + 6 = Exec Dir FD LSN
+
+.chdDone:
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+.chdErr:
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        rts
+
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_Seek
+* Setzt den Dateizeiger (PD_CP).
+*
+* Eingabe:
+*   REG_D1(a5) = Neue absolute Position (d1.l des Aufrufers)
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_Seek:
+        move.l  REG_D1(a5),PD_CP(a1)
+        andi    #$FE,ccr
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_GetStt
+* Statusabfragen für RBF (SS_Opt, SS_Size, SS_Pos, SS_EOF, SS_Ready, SS_FD, SS_FDInf, SS_DevNm).
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_GetStt:
+        move.w  REG_D1+2(a5),d0         * Funktionscode in d0.w
+
+        tst.w   d0                      * SS_Opt ($00)?
+        beq.s   Rbf_GstOpt
+        cmpi.w  #SS_Ready,d0
+        beq.w   Rbf_GstReady
+        cmpi.w  #SS_Size,d0
+        beq.w   Rbf_GstSize
+        cmpi.w  #SS_Pos,d0
+        beq.w   Rbf_GstPos
+        cmpi.w  #SS_EOF,d0
+        beq.w   Rbf_GstEOF
+        cmpi.w  #SS_DevNm,d0
+        beq.w   Rbf_GstDevNm
+        cmpi.w  #SS_FD,d0
+        beq.w   Rbf_GstFD
+        cmpi.w  #SS_FDInf,d0
+        beq.w   Rbf_GstFDInf
+
+* Unbekannter Statuscode -> an Blocktreiber delegieren
+        moveq   #D_GETST,d1             * D_GETST = 6
+        bsr.w   Rbf_CallDriver
+        rts
+
+Rbf_GstOpt:
+* Optionsabschnitt (bis zu 128 Bytes ab PD_OPT) in Aufrufer-Puffer kopieren
+        movem.l d0/d2/a0/a2,-(sp)
+        move.b  #1,PD_DTP(a1)           * DT_RBF (1) sicherstellen
+        movea.l REG_A0(a5),a0
+        lea     PD_OPT(a1),a2
+        move.l  REG_D2(a5),d0           * Angeforderte Puffergröße
+        tst.l   d0
+        beq.s   .useDefOptSize
+        cmpi.l  #128,d0
+        bls.s   .optSizeOk
+.useDefOptSize:
+        move.l  #128,d0
+.optSizeOk:
+.optCpyLp:
+        move.b  (a2)+,(a0)+
+        subq.l  #1,d0
+        bne.s   .optCpyLp
+
+        * Treiber ebenfalls mit D_GETST aufrufen (wie Original-RBF)
+        moveq   #D_GETST,d1
+        bsr.w   Rbf_CallDriver
+        bcc.s   .gstOptDone
+        cmpi.w  #E_UNKSVC,d1
+        beq.s   .gstOptDone
+        movem.l (sp)+,d0/d2/a0/a2
+        ori     #$01,ccr
+        rts
+.gstOptDone:
+        movem.l (sp)+,d0/d2/a0/a2
+        andi    #$FE,ccr
+        rts
+
+Rbf_GstReady:
+* Test for Data Ready: immer bereit (d1.l = 1)
+        moveq   #1,d1
+        move.l  d1,REG_D1(a5)
+        andi    #$FE,ccr
+        rts
+
+Rbf_GstSize:
+* Dateigröße in REG_D2(a5) zurückgeben
+        move.l  PD_SIZ(a1),REG_D2(a5)
+        andi    #$FE,ccr
+        rts
+
+Rbf_GstPos:
+* Aktuelle Position in REG_D2(a5) zurückgeben
+        move.l  PD_CP(a1),REG_D2(a5)
+        andi    #$FE,ccr
+        rts
+
+Rbf_GstEOF:
+* EOF prüfen: Wenn PD_CP >= PD_SIZ -> Carry setzen
+        move.l  PD_CP(a1),d0
+        cmp.l   PD_SIZ(a1),d0
+        bcs.s   Rbf_GstNotEOF
+        move.w  #E_EOF,d1
+        ori     #$01,ccr
+        rts
+Rbf_GstNotEOF:
+        andi    #$FE,ccr
+        rts
+
+Rbf_GstFD:
+* FD-Sektor des aktuellen Pfades in den Aufrufer-Puffer REG_A0(a5) kopieren
+        move.l  PD_FD(a1),d2            * LSN des FDs dieses Pfades
+        bra.s   Rbf_GstFDCopy
+
+Rbf_GstFDInf:
+* FD-Sektor anhand von REG_D3(a5) in den Aufrufer-Puffer REG_A0(a5) kopieren
+        move.l  REG_D3(a5),d2           * Angeforderte FD LSN aus d3
+
+Rbf_GstFDCopy:
+        tst.l   d2
+        bne.s   .lsnValid
+        move.w  #E_PARAM,d1
+        ori     #$01,ccr
+        rts
+
+.lsnValid:
+        movem.l d0/d2/a0/a2,-(sp)
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_ReadSector          * Sektor in internen Puffer einlesen
+        bcs.s   .readErr
+
+        * Puffergröße ermitteln: min(REG_D2, 256)
+        move.l  REG_D2(a5),d0
+        tst.l   d0
+        beq.s   .useDefSize
+        cmpi.l  #256,d0
+        bls.s   .sizeOk
+.useDefSize:
+        move.l  #256,d0
+.sizeOk:
+        * d0 Bytes aus Rbf_FDBuf nach REG_A0(a5) kopieren
+        lea     Rbf_FDBuf(pc),a2
+        movea.l REG_A0(a5),a0
+.cpyLp:
+        move.b  (a2)+,(a0)+
+        subq.l  #1,d0
+        bne.s   .cpyLp
+
+        movem.l (sp)+,d0/d2/a0/a2
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        rts
+
+.readErr:
+        movem.l (sp)+,d0/d2/a0/a2
+        ori     #$01,ccr                * Carry setzen (Fehlercode in d1.w)
+        rts
+
+Rbf_GstDevNm:
+* Gerätenamen (z. B. "dd\0") in Aufrufer-Puffer REG_A0(a5) kopieren
+        movem.l d0-d2/a0/a2-a3,-(sp)
+        movea.l REG_A0(a5),a2           * a2 = Zielpuffer des Aufrufers
+        movea.l PD_DEV(a1),a3
+        cmpa.w  #0,a3
+        beq.s   Rbf_GstDevNmDef
+        movea.l DT_DESC(a3),a0
+        cmpa.w  #0,a0
+        beq.s   Rbf_GstDevNmDef
+        move.l  $0C(a0),d0              * M$Name Offset im Modulkopf
+        lea     (a0,d0.l),a0            * a0 = Name im Modulkopf
+        moveq   #31,d2
+Rbf_GstDevNmLp:
+        move.b  (a0)+,d0
+        beq.s   Rbf_GstDevNmTerm
+        move.b  d0,d1
+        andi.b  #$7F,d0
+        move.b  d0,(a2)+
+        btst    #7,d1
+        bne.s   Rbf_GstDevNmTerm
+        dbra    d2,Rbf_GstDevNmLp
+Rbf_GstDevNmTerm:
+        clr.b   (a2)                    * NUL-terminieren
+        movem.l (sp)+,d0-d2/a0/a2-a3
+        andi    #$FE,ccr
+        rts
+
+Rbf_GstDevNmDef:
+        * Fallback: "dd\0"
+        move.b  #'d',(a2)+
+        move.b  #'d',(a2)+
+        clr.b   (a2)
+        movem.l (sp)+,d0-d2/a0/a2-a3
+        andi    #$FE,ccr
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_Read / Rbf_ReadLn
+* Liest Daten aus der geöffneten Datei in den Puffer des Aufrufers.
+*
+* Eingabe:
+*   REG_A0(a5) = Zielpuffer
+*   REG_D1(a5) = Angeforderte Byteanzahl
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_Read:
+        clr.l   -(sp)                   * ReadLn Flag (0 = normales Read)
+        bra.s   Rbf_ReadCommon
+
+Rbf_ReadLn:
+        move.l  #1,-(sp)                * ReadLn Flag (1 = Zeilenweise)
+
+Rbf_ReadCommon:
+        movem.l d2-d7/a0/a2-a3,-(sp)
+        moveq   #0,d7                   * d7 = tatsächlich gelesene Bytes (immer 0 auf EOF/Fehler)
+
+* Sicherstellen, dass Sektorgröße nicht 0 ist
+        tst.w   PD_SctSiz+2(a1)
+        bne.s   Rbf_ReadHasSctSiz
+        move.w  #512,PD_SctSiz+2(a1)
+Rbf_ReadHasSctSiz:
+
+* Prüfen auf Dateiende (PD_CP >= PD_SIZ)
+        move.l  PD_CP(a1),d5            * d5 = Aktuelle Position (PD_CP)
+        cmp.l   PD_SIZ(a1),d5
+        bcc     Rbf_ReadEOF
+
+* Verfügbare Bytes ermitteln = min(angefordert, PD_SIZ - PD_CP)
+        move.l  REG_D1(a5),d4           * d4 = verbleibende Bytes zu lesen
+        move.l  PD_SIZ(a1),d0
+        sub.l   d5,d0                   * d0 = Bytes bis Dateiende
+        cmp.l   d0,d4
+        bcs.s   Rbf_ReadHasBytes
+        move.l  d0,d4                   * Auf Dateigröße begrenzen
+Rbf_ReadHasBytes:
+        tst.l   d4
+        beq     Rbf_ReadEOF
+
+* FD einlesen, um Segmenttabelle bereitzuhalten
+        move.l  PD_FD(a1),d2
+        lea     Rbf_FDBuf(pc),a0
+        bsr     Rbf_ReadSector
+        bcs     Rbf_ReadDoneErr
+
+        movea.l REG_A0(a5),a2           * a2 = Zielpuffer des Aufrufers
+
+* Schleife über Blöcke/Sektoren
+Rbf_ReadLoop:
+        tst.l   d4                      * Noch Bytes angefordert?
+        beq.s   Rbf_ReadSuccess
+
+* Logische Position d5 in physische LSN umrechnen
+        move.l  d5,d0                   * Offset
+        move.w  PD_SctSiz+2(a1),d1      * Sektorgröße (z. B. 512)
+        lea     Rbf_FDBuf(pc),a0
+        bsr     Rbf_MapOffsetToLSN
+        bcs.s   Rbf_ReadSuccess         * Bei Segmentende fertig
+* Rückgabe: d2.l = LSN, d3.w = Offset im Sektor
+
+* Sektor einlesen
+        lea     Rbf_SectorBuf(pc),a0
+        bsr     Rbf_ReadSector
+        bcs.s   Rbf_ReadDoneErr
+
+* Bytes aus SectorBuf ab d3.w in a2 kopieren
+        lea     Rbf_SectorBuf(pc),a0
+        adda.w  d3,a0                   * a0 = Start im Sektorpuffer
+        move.w  PD_SctSiz+2(a1),d6
+        sub.w   d3,d6                   * d6 = Bytes bis Sektor-Ende
+
+Rbf_ReadByteCopy:
+        tst.l   d4                      * Noch Bytes gewünscht?
+        beq.s   Rbf_ReadSuccess
+        tst.w   d6                      * Sektor-Ende erreicht?
+        beq.s   Rbf_ReadLoop
+
+        move.b  (a0)+,(a2)+             * Byte kopieren
+        addq.l  #1,d5                   * PD_CP inkrementieren
+        addq.l  #1,d7                   * Gelesene Bytes inkrementieren
+        subq.l  #1,d4                   * Angeforderte Bytes dekrementieren
+        subq.w  #1,d6
+
+* Bei ReadLn: Prüfung auf Zeilenende ($0D oder $0A)
+        tst.l   36(sp)                  * Ist ReadLn aktiv? (Flag bei 36(sp))
+        beq.s   Rbf_ReadByteCopy
+        cmpi.b  #$0D,-1(a2)
+        beq.s   Rbf_ReadSuccess
+        cmpi.b  #$0A,-1(a2)
+        beq.s   Rbf_ReadSuccess
+
+        bra.s   Rbf_ReadByteCopy
+
+Rbf_ReadSuccess:
+        move.l  d5,PD_CP(a1)            * Neue Position sichern
+        move.l  d7,REG_D1(a5)           * Tatsächlich gelesene Bytes zurückgeben
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        addq.l  #4,sp                   * ReadLn-Flag poppen
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        rts
+
+Rbf_ReadEOF:
+        move.w  #E_EOF,d1
+Rbf_ReadDoneErr:
+        move.l  d7,REG_D1(a5)           * Bereits gelesene Bytes trotzdem melden
+        movem.l (sp)+,d2-d7/a0/a2-a3
+        addq.l  #4,sp                   * ReadLn-Flag poppen
+        ori     #$01,ccr                * Carry setzen (Fehler/EOF)
+        rts

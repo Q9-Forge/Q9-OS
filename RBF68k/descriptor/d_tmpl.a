@@ -1,0 +1,44 @@
+*
+* Template descriptor for second physical CF drive (Slave, DrvNum=1).
+*
+* Used by lucy_init to:
+*   1. Read LSN1 and check for LucyDiskLabel ("LLBL")
+*   2. Clone and patch this template for each partition found
+*   3. Register patched descriptors dynamically
+*
+* If no LucyDiskLabel is found, this descriptor remains usable as a
+* plain full-disk device (compatibility with non-labelled CF cards).
+*
+* Patchable fields (lucy_init searches for marker pattern):
+*   LSNOffset  - partition start sector  (default 0 = full disk)
+*   TotCyls    - partition size in sectors (default 0 = full disk)
+*
+	nam d_tmpl Device Descriptor Template - Slave
+	use defsfile
+	use <rbfdesc.a>
+
+Port        equ CF_Base
+DevCon		dc.l 0
+DevDrv      dc.b "cfide",0
+Control		set FmtDsabl+AutoEnabl
+
+IRQLevel	set 0
+Priority  	set 0
+SectTrk   	set 0
+Vector    	set 0
+DrvNum      set 1               * Slave (cfide V42: DEV=1 -> $F0)
+DiskKind	set Hard
+Cylnders    set 0
+SectTrk     set 0
+SectTrk0    set 0
+SectSize	set 512
+SegAlloc	set 1
+Heads       set 0
+TrkDns		set Single
+DnsTrk0		set Single
+NoVerify    set ON
+Trys		set 0
+LSNOffset   set 0               * patched by lucy_init
+TotCyls     set 0               * patched by lucy_init
+
+	ends

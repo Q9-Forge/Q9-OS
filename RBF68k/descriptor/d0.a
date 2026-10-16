@@ -1,0 +1,32 @@
+*
+* Device descriptor for CompactFlash Slave drive (second physical CF card).
+*
+* DrvNum = 1 -> cfide V42 selects DEV=1 ($F0 = Slave)
+*
+	nam d0 Device Descriptor
+	use defsfile
+	use <rbfdesc.a>
+
+Port        equ CF_Base
+DevCon		dc.l 0
+DevDrv      dc.b "cfide",0
+Control		set FmtDsabl+AutoEnabl
+
+IRQLevel	set 0
+Priority  	set 0
+SectTrk   	set 0
+Vector    	set 0
+DrvNum      set 1               * Slave drive
+DiskKind	set Hard
+Cylnders    set 0
+SectTrk     set 0
+SectTrk0    set 0
+SectSize	set 512
+SegAlloc	set 1
+Heads       set 0
+TrkDns		set Single
+DnsTrk0		set Single
+NoVerify    set ON
+Trys		set 0
+
+	ends

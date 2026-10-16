@@ -1,0 +1,275 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* rbf_drv.a -- Low-Level Driver Calling Interface for RBF68k
+*═════════════════════════════════════════════════════════════════════════════════════
+
+*═════════════════════════════════════════════════════════════════════════════════════
+* Statische Puffer und Cache-Deskriptoren für RBF68k
+* Minimal, deterministisch, ohne malloc (GEMINI.md Mandat)
+*═════════════════════════════════════════════════════════════════════════════════════
+        align
+Rbf_LSN0Buf:    ds.b    512             * Dedizierter Puffer für LSN 0
+Rbf_LSN0Valid:  dc.w    0               * 0 = ungültig, 1 = im Cache
+Rbf_FDBuf:      ds.b    512             * Puffer für File Descriptor Sektoren
+Rbf_CurFDLSN:   dc.l    $FFFFFFFF       * LSN des aktuell in Rbf_FDBuf liegenden FDs
+Rbf_SectorBuf:  ds.b    512             * Puffer für Daten-/Verzeichnis-Sektoren
+Rbf_CurLSN:     dc.l    $FFFFFFFF       * LSN des aktuell in Rbf_SectorBuf liegenden Sektors
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_ReadSector
+* Liest genau einen logischen Sektor (512 Bytes) mit Puffer-Caching.
+*
+* Eingabe:
+*   a1   = Zeiger auf Pfaddeskriptor (Path Descriptor)
+*   d2.l = Logische Sektornummer (LSN)
+*   a0   = Zielpuffer-Adresse
+*   a4   = Zeiger auf Prozessdeskriptor
+*   a6   = Zeiger auf System-Globals
+*
+* Ausgabe:
+*   cc   = Carry gelöscht bei Erfolg (Daten in a0)
+*   cc   = Carry gesetzt bei Fehler, d1.w = Fehlercode
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_ReadSector:
+        movem.l d0/d2-d3/a0/a2-a3,-(sp)
+
+        * 1. Prüfen ob a0 == Rbf_SectorBuf
+        lea     Rbf_SectorBuf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_RdChkFD
+        cmp.l   Rbf_CurLSN(pc),d2
+        beq.s   Rbf_RdCacheHit          * Cache-Treffer für Daten-/Dir-Sektor!
+        bra.s   Rbf_RdDoDriver
+
+Rbf_RdChkFD:
+        * 2. Prüfen ob a0 == Rbf_FDBuf
+        lea     Rbf_FDBuf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_RdChkLSN0
+        cmp.l   Rbf_CurFDLSN(pc),d2
+        beq.s   Rbf_RdCacheHit          * Cache-Treffer für FD-Sektor!
+        bra.s   Rbf_RdDoDriver
+
+Rbf_RdChkLSN0:
+        * 3. Prüfen ob a0 == Rbf_LSN0Buf
+        lea     Rbf_LSN0Buf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_RdDoDriver
+        tst.l   d2                      * Ist es LSN 0?
+        bne.s   Rbf_RdDoDriver
+        tst.w   Rbf_LSN0Valid(pc)
+        bne.s   Rbf_RdCacheHit          * Cache-Treffer für LSN 0!
+
+Rbf_RdDoDriver:
+        move.l  a0,PD_BUF(a1)           * Treiber liest nach PD_BUF
+        moveq   #1,d0                   * 1 Sektor
+        moveq   #D_READ,d1              * Funktionscode 2
+        bsr.w   Rbf_CallDriver
+        bcs.s   Rbf_RdErr
+
+        * Nach erfolgreichem Lesen: Cache-Tag aktualisieren
+        lea     Rbf_SectorBuf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_RdTagFD
+        lea     Rbf_CurLSN(pc),a3
+        move.l  d2,(a3)
+        bra.s   Rbf_RdCacheHit
+
+Rbf_RdTagFD:
+        lea     Rbf_FDBuf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_RdTagLSN0
+        lea     Rbf_CurFDLSN(pc),a3
+        move.l  d2,(a3)
+        bra.s   Rbf_RdCacheHit
+
+Rbf_RdTagLSN0:
+        lea     Rbf_LSN0Buf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_RdCacheHit
+        lea     Rbf_LSN0Valid(pc),a3
+        move.w  #1,(a3)
+
+Rbf_RdCacheHit:
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d0/d2-d3/a0/a2-a3
+        rts
+
+Rbf_RdErr:
+        movem.l (sp)+,d0/d2-d3/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_WriteSector
+* Schreibt genau einen logischen Sektor (512 Bytes) synchron (Write-Through)
+* und hält die Cache-Tags kohärent.
+*
+* Eingabe:
+*   a1   = Zeiger auf Pfaddeskriptor
+*   d2.l = Logische Sektornummer (LSN)
+*   a0   = Quellpuffer-Adresse
+*   a4   = Zeiger auf Prozessdeskriptor
+*   a6   = Zeiger auf System-Globals
+*
+* Ausgabe:
+*   cc   = Carry gelöscht bei Erfolg
+*   cc   = Carry gesetzt bei Fehler, d1.w = Fehlercode
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_WriteSector:
+        movem.l d0/d2-d3/a0/a2-a3,-(sp)
+        move.l  a0,PD_BUF(a1)           * Treiber schreibt aus PD_BUF
+        moveq   #1,d0                   * 1 Sektor
+        moveq   #D_WRIT,d1              * Funktionscode 4
+        bsr.w   Rbf_CallDriver
+        bcs.s   Rbf_WrErr
+
+        * Synchronous Write-Through: Sektor ist sicher auf Platte.
+        * Cache-Kohärenz aktualisieren:
+        lea     Rbf_SectorBuf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_WrNotSecBuf
+        lea     Rbf_CurLSN(pc),a3
+        move.l  d2,(a3)
+        bra.s   Rbf_WrCheckOther
+
+Rbf_WrNotSecBuf:
+        cmp.l   Rbf_CurLSN(pc),d2
+        bne.s   Rbf_WrCheckOther
+        lea     Rbf_CurLSN(pc),a3
+        move.l  #-1,(a3)
+
+Rbf_WrCheckOther:
+        lea     Rbf_FDBuf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_WrNotFDBuf
+        lea     Rbf_CurFDLSN(pc),a3
+        move.l  d2,(a3)
+        bra.s   Rbf_WrCheckLSN0
+
+Rbf_WrNotFDBuf:
+        cmp.l   Rbf_CurFDLSN(pc),d2
+        bne.s   Rbf_WrCheckLSN0
+        lea     Rbf_CurFDLSN(pc),a3
+        move.l  #-1,(a3)
+
+Rbf_WrCheckLSN0:
+        lea     Rbf_LSN0Buf(pc),a2
+        cmpa.l  a2,a0
+        bne.s   Rbf_WrNotLSN0
+        lea     Rbf_LSN0Valid(pc),a3
+        move.w  #1,(a3)
+        bra.s   Rbf_WrSuccess
+
+Rbf_WrNotLSN0:
+        tst.l   d2
+        bne.s   Rbf_WrSuccess
+        lea     Rbf_LSN0Valid(pc),a3
+        clr.w   (a3)
+
+Rbf_WrSuccess:
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d0/d2-d3/a0/a2-a3
+        rts
+
+Rbf_WrErr:
+        movem.l (sp)+,d0/d2-d3/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_FlushCache / Rbf_InvalidateCache
+* Invalidiert alle Cache-Tags für LSN0, FDs und Daten-Sektoren.
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_FlushCache:
+Rbf_InvalidateCache:
+        movem.l a0,-(sp)
+        lea     Rbf_CurLSN(pc),a0
+        move.l  #-1,(a0)
+        lea     Rbf_CurFDLSN(pc),a0
+        move.l  #-1,(a0)
+        lea     Rbf_LSN0Valid(pc),a0
+        clr.w   (a0)
+        movem.l (sp)+,a0
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_CallDriver
+* Interner Aufruf des Blocktreibers über Devicetbl und M$Exec Entry-Table.
+*
+* Eingabe:
+*   d0.l = Sektoranzahl
+*   d1.w = Treiber-Funktionscode (D_READ = 2, D_WRIT = 4, etc.)
+*   d2.l = Sektornummer (LSN)
+*   a1   = Pfaddeskriptor
+*   a4   = Prozessdeskriptor
+*   a6   = System-Globals
+*
+* Ausgabe:
+*   cc   = Carry vom Treiber reflektiert
+*   d1.w = Fehlercode falls Carry gesetzt
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_CallDriver:
+        movea.l PD_DEV(a1),a3           * a3 = Devicetbl-Zeiger
+        cmpa.w  #0,a3
+        beq.s   Rbf_DrvBadDev
+
+        movea.l DT_STAT(a3),a2          * a2 = Treiber-Statikspeicher (V_stat)
+        movea.l DT_DRIV(a3),a0          * a0 = Treibermodul-Basis
+
+* Drive-Table Zeiger in PD_DTB(a1) sicherstellen (essenziell fuer Blocktreiber wie cfide!)
+        tst.l   PD_DTB(a1)
+        bne.s   Rbf_DrvHaveDTB
+        moveq   #0,d3
+        move.b  PD_DRV(a1),d3           * Drive number (0=Master, 1=Slave)
+        mulu.w  #84,d3                  * sizeof(struct rbfdrive) = 84 ($54)
+        addi.w  #54,d3                  * Offset DRVBEG in V_stat ($36 = 54)
+        add.l   a2,d3                   * Basis V_stat
+        move.l  d3,PD_DTB(a1)           * In Pfaddeskriptor hinterlegen!
+Rbf_DrvHaveDTB:
+        move.l  a3,PD_DVT(a1)
+
+* Treiber-Locking über V_BUSY
+Rbf_DrvWaitBusy:
+        move.w  V_BUSY(a2),d3           * Ist Gerät frei?
+        beq.s   Rbf_DrvAcquire
+        cmp.w   PD_CPR(a1),d3           * Bereits von unserem Prozess gesperrt?
+        beq.s   Rbf_DrvAcquire          * Reentrant lock -> erlaubt!
+        * Falls belegt: einen Moment warten (oder Sleep)
+        * In Minimalphase: Busy-Schleife
+        bra.s   Rbf_DrvWaitBusy
+
+Rbf_DrvAcquire:
+        move.w  PD_CPR(a1),V_BUSY(a2)   * Als belegt durch aktuellen Prozess markieren
+
+* Einsprungadresse aus Treiber EntryTable ermitteln
+        move.l  $30(a0),d3              * M$Exec Offset im Modulkopf
+        add.w   d1,d3                   * Offset für gewählte Funktion (D_READ/D_WRIT)
+        move.w  (a0,d3.l),d3            * Wort-Offset der Routine im Treibercode
+        ext.l   d3
+
+* Register vor Treiberaufruf sichern (Treiber wie cfide modifizieren a5, d2 etc.)
+        movem.l d2-d7/a0-a6,-(sp)
+
+* Treiber-Aufruf ausführen
+        jsr     (a0,d3.l)               * Call Treiber (a1=PD, a2=V_stat, d0=Cnt, d2=LSN)
+
+* Treiber-Ergebnis (Status und d1) sichern
+        move.w  sr,-(sp)                * 2 Bytes: SR inklusive CCR
+        move.w  d1,-(sp)                * 2 Bytes: Fehlercode
+
+* Gerät freigeben (V_BUSY = 0)
+        clr.w   V_BUSY(a2)
+
+* Fehlercode und SR wiederholen
+        move.w  (sp)+,d1
+        move.w  (sp)+,d0                * Gesichertes SR nach d0
+
+* Alle Register wiederherstellen
+        movem.l (sp)+,d2-d7/a0-a6
+
+* CCR anhand des gesicherten Status setzen
+        move    d0,ccr
+        rts
+
+Rbf_DrvBadDev:
+        move.w  #E_BADDVR,d1
+        ori     #$01,ccr
+        rts

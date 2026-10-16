@@ -1,0 +1,16 @@
+# Build artifacts
+*.r
+*.mod
+*.o
+*.r68o
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Diagnostic and test artifacts
+*.log
+tools/dis68
+tools/OS9Boot*
+tools/*.bin
+tools/*.dis

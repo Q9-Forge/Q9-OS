@@ -1,0 +1,771 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* rbf_fs.a -- Filesystem Parsing and LSN Mapping Algorithms for RBF68k
+*═════════════════════════════════════════════════════════════════════════════════════
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_ParseLSN0
+* Liest die Kernparameter aus dem Sektor-0-Puffer aus und validiert sie.
+*
+* Eingabe:
+*   a0   = Zeiger auf Sektor-0-Puffer (mind. 512 Bytes)
+*
+* Ausgabe:
+*   cc   = Carry gelöscht bei Erfolg
+*   d0.l = Gesamtzahl der Sektoren (DD_TOT, 24-Bit zu 32-Bit expandiert)
+*   d1.w = Logische Sektorgröße (DD_LSNSize, Standard 512 falls 0)
+*   d2.l = Root-Verzeichnis File Descriptor LSN (DD_DIR)
+*   d3.l = Bitmap-Startsektor LSN (DD_MapLSN, Standard 1 falls 0)
+*   d4.w = Sektoren pro Cluster-Bit (DD_BIT)
+*
+* Fehler:
+*   cc   = Carry gesetzt falls Sektor 0 ungültig
+*   d1.w = E_BMOD
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_ParseLSN0:
+* DD_TOT (3 Bytes, Big-Endian)
+        moveq   #0,d0
+        move.b  DD_TOT(a0),d0
+        swap    d0
+        move.b  DD_TOT+1(a0),d0
+        lsl.w   #8,d0
+        move.b  DD_TOT+2(a0),d0
+        tst.l   d0
+        beq.s   Rbf_Lsn0Bad             * 0 Sektoren -> ungültiges Medium
+
+* DD_LSNSize (2 Bytes)
+        move.w  DD_LSNSize(a0),d1
+        tst.w   d1
+        bne.s   Rbf_Lsn0HasSctSiz
+        move.w  #512,d1                 * Standardgröße 512 Byte
+Rbf_Lsn0HasSctSiz:
+
+* DD_DIR (3 Bytes, Big-Endian)
+        moveq   #0,d2
+        move.b  DD_DIR(a0),d2
+        swap    d2
+        move.b  DD_DIR+1(a0),d2
+        lsl.w   #8,d2
+        move.b  DD_DIR+2(a0),d2
+
+* DD_MapLSN (4 Bytes)
+        move.l  DD_MapLSN(a0),d3
+        tst.l   d3
+        bne.s   Rbf_Lsn0HasMapLSN
+        moveq   #1,d3                   * Standard: Bitmap beginnt bei LSN 1
+Rbf_Lsn0HasMapLSN:
+
+* DD_BIT (2 Bytes)
+        move.w  DD_BIT(a0),d4
+
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        rts
+
+Rbf_Lsn0Bad:
+        move.w  #E_BMOD,d1
+        ori     #$01,ccr
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_MapOffsetToLSN
+* Rechnet einen Dateioffset (z. B. PD_CP) anhand der FD-Segmentliste in die
+* physische Sektornummer (LSN) und den relativen Sektor-Offset um.
+*
+* Eingabe:
+*   a0   = Zeiger auf File Descriptor (FD) Puffer
+*   d0.l = Dateioffset in Bytes (z. B. PD_CP)
+*   d1.w = Sektorgröße (z. B. 512)
+*
+* Ausgabe:
+*   cc   = Carry gelöscht bei Erfolg
+*   d2.l = Physische Sektornummer (LSN) auf dem Datenträger
+*   d3.w = Byte-Offset innerhalb des Sektors (0 .. sector_size-1)
+*   d4.w = Verbleibende Sektoren im aktuellen Segment
+*
+* Fehler:
+*   cc   = Carry gesetzt bei Dateiende (EOF) oder Bereichsüberschreitung
+*   d1.w = E_EOF
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_MapOffsetToLSN:
+        movem.l d4-d7/a1,-(sp)
+
+* Prüfung gegen Dateigröße FD_SIZ(a0)
+        cmp.l   FD_SIZ(a0),d0
+        bcc.s   Rbf_MapEof              * offset >= filesize -> EOF
+
+* Logischen Sektor-Index = d0.l / d1.w berechnen
+        move.l  d0,d5                   * d5 = Offset
+        divu.w  d1,d5                   * oberes Wort: Rest, unteres Wort: Quotient
+        swap    d5
+        move.w  d5,d3                   * d3.w = Byte-Offset im Sektor
+        clr.w   d5
+        swap    d5                      * d5.l = logischer Sektor-Index in der Datei
+
+* Segment-Tabelle durchlaufen
+        lea     FD_SEG(a0),a1           * a1 zeigt auf 1. Segment
+        moveq   #MAX_SEGS-1,d7          * Max. 48 Segmente
+
+Rbf_MapLoop:
+* Start-LSN des Segments lesen (3 Bytes, Big-Endian)
+        moveq   #0,d2
+        move.b  FDSL_A(a1),d2
+        swap    d2
+        move.b  FDSL_A+1(a1),d2
+        lsl.w   #8,d2
+        move.b  FDSL_A+2(a1),d2
+
+* Sektoranzahl des Segments lesen (2 Bytes)
+        move.w  FDSL_B(a1),d6
+        ext.l   d6
+
+* Prüfen auf Listenende (Start-LSN == 0 und Count == 0)
+        tst.l   d2
+        bne.s   Rbf_MapCheckSeg
+        tst.l   d6
+        beq.s   Rbf_MapEof              * Ende der Segmente erreicht -> EOF
+
+Rbf_MapCheckSeg:
+        cmp.l   d6,d5                   * Liegt logischer Sektor in diesem Segment?
+        bcs.s   Rbf_MapFound            * Ja: d5 < d6
+
+* Nicht in diesem Segment: Index reduzieren und nächstes Segment
+        sub.l   d6,d5
+        lea     FDSL_S(a1),a1           * Nächstes Segment (+5 Bytes)
+        dbra    d7,Rbf_MapLoop
+        bra.s   Rbf_MapEof
+
+Rbf_MapFound:
+* Ziel-LSN = Segment-Start-LSN + Restsektoren
+        add.l   d5,d2
+
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d4-d7/a1
+        rts
+
+Rbf_MapEof:
+        move.w  #E_EOF,d1
+        ori     #$01,ccr                * Carry setzen (EOF)
+        movem.l (sp)+,d4-d7/a1
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_CompareFilename
+* Vergleicht einen OS-9 Verzeichnisnamen (28 Bytes, High-Bit oder NUL terminiert)
+* mit einem gesuchten Pfadnamen (a2).
+*
+* Eingabe:
+*   a0 = Zeiger auf Verzeichniseintrag Name (28 Bytes)
+*   a2 = Zeiger auf Suchname (NUL oder '/' terminiert)
+*
+* Ausgabe:
+*   cc = Z-Flag gesetzt bei Match (EQ)
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_CompareFilename:
+        movem.l d0-d3/a0/a2,-(sp)
+        moveq   #28-1,d2
+
+Rbf_CmpLoop:
+        move.b  (a0)+,d0
+        move.b  (a2)+,d1
+
+* Suchstring-Ende prüfen ('/' oder '\0' oder Leerzeichen oder '\r')
+        tst.b   d1
+        beq.s   Rbf_CmpSearchEnd
+        cmpi.b  #'/',d1
+        beq.s   Rbf_CmpSearchEnd
+        cmpi.b  #' ',d1
+        beq.s   Rbf_CmpSearchEnd
+        cmpi.b  #$0D,d1
+        beq.s   Rbf_CmpSearchEnd
+
+* Dir-Eintrag-Ende prüfen (High-Bit gesetzt oder '\0')
+        tst.b   d0
+        beq.s   Rbf_CmpNoMatch          * Dir-Name zu früh zu Ende
+
+        move.b  d0,d3
+        andi.b  #$7F,d0                 * Bit 7 maskieren für Vergleich
+
+* Case-folding für d0 und d1 ('a'-'z' -> 'A'-'Z')
+        cmpi.b  #'a',d0
+        bcs.s   .c0_ok
+        cmpi.b  #'z',d0
+        bhi.s   .c0_ok
+        subi.b  #$20,d0
+.c0_ok:
+        cmpi.b  #'a',d1
+        bcs.s   .c1_ok
+        cmpi.b  #'z',d1
+        bhi.s   .c1_ok
+        subi.b  #$20,d1
+.c1_ok:
+        cmp.b   d0,d1
+        bne.s   Rbf_CmpNoMatch          * Zeichen ungleich
+
+* War das letzte Zeichen des Dir-Namens mit Bit 7 markiert?
+        btst    #7,d3
+        bne.s   Rbf_CmpDirHighBit
+
+        dbra    d2,Rbf_CmpLoop
+        bra.s   Rbf_CmpMatch
+
+Rbf_CmpDirHighBit:
+* Dir-Name ist hier zu Ende. Suchstring muss jetzt ebenfalls zu Ende sein!
+        move.b  (a2),d1
+        tst.b   d1
+        beq.s   Rbf_CmpMatch
+        cmpi.b  #'/',d1
+        beq.s   Rbf_CmpMatch
+        cmpi.b  #' ',d1
+        beq.s   Rbf_CmpMatch
+        cmpi.b  #$0D,d1
+        beq.s   Rbf_CmpMatch
+        bra.s   Rbf_CmpNoMatch
+
+Rbf_CmpSearchEnd:
+* Suchname ist hier zu Ende. War Dir-Name auch zu Ende?
+        tst.b   d0
+        beq.s   Rbf_CmpMatch
+        bra.s   Rbf_CmpNoMatch
+
+Rbf_CmpMatch:
+        clr.b   d0                      * Z-Flag setzen (EQ)
+        movem.l (sp)+,d0-d3/a0/a2
+        rts
+
+Rbf_CmpNoMatch:
+        moveq   #1,d0                   * Z-Flag löschen (NE)
+        movem.l (sp)+,d0-d3/a0/a2
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_ScanDir
+* Durchsucht das durch d2.l gegebene Verzeichnis nach dem Eintrag a2.
+*
+* Eingabe:
+*   d2.l = Directory FD LSN
+*   a2   = Suchname (Null-, Slash-, Space- oder CR-terminiert)
+*
+* Ausgabe (bei Erfolg):
+*   cc   = Carry gelöscht (Erfolg)
+*   d2.l = Ziel-FD LSN des gefundenen Eintrags
+*   d7.l = Elternverzeichnis FD LSN (das durchsuchte Verzeichnis)
+*
+* Fehler (wenn nicht gefunden):
+*   cc   = Carry gesetzt (Fehler)
+*   d1.w = E_PNNF ($D8)
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_ScanDir:
+        movem.l d3-d6/a0/a3,-(sp)
+        move.l  d2,d7                   * d7 = Parent Directory FD LSN
+
+* 1. Verzeichnis-FD in Rbf_FDBuf einlesen
+        lea     Rbf_FDBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.s   Rbf_ScanDirErr
+
+* Prüfen ob es wirklich ein Verzeichnis ist
+        btst    #7,FD_ATT(a0)
+        beq.s   Rbf_ScanDirNotDir
+
+* Segmente durchsuchen (bis zu 48 Segmente in FD_SEG)
+        lea     FD_SEG(a0),a3
+        moveq   #MAX_SEGS-1,d6          * Bis zu 48 Segment-Deskriptoren
+
+Rbf_ScanSegLoop:
+* Segment Start-LSN (3 Bytes, Big Endian)
+        moveq   #0,d4
+        move.b  FDSL_A(a3),d4
+        swap    d4
+        move.b  FDSL_A+1(a3),d4
+        lsl.w   #8,d4
+        move.b  FDSL_A+2(a3),d4         * d4 = Segment Start-LSN
+
+* Segment Sektoranzahl (2 Bytes)
+        move.w  FDSL_B(a3),d3           * d3 = Sektoranzahl im Segment
+        beq.s   Rbf_ScanDirNotFound     * Keine weiteren Segmente -> Ende
+
+Rbf_ScanSctLoop:
+* Sektor d4 in Rbf_SectorBuf einlesen
+        move.l  d4,d2
+        lea     Rbf_SectorBuf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.s   Rbf_ScanDirErr
+
+* 16 Einträge à 32 Byte im Sektor prüfen
+        moveq   #16-1,d5
+Rbf_ScanEntryLoop:
+        tst.b   DIR_NM(a0)              * Leerer Eintrag?
+        beq.s   Rbf_ScanNextEntry
+        bsr.w   Rbf_CompareFilename     * Vergleicht (a0) mit (a2)
+        beq.s   Rbf_ScanEntryFound      * Treffer!
+
+Rbf_ScanNextEntry:
+        lea     DIR_SZ(a0),a0           * +32 Bytes zum nächsten Eintrag
+        dbra    d5,Rbf_ScanEntryLoop
+
+* Nächster Sektor im Segment
+        addq.l  #1,d4
+        subq.w  #1,d3
+        bne.s   Rbf_ScanSctLoop
+
+* Nächstes Segment
+        lea     FDSL_S(a3),a3           * +5 Bytes zum nächsten Segment
+        dbra    d6,Rbf_ScanSegLoop
+
+Rbf_ScanDirNotFound:
+Rbf_ScanDirNotDir:
+        move.w  #E_PNNF,d1
+Rbf_ScanDirErr:
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d3-d6/a0/a3
+        rts
+
+Rbf_ScanEntryFound:
+* Ziel-FD LSN aus Eintrag extrahieren (DIR_FD = Offset 28)
+        move.l  DIR_FD(a0),d2
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d3-d6/a0/a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_ParsePath
+* Löst den Pfad in REG_A0(a5) vollständig auf.
+* Unterstützt absolute und relative Pfade sowie mehrstufige Verzeichnispfade.
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*
+* Ausgabe:
+*   cc   = Carry gelöscht bei Erfolg:
+*          Z=1 (EQ): Pfad bezeichnet ein Verzeichnis selbst (d2.l = Dir FD LSN, d7.l = Parent)
+*          Z=0 (NE): d7.l = Elternverzeichnis FD LSN, d2.l = Ziel FD LSN,
+*                    a2   = Zeiger auf den finalen Komponentennamen
+*   cc   = Carry gesetzt bei Fehler:
+*          d1.w = Fehlercode (z.B. E_PNNF)
+*─────────────────────────────────────────────────────────────────────────────────────
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_MatchDevName
+* Prüft, ob der Pfad bei a2 mit dem Gerätenamen bei a0 beginnt.
+* Gerätename ist ein OS-9 Modulstring (letztes Zeichen hat Bit 7 gesetzt oder ist \0).
+*
+* Eingabe:
+*   a0 = Zeiger auf Gerätename (M$Name aus Deskriptor)
+*   a2 = Zeiger auf Pfadstring
+*
+* Ausgabe:
+*   cc = Carry gelöscht bei Match, a2 zeigt auf das Trennzeichen hinter dem Gerätenamen
+*   cc = Carry gesetzt bei keinem Match, a2 unverändert
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_MatchDevName:
+        movem.l d0-d3/a0/a3,-(sp)
+        movea.l a2,a3                   * a3 = Arbeitszeiger für Pfad
+.loop:
+        move.b  (a0)+,d0
+        beq.s   .matched                * Name null-terminiert -> Ende
+        move.b  d0,d2                   * d2 sichert Original-Byte (für Bit 7 Test)
+        andi.b  #$7F,d0                 * Bit 7 löschen
+
+        * Case-fold d0 ('a'-'z' -> 'A'-'Z')
+        cmpi.b  #'a',d0
+        bcs.s   .mdev_c0_ok
+        cmpi.b  #'z',d0
+        bhi.s   .mdev_c0_ok
+        subi.b  #$20,d0
+.mdev_c0_ok:
+        move.b  (a3)+,d1
+        * Case-fold d1 ('a'-'z' -> 'A'-'Z')
+        cmpi.b  #'a',d1
+        bcs.s   .mdev_c1_ok
+        cmpi.b  #'z',d1
+        bhi.s   .mdev_c1_ok
+        subi.b  #$20,d1
+.mdev_c1_ok:
+        cmp.b   d0,d1
+        bne.s   .nomatch
+
+        * Hatte d2 Bit 7 gesetzt?
+        btst    #7,d2
+        bne.s   .matched                * Letztes Zeichen des Gerätenamens erreicht!
+        bra.s   .loop
+
+.matched:
+        * Trenner hinter dem Gerätenamen prüfen
+        move.b  (a3),d1
+        beq.s   .hit
+        cmpi.b  #'/',d1
+        beq.s   .hit
+        cmpi.b  #' ',d1
+        beq.s   .hit
+        cmpi.b  #$0D,d1
+        beq.s   .hit
+.nomatch:
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d0-d3/a0/a3
+        rts
+
+.hit:
+        movea.l a3,a2                   * a2 hinter den Gerätenamen setzen
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d0-d3/a0/a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_ParsePath / Rbf_ParsePathCreate
+* Analysiert einen OS-9 Pfadstring (z.B. "/dd/CMDS/list", "README", "/dd").
+* Unterstützt absolute und relative Pfade sowie mehrstufige Verzeichnispfade.
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*
+* Ausgabe:
+*   cc   = Carry gelöscht bei Erfolg:
+*          Z=1 (EQ): Pfad bezeichnet ein Verzeichnis selbst (d2.l = Dir FD LSN, d7.l = Parent)
+*          Z=0 (NE): d7.l = Elternverzeichnis FD LSN, d2.l = Ziel FD LSN (oder 0 bei Create),
+*                    a2   = Zeiger auf den finalen Komponentennamen
+*   cc   = Carry gesetzt bei Fehler:
+*          d1.w = Fehlercode (z.B. E_PNNF)
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_ParsePath:
+        moveq   #0,d0                   * Modus 0: Open
+        bra.s   Rbf_ParsePathCommon
+
+Rbf_ParsePathCreate:
+        moveq   #1,d0                   * Modus 1: Create
+
+Rbf_ParsePathCommon:
+        movem.l d3-d6/a0/a3,-(sp)
+        move.w  d0,-(sp)                * Modus auf Stack merken
+
+* 1. Sektor 0 einlesen um Root-Dir FD LSN zu bestimmen
+        moveq   #0,d2
+        lea     Rbf_LSN0Buf(pc),a0
+        bsr.w   Rbf_ReadSector
+        bcs.w   Rbf_ParseErrPop
+
+        bsr.w   Rbf_ParseLSN0
+        bcs.w   Rbf_ParseErrPop
+        move.w  d1,PD_SctSiz+2(a1)
+        move.l  d2,d6                   * d6 = Root Dir FD LSN
+
+* 2. Pfadstart analysieren: absolut vs. relativ
+        movea.l REG_A0(a5),a2
+
+* Führende Leerzeichen überspringen
+Rbf_P_SkipLeadSp:
+        cmpi.b  #' ',(a2)
+        bne.s   Rbf_P_CheckSlash
+        addq.l  #1,a2
+        bra.s   Rbf_P_SkipLeadSp
+
+Rbf_P_CheckSlash:
+        cmpi.b  #'/',(a2)
+        bne.s   .checkDev
+        addq.l  #1,a2                   * '/' überspringen
+        bsr.s   .tryMatchDev            * Optionaler Gerätename dahinter (z.B. "/dd/...")
+        bra.s   Rbf_P_IsAbs
+
+.checkDev:
+        bsr.s   .tryMatchDev
+        bcc.s   Rbf_P_IsAbs             * Match! -> Absoluter Pfad!
+        bra.s   Rbf_P_IsRel             * Kein Match -> Relativer Pfad
+
+.tryMatchDev:
+        movea.l PD_DEV(a1),a3
+        cmpa.w  #0,a3
+        beq.s   .noDev
+        movea.l DT_DESC(a3),a0
+        cmpa.w  #0,a0
+        beq.s   .noDev
+        move.l  M$Name(a0),d0
+        lea     (a0,d0.l),a0            * a0 = Gerätename
+        bra.w   Rbf_MatchDevName
+.noDev:
+        ori     #$01,ccr                * Carry setzen (kein Match)
+        rts
+
+Rbf_P_IsAbs:
+* Absolute Pfade starten immer im Root-Verzeichnis
+        move.l  d6,d2                   * d2 = Root Dir FD LSN
+        bra.s   Rbf_P_SkipSlashes
+
+Rbf_P_IsRel:
+* Relative Pfade starten im Arbeitsverzeichnis des aufrufenden Prozesses (a4)
+        cmpa.w  #0,a4
+        beq.s   .useRoot
+        move.b  PD_MOD(a1),d0           * Modus-Byte aus Pfaddeskriptor
+        btst    #2,d0                   * Exec-Verzeichnis gewollt?
+        beq.s   Rbf_P_RelData
+        move.l  350(a4),d2              * P_DIO_EXEC + 6
+        bne.s   Rbf_P_SkipSlashes
+.useRoot:
+        move.l  d6,d2                   * Fallback auf Root
+        bra.s   Rbf_P_SkipSlashes
+Rbf_P_RelData:
+        move.l  334(a4),d2              * P_DIO + 6
+        bne.s   Rbf_P_SkipSlashes
+        move.l  d6,d2                   * Fallback auf Root
+
+Rbf_P_SkipSlashes:
+        cmpi.b  #'/',(a2)
+        beq.s   Rbf_P_IncSlash
+        cmpi.b  #' ',(a2)
+        bne.s   Rbf_P_CheckSpecial
+Rbf_P_IncSlash:
+        addq.l  #1,a2
+        bra.s   Rbf_P_SkipSlashes
+
+Rbf_P_CheckSpecial:
+* Ist der Pfad leer, CR, '@' oder '.'?
+        tst.b   (a2)
+        beq.s   Rbf_P_DirSelf
+        cmpi.b  #$0D,(a2)
+        beq.s   Rbf_P_DirSelf
+        cmpi.b  #'@',(a2)
+        beq.s   Rbf_P_DirSelf
+        cmpi.b  #'.',(a2)
+        bne.w   Rbf_P_WalkComponents
+        * Bei '.' prüfen ob danach Ende oder '/'
+        tst.b   1(a2)
+        beq.s   Rbf_P_DirSelf
+        cmpi.b  #$0D,1(a2)
+        beq.s   Rbf_P_DirSelf
+        cmpi.b  #' ',1(a2)
+        beq.s   Rbf_P_DirSelf
+        cmpi.b  #'/',1(a2)
+        bne.w   Rbf_P_WalkComponents
+        addq.l  #1,a2                   * '.' überspringen
+        bra.s   Rbf_P_SkipSlashes
+
+Rbf_P_DirSelf:
+        addq.l  #2,sp                   * Modus-Word abräumen
+        move.l  d2,d7                   * Parent = Target = d2
+        clr.b   d0                      * Z=1 (EQ)
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d3-d6/a0/a3
+        rts
+* Statischer Puffer für die aktuelle Komponente
+        align
+Rbf_CompBuf:    ds.b    32
+        align
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Rbf_ParseComponent
+* Analysiert die nächste Pfadkomponente mittels OS-9 F$PrsNam ($10)
+* und implementiert die offizielle RBF Multi-Dot Zerlegung ("...", "....").
+*
+* Eingabe:
+*   a0   = Zeiger auf aktuellen Pfadstring
+*
+* Ausgabe (Erfolg):
+*   cc   = Carry gelöscht
+*   a0   = Zeiger auf den Anfang der Komponente im Eingabestring
+*   a3   = Zeiger auf das Trennzeichen / die nächste Komponente
+*   d0.b = Trennzeichen ('/', '\0', '\r', ' ', '@')
+*   d1.w = Länge der Komponente (1..28)
+*   a1   = Unverändert (Pfaddeskriptor)
+*
+* Fehler:
+*   cc   = Carry gesetzt
+*   d1.w = E_BNAM ($D7)
+*─────────────────────────────────────────────────────────────────────────────────────
+Rbf_ParseComponent:
+        movem.l d2/a2,-(sp)
+
+* Führende Leerzeichen überspringen
+.skipSp:
+        cmpi.b  #' ',(a0)
+        bne.s   .checkDot
+        addq.l  #1,a0
+        bra.s   .skipSp
+
+.checkDot:
+        cmpi.b  #'.',(a0)
+        bne.s   .parseNormal
+
+* --- PUNKTE-BEHANDLUNG ('.', '..', '...', '....') ---
+        movea.l a0,a3                   * a3 zum Zählen der Punkte
+        moveq   #0,d1                   * d1 = Anzahl aufeinanderfolgender Punkte
+.countDots:
+        cmpi.b  #'.',(a3)
+        bne.s   .dotsDone
+        addq.w  #1,d1
+        addq.l  #1,a3
+        bra.s   .countDots
+
+.dotsDone:
+* Wenn mindestens 3 Punkte: als ".." auflösen und Delimiter als '/' simulieren!
+        cmpi.w  #3,d1
+        bcs.s   .dotsOneOrTwo
+
+        * >= 3 Punkte:
+        * a0 = Start (Punkt 1)
+        * a3 = Start + 1 (Punkt 2, dort beginnt die nächste Komponente!)
+        * d0.b = '/' (simulierter Trenner für Unterverzeichnis-Schritt)
+        * d1.w = 2 (Länge "..")
+        lea     1(a0),a3
+        moveq   #'/',d0
+        moveq   #2,d1
+        bra.s   .pcSuccess
+
+.dotsOneOrTwo:
+        * 1 oder 2 Punkte:
+        * a0 = Start
+        * a3 = zeigt auf das Zeichen nach den Punkten
+        * d0.b = Zeichen an a3 (Trennzeichen)
+        * d1.w = 1 oder 2
+        move.b  (a3),d0
+        bra.s   .checkDelim
+
+* --- NORMALER DATEI-/VERZEICHNISNAME ---
+.parseNormal:
+        movea.l a0,a3                   * a3 wandert bis zum Trennzeichen
+.nameLoop:
+        move.b  (a3),d0
+        beq.s   .delimFound
+        cmpi.b  #'/',d0
+        beq.s   .delimFound
+        cmpi.b  #$0D,d0
+        beq.s   .delimFound
+        cmpi.b  #' ',d0
+        beq.s   .delimFound
+        cmpi.b  #'@',d0
+        beq.s   .delimFound
+        * Prüfen auf High-Bit (OS-9 Namensterminierung $80..$FF)
+        btst    #7,d0
+        bne.s   .highBitFound
+
+        addq.l  #1,a3
+        bra.s   .nameLoop
+
+.highBitFound:
+        addq.l  #1,a3                   * Das High-Bit-Zeichen gehört noch zum Namen!
+        moveq   #0,d0                   * Gilt als abgeschlossen
+
+.delimFound:
+        * d0.b enthält das Trennzeichen, a3 zeigt darauf
+        move.l  a3,d1
+        sub.l   a0,d1                   * d1 = Länge der Komponente
+        beq.s   .badName                * Länge 0 -> Ungültiger Name
+        cmpi.w  #28,d1
+        bls.s   .pcSuccess
+        bra.s   .badName
+
+.checkDelim:
+        * Gültige Trennzeichen für '.' / '..' prüfen: '\0', '/', '\r', ' ', '@'
+        tst.b   d0
+        beq.s   .pcSuccess
+        cmpi.b  #'/',d0
+        beq.s   .pcSuccess
+        cmpi.b  #$0D,d0
+        beq.s   .pcSuccess
+        cmpi.b  #' ',d0
+        beq.s   .pcSuccess
+        cmpi.b  #'@',d0
+        beq.s   .pcSuccess
+
+.badName:
+        move.w  #E_BNAM,d1              * Fehler 215: Bad Name
+        ori     #$01,ccr                * Carry setzen
+        movem.l (sp)+,d2/a2
+        rts
+
+.pcSuccess:
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2/a2
+        rts
+
+
+* 3. Komponenten-Schleife: Verzeichnishierarchie durchwandern
+Rbf_P_WalkComponents:
+        move.l  d2,d7                   * d7 = Aktuelles Verzeichnis FD LSN
+        movea.l a2,a0                   * a0 = Aktueller Pfad-Zeiger
+        bsr.w   Rbf_ParseComponent
+        bcs.w   Rbf_ParseErrPop
+
+* Rückgabe von Rbf_ParseComponent:
+*   a0   = Start der Komponente
+*   a3   = Nächste Komponente / Trenner
+*   d0.b = Trennzeichen ('/', '\0', '\r', ' ', '@')
+*   d1.w = Länge der Komponente (1..28)
+*   a1   = Unverändert (Pfaddeskriptor)
+
+* Komponente in Rbf_CompBuf kopieren und sauber null-terminieren
+        move.b  d0,d5                   * d5.b = Trennzeichen sichern
+        lea     Rbf_CompBuf(pc),a2
+        move.w  d1,d4
+        subq.w  #1,d4
+.copyCompLoop:
+        move.b  (a0)+,(a2)+
+        dbra    d4,.copyCompLoop
+        clr.b   (a2)                    * Null-Terminierung garantieren!
+
+* a2 wieder auf Pufferanfang setzen für Rbf_ScanDir
+        lea     Rbf_CompBuf(pc),a2
+
+* Prüfen: Ist das Trennzeichen ein '/' (Unterverzeichnis)?
+        cmpi.b  #'/',d5
+        bne.s   Rbf_P_FinalComp
+
+* --- UNTERVERZEICHNIS-KOMPONENTE (Trennzeichen war '/') ---
+        move.l  d7,d2                   * d2 = Aktuelles Verzeichnis
+        bsr.w   Rbf_ScanDir             * Sucht Rbf_CompBuf im Verzeichnis d2
+        bcs.w   Rbf_ParseErrPop         * Unterverzeichnis nicht gefunden -> E_PNNF
+
+* d2.l ist jetzt die FD LSN des Unterverzeichnisses!
+* Nachfolgende Schrägstriche und Leerzeichen bei a3 überspringen
+Rbf_P_SkipSubSlash:
+        cmpi.b  #'/',(a3)
+        beq.s   .incSubSlash
+        cmpi.b  #' ',(a3)
+        bne.s   .checkSubEnd
+.incSubSlash:
+        addq.l  #1,a3
+        bra.s   Rbf_P_SkipSubSlash
+
+.checkSubEnd:
+        tst.b   (a3)
+        beq.w   Rbf_P_DirSelf           * Pfad endete auf '/' -> Verzeichnis selbst öffnen!
+        cmpi.b  #$0D,(a3)
+        beq.w   Rbf_P_DirSelf
+        movea.l a3,a2                   * a2 = Start der nächsten Komponente
+        bra.s   Rbf_P_WalkComponents    * Nächste Komponente auflösen!
+
+* --- FINALE KOMPONENTE (Trennzeichen war kein '/') ---
+Rbf_P_FinalComp:
+* a2 zeigt auf die finale Komponente, d7.l ist das Elternverzeichnis
+        move.l  d7,d2
+        bsr.w   Rbf_ScanDir
+        bcc.s   .compFound
+
+        * Komponente nicht gefunden (Carry=1)
+        * Prüfen, welcher Modus aktiv ist
+        tst.w   (sp)
+        beq.s   Rbf_ParseErrPop         * Modus 0 (Open): Fehler E_PNNF
+
+        * Modus 1 (Create): Datei existiert noch nicht -> d2.l = 0, Carry=0!
+        moveq   #0,d2
+        addq.l  #2,sp                   * Modus-Word abräumen
+        moveq   #1,d0                   * Z=0 (NE) -> finale Komponente bei a2
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d3-d6/a0/a3
+        rts
+
+.compFound:
+        * d2.l = Ziel-FD LSN
+        addq.l  #2,sp                   * Modus-Word abräumen
+        moveq   #1,d0                   * Z=0 (NE) -> finale Komponente bei a2
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d3-d6/a0/a3
+        rts
+
+Rbf_ParseErrPop:
+        addq.l  #2,sp                   * Modus-Word abräumen
+Rbf_ParseErr:
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d3-d6/a0/a3
+        rts
+
+
