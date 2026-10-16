@@ -40,7 +40,7 @@ cd "$OUTDIR"
 # mit einem alten .r "erfolgreich" bauen. Jetzt wird zuerst aufgeraeumt, und
 # jede Werkzeugausgabe wird auf Fehlermeldungen durchsucht.
 rm -f ./*.r ./*.map ./*.lines makefile q9kernel forkchild trace hellosvc \
-      chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak
+      chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr
 rm -rf srcdebug
 
 # scan_log <Modus> <Beschreibung> <Logdatei>: 0 = keine Fehlermeldung gefunden.
@@ -423,6 +423,24 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/openleak =="
 file openleak || true
 
+echo "== trapfail.a bauen (Trap-Modul mit fehlschlagendem M\$Init, B2) =="
+cp "$SRCDIR"/trapfail.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=trapfail.r "trapfail.a" < /dev/null
+wine_tool l68 \
+    -o=trapfail -f=orowoe trapfail.r < /dev/null
+echo "== Fertig: $OUTDIR/trapfail =="
+file trapfail || true
+
+echo "== tlinkerr.a bauen (Regressionstest: Fehlerpfade von F\$TLink, B2) =="
+cp "$SRCDIR"/tlinkerr.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=tlinkerr.r "tlinkerr.a" < /dev/null
+wine_tool l68 \
+    -o=tlinkerr -f=orowoe tlinkerr.r < /dev/null
+echo "== Fertig: $OUTDIR/tlinkerr =="
+file tlinkerr || true
+
 echo "== icptrte.a bauen (Regressionstest: zweites Signal waehrend der Intercept-Routine, A10) =="
 cp "$SRCDIR"/icptrte.a .
 wine_tool r68 \
@@ -459,7 +477,7 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/iattachsvc =="
 file iattachsvc || true
 
-for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak; do
+for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr; do
     [ -s "$f" ] || { echo "FEHLER: Ergebnis $f fehlt oder ist leer" >&2; exit 1; }
 done
 echo "== BUILD OK: alle Ergebnisse frisch erzeugt, keine Werkzeugfehler =="

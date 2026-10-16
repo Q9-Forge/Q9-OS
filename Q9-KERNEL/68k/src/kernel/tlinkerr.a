@@ -1,0 +1,124 @@
+*******************************************************************************
+* tlinkerr.a -- Regressionstest fuer Arbeitsplan B2: Fehlerpfade von F$TLink geben alles zurueck.
+*
+* Drei Runden, jede mit frischem F$Load von "trapfail" (Trap-Modul, dessen M$Init Carry und $A5 meldet):
+*   1. F$TLink Trap 1                      -> "tlink init err=A5": M$Init scheitert, der Handler wird zurueckgebaut.
+*   2. F$TLink Trap 1 nochmal              -> wieder "A5" (waere der Slot nicht frei, kaeme E$ModBsy = D1).
+*   3. F$TLink Trap 2 mit d1 = $7FFFFFF0   -> "tlink mem err=CF" (E$MemFul): die Speicheranforderung scheitert, nachdem
+*      das Modul schon gelinkt war -- der Link muss zurueckgegeben werden.
+* Jede Zeile hat die Form "Text XX" (XX = Fehlercode hex, 00 = Erfolg). Zum Schluss "tlinkerr done 00".
+*
+* Warum vor jeder Runde ein F$Load: in diesem Kernel hat ein geladenes Modul den Link-Zaehler 0 (F$Link zaehlt nicht mit,
+* IOMan zaehlt in einem eigenen Puffer). F$TLink hebt ihn auf 1, der Rueckbau auf 0 -- und ein Eintrag mit Zaehler 0 wird
+* aus dem Verzeichnis entfernt. Der naechste F$TLink fand das Modul deshalb nicht mehr (E$MNF).
+*
+* Wiederholt aufgerufen (tools/leak_test.sh mit Q9K_LEAK_CMDS="tlinkerr;") darf weder die Summe der Modul-Linkzaehler noch
+* der Freispeicher noch die Zahl der belegten Trap-Slots wachsen (Zeile "M R"). Ohne die Korrektur in Q9K_ProcTLink bliebe
+* nach Runde 3 ein Link stehen und die Summe wuchse mit jedem Aufruf.
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_TLErrEdition        equ     1
+Q9K_TLErrStackSize      equ     $1000
+
+        psect   tlinkerr,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_TLErrEdition,Q9K_TLErrStackSize,Q9K_TLErrStart
+
+        vsect
+Q9K_TLErrData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_TLErrStart:
+        moveq   #1,d0
+        moveq   #0,d1
+        lea     Q9K_TLErrTxtInit1(pc),a0
+        bsr     Q9K_TLErrRound
+        moveq   #1,d0
+        moveq   #0,d1
+        lea     Q9K_TLErrTxtInit2(pc),a0
+        bsr     Q9K_TLErrRound
+        moveq   #2,d0
+        move.l  #$7ffffff0,d1                   * unerfuellbarer Zusatzspeicher
+        lea     Q9K_TLErrTxtMem(pc),a0
+        bsr     Q9K_TLErrRound
+        moveq   #0,d1
+        lea     Q9K_TLErrTxtDone(pc),a0
+        bsr     Q9K_TLErrReport
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+* d0 = Trap, d1 = Zusatzspeicher, a0 = Ausgabetext. F$Load, F$TLink, Meldung.
+Q9K_TLErrRound:
+        movem.l d0-d1/a0,-(sp)
+        lea     Q9K_TLErrName(pc),a0
+        moveq   #0,d0                           * Typ/Sprache: beliebig
+        trap    #0
+        dc.w    $0001                            * F$Load
+        bcs.s   Q9K_TLErrRoundLoadFail
+        movem.l (sp)+,d0-d1/a0
+        move.w  d0,d3                           * Trap-Nummer merken (d3 bleibt ueber Syscalls erhalten)
+        movea.l a0,a3                           * Text merken (a3 ebenso)
+        lea     Q9K_TLErrName(pc),a0
+        trap    #0
+        dc.w    $0021                            * F$TLink
+        bcs.s   Q9K_TLErrRoundReport
+        move.w  d3,d0                           * Erfolg (unerwartet): Handler wieder entfernen
+        suba.l  a0,a0
+        moveq   #0,d1
+        trap    #0
+        dc.w    $0021
+        moveq   #0,d1
+Q9K_TLErrRoundReport:
+        movea.l a3,a0
+        bra     Q9K_TLErrReport
+Q9K_TLErrRoundLoadFail:
+        lea     Q9K_TLErrTxtLoad(pc),a0         * d1.w = Fehlercode von F$Load
+        addq.l  #8,sp                           * gerettete d0-d1/a0 verwerfen (3 Register = 12 Byte, s.u.)
+        addq.l  #4,sp
+        bra     Q9K_TLErrReport
+
+* a0 = Text (0-terminiert), d1.w = Code: schreibt "Text" + zwei Hexziffern + CR auf Pfad 1. Rueckkehr per rts.
+Q9K_TLErrReport:
+        movem.l d0-d2/a0-a1,-(sp)
+        lea     -48(sp),sp
+        movea.l sp,a1
+Q9K_TLErrCopy:
+        move.b  (a0)+,d2
+        beq.s   Q9K_TLErrCopyEnd
+        move.b  d2,(a1)+
+        bra.s   Q9K_TLErrCopy
+Q9K_TLErrCopyEnd:
+        move.w  d1,d2
+        lsr.w   #4,d2
+        andi.w  #$f,d2
+        move.b  Q9K_TLErrHex(pc,d2.w),(a1)+
+        andi.w  #$f,d1
+        move.b  Q9K_TLErrHex(pc,d1.w),(a1)+
+        move.b  #$0d,(a1)+
+        move.l  a1,d1
+        movea.l sp,a0
+        sub.l   a0,d1                           * d1.l = Laenge
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        lea     48(sp),sp
+        movem.l (sp)+,d0-d2/a0-a1
+        rts
+
+Q9K_TLErrHex:
+        dc.b    "0123456789ABCDEF"
+Q9K_TLErrTxtInit1:
+        dc.b    "tlink init err=",0
+Q9K_TLErrTxtInit2:
+        dc.b    "tlink init again err=",0
+Q9K_TLErrTxtMem:
+        dc.b    "tlink mem err=",0
+Q9K_TLErrTxtDone:
+        dc.b    "tlinkerr done ",0
+Q9K_TLErrTxtLoad:
+        dc.b    "tlinkerr load failed ",0
+Q9K_TLErrName:
+        dc.b    "trapfail",0
+
+        endsect

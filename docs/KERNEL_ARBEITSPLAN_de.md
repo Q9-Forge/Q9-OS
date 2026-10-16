@@ -47,14 +47,14 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
 | A | Kernel-Fundament | 16 / 16 | ✅ |
-| B | Technische Schulden | 1 / 4 | 🔄 |
+| B | Technische Schulden | 2 / 5 | 🔄 |
 | C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
 | E | Eigene Filemanager | 0 / 7 | ⬜ |
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **18 / 55** | |
+| **Teil 1 Kernel** | | **19 / 56** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -63,7 +63,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | N | Netzwerk | 0 / 7 | ⬜ |
 | O | Grafik und übrige Programme | 0 / 6 | ⬜ |
 | **Teil 2 Userland** | | **0 / 43** | |
-| **Gesamt** | | **18 / 90** | |
+| **Gesamt** | | **19 / 91** | |
 
 | Meilenstein | Status |
 |---|---|
@@ -172,9 +172,10 @@ Aus `KERNEL_NEXT_SESSION_de.md`, Abschnitt „Technische Schulden".
 | Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
 |---|---|---|---|---|---|
 | B1 | ⬜ | **`Q9K_ApplyInitializedData`**: Grenzprüfungen für Modul und Zielspeicher; das verworfene IRefs-Gruppenwort klären; unterstützten Relokationsumfang festlegen | Hosttests mit kaputten Modulen und Grenzfällen grün | — | |
-| B2 | ⬜ | **Fehlerpfade von `F$TLink`**: erworbene Modulreferenzen, Static-Speicher und Trap-Slots zurückgeben | Negativtest ohne Ressourcenverlust | A8 | |
+| B2 | ✅ | **Fehlerpfade von `F$TLink`**: erworbene Modulreferenzen, Static-Speicher und Trap-Slots zurückgeben | Negativtest ohne Ressourcenverlust | A8 | **Zwei Fehler gefunden und behoben (16.10.2026):** (1) `Q9K_ProcTLink` gab den Modul-Link nicht zurück, wenn die Anforderung des statischen Speichers scheiterte (`Q9K_ModDirUnlinkByHeader(hdr)` fehlte); (2) `Q9K_SysFTLink` (`q9kernel_entry.a`) löschte nach `M$Init` das Carry-Bit (`andi #$fe,ccr`) und meldete immer Erfolg, obwohl das Handbuch (68k_tech.pdf S. 172) für `TrapInit` „carry set, d1.w = error code“ vorsieht. Jetzt: Carry-Test als erste Instruktion nach `M$Init`, bei Fehler Rückbau wie bei `F$TLink` mit Namenszeiger 0 (Link, statischer Speicher, Slot; die Trap-Nummer liegt unter dem `M$Init`-Rahmen auf dem Stack) und Fehlercode an den Aufrufer. Der Rückbau ist unsere Entscheidung, das Handbuch regelt nur die Rückgabe von `M$Init`. **Beleg:** Hosttest `test_q9kernel_traplink` (F7: ein Unlink auf den Modulkopf, rot ohne Korrektur); Live: `trapfail.a` (TrapLib, `M$Init` meldet $A5) und `tlinkerr.a` (drei Runden mit frischem `F$Load`: A5, A5, CF). Mit `leak_test.sh` und `Q9K_LEAK_CMDS=\'tlinkerr;tlinkerr;\'` bleiben Linkzähler (4 → 4), Modulverzeichnis (36 → 36), Trap-Slots (2 → 2) und Freispeicher gleich. **Negativproben:** ohne C-Korrektur Linkzähler +20 und +20 Verzeichniseinträge in 24 Läufen; ohne Assembler-Korrektur meldet `F$TLink` `err=00`. Stufe „F$TLink-Fehlerpfade“ in `kernel_regress.sh` und Block 9 im Login-Test (12 Stufen grün, 16.10.2026). |
 | B3 | ✅ | **Scratch-Adressen und IRQ-Sperre im Trap-Pfad**: zentrale Belegungstabelle, Regel für Verschachtelung und Kontextwechsel | Keine Überlappung; Prüfskript läuft im Build mit (vgl. behobener `$3F0`/`$3F8`-Konflikt aus Fortsetzung 122) | — | `5b16faa`: 450 Zellen geprüft, drei Doppelbelegungen behoben (F$FModul zerstörte Alarm 0; TRAP-#1-15-Zellen auf dem Speicherprotokoll; Callcode-Wort von I$Open überschrieben); Prüfung läuft in `build.sh`; `docs/KERNEL_SPEICHERBELEGUNG_de.md`, `docs/KERNEL_IRQ_SPERRE_de.md` |
 | B4 | ⬜ | **`Q9K_PatchCslFreelistBug`** prüfen: greift er überhaupt (erwartetes Bytemuster fehlte am 16.09.)? | Entscheidung belegt: als Kompatibilitätsmaßnahme gekennzeichnet oder entfernt | A1 | |
+| B5 | ⬜ | **`F$Link`/`F$UnLink` zählen nicht symmetrisch**: `F$Link` ruft die nebenwirkungsfreie Suche `Q9K_SysFLinkSearchImpl` (`Q9K_ModDirFindSlotByName`) und erhöht den Link-Zähler nicht, `F$UnLink` senkt ihn (bis 0), `F$Load` hinterlässt 0 (IOMans Wrapper zählt in einem eigenen Puffer, `Q9K_VMODUL_RETBUF`). Ein geladenes Modul verschwindet dadurch nach dem ersten Link/Unlink-Paar aus dem Verzeichnis, auch nach einem kernelinternen `F$TLink`/`F$Fork`, und ein `F$Link` aus einem Programm hält das Modul nicht fest | `F$Link` erhöht den Zähler, `F$UnLink` senkt ihn, `F$Load` hinterlässt 1 (wie Microware) — oder die Abweichung ist mit Beleg als bewusst begründet; IOMans Treiberanschluss (`F$Link` aus dem Trampolin) bleibt funktionsfähig; Hosttest und Login-Test grün | A8, B2 | Fund aus B2 (`tlinkerr.a`: nach Load + Link + `F$TLink` + Rückbau fehlte das Modul, gemessen per `F$Link`-Probe, 16.10.2026). Vorsicht: IOMan ruft `F$Link` auch direkt über das Trampolin; ein erhöhter Zähler muss dort wieder zurückgenommen werden, sonst wächst er mit jedem Treiberanschluss |
 
 ## Phase C — Teilweise Syscalls abschließen
 

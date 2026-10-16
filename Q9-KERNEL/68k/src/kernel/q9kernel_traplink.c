@@ -445,6 +445,13 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
 #if defined(Q9K_MEMTRACE_ARENA)
             Q9K_MemTraceClearModule();
 #endif
+            /* B2 (2026-10-16): der Link aus Q9K_ModDirLinkByName oben wurde hier nie zurueckgegeben -- jeder
+             * fehlgeschlagene F$TLink wegen Speichermangel liess den Link-Zaehler des Moduls um 1 steigen
+             * (Modul blieb fuer immer im Speicher). Jetzt wie beim Entfernen eines Handlers zuruecknehmen. */
+            Q9K_ModDirUnlinkByHeader(hdr);
+            *outModPtr    = 0;
+            *outExecEntry = 0;
+            *outInitEntry = 0;
             *outError = memErr;
             return 0;
         }

@@ -57,6 +57,10 @@ for c in echo date pd dir setime; do
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
 # openleak: Testprogramm aus dem Kernelbau (A16: Prozessende mit offenem IOMan-Pfad), Q9K_LEAK_CMDS="openleak;"
+for c in trapfail tlinkerr; do   # B2: Fehlerpfade von F$TLink (Q9K_LEAK_CMDS="tlinkerr;")
+    "$OS9" copy "$WORK/kb/$c" "$IMG,CMDS/$c" >/dev/null 2>&1 || die "copy $c"
+    "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
+done
 "$OS9" copy "$WORK/kb/openleak" "$IMG,CMDS/openleak" >/dev/null 2>&1 || die "copy openleak"
 "$OS9" attr -q -e -pe "$IMG,CMDS/openleak" >/dev/null 2>&1 || true
 printf '* Q9 leak startup\rchx /dd/CMDS\rchd /dd\rsetime 26/10/15 12:00:00\r' > "$WORK/startup"
@@ -85,6 +89,14 @@ fi
 if grep -aq 'openleak: open failed' "$WORK/console.log"; then
     echo "FAIL  openleak: $(grep -ac 'openleak: open failed' "$WORK/console.log") misslungene Opens (IOMan-Pfad nach Prozessende offen)"
     exit 1
+fi
+# B2: tlinkerr meldet je Runde den Fehlercode von F$TLink; erwartet sind A5 (M$Init-Fehler, auch beim zweiten Mal) und CF (Speichermangel).
+if grep -aE '^tlink (init|init again|mem) err=' "$WORK/console.log" | tr -d '\r' | grep -avE '^tlink (init|init again) err=A5$|^tlink mem err=CF$' | grep -aq .; then
+    echo "FAIL  tlinkerr: unerwartete Fehlercodes: $(grep -aE '^tlink (init|init again|mem) err=' "$WORK/console.log" | tr -d '\r' | grep -avE '^tlink (init|init again) err=A5$|^tlink mem err=CF$' | sort | uniq -c | tr '\n' ';')"
+    exit 1
+fi
+if grep -aq 'tlinkerr load failed' "$WORK/console.log"; then
+    echo "FAIL  tlinkerr: F$Load von trapfail scheitert"; exit 1
 fi
 python3 - "$WORK/console.log" "$CYCLES" "$WARMUP" "${Q9K_LEAK_MAX_BYTES:-0}" <<'PY' || exit 1
 import re, sys

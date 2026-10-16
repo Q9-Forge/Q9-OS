@@ -82,9 +82,12 @@ unsigned long Q9K_ModDirLinkByName(unsigned short desiredTyLang, const char *nam
     return g_modDirHdr;
 }
 
+static int           g_unlinkCalls = 0;      /* B2 */
+static unsigned long g_unlinkLastHdr = 0;
 unsigned long Q9K_ModDirUnlinkByHeader(unsigned long hdrAddr)
 {
-    (void)hdrAddr;
+    g_unlinkCalls++;
+    g_unlinkLastHdr = hdrAddr;
     return 0;
 }
 
@@ -239,6 +242,8 @@ static void resetAll(void)
     g_srqmemOutError = 0;
     g_srqmemLastRequested = 0;
     g_srqmemCalls = 0;
+    g_unlinkCalls = 0;
+    g_unlinkLastHdr = 0;
 }
 
 int main(void)
@@ -408,6 +413,10 @@ int main(void)
         checkU32("F7: Fehlercode durchgereicht (E_MEMFUL)", err, 0x00CFUL);
         checkU32("F7: Trap-Tabelle Slot 3 bleibt frei",
                  readSlotField(slotAddrFor(3UL), Q9K_TRAPTBL_OFF_MODPTR), 0);
+        /* B2: der beim Linken erworbene Verweis muss zurueckgegeben werden, sonst bleibt das Modul fuer immer gelinkt. */
+        checkU32("F7 (B2): Modul-Link zurueckgegeben (genau ein Unlink)", (unsigned long)g_unlinkCalls, 1);
+        checkU32("F7 (B2): Unlink auf den Modulkopf", g_unlinkLastHdr, (unsigned long)g_fakeModule);
+        checkU32("F7 (B2): kein Modulzeiger an den Aufrufer", modPtr, 0);
     }
 
     /* Fall 8: Bruecke Q9K_SysTLinkImpl -- Scratch-Zellen EIN, echter

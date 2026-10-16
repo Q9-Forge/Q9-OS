@@ -6041,6 +6041,9 @@ Q9K_SysFTLink:
         move.l  a3,Q9K_TLinkTrace_PreInitA3
         move.l  a6,Q9K_TLinkTrace_PreInitA6
 
+* B2 (2026-10-16): Trap-Nummer fuer den Rueckbau merken, falls M$Init einen Fehler meldet (der Rahmen darueber wird
+* von M$Init selbst verbraucht, s. unten; diese Zelle liegt darunter und bleibt unberuehrt).
+        move.l  Q9K_TLinkScratch_TrapNum,-(sp)
         move.l  a6,-(sp)                            * caller A6, restore after M$Init
         pea     Q9K_SysFTLink_AfterInit(pc)       * Rahmen: Ruecksprung-PC (liegt am Ende bei +8)
         clr.l   -(sp)                              * Rahmen: Fuellwortpaar 0000/0000 (bei +4)
@@ -6050,13 +6053,38 @@ Q9K_SysFTLink:
         movea.l Q9K_TLinkScratch_PastName,a0         * a0 = Name, hinter den Namen aktualisiert
         movea.l Q9K_TLinkScratch_ExecEntry,a1        * a1 = Ausfuehrungs-Einsprung
         movea.l Q9K_TLinkScratch_ModPtr,a2           * a2 = Modulzeiger
+        andi    #$fe,ccr                             * M$Init startet mit geloeschtem Carry (Fehler = Carry bei der Rueckkehr)
         jmp     (a4)                                  * M$Init -- KEIN jsr, s.o.
 Q9K_SysFTLink_AfterInit:
+* B2: das erste, was nach M$Init geschieht, muss der Carry-Test sein -- jeder move veraendert das CCR. Handbuch
+* (68k_tech.pdf S. 172): "cc = carry set, d1.w = error code if error".
+        bcs     Q9K_SysFTLink_InitFail
         move.l  a3,Q9K_TLinkTrace_PostInitA3
         move.l  a6,Q9K_TLinkTrace_PostInitA6
         movea.l (sp)+,a6                            * restore caller data base
+        addq.l  #4,sp                               * B2: gemerkte Trap-Nummer verwerfen
         movem.l (sp)+,d2-d7/a3-a5                   * A5: Aufruferregister zurueck (movem aendert das CCR nicht)
         andi    #$fe,ccr                            * Carry loeschen -- Erfolg (a0/a1/a2 unveraendert von M$Init erwartet)
+        rts
+
+* B2: M$Init meldete einen Fehler. Der Handler ist dann nicht benutzbar -- Modul-Link, statischen Speicher und Slot
+* zurueckgeben (dasselbe wie F$TLink mit Namenszeiger 0 fuer diese Trap-Nummer) und den Fehlercode des Moduls melden.
+* Das Handbuch regelt nur die Rueckgabe von M$Init; der Rueckbau ist die sichere Folge (kein halb installierter Handler).
+Q9K_SysFTLink_InitFail:
+        movea.l (sp)+,a6                            * caller A6 (wie nach dem Erfolg)
+        move.l  (sp)+,d0                            * gemerkte Trap-Nummer
+        move.w  d1,-(sp)                            * Fehlercode von M$Init
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_TLinkScratch_TrapNum
+        clr.l   Q9K_TLinkScratch_MemOvr
+        clr.l   Q9K_TLinkScratch_NamePtr            * Namenszeiger 0 = Handler entfernen
+        movea.l Q9K_TLinkImplPtr,a1
+        jsr     (a1)
+        movea.l (sp)+,a6
+        move.w  (sp)+,d1                            * Fehlercode zurueck
+        movem.l (sp)+,d2-d7/a3-a5
+        ori     #1,ccr                              * Carry setzen -- Fehlschlag
         rts
 
 Q9K_SysFTLink_NoInit:

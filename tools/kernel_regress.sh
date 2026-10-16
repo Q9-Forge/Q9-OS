@@ -11,7 +11,8 @@
 #   4. Parallellauf  tools/leak_test.sh 24 2 mit 5 gleichzeitigen Prozessen (~1,5 min)
 #   5. Offener Pfad tools/leak_test.sh 12 4 mit openleak (A16: Prozessende schliesst IOMan-Pfade; ~1 min)
 #   6. Interrupt-Injektion (A15): Langlauf, Parallellauf und Login-Test mit Q9_TIMER_PERIOD_MS=1 (zehnfacher Takt; ~5 min)
-#   7. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
+#   7. F$TLink-Fehler tools/leak_test.sh 12 4 mit tlinkerr (B2: Rueckbau bei M$Init-Fehler und Speichermangel; ~1 min)
+#   8. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
 #                    (nur Standardvariante, laufen mit dem Kernel, den build.sh ohne Schalter baut)
 # --quick: nur Stufe 1 (ohne Emulator, ohne Wine-Bau).
 #
@@ -73,6 +74,11 @@ if [ "$QUICK" = 0 ]; then
     stufe "Interrupt-Injektion: Parallellauf, Takt 1 ms" env Q9_TIMER_PERIOD_MS=1 Q9K_LEAK_PER=2 \
         'Q9K_LEAK_CMDS=dir /dd/CMDS&dir /dd/SYS&date&pd&echo a&wait;' bash "$HERE/leak_test.sh" 24 2
     stufe "Interrupt-Injektion: Login-Test, Takt 1 ms" env Q9_TIMER_PERIOD_MS=1 bash "$HERE/login_shell_test.sh" development
+    # F$TLink-Fehlerpfade (B2): tlinkerr laesst M$Init eines Trap-Moduls scheitern (zweimal) und einen F$TLink am
+    # Speichermangel scheitern. Zwischen den Marken duerfen Link-Zaehler, Modulverzeichnis, Trap-Slots und Freispeicher nicht
+    # wachsen; leak_test.sh prueft ausserdem die gemeldeten Fehlercodes (A5, A5, CF).
+    stufe "F\$TLink-Fehlerpfade, Ressourcenbilanz" env Q9K_LEAK_PER=2 'Q9K_LEAK_CMDS=tlinkerr;tlinkerr;' \
+        bash "$HERE/leak_test.sh" 12 4
     for t in startup_shell_test.sh mgrpath_probe_test.sh; do
         if [ -f "$HERE/$t" ]; then stufe "$t" bash "$HERE/$t"
         else echo "(uebersprungen, fehlt: $t)"; fi
