@@ -654,6 +654,24 @@ Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr)
     return 1;
 }
 
+#if defined(Q9K_MEMTRACE_ARENA)
+/* A8 (2026-10-16): Ressourcenbilanz -- Summe der Link-Zaehler und Zahl der Eintraege im Verzeichnis. Nur Diagnose
+ * (Developer-Kernel, Zeile "M R" beim Prozessende); verwaiste Links zeigen sich als Zuwachs der Summe. */
+void Q9K_ModDirResTotals(Q9_u32 *outLinks, Q9_u32 *outEntries)
+{
+    Q9_u32 slot = Q9K_GetU32(Q9K_MODDIR_HEAD_ADDR);
+    Q9_u32 links = 0, entries = 0;
+
+    while (slot != 0 && entries < 4096UL) {
+        links += Q9K_ModDirGetU16(slot + Q9K_MODDIR_LINKCNT_OFF);
+        entries++;
+        slot = Q9K_GetU32(slot + Q9K_MODDIR_NEXT_OFF);
+    }
+    *outLinks = links;
+    *outEntries = entries;
+}
+#endif
+
 /* Q9K_ModDirValidateAndAdd -- F$VModul-Kernlogik (Callcode 0x2e,
  * "Validate Module", 68k_tech.pdf S. 532f, echt per Read gelesen). IN
  * (hier als Parameter durchgereicht): (a0)=Modulzeiger, d1.l=Modulgroesse

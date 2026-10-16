@@ -90,7 +90,7 @@ python3 - "$WORK/console.log" "$CYCLES" "$WARMUP" "${Q9K_LEAK_MAX_BYTES:-0}" <<'
 import re, sys
 log, cycles, warm, maxbytes = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 raw = open(log, 'rb').read().decode('latin1').replace('\r', '')
-EV = re.compile(r'^M ([APFL]) r=([0-9A-F]+) a=([0-9A-F]+) s=([0-9A-F]+) e=([0-9A-F]+)', re.M)
+EV = re.compile(r'^M ([APFLR]) r=([0-9A-F]+) a=([0-9A-F]+) s=([0-9A-F]+) e=([0-9A-F]+)', re.M)
 # Ohne Zeilenanfang-Anker: bei verschraenkter Ausgabe mehrerer Prozesse steht die Marke mitten in der Zeile.
 # Das Terminalecho der getippten Zeile endet ebenfalls so, die Ausgabe des Befehls folgt aber spaeter und gewinnt.
 MARK = re.compile(r'zq(mid1|end1)\s*$', re.M)
@@ -108,6 +108,16 @@ def snapshot(pos):
         elif op == 'F': live.pop(addr, None)
     return live
 mid, end = snapshot(marks['mid1']), snapshot(marks['end1'])
+# A8: Zeilen "M R r=<Link-Summe> a=<Moduleintraege> s=<Trap-Slots>" (je Prozessende); jeweils die letzte vor der Marke.
+RES = re.compile(r'^M R r=([0-9A-F]+) a=([0-9A-F]+) s=([0-9A-F]+)', re.M)
+resev = [(m.start(), int(m.group(1), 16), int(m.group(2), 16), int(m.group(3), 16)) for m in RES.finditer(raw)]
+def lastres(pos):
+    last = None
+    for p, links, ent, slots in resev:
+        if p >= pos: break
+        last = (links, ent, slots)
+    return last
+r1, r2 = lastres(marks['mid1']), lastres(marks['end1'])
 procs_total = sum(1 for p, op, *_ in events if op == 'P' and marks['mid1'] <= p < marks['end1'])
 # Entscheidend sind die SUMMEN: ein Puffer, der an anderer Adresse neu angelegt wurde, ist kein Verlust.
 gbytes = sum(end.values()) - sum(mid.values())
@@ -124,5 +134,14 @@ for s, n in sorted(extra.items()):
     if n: print("    Groesse %d Byte: %+d Bloecke" % (s, n))
 ok = gbytes <= maxbytes
 print("%s  Speicherbilanz: Zuwachs %d Byte (erlaubt %d)" % ("ok  " if ok else "FAIL", gbytes, maxbytes))
+if r1 and r2:
+    print("Modul-Linkzaehler (Summe): %d -> %d, Eintraege im Modulverzeichnis: %d -> %d, belegte Trap-Slots: %d -> %d" % (r1[0], r2[0], r1[1], r2[1], r1[2], r2[2]))
+    maxlinks = int(__import__('os').environ.get('Q9K_LEAK_MAX_LINKS', '0'))
+    okr = (r2[0] - r1[0] <= maxlinks) and (r2[2] - r1[2] <= 0)
+    print("%s  Ressourcenbilanz: Linkzaehler %+d (erlaubt %d), Trap-Slots %+d (erlaubt 0)" % ("ok  " if okr else "FAIL", r2[0] - r1[0], maxlinks, r2[2] - r1[2]))
+    ok = ok and okr
+else:
+    print("FAIL  keine 'M R'-Zeilen im Log (Ressourcenbilanz nicht messbar)")
+    ok = False
 sys.exit(0 if ok else 1)
 PY

@@ -102,7 +102,9 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
                                Q9_u32 error,
                                Q9_u32 freeHead);
 #define Q9K_MEMTRACE_OP_PROC_RELEASE 6UL
+#define Q9K_MEMTRACE_OP_RESOURCES    8UL
 #define Q9K_D_FREEMEM 0x0404UL
+extern void   Q9K_ModDirResTotals(Q9_u32 *outLinks, Q9_u32 *outEntries); /* q9kernel_moddir.c */
 #endif
 
 /* Deskriptor-Feldoffsets -- lokal dupliziert, gleiche schlanke Konvention
@@ -326,6 +328,28 @@ static void Q9K_ProcReleaseMemory(Q9_u32 desc)
     Q9K_ProcMemReleaseAll(desc);
 }
 
+#if defined(Q9K_MEMTRACE_ARENA)
+/* A8 (2026-10-16): Ressourcenbilanz beim Prozessende, Zeile "M R r=<Summe der Link-Zaehler> a=<Eintraege im Modul-
+ * verzeichnis> s=<belegte Trap-Slots in allen Prozessen>". Nach dem Aufraeumen des endenden Prozesses ausgegeben:
+ * zwischen zwei Marken muessen alle drei Werte gleich bleiben (tools/leak_test.sh). */
+static void Q9K_ProcResAudit(void)
+{
+    Q9_u32 base  = Q9K_GetU32(Q9K_PROCPOOL_BASE_ADDR);
+    Q9_u32 count = Q9K_GetU32(Q9K_PROCPOOL_COUNT_ADDR);
+    Q9_u32 links = 0, entries = 0, trapSlots = 0, i, k;
+
+    Q9K_ModDirResTotals(&links, &entries);
+    for (i = 0; i < count; i++) {
+        Q9_u32 desc = base + i * Q9K_PROCDESC_SIZE;
+
+        for (k = 0; k < Q9K_TRAPTBL_ENTRIES; k++)
+            if (Q9K_GetU32(desc + Q9K_PROCDESC_TRAPTBL_OFF + k * Q9K_TRAPTBL_ENTRY_SIZE + Q9K_TRAPTBL_OFF_MODPTR) != 0)
+                trapSlots++;
+    }
+    Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_RESOURCES, links, entries, trapSlots, 0UL, 0UL);
+}
+#endif
+
 /* Gibt einen Deskriptor-Pool-Slot zurueck in die Freiliste (Gegenstueck
  * zu Q9K_ProcPoolAlloc, q9kernel_firstproc.c -- dort static, deshalb hier
  * eine eigene, aber identische Umkehr-Implementierung statt eines
@@ -432,6 +456,9 @@ Q9_u32 Q9K_ProcExit(Q9_u32 callerDesc, Q9_u16 exitStatus)
      * Wiedereinreihen (anders als Q9K_SchedReschedule), deshalb
      * Q9K_SchedFirstPick statt Q9K_SchedReschedule, exakt wie beim
      * allerersten Prozessstart (Q9K_SchedRun). */
+#if defined(Q9K_MEMTRACE_ARENA)
+    Q9K_ProcResAudit();
+#endif
     return Q9K_SchedFirstPick();
 }
 

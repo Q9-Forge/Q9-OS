@@ -1205,7 +1205,12 @@ Q9K_MemTraceConsoleBackend:
         beq     Q9K_MemTraceFree
         cmpi.l  #6,d6
         beq     Q9K_MemTraceProcRelease
+        cmpi.l  #8,d6
+        beq     Q9K_MemTraceResources
         moveq   #'L',d7
+        bra     Q9K_MemTraceCompactOp
+Q9K_MemTraceResources:
+        moveq   #'R',d7                         * A8: r=Link-Summe a=Moduleintraege s=Trap-Slots
         bra     Q9K_MemTraceCompactOp
 Q9K_MemTraceAlloc:
         moveq   #'A',d7
