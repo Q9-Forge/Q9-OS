@@ -10,7 +10,8 @@
 #   3. Langlauf      tools/leak_test.sh 64 8          (192 Forks, Speicherbilanz; ~2 min)
 #   4. Parallellauf  tools/leak_test.sh 24 2 mit 5 gleichzeitigen Prozessen (~1,5 min)
 #   5. Offener Pfad tools/leak_test.sh 12 4 mit openleak (A16: Prozessende schliesst IOMan-Pfade; ~1 min)
-#   6. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
+#   6. Interrupt-Injektion (A15): Langlauf, Parallellauf und Login-Test mit Q9_TIMER_PERIOD_MS=1 (zehnfacher Takt; ~5 min)
+#   7. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
 #                    (nur Standardvariante, laufen mit dem Kernel, den build.sh ohne Schalter baut)
 # --quick: nur Stufe 1 (ohne Emulator, ohne Wine-Bau).
 #
@@ -64,6 +65,14 @@ if [ "$QUICK" = 0 ]; then
     # scheitert schon der zweite Open (Fehler $D6, Meldung "open failed"); leak_test.sh wertet die Meldungen aus.
     stufe "Prozessende mit offenem IOMan-Pfad" env Q9K_LEAK_PER=2 'Q9K_LEAK_CMDS=openleak;openleak;' \
         bash "$HERE/leak_test.sh" 12 4
+    # Interrupt-Injektion (A15): Q9_TIMER_PERIOD_MS=1 (Q9-Flux, timer_irq.c) verkuerzt den Board-Takt von 10 auf 1 ms. Die
+    # IRQ-Fenster aus A7 (Queue- und Kontextuebergabe, Rueckweg des Trap-Pfads) werden dadurch zehnmal so oft getroffen.
+    # Die Q9-Uhr laeuft entsprechend schneller. Setzt einen Emulator mit dieser Variablen voraus; ein aelterer q9.exe
+    # ignoriert sie, die Stufen laufen dann nur mit 10 ms (kein Fehlalarm, aber auch kein Beleg).
+    stufe "Interrupt-Injektion: Langlauf, Takt 1 ms" env Q9_TIMER_PERIOD_MS=1 bash "$HERE/leak_test.sh" 64 8
+    stufe "Interrupt-Injektion: Parallellauf, Takt 1 ms" env Q9_TIMER_PERIOD_MS=1 Q9K_LEAK_PER=2 \
+        'Q9K_LEAK_CMDS=dir /dd/CMDS&dir /dd/SYS&date&pd&echo a&wait;' bash "$HERE/leak_test.sh" 24 2
+    stufe "Interrupt-Injektion: Login-Test, Takt 1 ms" env Q9_TIMER_PERIOD_MS=1 bash "$HERE/login_shell_test.sh" development
     for t in startup_shell_test.sh mgrpath_probe_test.sh; do
         if [ -f "$HERE/$t" ]; then stufe "$t" bash "$HERE/$t"
         else echo "(uebersprungen, fehlt: $t)"; fi
