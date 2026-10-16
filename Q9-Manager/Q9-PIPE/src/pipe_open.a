@@ -1,0 +1,407 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* pipe_open.a -- Open, Create, Close and Delete Operations for Q9-PIPE
+*═════════════════════════════════════════════════════════════════════════════════════
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_Create
+* Erstellt eine anonyme oder benannte Pipe.
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*   a6 = System-Globals
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_Create:
+        movem.l d2-d6/a0/a2-a3,-(sp)
+
+        * 1. Verzeichnis-Bit prüfen: Pipes können keine Verzeichnisse sein!
+        move.b  PD_MOD(a1),d0
+        btst    #7,d0
+        bne.w   Pipe_CreateBadMode
+
+        * 2. Prüfen ob Name übergeben wurde
+        movea.l REG_A0(a5),a0
+        cmpa.l  #0,a0
+        beq.s   Pipe_CreateAnonymous
+
+        * Name parsen
+        bsr.w   Pipe_ParseName
+        bcs.w   Pipe_CreateErr
+        tst.w   d1                      * Namenslänge == 0?
+        beq.s   Pipe_CreateAnonymous
+
+        * Benannte Pipe: Prüfen ob bereits vorhanden
+        movea.l a0,a3                   * Name-Zeiger in a3 merken
+        movea.l PD_DEV(a1),a2
+        movea.l DT_STAT(a2),a2          * a2 = V_stat
+        bsr.w   Pipe_LockDev
+        bsr.w   Pipe_FindNamed
+        bcc.s   Pipe_CreateExists       * Schon da -> E_CErr
+
+        * Nicht gefunden (E_PNNF erwartet) -> Neue benannte Pipe anlegen
+        cmpi.w  #E_PNNF,d1
+        bne.s   Pipe_CreateUnlockErr
+
+        * Speicher für Namen merken
+        move.w  d1,d3                   * Namenslänge
+        bra.s   Pipe_CreateSetupBuffer
+
+Pipe_CreateExists:
+        bsr.w   Pipe_UnlockDev
+        move.w  #E_CErr,d1              * Datei existiert bereits
+        bra.w   Pipe_CreateErr
+
+Pipe_CreateUnlockErr:
+        bsr.w   Pipe_UnlockDev
+        bra.w   Pipe_CreateErr
+
+Pipe_CreateAnonymous:
+        clr.w   d3                      * Kein Name (anonyme Shell-Pipe)
+        ori.b   #3,PD_MOD(a1)           * Beide Modi (Read & Write) erzwingen
+        bset.b  #7,PD_FLAGS(a1)         * Anonyme Pipe Flag
+
+Pipe_CreateSetupBuffer:
+        * 3. Puffergröße bestimmen
+        move.l  REG_D1(a5),d0           * Angeforderte Größe
+        cmpi.l  #PIPE_DEF_SZ,d0
+        bhi.s   Pipe_CreateDynamicBuf
+
+        * Standardfall: Zero-Allocation im Pfaddeskriptor (90 Bytes)
+        move.l  #PIPE_DEF_SZ,d0
+        lea     PD_EMBBUF(a1),a2
+        bra.s   Pipe_CreateInitPD
+
+Pipe_CreateDynamicBuf:
+        * Dynamische Allokation bei > 90 Bytes
+        bsr.w   Pipe_SysSRqMem
+        bcs.w   Pipe_CreateMemErr
+
+Pipe_CreateInitPD:
+        * 4. Pfaddeskriptor initialisieren
+        move.l  a2,PD_BUF(a1)           * Pufferbasis
+        move.l  d0,PD_BUFSZ(a1)         * Pufferkapazität
+        lea     (a2,d0.l),a3
+        move.l  a3,PD_BUFEND(a1)        * Pufferende
+
+        move.l  a2,PD_RDPTR(a1)         * Lesezeiger = Basis
+        move.l  a2,PD_WRPTR(a1)         * Schreibzeiger = Basis
+        clr.l   PD_RDBYT(a1)            * 0 Bytes lesbar
+        move.l  d0,PD_WRSPC(a1)         * Voller Puffer frei zum Schreiben
+
+        clr.w   PD_RDWAT(a1)
+        clr.w   PD_WRWAT(a1)
+        clr.w   PD_WRWAT2(a1)
+        clr.l   PD_RDSIG(a1)
+        clr.l   PD_WRSIG(a1)
+        clr.b   PD_FLAGS(a1)
+        clr.b   PD_DEL(a1)
+        clr.b   PD_ERR(a1)
+
+        move.l  #24,PD_XMASK(a1)        * XOR-Abstand Lese-/Schreibkanal ($18 = 24)
+        move.l  a1,PD_HEAD(a1)          * Master-Deskriptor = self
+        move.l  a1,PD_SELF(a1)
+
+        * Lese-/Schreib-Zähler initialisieren
+        clr.w   PD_RDOPN(a1)
+        clr.w   PD_WROPN(a1)
+        move.b  PD_MOD(a1),d0
+        btst    #0,d0                   * READ angefordert?
+        beq.s   Pipe_CreateChkWr
+        addq.w  #1,PD_RDOPN(a1)
+Pipe_CreateChkWr:
+        btst    #1,d0                   * WRITE angefordert?
+        beq.s   Pipe_CreateInitPerm
+        addq.w  #1,PD_WROPN(a1)
+
+Pipe_CreateInitPerm:
+        * Eigentümer & Rechte setzen
+        move.w  P_User(a4),d0
+        move.b  d0,PD_OWN(a1)
+        lsr.w   #8,d0
+        move.b  d0,PD_GRP(a1)
+        move.b  REG_D2+3(a5),PD_PERM(a1)
+
+        * 5. Falls benannte Pipe: Namen eintragen und in Liste einhängen
+        tst.w   d3
+        beq.s   Pipe_CreateSuccess
+
+        * Name nach PD_NAME kopieren
+        movea.l a3,a0
+        lea     PD_NAME(a1),a2
+        move.l  d3,d1
+        bsr.w   Pipe_CopyMem
+        clr.b   (a2)                    * Nullterminierung
+
+        * In Liste des Treibers (V_stat) einhängen
+        movea.l PD_DEV(a1),a2
+        movea.l DT_STAT(a2),a2          * a2 = V_stat
+        move.l  104(a2),PD_NEXT(a1)     * Nächster = bisheriger Kopf
+        move.l  a1,104(a2)              * Neuer Kopf = a1
+        clr.l   PD_PREV(a1)
+        bsr.w   Pipe_UnlockDev
+
+Pipe_CreateSuccess:
+        move.w  #1,PD_COUNT(a1)
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2-d6/a0/a2-a3
+        rts
+
+Pipe_CreateBadMode:
+        move.w  #E_BMODE,d1
+Pipe_CreateMemErr:
+Pipe_CreateErr:
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d2-d6/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_Open
+* Öffnet eine bestehende Pipe (anonym oder benannt).
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*   a6 = System-Globals
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_Open:
+        movem.l d2-d6/a0/a2-a3,-(sp)
+
+        * 1. Verzeichnis-Bit prüfen
+        move.b  PD_MOD(a1),d0
+        btst    #7,d0
+        bne.w   Pipe_OpenBadMode
+
+        * 2. Prüfen ob Name übergeben wurde
+        movea.l REG_A0(a5),a0
+        cmpa.l  #0,a0
+        beq.w   Pipe_OpenAnonymous
+
+        * Name parsen
+        bsr.w   Pipe_ParseName
+        bcs.w   Pipe_OpenErr
+        tst.w   d1
+        beq.w   Pipe_OpenAnonymous
+
+        * Benannte Pipe in Liste suchen
+        movea.l PD_DEV(a1),a2
+        movea.l DT_STAT(a2),a2          * a2 = V_stat
+        bsr.w   Pipe_LockDev
+        bsr.w   Pipe_FindNamed
+        bcs.s   Pipe_OpenNotFound
+
+        * Pipe gefunden: a2 = Zeiger auf Master-Deskriptor
+        * Zugriffsrechte prüfen
+        move.b  PD_PERM(a2),d0
+        move.b  PD_MOD(a1),d2
+        and.b   d2,d0
+        cmp.b   d2,d0
+        bne.s   Pipe_OpenPermErr
+
+        * Master-Deskriptor Zustand in a1 spiegeln / verbinden
+        move.l  a2,PD_HEAD(a1)          * Zeigt auf Master
+        move.l  PD_BUF(a2),PD_BUF(a1)
+        move.l  PD_BUFEND(a2),PD_BUFEND(a1)
+        move.l  PD_BUFSZ(a2),PD_BUFSZ(a1)
+
+        * Offene Zähler auf Master aktualisieren
+        btst    #0,d2                   * Read?
+        beq.s   Pipe_OpenChkWr
+        addq.w  #1,PD_RDOPN(a2)
+Pipe_OpenChkWr:
+        btst    #1,d2                   * Write?
+        beq.s   Pipe_OpenLinked
+        addq.w  #1,PD_WROPN(a2)
+
+Pipe_OpenLinked:
+        addq.w  #1,PD_COUNT(a2)
+        move.w  #1,PD_COUNT(a1)
+        bsr.w   Pipe_UnlockDev
+
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2-d6/a0/a2-a3
+        rts
+
+Pipe_OpenNotFound:
+        bsr.w   Pipe_UnlockDev
+        move.w  #E_PNNF,d1              * Pipe nicht gefunden
+        bra.s   Pipe_OpenErr
+
+Pipe_OpenPermErr:
+        bsr.w   Pipe_UnlockDev
+        move.w  #E_BMODE,d1             * Keine Berechtigung
+        bra.s   Pipe_OpenErr
+
+Pipe_OpenAnonymous:
+        * Anonyme Pipe: Falls neu geöffnet, wie Create initialisieren
+        bra.w   Pipe_CreateAnonymous
+
+Pipe_OpenBadMode:
+        move.w  #E_BMODE,d1
+Pipe_OpenErr:
+        ori     #$01,ccr
+        movem.l (sp)+,d2-d6/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_Close
+* Schließt einen Pfad auf einer Pipe.
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a6 = System-Globals
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_Close:
+        movem.l d2-d3/a0/a2-a3,-(sp)
+
+        * Master-Deskriptor ermitteln
+        movea.l PD_HEAD(a1),a2
+        cmpa.l  #0,a2
+        bne.s   Pipe_CloseHaveHead
+        movea.l a1,a2                   * Self ist Master
+
+Pipe_CloseHaveHead:
+        * Offene Zähler dekrementieren
+        move.b  PD_MOD(a1),d0
+        btst    #0,d0                   * War Leser?
+        beq.s   Pipe_CloseChkWr
+        tst.w   PD_RDOPN(a2)
+        beq.s   Pipe_CloseChkWr
+        subq.w  #1,PD_RDOPN(a2)
+        * Evtl. wartende Schreiber wecken (erkennen nun Broken Pipe)
+        move.w  PD_WRWAT(a2),d0
+        bsr.w   Pipe_WakeProcess
+        clr.w   PD_WRWAT(a2)
+
+Pipe_CloseChkWr:
+        btst    #1,d0                   * War Schreiber?
+        beq.s   Pipe_CloseCount
+        tst.w   PD_WROPN(a2)
+        beq.s   Pipe_CloseCount
+        subq.w  #1,PD_WROPN(a2)
+        * Evtl. wartende Leser wecken (erkennen nun EOF)
+        move.w  PD_RDWAT(a2),d0
+        bsr.w   Pipe_WakeProcess
+        clr.w   PD_RDWAT(a2)
+
+Pipe_CloseCount:
+        tst.w   PD_COUNT(a2)
+        beq.s   Pipe_CloseCheckDestroy
+        subq.w  #1,PD_COUNT(a2)
+
+Pipe_CloseCheckDestroy:
+        * Wenn keine Leser und keine Schreiber mehr offen sind -> Freigabe
+        move.w  PD_RDOPN(a2),d0
+        add.w   PD_WROPN(a2),d0
+        bne.s   Pipe_CloseDone          * Noch andere Enden offen
+
+        * Beide Enden geschlossen!
+        * Falls benannte Pipe: Aus Liste des Treibers aushängen
+        tst.b   PD_NAME(a2)
+        beq.s   Pipe_CloseFreeBuf
+
+        movea.l PD_DEV(a1),a3
+        movea.l DT_STAT(a3),a3          * a3 = V_stat
+        bsr.w   Pipe_LockDev
+
+        * Element a2 aus doppelt verketteter Liste entfernen
+        movea.l 104(a3),a0              * Erster Eintrag
+        cmpa.l  a2,a0
+        bne.s   Pipe_CloseScanList
+        * a2 war Kopf
+        move.l  PD_NEXT(a2),104(a3)
+        bra.s   Pipe_CloseUnlinked
+
+Pipe_CloseScanList:
+        cmpa.l  #0,a0
+        beq.s   Pipe_CloseUnlinked
+        cmpa.l  PD_NEXT(a0),a2
+        beq.s   Pipe_CloseFoundPrev
+        movea.l PD_NEXT(a0),a0
+        bra.s   Pipe_CloseScanList
+
+Pipe_CloseFoundPrev:
+        move.l  PD_NEXT(a2),PD_NEXT(a0)
+
+Pipe_CloseUnlinked:
+        bsr.w   Pipe_UnlockDev
+
+Pipe_CloseFreeBuf:
+        * Dynamischen Puffer freigeben, falls > 90 Bytes
+        move.l  PD_BUFSZ(a2),d0
+        cmpi.l  #PIPE_DEF_SZ,d0
+        bls.s   Pipe_CloseDone
+
+        movea.l PD_BUF(a2),a2           * Pufferadresse
+        bsr.w   Pipe_SysSRtMem
+
+Pipe_CloseDone:
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2-d3/a0/a2-a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_Delete
+* Löscht eine benannte Pipe aus dem System.
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_Delete:
+        movem.l d2-d3/a0/a2-a3,-(sp)
+
+        movea.l REG_A0(a5),a0
+        bsr.w   Pipe_ParseName
+        bcs.s   Pipe_DeleteErr
+
+        movea.l PD_DEV(a1),a2
+        movea.l DT_STAT(a2),a2
+        bsr.w   Pipe_LockDev
+        bsr.w   Pipe_FindNamed
+        bcs.s   Pipe_DeleteNotFound
+
+        * Pipe gefunden in a2: Prüfen ob noch Pfade offen sind
+        tst.w   PD_COUNT(a2)
+        bne.s   Pipe_DeleteInUse
+
+        * Pipe ungesperrt: Aus Liste aushängen
+        movea.l 104(a2),a0
+        cmpa.l  a2,a0
+        bne.s   Pipe_DelScan
+        move.l  PD_NEXT(a2),104(a2)
+        bra.s   Pipe_DelDone
+
+Pipe_DelScan:
+        cmpa.l  #0,a0
+        beq.s   Pipe_DelDone
+        cmpa.l  PD_NEXT(a0),a2
+        beq.s   Pipe_DelFound
+        movea.l PD_NEXT(a0),a0
+        bra.s   Pipe_DelScan
+
+Pipe_DelFound:
+        move.l  PD_NEXT(a2),PD_NEXT(a0)
+
+Pipe_DelDone:
+        bsr.w   Pipe_UnlockDev
+        andi    #$FE,ccr
+        movem.l (sp)+,d2-d3/a0/a2-a3
+        rts
+
+Pipe_DeleteInUse:
+        bsr.w   Pipe_UnlockDev
+        move.w  #E_SHARE,d1             * Noch in Benutzung
+        bra.s   Pipe_DeleteErr
+
+Pipe_DeleteNotFound:
+        bsr.w   Pipe_UnlockDev
+        move.w  #E_PNNF,d1
+
+Pipe_DeleteErr:
+        ori     #$01,ccr
+        movem.l (sp)+,d2-d3/a0/a2-a3
+        rts

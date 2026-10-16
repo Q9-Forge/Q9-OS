@@ -1,0 +1,340 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* pipe_io.a -- Read, Write, ReadLn, and WritLn Operations for Q9-PIPE
+*═════════════════════════════════════════════════════════════════════════════════════
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_Read
+* Liest Datenblöcke aus der Pipe.
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_Read:
+        moveq   #$FF,d7                 * d7 = $FF: Blocktransfer (kein Begrenzer)
+        bra.s   Pipe_DoRead
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_ReadLn
+* Liest eine Zeile bis Carriage Return ($0D) aus der Pipe.
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_ReadLn:
+        moveq   #$0D,d7                 * d7 = $0D: Zeilentransfer bis CR
+
+Pipe_DoRead:
+        movem.l d2-d6/a0/a2-a4,-(sp)
+
+        * Master-Deskriptor ermitteln
+        movea.l PD_HEAD(a1),a2
+        cmpa.l  #0,a2
+        bne.s   Pipe_RdHaveHead
+        movea.l a1,a2
+
+Pipe_RdHaveHead:
+        movea.l REG_A0(a5),a3           * Zielpuffer des Benutzers
+        move.l  REG_D1(a5),d6           * Angeforderte Byteanzahl
+        clr.l   d5                      * d5 = Bisher übertragene Bytes
+
+        tst.l   d6
+        beq.w   Pipe_RdSuccess          * 0 Bytes angefordert -> sofort fertig
+
+Pipe_RdLoop:
+        tst.l   d6
+        beq.w   Pipe_RdSuccess          * Alle angeforderten Bytes gelesen
+
+        * Prüfen ob Daten in der Pipe vorhanden sind
+        move.l  PD_RDBYT(a2),d2
+        bne.s   Pipe_RdHaveData
+
+        * Keine Daten vorhanden: Prüfen ob noch Schreiber existieren
+        tst.w   PD_WROPN(a2)
+        bne.s   Pipe_RdSleep
+
+        * Keine Schreiber mehr da (alle geschlossen) -> EOF!
+        tst.l   d5
+        bne.w   Pipe_RdSuccess          * Bereits Bytes in diesem Aufruf gelesen -> OK
+        move.w  #E_EOF,d1               * Keine Bytes gelesen -> EOF-Fehler melden
+        bra.w   Pipe_RdErr
+
+Pipe_RdSleep:
+        * Schreiber existiert, aber Puffer leer -> Schlafen bis Daten ankommen
+        clr.w   PD_CPR(a1)              * Pfadsperre vor dem Schlafen freigeben!
+        move.w  P_ID(a4),PD_RDWAT(a2)   * PID für Wecksignal hinterlegen
+        moveq   #0,d0                   * Unendlich schlafen
+        bsr.w   Pipe_SysSleep
+        clr.w   PD_RDWAT(a2)
+
+Pipe_RdReAcquire:
+        move.w  PD_CPR(a1),d0           * Prüfen ob anderer Prozess im Pfad aktiv
+        beq.s   Pipe_RdAcquired
+        moveq   #1,d0                   * 1 Tick warten
+        bsr.w   Pipe_SysSleep
+        bra.s   Pipe_RdReAcquire
+
+Pipe_RdAcquired:
+        move.w  P_ID(a4),PD_CPR(a1)     * Pfad wieder für diesen Prozess sperren
+
+        * Signalprüfung nach dem Aufwachen
+        tst.w   P_Signal(a4)
+        beq.s   Pipe_RdLoop             * Normal durch Schreiber geweckt -> weitermachen
+
+        * Durch externes Signal (z.B. SIGINT/Ctrl-C) unterbrochen
+        tst.l   d5
+        bne.w   Pipe_RdSuccess          * Falls schon Daten gelesen -> Teilerfolg
+        move.w  #E_READ,d1
+        bra.w   Pipe_RdErr
+
+Pipe_RdHaveData:
+        * Daten vorhanden! Bestimme Chunk-Größe: min(d6, PD_RDBYT, Distanz bis BUFEND)
+        move.l  d6,d1                   * Verbleibend angefordert
+        cmp.l   d2,d1                   * d2 = PD_RDBYT(a2)
+        bls.s   Pipe_RdLimitWrap
+        move.l  d2,d1                   * Maximal PD_RDBYT
+
+Pipe_RdLimitWrap:
+        * Abstand bis zum physischen Pufferende prüfen (Wrap-Around Schutz)
+        move.l  PD_BUFEND(a2),d0
+        sub.l   PD_RDPTR(a2),d0
+        cmp.l   d0,d1
+        bls.s   Pipe_RdDoTransfer
+        move.l  d0,d1                   * Bis zum Pufferende lesen
+
+Pipe_RdDoTransfer:
+        movea.l PD_RDPTR(a2),a0         * Quelle: Ringpuffer
+        lea     (a3,d5.l),a4            * Ziel: Benutzerpuffer + Offset
+
+        cmpi.b  #$0D,d7
+        beq.s   Pipe_RdTransferLn
+
+        * Blocktransfer: d1 Bytes mit Pipe_CopyMem kopieren
+        move.l  a2,-(sp)                * a2 (Master Descriptor) sichern!
+        movea.l a4,a2                   * a2 = Zieladresse für Pipe_CopyMem
+        bsr.w   Pipe_CopyMem
+        movea.l (sp)+,a2                * a2 (Master Descriptor) restaurieren!
+
+        * Quellzeiger-Fortschritt berechnen
+        move.l  a0,d0
+        sub.l   PD_RDPTR(a2),d0         * Übertragene Bytes
+        add.l   d0,d5                   * Gesamtgelesen + d0
+        sub.l   d0,d6                   * Restbedarf - d0
+        sub.l   d0,PD_RDBYT(a2)
+        add.l   d0,PD_WRSPC(a2)
+        bra.s   Pipe_RdWrapPtr
+
+Pipe_RdTransferLn:
+        clr.b   d3                      * Letztes Zeichen
+Pipe_RdLnByte:
+        move.b  (a0)+,d3
+        move.b  d3,(a4)+
+        addq.l  #1,d5                   * Gesamtgelesen + 1
+        subq.l  #1,d6                   * Restbedarf - 1
+        subq.l  #1,PD_RDBYT(a2)
+        addq.l  #1,PD_WRSPC(a2)
+
+        cmp.b   d7,d3                   * Carriage Return erreicht?
+        beq.s   Pipe_RdWrapPtr          * Ja -> Zeilenende!
+        subq.l  #1,d1
+        bne.s   Pipe_RdLnByte
+
+Pipe_RdWrapPtr:
+        * Lesezeiger aktualisieren und Wrap-Around prüfen
+        cmpa.l  PD_BUFEND(a2),a0
+        bcs.s   Pipe_RdSavePtr
+        movea.l PD_BUF(a2),a0           * Wrap zum Pufferanfang
+Pipe_RdSavePtr:
+        move.l  a0,PD_RDPTR(a2)
+
+        * Wartenden Schreiber wecken (da nun wieder Platz frei ist)
+        move.w  PD_WRWAT(a2),d0
+        beq.s   Pipe_RdCheckEnd
+        clr.w   PD_WRWAT(a2)
+        bsr.w   Pipe_WakeProcess
+
+Pipe_RdCheckEnd:
+        * Falls Zeilenende erreicht war: Fertig
+        cmpi.b  #$0D,d7
+        bne.w   Pipe_RdLoop
+        cmpi.b  #$0D,d3
+        beq.s   Pipe_RdSuccess
+        bra.w   Pipe_RdLoop
+
+Pipe_RdSuccess:
+        move.l  d5,REG_D1(a5)           * Tatsächlich gelesene Bytes eintragen
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2-d6/a0/a2-a4
+        rts
+
+Pipe_RdErr:
+        move.l  d5,REG_D1(a5)
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d2-d6/a0/a2-a4
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_Write
+* Schreibt Datenblöcke in die Pipe.
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_Write:
+        moveq   #$FF,d7                 * d7 = $FF: Blocktransfer
+        bra.s   Pipe_DoWrite
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_WritLn
+* Schreibt eine Zeile bis Carriage Return ($0D) in die Pipe.
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_WritLn:
+        moveq   #$0D,d7                 * d7 = $0D: Zeilentransfer bis CR
+
+Pipe_DoWrite:
+        movem.l d2-d6/a0/a2-a4,-(sp)
+
+        * Master-Deskriptor ermitteln
+        movea.l PD_HEAD(a1),a2
+        cmpa.l  #0,a2
+        bne.s   Pipe_WrHaveHead
+        movea.l a1,a2
+
+Pipe_WrHaveHead:
+        movea.l REG_A0(a5),a3           * Quellpuffer des Benutzers
+        move.l  REG_D1(a5),d6           * Zu schreibende Byteanzahl
+        clr.l   d5                      * d5 = Bisher geschriebene Bytes
+
+        tst.l   d6
+        beq.w   Pipe_WrSuccess          * 0 Bytes -> sofort fertig
+
+Pipe_WrLoop:
+        tst.l   d6
+        beq.w   Pipe_WrSuccess          * Alle Bytes geschrieben
+
+        * 1. Prüfen ob noch Leser existieren (Broken Pipe Schutz!)
+        tst.w   PD_RDOPN(a2)
+        bne.s   Pipe_WrCheckSpace
+
+        * Keine Leser mehr da -> Broken Pipe!
+        tst.l   d5
+        bne.w   Pipe_WrSuccess          * Bereits Bytes geschrieben -> Teilerfolg
+        move.w  #E_BROKNP,d1            * E_BROKNP (245)
+        bra.w   Pipe_WrErr
+
+Pipe_WrCheckSpace:
+        * 2. Prüfen ob Platz im Ringpuffer vorhanden ist
+        move.l  PD_WRSPC(a2),d2
+        bne.s   Pipe_WrHaveSpace
+
+        * Puffer voll -> Schlafen bis Leser Daten konsumiert
+        clr.w   PD_CPR(a1)              * Pfadsperre vor dem Schlafen freigeben!
+        move.w  P_ID(a4),PD_WRWAT(a2)   * PID für Wecksignal
+        moveq   #0,d0
+        bsr.w   Pipe_SysSleep
+        clr.w   PD_WRWAT(a2)
+
+Pipe_WrReAcquire:
+        move.w  PD_CPR(a1),d0           * Prüfen ob anderer Prozess im Pfad aktiv
+        beq.s   Pipe_WrAcquired
+        moveq   #1,d0                   * 1 Tick warten
+        bsr.w   Pipe_SysSleep
+        bra.s   Pipe_WrReAcquire
+
+Pipe_WrAcquired:
+        move.w  P_ID(a4),PD_CPR(a1)     * Pfad wieder für diesen Prozess sperren
+
+        * Signalprüfung nach dem Aufwachen
+        tst.w   P_Signal(a4)
+        beq.w   Pipe_WrLoop             * Normal geweckt
+
+        tst.l   d5
+        bne.w   Pipe_WrSuccess
+        move.w  #E_WRITE,d1
+        bra.w   Pipe_WrErr
+
+Pipe_WrHaveSpace:
+        * Platz vorhanden! Bestimme Chunk-Größe: min(d6, PD_WRSPC, Distanz bis BUFEND)
+        move.l  d6,d1                   * Verbleibend zu schreiben
+        cmp.l   d2,d1                   * d2 = PD_WRSPC(a2)
+        bls.s   Pipe_WrLimitWrap
+        move.l  d2,d1                   * Maximal PD_WRSPC
+
+Pipe_WrLimitWrap:
+        * Abstand bis Pufferende prüfen (Wrap-Around)
+        move.l  PD_BUFEND(a2),d0
+        sub.l   PD_WRPTR(a2),d0
+        cmp.l   d0,d1
+        bls.s   Pipe_WrDoTransfer
+        move.l  d0,d1                   * Bis zum Pufferende schreiben
+
+Pipe_WrDoTransfer:
+        lea     (a3,d5.l),a0            * Quelle: Benutzerpuffer + Offset
+        movea.l PD_WRPTR(a2),a4         * Ziel: Ringpuffer
+
+        cmpi.b  #$0D,d7
+        beq.s   Pipe_WrTransferLn
+
+        * Blocktransfer: d1 Bytes von a0 nach a4 kopieren
+        move.l  a2,-(sp)                * a2 (Master Descriptor) sichern!
+        movea.l a4,a2                   * a2 = Ziel für Pipe_CopyMem
+        bsr.w   Pipe_CopyMem            * a2 wird inkrementiert zu neuem Schreibzeiger
+        movea.l a2,a4                   * a4 = neuer Schreibzeiger!
+        movea.l (sp)+,a2                * a2 (Master Descriptor) wiederherstellen!
+
+        move.l  a4,d0
+        sub.l   PD_WRPTR(a2),d0         * d0 = tatsächlich geschriebene Bytes
+        add.l   d0,d5
+        sub.l   d0,d6
+        add.l   d0,PD_RDBYT(a2)
+        sub.l   d0,PD_WRSPC(a2)
+        movea.l a4,a0                   * a0 = neuer Schreibzeiger für Wrap-Prüfung
+        bra.s   Pipe_WrWrapPtr
+
+Pipe_WrTransferLn:
+        clr.b   d3
+Pipe_WrLnByte:
+        move.b  (a0)+,d3
+        move.b  d3,(a4)+
+        addq.l  #1,d5
+        subq.l  #1,d6
+        addq.l  #1,PD_RDBYT(a2)
+        subq.l  #1,PD_WRSPC(a2)
+
+        cmp.b   d7,d3
+        beq.s   Pipe_WrWrapLn
+        subq.l  #1,d1
+        bne.s   Pipe_WrLnByte
+
+Pipe_WrWrapLn:
+        movea.l a4,a0                   * a0 = neuer Schreibzeiger
+
+Pipe_WrWrapPtr:
+        cmpa.l  PD_BUFEND(a2),a0
+        bcs.s   Pipe_WrSavePtr
+        movea.l PD_BUF(a2),a0
+Pipe_WrSavePtr:
+        move.l  a0,PD_WRPTR(a2)
+
+        * Wartenden Leser wecken
+        move.w  PD_RDWAT(a2),d0
+        beq.s   Pipe_WrCheckSignal
+        clr.w   PD_RDWAT(a2)
+        bsr.w   Pipe_WakeProcess
+
+Pipe_WrCheckSignal:
+        * Signal auf Datenbereitschaft (SS_SSig) prüfen
+        move.w  PD_RDSIG(a2),d0
+        beq.s   Pipe_WrCheckEnd
+        clr.w   PD_RDSIG(a2)
+        move.w  PD_RDSIG+2(a2),d1       * Signalnummer
+        bsr.w   Pipe_SysSend
+
+Pipe_WrCheckEnd:
+        cmpi.b  #$0D,d7
+        bne.w   Pipe_WrLoop
+        cmpi.b  #$0D,d3
+        beq.s   Pipe_WrSuccess
+        bra.w   Pipe_WrLoop
+
+Pipe_WrSuccess:
+        move.l  d5,REG_D1(a5)
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2-d6/a0/a2-a4
+        rts
+
+Pipe_WrErr:
+        move.l  d5,REG_D1(a5)
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d2-d6/a0/a2-a4
+        rts

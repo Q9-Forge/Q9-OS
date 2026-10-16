@@ -1,0 +1,348 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* pipe_sub.a -- Helper Subroutines for Q9-PIPE
+*═════════════════════════════════════════════════════════════════════════════════════
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_LockDev
+* Sperrt den Treiber-/Gerätespeicher über V_BUSY.
+*
+* Eingabe:
+*   a2 = Zeiger auf V_stat (Treiber-Statikspeicher)
+*   a4 = Prozessdeskriptor
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_LockDev:
+        movem.l d0-d1,-(sp)
+Pipe_LockDevLoop:
+        move.w  V_BUSY(a2),d0           * Ist Gerät frei?
+        beq.s   Pipe_LockDevAcquire
+        cmp.w   P_ID(a4),d0             * Bereits von aktuellem Prozess gesperrt?
+        beq.s   Pipe_LockDevAcquire
+        * Gerät belegt: Kurzer Zeitscheiben-Verzicht (Sleep 1 Tick)
+        moveq   #1,d0
+        bsr.w   Pipe_SysSleep
+        bra.s   Pipe_LockDevLoop
+
+Pipe_LockDevAcquire:
+        move.w  P_ID(a4),V_BUSY(a2)      * Als belegt durch aktuellen Prozess markieren
+        movem.l (sp)+,d0-d1
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_UnlockDev
+* Gibt die Gerätesperre frei und weckt evtl. wartende Prozesse.
+*
+* Eingabe:
+*   a2 = Zeiger auf V_stat
+*   a4 = Prozessdeskriptor
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_UnlockDev:
+        movem.l d0-d1,-(sp)
+        clr.w   V_BUSY(a2)              * Sperre aufheben
+        move.w  V_WAKE(a2),d0           * Wartender Prozess vorhanden?
+        beq.s   Pipe_UnlockDevDone
+        clr.w   V_WAKE(a2)
+        moveq   #1,d1                   * Weck-Signal 1
+        bsr.w   Pipe_SysSend
+Pipe_UnlockDevDone:
+        movem.l (sp)+,d0-d1
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_CopyMem
+* Optimiertes Kopieren von Speicherbereichen.
+*
+* Eingabe:
+*   a0 = Quelladresse
+*   a2 = Zieladresse
+*   d1.l = Anzahl Bytes
+*
+* Ausgabe:
+*   a0 = Quelladresse nach dem Kopieren
+*   a2 = Zieladresse nach dem Kopieren
+*   d1.l = 0
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_CopyMem:
+        tst.l   d1
+        ble.s   Pipe_CopyMemDone
+
+        * Bei kleinen Blockgrößen (< 12 Bytes) direkt byteweise
+        cmpi.l  #12,d1
+        bcs.s   Pipe_CopyBytes
+
+        * Quell- und Zieladresse auf Wort-Ausrichtung prüfen
+        move.w  a0,d0
+        btst    #0,d0
+        beq.s   Pipe_CopyChkDst
+        move.b  (a0)+,(a2)+             * Ein ungerades Byte vorweg
+        subq.l  #1,d1
+
+Pipe_CopyChkDst:
+        move.w  a2,d0
+        btst    #0,d0
+        bne.s   Pipe_CopyBytes          * Ungleiche Ausrichtung -> byteweise
+
+        * Beide Adressen sind gerade ausgerichtet: Longwort-Kopierschleife
+        move.l  d1,d0
+        lsr.l   #2,d0                   * Anzahl Longwörter
+        beq.s   Pipe_CopyWords          * Keine ganzen Longwörter
+
+Pipe_CopyLongs:
+        move.l  (a0)+,(a2)+
+        subq.l  #1,d0
+        bne.s   Pipe_CopyLongs
+
+        andi.l  #3,d1                   * Restbytes nach Longs
+        beq.s   Pipe_CopyMemDone
+
+Pipe_CopyWords:
+        cmpi.l  #2,d1
+        bcs.s   Pipe_CopyBytes
+        move.w  (a0)+,(a2)+
+        subq.l  #2,d1
+        beq.s   Pipe_CopyMemDone
+
+Pipe_CopyBytes:
+        tst.l   d1
+        beq.s   Pipe_CopyMemDone
+Pipe_CopyByteLoop:
+        move.b  (a0)+,(a2)+
+        subq.l  #1,d1
+        bne.s   Pipe_CopyByteLoop
+
+Pipe_CopyMemDone:
+        moveq   #0,d1
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_ParseName
+* Parst einen Pfadstring für Pipes.
+* Erkennt anonyme Pipes (/pipe oder pipe) vs. benannte Pipes (/pipe/name).
+*
+* Eingabe:
+*   a0 = Zeiger auf Pfadstring des Aufrufers
+*   a1 = Pfaddeskriptor (MUSS ERHALTEN BLEIBEN!)
+*
+* Ausgabe:
+*   a0 = Zeiger auf den Namen der benannten Pipe (falls vorhanden)
+*   a1 = Pfaddeskriptor (unverändert!)
+*   d0.b = Begrenzungszeichen
+*   d1.w = Länge des Namens (0 = anonyme Pipe, >0 = benannte Pipe)
+*   cc   = Carry gesetzt bei Syntaxfehler (d1.w = E_BPNAM), gelöscht bei Erfolg
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_ParseName:
+        movem.l d2/a1-a2,-(sp)          * a1 sichern! d2, a2 sichern!
+        movea.l a0,a2                   * a2 = Basis
+        * Ersten Teil (Gerätename "pipe") parsen
+        bsr.s   Pipe_PrsNamOne
+        bcs.s   Pipe_ParseNameErr
+        cmpi.b  #'/',d0                 * Folgt ein Pfadtrenner?
+        beq.s   Pipe_ParseNamed         * Ja -> Benannte Pipe (/pipe/...)
+
+        * Kein '/' -> Anonyme Pipe!
+        moveq   #0,d1                   * Länge = 0 (anonym)
+        andi    #$FE,ccr                * Carry löschen
+        movem.l (sp)+,d2/a1-a2
+        rts
+
+Pipe_ParseNamed:
+        * a1 zeigt auf das Begrenzungszeichen '/'
+        movea.l a1,a0
+        addq.l  #1,a0                   * a0 = Anfang des Namens hinter '/'
+        movea.l a0,a2                   * merken
+        bsr.s   Pipe_PrsNamOne
+        bcs.s   Pipe_ParseNameErr
+        cmpi.b  #'/',d0                 * Weiteres '/' ist unzulässig!
+        beq.s   Pipe_ParseNameBad
+        cmpi.w  #PIPE_MAX_NAM,d1        * Max 28 Zeichen
+        bhi.s   Pipe_ParseNameBad
+        tst.w   d1                      * War Name hinter '/' leer?
+        beq.s   Pipe_ParseNameAnon      * z.B. "/pipe/" -> behandle wie anonym
+
+        * Gültiger benannter Pipe-Name
+        movea.l a2,a0                   * a0 = Name
+        andi    #$FE,ccr                * Carry löschen
+        movem.l (sp)+,d2/a1-a2
+        rts
+
+Pipe_ParseNameAnon:
+        moveq   #0,d1
+        andi    #$FE,ccr
+        movem.l (sp)+,d2/a1-a2
+        rts
+
+Pipe_ParseNameBad:
+        move.w  #E_BPNAM,d1
+Pipe_ParseNameErr:
+        ori     #$01,ccr                * Carry setzen
+        movem.l (sp)+,d2/a1-a2
+        rts
+
+* Hilfsroutine: Ein Pfadelement parsen und Delimiter validieren
+Pipe_PrsNamOne:
+        bsr.w   Pipe_SysPrsNam
+        bcs.s   Pipe_PrsRet
+        tst.b   d0                      * \0
+        beq.s   Pipe_PrsRet
+        cmpi.b  #'/',d0                 * '/'
+        beq.s   Pipe_PrsRet
+        cmpi.b  #$0D,d0                 * \r
+        beq.s   Pipe_PrsRet
+        cmpi.b  #' ',d0                 * ' '
+        beq.s   Pipe_PrsRet
+        move.w  #E_BPNAM,d1
+        ori     #$01,ccr
+Pipe_PrsRet:
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_FindNamed
+* Sucht eine benannte Pipe in der verketteten Liste des Gerätetreibers.
+*
+* Eingabe:
+*   a0 = Zeiger auf gesuchten Namen
+*   d1.w = Namenslänge
+*   a2 = Zeiger auf V_stat (DT_STAT)
+*
+* Ausgabe:
+*   cc = Carry gelöscht: Gefunden, a2 = Zeiger auf gefundene Pipe
+*   cc = Carry gesetzt: Nicht gefunden, d1.w = E_PNNF
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_FindNamed:
+        movem.l d2-d4/a0-a1/a3,-(sp)
+        move.w  d1,d2                   * d2 = Suchlänge
+        movea.l a0,a3                   * a3 = Suchname-Zeiger
+
+        * Kopf der Liste aus V_stat (Offset 104) lesen
+        movea.l 104(a2),a1              * Erster Eintrag in Pipe-Liste
+Pipe_FindLoop:
+        cmpa.l  #0,a1                   * Listenende erreicht?
+        beq.s   Pipe_FindNotFound
+        cmpa.l  a1,a2                   * Zeigt auf Listenanker selbst?
+        beq.s   Pipe_FindNotFound
+
+        * Vergleiche Namen bei PD_NAME (Offset 224)
+        lea     PD_NAME(a1),a0
+        move.w  d2,d0                   * Längenvergleich
+        movea.l a3,a0                   * Suchname
+        lea     PD_NAME(a1),a2          * Pipe-Name
+
+Pipe_CmpLoop:
+        move.b  (a0)+,d3
+        move.b  (a2)+,d4
+        * Case-Insensitive Vergleich (Gross/Klein)
+        cmpi.b  #'a',d3
+        bcs.s   Pipe_CmpNoLow1
+        cmpi.b  #'z',d3
+        bhi.s   Pipe_CmpNoLow1
+        subi.b  #$20,d3
+Pipe_CmpNoLow1:
+        cmpi.b  #'a',d4
+        bcs.s   Pipe_CmpNoLow2
+        cmpi.b  #'z',d4
+        bhi.s   Pipe_CmpNoLow2
+        subi.b  #$20,d4
+Pipe_CmpNoLow2:
+        cmp.b   d3,d4
+        bne.s   Pipe_FindNext
+        subq.w  #1,d0
+        bne.s   Pipe_CmpLoop
+
+        * Name stimmt überein! Prüfen ob Pipe-Name auch endet
+        tst.b   (a2)
+        beq.s   Pipe_FindMatch          * Nullterminiert
+        cmpi.b  #$80,(a2)
+        bcc.s   Pipe_FindMatch          * High-Bit terminiert
+
+Pipe_FindNext:
+        movea.l PD_NEXT(a1),a1          * Nächste Pipe in Liste
+        bra.s   Pipe_FindLoop
+
+Pipe_FindMatch:
+        movea.l a1,a2                   * a2 = gefundener Deskriptor
+        andi    #$FE,ccr                * Carry löschen (Gefunden)
+        movem.l (sp)+,d2-d4/a0-a1/a3
+        rts
+
+Pipe_FindNotFound:
+        move.w  #E_PNNF,d1
+        ori     #$01,ccr                * Carry setzen (Nicht gefunden)
+        movem.l (sp)+,d2-d4/a0-a1/a3
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_WakeProcess
+* Sendet Wecksignal (Signal 1) an Prozess mit PID in d0.w.
+*
+* Eingabe:
+*   d0.w = Ziel-PID
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_WakeProcess:
+        tst.w   d0
+        beq.s   Pipe_WakeDone
+        movem.l d0-d1,-(sp)
+        moveq   #1,d1                   * Signal 1 (Wakeup)
+        bsr.w   Pipe_SysSend
+        movem.l (sp)+,d0-d1
+Pipe_WakeDone:
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Supervisor-Modus Kernel Service Dispatcher (via D_SysDis at $03a4(a6))
+* Direkter Dispatch über System-Call-Tabelle vermeidet Trap-0-Rekursion im Supervisor-Status.
+* Offset = Callcode * 4, A3-Kontext = $400 + Offset
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_SysSleep:
+        move.l  a3,-(sp)
+        movea.l $03a4(a6),a3
+        pea     Pipe_SysSleepRet(pc)
+        move.l  $28(a3),-(sp)           * F$Sleep: Callcode $0A * 4 = $28
+        movea.l $428(a3),a3             * $400 + $28 = $428
+        rts
+Pipe_SysSleepRet:
+        movea.l (sp)+,a3
+        rts
+
+Pipe_SysSend:
+        move.l  a3,-(sp)
+        movea.l $03a4(a6),a3
+        pea     Pipe_SysSendRet(pc)
+        move.l  $20(a3),-(sp)           * F$Send: Callcode $08 * 4 = $20
+        movea.l $420(a3),a3             * $400 + $20 = $420
+        rts
+Pipe_SysSendRet:
+        movea.l (sp)+,a3
+        rts
+
+Pipe_SysSRqMem:
+        move.l  a3,-(sp)
+        movea.l $03a4(a6),a3
+        pea     Pipe_SysSRqMemRet(pc)
+        move.l  $A0(a3),-(sp)           * F$SRqMem: Callcode $28 * 4 = $A0
+        movea.l $4A0(a3),a3             * $400 + $A0 = $4A0
+        rts
+Pipe_SysSRqMemRet:
+        movea.l (sp)+,a3
+        rts
+
+Pipe_SysSRtMem:
+        move.l  a3,-(sp)
+        movea.l $03a4(a6),a3
+        pea     Pipe_SysSRtMemRet(pc)
+        move.l  $A4(a3),-(sp)           * F$SRtMem: Callcode $29 * 4 = $A4
+        movea.l $4A4(a3),a3             * $400 + $A4 = $4A4
+        rts
+Pipe_SysSRtMemRet:
+        movea.l (sp)+,a3
+        rts
+
+Pipe_SysPrsNam:
+        move.l  a3,-(sp)
+        movea.l $03a4(a6),a3
+        pea     Pipe_SysPrsNamRet(pc)
+        move.l  $40(a3),-(sp)           * F$PrsNam: Callcode $10 * 4 = $40
+        movea.l $440(a3),a3             * $400 + $40 = $440
+        rts
+Pipe_SysPrsNamRet:
+        movea.l (sp)+,a3
+        rts
+

@@ -1,0 +1,1114 @@
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 001
+
+    1                     * Disassembly by Os9disasm of /Volumes/SSD1TB/projects/Q9-Forge/Q9-Images/cf_images/OS9SYS/CMDS/BOOTOBJS/pipeman
+    2
+    3
+    4                      * OS-9 system function equates
+    5
+    6  00010 0010 F$PrsNam   equ    $10        
+    7  00015 0015 F$Time     equ    $15        
+    8  00028 0028 F$SRqMem   equ    $28        
+    9  00081 0081 I$Detach   equ    $81        
+   10
+   11  00000 000d FlMgr      set    $d         
+   12  00000 0001 Objct      set    $01        
+   13  00000 0020 SupStat    set    $20        
+   14  00000 0080 ReEnt      set    $80        
+   15
+   16  00000 0080            psect  pipeman_a,(FlMgr<<8)|Objct,(SupStat+ReEnt<<8)|0,63,0,L00040 
+   17
+   18
+   19                       * OS9 data area definitions
+   20
+   21  00000 0000            vsect             
+   22  00000 0000            ds.b   72         
+   23  00000 0000            ends              
+   24
+   25  0001a 32aaaba2 Open       equ    *-30       
+   26  00038 0000            ori.b  #0,d0      
+   27  0003c b0bd            dc.w   $b0bd      
+   28  0003e af68            dc.w   $af68      
+   29  00040 001a L00040     dc.w   Open       
+   30  00042 0132            dc.w   Create     
+   31  00044 0410            dc.w   Chgdir     
+   32  00046 0410            dc.w   Chgdir     
+   33  00048 03e2            dc.w   Delete     
+   34  0004a 04d2            dc.w   Seek       
+   35  0004c 07d2            dc.w   Read       
+   36  0004e 07ec            dc.w   Write      
+   37  00050 0800            dc.w   Readln     
+   38  00052 0830            dc.w   Writeln    
+   39  00054 04d6            dc.w   Getstat    
+   40  00056 0614            dc.w   Setstat    
+   41  00058 041a            dc.w   Close      
+   42  0005a 48e7            movem.l a0/a2,-(sp) 
+   43  0005e 0829            btst.b #7,2(a1)   
+   44  00064 6612            bne.s  L00078     
+   45  00066 6100            bsr.w  L0021a     
+   46  0006a 6518            bcs.s  L00084     
+   47  0006c 4a40            tst.w  d0         
+   48  0006e 6746            beq.s  L000b6     
+   49  00070 323c            move.w #218,d1    
+   50  00074 6000            bra.w  L0015c     
+   51  00078 323c L00078     move.w #203,d1    
+   52  0007c 6100            bsr.w  L0037e     
+   53  00080 6000            bra.w  L0015c     
+   54  00084 0c41 L00084     cmpi.w #216,d1    
+   55  00088 6600            bne.w  L0015c     
+   56  0008c 526a            addq.w #1,102(a2) 
+   57  00090 236a            move.l 108(a2),108(a1) 
+   58  00096 2549            move.l a1,108(a2) 
+   59  0009a 234a            move.l a2,104(a1) 
+   60  0009e 2469            movea.l 108(a1),a2 
+   61  000a2 2549            move.l a1,104(a2) 
+   62  000a6 45e9            lea.l  224(a1),a2 
+   63  000aa 2200            move.l d0,d1      
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 002
+
+   64  000ac 6100            bsr.w  L007c4     
+   65  000b0 2009            move.l a1,d0      
+   66  000b2 2340            move.l d0,252(a1) 
+   67  000b6 1029 L000b6     move.b 2(a1),d0   
+   68  000ba 0200            andi.b #3,d0      
+   69  000be 6700            beq.w  L00158     
+   70  000c2 0029            ori.b  #3,2(a1)   
+   71  000c8 08e9 L000c8     bset.b #7,62(a1)  
+   72  000ce 082d            btst.b #5,3(a5)   
+   73  000d4 6706            beq.s  L000dc     
+   74  000d6 202d            move.l 8(a5),d0   
+   75  000da 6604            bne.s  L000e0     
+   76  000dc 2029 L000dc     move.l 130(a1),d0 
+   77  000e0 0c80 L000e0     cmpi.l #90,d0     
+   78  000e6 620c            bhi.s  L000f4     
+   79  000e8 203c            move.l #90,d0     
+   80  000ee 45e9            lea.l  134(a1),a2 
+   81  000f2 6006            bra.s  L000fa     
+   82  000f4 4e40 L000f4     os9    F$SRqMem   
+   83  000f8 6562            bcs.s  L0015c     
+   84  000fa 2b48 L000fa     move.l a0,32(a5)  
+   85  000fe 2340            move.l d0,130(a1) 
+   86  00102 234a            move.l a2,14(a1)  
+   87  00106 1369            move.b 19(a1),114(a1) 
+   88  0010c 1369            move.b 21(a1),115(a1) 
+   89  00112 136d            move.b 7(a5),113(a1) 
+   90  00118 2029 L00118     move.l 130(a1),d0 
+   91  0011c 2469            movea.l 14(a1),a2  
+   92  00120 234a            move.l a2,44(a1)  
+   93  00124 234a            move.l a2,68(a1)  
+   94  00128 d5c0            adda.l d0,a2      
+   95  0012a 234a            move.l a2,96(a1)  
+   96  0012e 2340            move.l d0,72(a1)  
+   97  00132 7000 Create     moveq  #0,d0      
+   98  00134 4e40            os9    F$Time     
+   99  00138 2340            move.l d0,118(a1) 
+  100  0013c 1341            move.b d1,118(a1) 
+  101  00140 e049            lsr.w  #8,d1      
+  102  00142 1341            move.b d1,117(a1) 
+  103  00146 4841            swap.w d1         
+  104  00148 0441            subi.w #1900,d1   
+  105  0014c 1341            move.b d1,116(a1) 
+  106  00150 4cdf            movem.l (sp)+,a0/a2 
+  107  00154 6000            bra.w  L00338     
+  108  00158 323c L00158     move.w #203,d1    
+  109  0015c 4aa9 L0015c     tst.l  108(a1)    
+  110  00160 6704            beq.s  L00166     
+  111  00162 6100            bsr.w  L0078e     
+  112  00166 003c L00166     ori    #1,ccr     
+  113  0016a 4cdf            movem.l (sp)+,a0/a2 
+  114  0016e 6000            bra.w  L00338     
+  115  00172 48e7            movem.l a0/a2,-(sp) 
+  116  00176 6100            bsr.w  L0021a     
+  117  0017a 65ea            bcs.s  L00166     
+  118  0017c 4a40            tst.w  d0         
+  119  0017e 661a            bne.s  L0019a     
+  120  00180 0829            btst.b #7,2(a1)   
+  121  00186 6700            beq.w  L000b6     
+  122  0018a 0829            btst.b #1,2(a1)   
+  123  00190 66c6            bne.s  L00158     
+  124  00192 234a            move.l a2,100(a1) 
+  125  00196 6000            bra.w  L000c8     
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 003
+
+  126  0019a 0829 L0019a     btst.b #7,2(a1)   
+  127  001a0 66b6            bne.s  L00158     
+  128  001a2 d0c0            adda.w d0,a0      
+  129  001a4 2b48            move.l a0,32(a5)  
+  130  001a8 2f0a            move.l a2,-(sp)   
+  131  001aa 2469            movea.l 4(a1),a2   
+  132  001ae 206a            movea.l 4(a2),a0   
+  133  001b2 41e8            lea.l  -12(a0),a0 
+  134  001b6 2008            move.l a0,d0      
+  135  001b8 2040 L001b8     movea.l d0,a0      
+  136  001ba 2028            move.l 22(a0),d0  
+  137  001be 670a            beq.s  L001ca     
+  138  001c0 b089            cmp.l  a1,d0      
+  139  001c2 66f4            bne.s  L001b8     
+  140  001c4 2169            move.l 22(a1),22(a0) 
+  141  001ca 4e40 L001ca     os9    I$Detach   
+  142  001ce 3029            move.w 0(a1),d0   
+  143  001d2 206e            movea.l D00048(a6),a0 
+  144  001d6 2f0b            move.l a3,-(sp)   
+  145  001d8 266e            movea.l D003a4(a6),a3 
+  146  001dc 487a            pea    L001ea(pc) 
+  147  001e0 2f2b            move.l 196(a3),-(sp) 
+  148  001e4 266b            movea.l 1220(a3),a3 
+  149  001e8 4e75            rts               
+  150  001ea 265f L001ea     movea.l (sp)+,a3   
+  151  001ec 225f            movea.l (sp)+,a1   
+  152  001ee 5269            addq.w #1,26(a1)  
+  153  001f2 336c            move.w 0(a4),8(a1) 
+  154  001f8 7000            moveq  #0,d0      
+  155  001fa 1029            move.b 112(a1),d0 
+  156  001fe 9169            dc.w   $9169      
+  157  00200 001a            dc.w   $1a        
+  158  00202 4229            clr.b  112(a1)    
+  159  00206 6100            bsr.w  L00338     
+  160  0020a 4cdf            movem.l (sp)+,a0/a2 
+  161  0020e 2089            move.l a1,(a0)    
+  162  00210 4a29            tst.b  126(a1)    
+  163  00214 6600            bne.w  L00ca6     
+  164  00218 4e75            rts               
+  165  0021a 48e7 L0021a     movem.l a0-a1,-(sp) 
+  166  0021e 41e9            lea.l  44(a1),a0  
+  167  00222 2008            move.l a0,d0      
+  168  00224 41e9            lea.l  68(a1),a0  
+  169  00228 2208            move.l a0,d1      
+  170  0022a b181            eor.l  d0,d1      
+  171  0022c 2341            move.l d1,92(a1)  
+  172  00230 2349            move.l a1,104(a1) 
+  173  00234 2349            move.l a1,108(a1) 
+  174  00238 2469            movea.l 4(a1),a2   
+  175  0023c 246a            movea.l 4(a2),a2   
+  176  00240 6100            bsr.w  L002f8     
+  177  00244 45ea            lea.l  -56(a2),a2 
+  178  00248 4aaa            tst.l  104(a2)    
+  179  0024c 6608            bne.s  L00256     
+  180  0024e 254a            move.l a2,104(a2) 
+  181  00252 254a            move.l a2,108(a2) 
+  182  00256 206d L00256     movea.l 32(a5),a0  
+  183  0025a 6100            bsr.w  L003c6     
+  184  0025e 6500            bcs.w  L002ee     
+  185  00262 0c00            cmpi.b #47,d0     
+  186  00266 6708            beq.s  L00270     
+  187  00268 2e89            move.l a1,(sp)    
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 004
+
+  188  0026a 7000            moveq  #0,d0      
+  189  0026c 6000            bra.w  L002f2     
+  190  00270 2049 L00270     movea.l a1,a0      
+  191  00272 5289            addq.l #1,a1      
+  192  00274 2e89            move.l a1,(sp)    
+  193  00276 240a L00276     move.l a2,d2      
+  194  00278 6100            bsr.w  L003c6     
+  195  0027c 6570            bcs.s  L002ee     
+  196  0027e 0c00            cmpi.b #47,d0     
+  197  00282 6708            beq.s  L0028c     
+  198  00284 2001            move.l d1,d0      
+  199  00286 0c41            cmpi.w #28,d1     
+  200  0028a 6324            bls.s  L002b0     
+  201  0028c 323c L0028c     move.w #235,d1    
+  202  00290 605c            bra.s  L002ee     
+  203  00292 43ea L00292     lea.l  224(a2),a1 
+  204  00296 2200            move.l d0,d1      
+  205  00298 2f0b            move.l a3,-(sp)   
+  206  0029a 266e            movea.l D003a4(a6),a3 
+  207  0029e 487a            pea    L002ac(pc) 
+  208  002a2 2f2b            move.l 68(a3),-(sp) 
+  209  002a6 266b            movea.l 1092(a3),a3 
+  210  002aa 4e75            rts               
+  211  002ac 265f L002ac     movea.l (sp)+,a3   
+  212  002ae 640e            bcc.s  L002be     
+  213  002b0 246a L002b0     movea.l 104(a2),a2 
+  214  002b4 b48a            cmp.l  a2,d2      
+  215  002b6 66da            bne.s  L00292     
+  216  002b8 323c L002b8     move.w #216,d1    
+  217  002bc 6030            bra.s  L002ee     
+  218  002be 226f L002be     movea.l 4(sp),a1   
+  219  002c2 322c            move.w 20(a4),d1  
+  220  002c6 670e            beq.s  L002d6     
+  221  002c8 b22a            cmp.b  114(a2),d1 
+  222  002cc 6708            beq.s  L002d6     
+  223  002ce 122a            move.b 113(a2),d1 
+  224  002d2 e609            lsr.b  #3,d1      
+  225  002d4 6004            bra.s  L002da     
+  226  002d6 122a L002d6     move.b 113(a2),d1 
+  227  002da c229 L002da     and.b  2(a1),d1   
+  228  002de 1429            move.b 2(a1),d2   
+  229  002e2 b501            eor.b  d2,d1      
+  230  002e4 0201            andi.b #7,d1      
+  231  002e8 6708            beq.s  L002f2     
+  232  002ea 323c            move.w #214,d1    
+  233  002ee 003c L002ee     ori    #1,ccr     
+  234  002f2 4cdf L002f2     movem.l (sp)+,a0-a1 
+  235  002f6 4e75            rts               
+  236  002f8 48e7 L002f8     movem.l d0-d1,-(sp) 
+  237  002fc 40c1 L002fc     move   sr,d1      
+  238  002fe 007c            ori    #1792,sr   
+  239  00302 302a            move.w 56(a2),d0  
+  240  00306 6720            beq.s  L00328     
+  241  00308 b06c            cmp.w  0(a4),d0   
+  242  0030c 671a            beq.s  L00328     
+  243  0030e 46c1            move   d1,sr      
+  244  00310 2f0b            move.l a3,-(sp)   
+  245  00312 266e            movea.l D003a4(a6),a3 
+  246  00316 487a            pea    L00324(pc) 
+  247  0031a 2f2b            move.l 172(a3),-(sp) 
+  248  0031e 266b            movea.l 1196(a3),a3 
+  249  00322 4e75            rts               
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 005
+
+  250  00324 265f L00324     movea.l (sp)+,a3   
+  251  00326 60d4            bra.s  L002fc     
+  252  00328 356c L00328     move.w 0(a4),56(a2) 
+  253  0032e 46c1            move   d1,sr      
+  254  00330 614c            bsr.s  L0037e     
+  255  00332 4cdf            movem.l (sp)+,d0-d1 
+  256  00336 4e75            rts               
+  257  00338 48e7 L00338     movem.l a2/d0-d2,-(sp) 
+  258  0033c 40c2            move   sr,d2      
+  259  0033e 2469            movea.l 4(a1),a2   
+  260  00342 246a            movea.l 4(a2),a2   
+  261  00346 302a            move.w 56(a2),d0  
+  262  0034a b06c            cmp.w  0(a4),d0   
+  263  0034e 6622            bne.s  L00372     
+  264  00350 426a            clr.w  56(a2)     
+  265  00354 302c            move.w 726(a4),d0 
+  266  00358 6718            beq.s  L00372     
+  267  0035a 7201            moveq  #1,d1      
+  268  0035c 2f0b            move.l a3,-(sp)   
+  269  0035e 266e            movea.l D003a4(a6),a3 
+  270  00362 487a            pea    L00370(pc) 
+  271  00366 2f2b            move.l 32(a3),-(sp) 
+  272  0036a 266b            movea.l 1056(a3),a3 
+  273  0036e 4e75            rts               
+  274  00370 265f L00370     movea.l (sp)+,a3   
+  275  00372 52ac L00372     addq.l #1,940(a4) 
+  276  00376 46c2            move   d2,sr      
+  277  00378 4cdf            movem.l (sp)+,a2/d0-d2 
+  278  0037c 4e75            rts               
+  279  0037e 598f L0037e     subq.l #4,sp      
+  280  00380 40ef            move   sr,0(sp)   
+  281  00384 53ac            subq.l #1,940(a4) 
+  282  00388 6634            bne.s  L003be     
+  283  0038a 082c            btst.b #5,28(a4)  
+  284  00390 672c            beq.s  L003be     
+  285  00392 4aae            tst.l  D008bc(a6) 
+  286  00396 6626            bne.s  L003be     
+  287  00398 48e7            movem.l a5/d0-d1,-(sp) 
+  288  0039c 598f            subq.l #4,sp      
+  289  0039e 2a4f            movea.l sp,a5      
+  290  003a0 7001            moveq  #1,d0      
+  291  003a2 2f0b            move.l a3,-(sp)   
+  292  003a4 266e            movea.l D003a4(a6),a3 
+  293  003a8 487a            pea    L003b6(pc) 
+  294  003ac 2f2b            move.l 40(a3),-(sp) 
+  295  003b0 266b            movea.l 1064(a3),a3 
+  296  003b4 4e75            rts               
+  297  003b6 265f L003b6     movea.l (sp)+,a3   
+  298  003b8 588f            addq.l #4,sp      
+  299  003ba 4cdf            movem.l (sp)+,a5/d0-d1 
+  300  003be 44ef L003be     move   0(sp),ccr  
+  301  003c2 588f            addq.l #4,sp      
+  302  003c4 4e75            rts               
+  303  003c6 4e40 L003c6     os9    F$PrsNam   
+  304  003ca 651e            bcs.s  L003ea     
+  305  003cc 4a00            tst.b  d0         
+  306  003ce 671a            beq.s  L003ea     
+  307  003d0 0c00            cmpi.b #47,d0     
+  308  003d4 6714            beq.s  L003ea     
+  309  003d6 0c00            cmpi.b #13,d0     
+  310  003da 670e            beq.s  L003ea     
+  311  003dc 0c00            cmpi.b #32,d0     
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 006
+
+  312  003e0 6708            beq.s  L003ea     
+  313  003e2 323c Delete     move.w #235,d1    
+  314  003e6 003c            ori    #1,ccr     
+  315  003ea 4e75 L003ea     rts               
+  316  003ec 206d L003ec     movea.l 32(a5),a0  
+  317  003f0 2469            movea.l 4(a1),a2   
+  318  003f4 246a            movea.l 4(a2),a2   
+  319  003f8 6100            bsr.w  L002f8     
+  320  003fc 45ea            lea.l  -56(a2),a2 
+  321  00400 48e7            movem.l a0-a1,-(sp) 
+  322  00404 2008            move.l a0,d0      
+  323  00406 6700            beq.w  L0028c     
+  324  0040a 7000            moveq  #0,d0      
+  325  0040c 4a10            tst.b  (a0)       
+  326  0040e 6600            bne.w  L00276     
+  327  00410 2213538 Chgdir     equ    *-2        
+  328  00412 6000            bra.w  L002b8     
+  329  00416 323c L00416     move.w #253,d1    
+  330  0041a 003c Close      ori    #1,ccr     
+  331  0041e 6000            bra.w  L00338     
+  332  00422 2f08            move.l a0,-(sp)   
+  333  00424 6100            bsr.w  L0021a     
+  334  00428 205f            movea.l (sp)+,a0   
+  335  0042a 6500            bcs.w  L00338     
+  336  0042e 4a40            tst.w  d0         
+  337  00430 6700            beq.w  L00338     
+  338  00434 4a2a            tst.b  112(a2)    
+  339  00438 67dc            beq.s  L00416     
+  340  0043a 487a            pea    L00446(pc) 
+  341  0043e 48e7            movem.l a0/a2,-(sp) 
+  342  00442 6000            bra.w  L0019a     
+  343  00446 42a9 L00446     clr.l  48(a1)     
+  344  0044a 4269            clr.w  26(a1)     
+  345  0044e 600a            bra.s  L0045a     
+  346  00450 323c            move.w #208,d1    
+  347  00454 003c            ori    #1,ccr     
+  348  00458 4e75            rts               
+  349  0045a 47e9 L0045a     lea.l  44(a1),a3  
+  350  0045e 302b            move.w 12(a3),d0  
+  351  00462 b069            cmp.w  8(a1),d0   
+  352  00466 6604            bne.s  L0046c     
+  353  00468 6100            bsr.w  L009e8     
+  354  0046c 3029 L0046c     move.w 26(a1),d0  
+  355  00470 664e            bne.s  L004c0     
+  356  00472 4a29            tst.b  224(a1)    
+  357  00476 6716            beq.s  L0048e     
+  358  00478 4aa9            tst.l  48(a1)     
+  359  0047c 6638            bne.s  L004b6     
+  360  0047e 2469            movea.l 4(a1),a2   
+  361  00482 246a            movea.l 4(a2),a2   
+  362  00486 6100            bsr.w  L002f8     
+  363  0048a 6100            bsr.w  L0078e     
+  364  0048e 2029 L0048e     move.l 130(a1),d0 
+  365  00492 0c80            cmpi.l #90,d0     
+  366  00498 677a            beq.s  L00514     
+  367  0049a 2469            movea.l 14(a1),a2  
+  368  0049e 2f0b            move.l a3,-(sp)   
+  369  004a0 266e            movea.l D003a4(a6),a3 
+  370  004a4 487a            pea    L004b2(pc) 
+  371  004a8 2f2b            move.l 164(a3),-(sp) 
+  372  004ac 266b            movea.l 1188(a3),a3 
+  373  004b0 4e75            rts               
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 007
+
+  374  004b2 265f L004b2     movea.l (sp)+,a3   
+  375  004b4 4e75            rts               
+  376  004b6 5269 L004b6     addq.w #1,26(a1)  
+  377  004ba 5229            addq.b #1,112(a1) 
+  378  004be 4e75            rts               
+  379  004c0 41e9 L004c0     lea.l  44(a1),a0  
+  380  004c4 3028            move.w 16(a0),d0  
+  381  004c8 3229            move.w 84(a1),d1  
+  382  004cc d041            add.w  d1,d0      
+  383  004ce 6742            beq.s  L00512     
+  384  004d0 b068            cmp.w  16(a0),d0  
+  385  004d2 0000 Seek       equ    *-2        
+  386  004d4 670a            beq.s  L004e0     
+  387  004d6 41e9 Getstat    lea.l  68(a1),a0  
+  388  004da b068            cmp.w  16(a0),d0  
+  389  004de 6632            bne.s  L00512     
+  390  004e0 3028 L004e0     move.w 12(a0),d0  
+  391  004e4 672e            beq.s  L00514     
+  392  004e6 3228            move.w 14(a0),d1  
+  393  004ea 6728            beq.s  L00514     
+  394  004ec 4268            clr.w  14(a0)     
+  395  004f0 08a8            bclr.b #0,18(a0)  
+  396  004f6 6704            beq.s  L004fc     
+  397  004f8 4268            clr.w  12(a0)     
+  398  004fc 2f0b L004fc     move.l a3,-(sp)   
+  399  004fe 266e            movea.l D003a4(a6),a3 
+  400  00502 487a            pea    L00510(pc) 
+  401  00506 2f2b            move.l 32(a3),-(sp) 
+  402  0050a 266b            movea.l 1056(a3),a3 
+  403  0050e 4e75            rts               
+  404  00510 265f L00510     movea.l (sp)+,a3   
+  405  00512 7200 L00512     moveq  #0,d1      
+  406  00514 4e75 L00514     rts               
+  407  00516 322d            move.w 6(a5),d1   
+  408  0051a 0c41            cmpi.w #0,d1      
+  409  0051e 6716            beq.s  L00536     
+  410  00520 0c41            cmpi.w #1,d1      
+  411  00524 6612            bne.s  L00538     
+  412  00526 2b69            move.l 48(a1),4(a5) 
+  413  0052c 6608            bne.s  L00536     
+  414  0052e 323c L0052e     move.w #246,d1    
+  415  00532 003c L00532     ori    #1,ccr     
+  416  00536 4e75 L00536     rts               
+  417  00538 0c41 L00538     cmpi.w #6,d1      
+  418  0053c 6640            bne.s  L0057e     
+  419  0053e 7200            moveq  #0,d1      
+  420  00540 3229            move.w 60(a1),d1  
+  421  00544 5241            addq.w #1,d1      
+  422  00546 b269            cmp.w  26(a1),d1  
+  423  0054a 65c6            bcs.s  L00512     
+  424  0054c 2229            move.l 48(a1),d1  
+  425  00550 66e4            bne.s  L00536     
+  426  00552 0829            btst.b #7,2(a1)   
+  427  00558 671e            beq.s  L00578     
+  428  0055a 2069            movea.l 100(a1),a0 
+  429  0055e 2468            movea.l 104(a0),a2 
+  430  00562 b1ea            cmpa.l 108(a2),a0 
+  431  00566 6610            bne.s  L00578     
+  432  00568 2069            movea.l 4(a1),a0   
+  433  0056c 2068            movea.l 4(a0),a0   
+  434  00570 41e8            lea.l  -56(a0),a0 
+  435  00574 b1ca            cmpa.l a2,a0      
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 008
+
+  436  00576 669a            bne.s  L00512     
+  437  00578 323c L00578     move.w #211,d1    
+  438  0057c 60b4            bra.s  L00532     
+  439  0057e 0c41 L0057e     cmpi.w #15,d1     
+  440  00582 665a            bne.s  L005de     
+  441  00584 1369 L00584     move.b 27(a1),121(a1) 
+  442  0058a 6606            bne.s  L00592     
+  443  0058c 137c            move.b #255,121(a1) 
+  444  00592 2369 L00592     move.l 48(a1),122(a1) 
+  445  00598 720d            moveq  #13,d1     
+  446  0059a b2ad            cmp.l  8(a5),d1   
+  447  0059e 6304            bls.s  L005a4     
+  448  005a0 222d            move.l 8(a5),d1   
+  449  005a4 246d L005a4     movea.l 32(a5),a2  
+  450  005a8 082d            btst.b #5,64(a5)  
+  451  005ae 6620            bne.s  L005d0     
+  452  005b0 2001            move.l d1,d0      
+  453  005b2 2f01            move.l d1,-(sp)   
+  454  005b4 7202            moveq  #2,d1      
+  455  005b6 2f0b            move.l a3,-(sp)   
+  456  005b8 266e            movea.l D003a4(a6),a3 
+  457  005bc 487a            pea    L005ca(pc) 
+  458  005c0 2f2b            move.l 352(a3),-(sp) 
+  459  005c4 266b            movea.l 1376(a3),a3 
+  460  005c8 4e75            rts               
+  461  005ca 265f L005ca     movea.l (sp)+,a3   
+  462  005cc 650a            bcs.s  L005d8     
+  463  005ce 221f            move.l (sp)+,d1   
+  464  005d0 41e9 L005d0     lea.l  113(a1),a0 
+  465  005d4 6000            bra.w  L007c4     
+  466  005d8 4fef L005d8     lea.l  4(sp),a7   
+  467  005dc 4e75            rts               
+  468  005de 0c41 L005de     cmpi.w #2,d1      
+  469  005e2 6608            bne.s  L005ec     
+  470  005e4 2b69            move.l 130(a1),8(a5) 
+  471  005ea 4e75            rts               
+  472  005ec 0c41 L005ec     cmpi.w #32,d1     
+  473  005f0 663a            bne.s  L0062c     
+  474  005f2 4a6c            tst.w  20(a4)     
+  475  005f6 6708            beq.s  L00600     
+  476  005f8 082d            btst.b #5,64(a5)  
+  477  005fe 6722            beq.s  L00622     
+  478  00600 2469 L00600     movea.l 4(a1),a2   
+  479  00604 246a            movea.l 4(a2),a2   
+  480  00608 45ea            lea.l  -56(a2),a2 
+  481  0060c 224a            movea.l a2,a1      
+  482  0060e 2269 L0060e     movea.l 104(a1),a1 
+  483  00612 b689            cmp.l  a1,d3      
+  484  00614 6700 Setstat    beq.w  L00584     
+  485  00618 b5c9            cmpa.l a1,a2      
+  486  0061a 66f2            bne.s  L0060e     
+  487  0061c 323c            move.w #241,d1    
+  488  00620 6004            bra.s  L00626     
+  489  00622 323c L00622     move.w #164,d1    
+  490  00626 003c L00626     ori    #1,ccr     
+  491  0062a 4e75            rts               
+  492  0062c 7206 L0062c     moveq  #6,d1      
+  493  0062e 48e7 L0062e     movem.l a1/a4-a6,-(sp) 
+  494  00632 2069            movea.l 4(a1),a0   
+  495  00636 2468            movea.l 4(a0),a2   
+  496  0063a 2068            movea.l 0(a0),a0   
+  497  0063e d2a8            add.l  48(a0),d1  
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 009
+
+  498  00642 3230            move.w (a0,d1.w),d1 
+  499  00646 202d            move.l 0(a5),d0   
+  500  0064a 4eb0            jsr    (a0,d1.w)  
+  501  0064e 4cdf            movem.l (sp)+,a1/a4-a6 
+  502  00652 4e75 L00652     rts               
+  503  00654 322d            move.w 6(a5),d1   
+  504  00658 0c41            cmpi.w #0,d1      
+  505  0065c 67f4            beq.s  L00652     
+  506  0065e 0c41            cmpi.w #26,d1     
+  507  00662 6632            bne.s  L00696     
+  508  00664 41e9            lea.l  44(a1),a0  
+  509  00668 4a68            tst.w  12(a0)     
+  510  0066c 6600            bne.w  L0052e     
+  511  00670 4a68            tst.w  16(a0)     
+  512  00674 6600            bne.w  L0052e     
+  513  00678 3169            move.w 8(a1),12(a0) 
+  514  0067e 316d            move.w 10(a5),14(a0) 
+  515  00684 08e8            bset.b #0,18(a0)  
+  516  0068a 4aa9            tst.l  48(a1)     
+  517  0068e 6704            beq.s  L00694     
+  518  00690 6100            bsr.w  L004e0     
+  519  00694 4e75 L00694     rts               
+  520  00696 0c41 L00696     cmpi.w #27,d1     
+  521  0069a 6612            bne.s  L006ae     
+  522  0069c 47e9            lea.l  44(a1),a3  
+  523  006a0 302b            move.w 12(a3),d0  
+  524  006a4 b069            cmp.w  8(a1),d0   
+  525  006a8 667e            bne.s  L00728     
+  526  006aa 6000            bra.w  L009e8     
+  527  006ae 0c41 L006ae     cmpi.w #2,d1      
+  528  006b2 661a            bne.s  L006ce     
+  529  006b4 242d            move.l 8(a5),d2   
+  530  006b8 666e            bne.s  L00728     
+  531  006ba 4a69            tst.w  56(a1)     
+  532  006be 6668            bne.s  L00728     
+  533  006c0 4a69            tst.w  80(a1)     
+  534  006c4 6662            bne.s  L00728     
+  535  006c6 48e7            movem.l a0/a2,-(sp) 
+  536  006ca 6000            bra.w  L00118     
+  537  006ce 0c41 L006ce     cmpi.w #15,d1     
+  538  006d2 663c            bne.s  L00710     
+  539  006d4 4a6c            tst.w  20(a4)     
+  540  006d8 664e            bne.s  L00728     
+  541  006da 246d            movea.l 32(a5),a2  
+  542  006de 082d            btst.b #5,64(a5)  
+  543  006e4 661c            bne.s  L00702     
+  544  006e6 7003            moveq  #3,d0      
+  545  006e8 7201            moveq  #1,d1      
+  546  006ea 2f0b            move.l a3,-(sp)   
+  547  006ec 266e            movea.l D003a4(a6),a3 
+  548  006f0 487a            pea    L006fe(pc) 
+  549  006f4 2f2b            move.l 352(a3),-(sp) 
+  550  006f8 266b            movea.l 1376(a3),a3 
+  551  006fc 4e75            rts               
+  552  006fe 265f L006fe     movea.l (sp)+,a3   
+  553  00700 6526            bcs.s  L00728     
+  554  00702 136a L00702     move.b 1(a2),114(a1) 
+  555  00708 136a            move.b 2(a2),115(a1) 
+  556  0070e 6018            bra.s  L00728     
+  557  00710 0c41 L00710     cmpi.w #28,d1     
+  558  00714 661e            bne.s  L00734     
+  559  00716 322c            move.w 20(a4),d1  
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 010
+
+  560  0071a 6706            beq.s  L00722     
+  561  0071c b229            cmp.b  114(a1),d1 
+  562  00720 6608            bne.s  L0072a     
+  563  00722 136d L00722     move.b 11(a5),113(a1) 
+  564  00728 4e75 L00728     rts               
+  565  0072a 323c L0072a     move.w #214,d1    
+  566  0072e 003c L0072e     ori    #1,ccr     
+  567  00732 4e75            rts               
+  568  00734 0c41 L00734     cmpi.w #47,d1     
+  569  00738 6706            beq.s  L00740     
+  570  0073a 0c41            cmpi.w #66,d1     
+  571  0073e 6670            bne.s  L007b0     
+  572  00740 6100 L00740     bsr.w  L003ec     
+  573  00744 6508            bcs.s  L0074e     
+  574  00746 b5c9            cmpa.l a1,a2      
+  575  00748 6710            beq.s  L0075a     
+  576  0074a 323c            move.w #218,d1    
+  577  0074e 0c41 L0074e     cmpi.w #216,d1    
+  578  00752 6706            beq.s  L0075a     
+  579  00754 6100            bsr.w  L00338     
+  580  00758 60d4            bra.s  L0072e     
+  581  0075a 4a29 L0075a     tst.b  224(a1)    
+  582  0075e 661a            bne.s  L0077a     
+  583  00760 526a            addq.w #1,102(a2) 
+  584  00764 236a            move.l 108(a2),108(a1) 
+  585  0076a 2549            move.l a1,108(a2) 
+  586  0076e 234a            move.l a2,104(a1) 
+  587  00772 2469            movea.l 108(a1),a2 
+  588  00776 2549            move.l a1,104(a2) 
+  589  0077a 45e9 L0077a     lea.l  224(a1),a2 
+  590  0077e 4232            clr.b  (a2,d0.l)  
+  591  00782 2200            move.l d0,d1      
+  592  00784 6708            beq.s  L0078e     
+  593  00786 6100            bsr.w  L007c4     
+  594  0078a 6000            bra.w  L00338     
+  595  0078e 4ce9 L0078e     movem.l 104(a1),a0/a2 
+  596  00794 2569            move.l 104(a1),104(a2) 
+  597  0079a 2169            move.l 108(a1),108(a0) 
+  598  007a0 2069            movea.l 4(a1),a0   
+  599  007a4 2068            movea.l 4(a0),a0   
+  600  007a8 5368            subq.w #1,46(a0)  
+  601  007ac 6000            bra.w  L00338     
+  602  007b0 0c41 L007b0     cmpi.w #29,d1     
+  603  007b4 6608            bne.s  L007be     
+  604  007b6 5229            addq.b #1,126(a1) 
+  605  007ba 6100            bsr.w  L004c0     
+  606  007be 7208 L007be     moveq  #8,d1      
+  607  007c0 6000            bra.w  L0062e     
+  608  007c4 0c81 L007c4     cmpi.l #12,d1     
+  609  007ca 6538            bcs.s  L00804     
+  610  007cc 3808            move.w a0,d4      
+  611  007ce 0804            btst.l #0,d4      
+  612  007d2 6704 Read       beq.s  L007d8     
+  613  007d4 14d8            move.b (a0)+,(a2)+ 
+  614  007d6 5381            subq.l #1,d1      
+  615  007d8 380a L007d8     move.w a2,d4      
+  616  007da 0804            btst.l #0,d4      
+  617  007de 6624            bne.s  L00804     
+  618  007e0 e289            lsr.l  #1,d1      
+  619  007e2 6406            bcc.s  L007ea     
+  620  007e4 6104            bsr.s  L007ea     
+  621  007e6 14d8            move.b (a0)+,(a2)+ 
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 011
+
+  622  007e8 4e75            rts               
+  623  007ea e289 L007ea     lsr.l  #1,d1      
+  624  007ec 6406 Write      bcc.s  L007f4     
+  625  007ee 34d8            move.w (a0)+,(a2)+ 
+  626  007f0 6002            bra.s  L007f4     
+  627  007f2 24d8 L007f2     move.l (a0)+,(a2)+ 
+  628  007f4 51c9 L007f4     dbra   d1,L007f2  
+  629  007f8 5241            addq.w #1,d1      
+  630  007fa 5381            subq.l #1,d1      
+  631  007fc 64f4            bcc.s  L007f2     
+  632  007fe 7200            moveq  #0,d1      
+  633  00800 4e75 Readln     rts               
+  634  00802 14d8 L00802     move.b (a0)+,(a2)+ 
+  635  00804 51c9 L00804     dbra   d1,L00802  
+  636  00808 5241            addq.w #1,d1      
+  637  0080a 5381            subq.l #1,d1      
+  638  0080c 64f4            bcc.s  L00802     
+  639  0080e 7200            moveq  #0,d1      
+  640  00810 4e75            rts               
+  641  00812 4aad            tst.l  4(a5)      
+  642  00816 6608            bne.s  L00820     
+  643  00818 0829            btst.b #0,62(a1)  
+  644  0081e 664c            bne.s  L0086c     
+  645  00820 7eff L00820     moveq  #255,d7    
+  646  00822 41fa            lea.l  L007c4(pc),a0 
+  647  00826 47e9            lea.l  44(a1),a3  
+  648  0082a 6066            bra.s  L00892     
+  649  0082c 7eff            moveq  #255,d7    
+  650  0082e 41fa            lea.l  L00838(pc),a0 
+  651  00830 0000 Writeln    equ    *-2        
+  652  00832 47e9            lea.l  68(a1),a3  
+  653  00836 605a            bra.s  L00892     
+  654  00838 c14a L00838     dc.w   $c14a      
+  655  0083a 6188            bsr.s  L007c4     
+  656  0083c c14a            dc.w   $c14a      
+  657  0083e 4e75 L0083e     rts               
+  658  00840 4aad            tst.l  4(a5)      
+  659  00844 6608            bne.s  L0084e     
+  660  00846 0829            btst.b #0,62(a1)  
+  661  0084c 661e            bne.s  L0086c     
+  662  0084e 7e0d L0084e     moveq  #13,d7     
+  663  00850 41fa            lea.l  L00860(pc),a0 
+  664  00854 47e9            lea.l  44(a1),a3  
+  665  00858 6038            bra.s  L00892     
+  666  0085a 1018 L0085a     move.b (a0)+,d0   
+  667  0085c 14c0            move.b d0,(a2)+   
+  668  0085e be00            cmp.b  d0,d7      
+  669  00860 57c9 L00860     dbeq   d1,L0085a  
+  670  00864 6706            beq.s  L0086c     
+  671  00866 5241            addq.w #1,d1      
+  672  00868 5381            subq.l #1,d1      
+  673  0086a 64ee            bcc.s  L0085a     
+  674  0086c 7200 L0086c     moveq  #0,d1      
+  675  0086e 4e75            rts               
+  676  00870 7e0d            moveq  #13,d7     
+  677  00872 41fa            lea.l  L00882(pc),a0 
+  678  00876 47e9            lea.l  68(a1),a3  
+  679  0087a 6016            bra.s  L00892     
+  680  0087c 101a L0087c     move.b (a2)+,d0   
+  681  0087e 10c0            move.b d0,(a0)+   
+  682  00880 be00            cmp.b  d0,d7      
+  683  00882 57c9 L00882     dbeq   d1,L0087c  
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 012
+
+  684  00886 6706            beq.s  L0088e     
+  685  00888 5241            addq.w #1,d1      
+  686  0088a 5381            subq.l #1,d1      
+  687  0088c 64ee            bcc.s  L0087c     
+  688  0088e 7200 L0088e     moveq  #0,d1      
+  689  00890 4e75            rts               
+  690  00892 2a08 L00892     move.l a0,d5      
+  691  00894 6100            bsr.w  L00a2a     
+  692  00898 65a4            bcs.s  L0083e     
+  693  0089a 246d            movea.l 32(a5),a2  
+  694  0089e 2c2d            move.l 4(a5),d6   
+  695  008a2 6700            beq.w  L009e8     
+  696  008a6 6100            bsr.w  L00ac4     
+  697  008aa 6100            bsr.w  L0037e     
+  698  008ae 4a07 L008ae     tst.b  d7         
+  699  008b0 6a00            bpl.w  L00974     
+  700  008b4 200b            move.l a3,d0      
+  701  008b6 2229            move.l 92(a1),d1  
+  702  008ba b380            eor.l  d1,d0      
+  703  008bc 2040            movea.l d0,a0      
+  704  008be 4a68            tst.w  12(a0)     
+  705  008c2 6700            beq.w  L00974     
+  706  008c6 4a28            tst.b  18(a0)     
+  707  008ca 6b0a            bmi.s  L008d6     
+  708  008cc 4aab            tst.l  4(a3)      
+  709  008d0 6600            bne.w  L00974     
+  710  008d4 6008            bra.s  L008de     
+  711  008d6 4aa8 L008d6     tst.l  4(a0)      
+  712  008da 6600            bne.w  L00974     
+  713  008de 4aa8 L008de     tst.l  8(a0)      
+  714  008e2 6700            beq.w  L00974     
+  715  008e6 2068            movea.l 8(a0),a0   
+  716  008ea 4aa8            tst.l  4(a0)      
+  717  008ee 6a00            bpl.w  L00974     
+  718  008f2 4aa8            tst.l  0(a0)      
+  719  008f6 6700            beq.w  L00974     
+  720  008fa bca8            cmp.l  0(a0),d6   
+  721  008fe 6206            bhi.s  L00906     
+  722  00900 2206            move.l d6,d1      
+  723  00902 6000            bra.w  L0090e     
+  724  00906 2228 L00906     move.l 0(a0),d1   
+  725  0090a 6000            bra.w  L0090e     
+  726  0090e 2f08 L0090e     move.l a0,-(sp)   
+  727  00910 2068            movea.l 8(a0),a0   
+  728  00914 7000            moveq  #0,d0      
+  729  00916 240a            move.l a2,d2      
+  730  00918 0c81            cmpi.l #256,d1    
+  731  0091e 6330            bls.s  L00950     
+  732  00920 4a2b            tst.b  18(a3)     
+  733  00924 6b02            bmi.s  L00928     
+  734  00926 c14a            dc.w   $c14a      
+  735  00928 c342 L00928     exg    d1,d2      
+  736  0092a 2f0b            move.l a3,-(sp)   
+  737  0092c 266e            movea.l D003a4(a6),a3 
+  738  00930 487a            pea    L0093e(pc) 
+  739  00934 2f2b            move.l 224(a3),-(sp) 
+  740  00938 266b            movea.l 1248(a3),a3 
+  741  0093c 4e75            rts               
+  742  0093e 265f L0093e     movea.l (sp)+,a3   
+  743  00940 d1c2            adda.l d2,a0      
+  744  00942 d5c2            adda.l d2,a2      
+  745  00944 c342            exg    d1,d2      
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 013
+
+  746  00946 4a2b            tst.b  18(a3)     
+  747  0094a 6b0a            bmi.s  L00956     
+  748  0094c c14a            dc.w   $c14a      
+  749  0094e 6006            bra.s  L00956     
+  750  00950 cb8d L00950     exg    d5,a5      
+  751  00952 4e95            jsr    (a5)       
+  752  00954 cb8d            exg    d5,a5      
+  753  00956 205f L00956     movea.l (sp)+,a0   
+  754  00958 948a            sub.l  a2,d2      
+  755  0095a 2202            move.l d2,d1      
+  756  0095c 4481            neg.l  d1         
+  757  0095e d3a8            add.l  d1,8(a0)   
+  758  00962 d5a8            add.l  d2,0(a0)   
+  759  00966 dc82            add.l  d2,d6      
+  760  00968 6752            beq.s  L009bc     
+  761  0096a be00            cmp.b  d0,d7      
+  762  0096c 6606            bne.s  L00974     
+  763  0096e 6100 L0096e     bsr.w  L00b46     
+  764  00972 654c            bcs.s  L009c0     
+  765  00974 4a86 L00974     tst.l  d6         
+  766  00976 6744            beq.s  L009bc     
+  767  00978 222b            move.l 4(a3),d1   
+  768  0097c 67f0            beq.s  L0096e     
+  769  0097e b286            cmp.l  d6,d1      
+  770  00980 6302            bls.s  L00984     
+  771  00982 2206            move.l d6,d1      
+  772  00984 2029 L00984     move.l 96(a1),d0  
+  773  00988 206b            movea.l 0(a3),a0   
+  774  0098c 9088            sub.l  a0,d0      
+  775  0098e b280            cmp.l  d0,d1      
+  776  00990 6302            bls.s  L00994     
+  777  00992 2200            move.l d0,d1      
+  778  00994 7000 L00994     moveq  #0,d0      
+  779  00996 240a            move.l a2,d2      
+  780  00998 cb8d            exg    d5,a5      
+  781  0099a 4e95            jsr    (a5)       
+  782  0099c cb8d            exg    d5,a5      
+  783  0099e b1e9            cmpa.l 96(a1),a0  
+  784  009a2 6504            bcs.s  L009a8     
+  785  009a4 2069            movea.l 14(a1),a0  
+  786  009a8 2748 L009a8     move.l a0,0(a3)   
+  787  009ac 948a            sub.l  a2,d2      
+  788  009ae d5ab            add.l  d2,4(a3)   
+  789  009b2 dc82            add.l  d2,d6      
+  790  009b4 6706            beq.s  L009bc     
+  791  009b6 be00            cmp.b  d0,d7      
+  792  009b8 6600            bne.w  L008ae     
+  793  009bc 023c L009bc     andi   #-2,ccr    
+  794  009c0 40c2 L009c0     move   sr,d2      
+  795  009c2 95ed            suba.l 32(a5),a2  
+  796  009c6 2b4a            move.l a2,4(a5)   
+  797  009ca 4a2b            tst.b  18(a3)     
+  798  009ce 6a0e            bpl.s  L009de     
+  799  009d0 200a            move.l a2,d0      
+  800  009d2 6608            bne.s  L009dc     
+  801  009d4 323c            move.w #211,d1    
+  802  009d8 003c            ori    #1,ccr     
+  803  009dc 40c2 L009dc     move   sr,d2      
+  804  009de 52ac L009de     addq.l #1,940(a4) 
+  805  009e2 6100            bsr.w  L00b06     
+  806  009e6 6002            bra.s  L009ea     
+  807  009e8 40c2 L009e8     move   sr,d2      
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 014
+
+  808  009ea 2f01 L009ea     move.l d1,-(sp)   
+  809  009ec 200b            move.l a3,d0      
+  810  009ee 2229            move.l 92(a1),d1  
+  811  009f2 b380            eor.l  d1,d0      
+  812  009f4 2040            movea.l d0,a0      
+  813  009f6 2029            move.l 130(a1),d0 
+  814  009fa 90ab            sub.l  4(a3),d0   
+  815  009fe 2140            move.l d0,4(a0)   
+  816  00a02 4a68            tst.w  12(a0)     
+  817  00a06 6712            beq.s  L00a1a     
+  818  00a08 0828            btst.b #0,18(a0)  
+  819  00a0e 6706            beq.s  L00a16     
+  820  00a10 4aa8            tst.l  4(a0)      
+  821  00a14 6704            beq.s  L00a1a     
+  822  00a16 6100 L00a16     bsr.w  L004e0     
+  823  00a1a 426b L00a1a     clr.w  12(a3)     
+  824  00a1e 08ab            bclr.b #0,18(a3)  
+  825  00a24 221f            move.l (sp)+,d1   
+  826  00a26 46c2            move   d2,sr      
+  827  00a28 4e75            rts               
+  828  00a2a 4a29 L00a2a     tst.b  126(a1)    
+  829  00a2e 6600            bne.w  L00ca6     
+  830  00a32 302b            move.w 12(a3),d0  
+  831  00a36 6608            bne.s  L00a40     
+  832  00a38 3769            move.w 8(a1),12(a3) 
+  833  00a3e 4e75            rts               
+  834  00a40 082b L00a40     btst.b #0,18(a3)  
+  835  00a46 6600            bne.w  L0052e     
+  836  00a4a b069            cmp.w  8(a1),d0   
+  837  00a4e 6772            beq.s  L00ac2     
+  838  00a50 526b            addq.w #1,16(a3)  
+  839  00a54 7200            moveq  #0,d1      
+  840  00a56 322b            move.w 16(a3),d1  
+  841  00a5a 4a2b            tst.b  18(a3)     
+  842  00a5e 6a06            bpl.s  L00a66     
+  843  00a60 3029            move.w 84(a1),d0  
+  844  00a64 6004            bra.s  L00a6a     
+  845  00a66 3029 L00a66     move.w 60(a1),d0  
+  846  00a6a d041 L00a6a     add.w  d1,d0      
+  847  00a6c b240            cmp.w  d0,d1      
+  848  00a6e 6606            bne.s  L00a76     
+  849  00a70 204b            movea.l a3,a0      
+  850  00a72 6100            bsr.w  L004e0     
+  851  00a76 4269 L00a76     clr.w  8(a1)      
+  852  00a7a 302b            move.w 12(a3),d0  
+  853  00a7e 2f0b L00a7e     move.l a3,-(sp)   
+  854  00a80 266e            movea.l D003a4(a6),a3 
+  855  00a84 487a            pea    L00a92(pc) 
+  856  00a88 2f2b            move.l 172(a3),-(sp) 
+  857  00a8c 266b            movea.l 1196(a3),a3 
+  858  00a90 4e75            rts               
+  859  00a92 265f L00a92     movea.l (sp)+,a3   
+  860  00a94 652c            bcs.s  L00ac2     
+  861  00a96 3029            move.w 8(a1),d0   
+  862  00a9a 66e2            bne.s  L00a7e     
+  863  00a9c 336c            move.w 0(a4),8(a1) 
+  864  00aa2 536b            subq.w #1,16(a3)  
+  865  00aa6 322c            move.w 38(a4),d1  
+  866  00aaa 6700            beq.w  L00a2a     
+  867  00aae 0c41            cmpi.w #32,d1     
+  868  00ab2 650a            bcs.s  L00abe     
+  869  00ab4 082c            btst.b #1,28(a4)  
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 015
+
+  870  00aba 6700            beq.w  L00a2a     
+  871  00abe 003c L00abe     ori    #1,ccr     
+  872  00ac2 4e75 L00ac2     rts               
+  873  00ac4 48e7 L00ac4     movem.l a0/d0-d1,-(sp) 
+  874  00ac8 2229            move.l 92(a1),d1  
+  875  00acc 200b            move.l a3,d0      
+  876  00ace b380            eor.l  d1,d0      
+  877  00ad0 2040            movea.l d0,a0      
+  878  00ad2 0828 L00ad2     btst.b #1,18(a0)  
+  879  00ad8 6720            beq.s  L00afa     
+  880  00ada 08eb            bset.b #2,18(a3)  
+  881  00ae0 7000            moveq  #0,d0      
+  882  00ae2 2f0b            move.l a3,-(sp)   
+  883  00ae4 266e            movea.l D003a4(a6),a3 
+  884  00ae8 487a            pea    L00af6(pc) 
+  885  00aec 2f2b            move.l 40(a3),-(sp) 
+  886  00af0 266b            movea.l 1064(a3),a3 
+  887  00af4 4e75            rts               
+  888  00af6 265f L00af6     movea.l (sp)+,a3   
+  889  00af8 60d8            bra.s  L00ad2     
+  890  00afa 08eb L00afa     bset.b #1,18(a3)  
+  891  00b00 4cdf            movem.l (sp)+,a0/d0-d1 
+  892  00b04 4e75            rts               
+  893  00b06 48e7 L00b06     movem.l a0/d0-d1,-(sp) 
+  894  00b0a 2229            move.l 92(a1),d1  
+  895  00b0e 200b            move.l a3,d0      
+  896  00b10 b380            eor.l  d1,d0      
+  897  00b12 2040            movea.l d0,a0      
+  898  00b14 08ab            bclr.b #1,18(a3)  
+  899  00b1a 08a8            bclr.b #2,18(a0)  
+  900  00b20 671e            beq.s  L00b40     
+  901  00b22 7000            moveq  #0,d0      
+  902  00b24 3028            move.w 12(a0),d0  
+  903  00b28 7201            moveq  #1,d1      
+  904  00b2a 2f0b            move.l a3,-(sp)   
+  905  00b2c 266e            movea.l D003a4(a6),a3 
+  906  00b30 487a            pea    L00b3e(pc) 
+  907  00b34 2f2b            move.l 32(a3),-(sp) 
+  908  00b38 266b            movea.l 1056(a3),a3 
+  909  00b3c 4e75            rts               
+  910  00b3e 265f L00b3e     movea.l (sp)+,a3   
+  911  00b40 4cdf L00b40     movem.l (sp)+,a0/d0-d1 
+  912  00b44 4e75            rts               
+  913  00b46 0829 L00b46     btst.b #7,2(a1)   
+  914  00b4c 6600            bne.w  L00cac     
+  915  00b50 200b            move.l a3,d0      
+  916  00b52 2229            move.l 92(a1),d1  
+  917  00b56 b380            eor.l  d1,d0      
+  918  00b58 2040            movea.l d0,a0      
+  919  00b5a 52ac            addq.l #1,940(a4) 
+  920  00b5e 2029            move.l 130(a1),d0 
+  921  00b62 90ab            sub.l  4(a3),d0   
+  922  00b66 2140            move.l d0,4(a0)   
+  923  00b6a 7200            moveq  #0,d1      
+  924  00b6c 322b            move.w 16(a3),d1  
+  925  00b70 5241            addq.w #1,d1      
+  926  00b72 b269            cmp.w  26(a1),d1  
+  927  00b76 6610            bne.s  L00b88     
+  928  00b78 4a29            tst.b  224(a1)    
+  929  00b7c 6700            beq.w  L00c98     
+  930  00b80 4aa9            tst.l  48(a1)     
+  931  00b84 6700            beq.w  L00c98     
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 016
+
+  932  00b88 3741 L00b88     move.w d1,16(a3)  
+  933  00b8c 4a2b            tst.b  18(a3)     
+  934  00b90 6a06            bpl.s  L00b98     
+  935  00b92 2029            move.l 48(a1),d0  
+  936  00b96 6004            bra.s  L00b9c     
+  937  00b98 2029 L00b98     move.l 72(a1),d0  
+  938  00b9c 6710 L00b9c     beq.s  L00bae     
+  939  00b9e 536b            subq.w #1,16(a3)  
+  940  00ba2 336c            move.w 0(a4),8(a1) 
+  941  00ba8 53ac            subq.l #1,940(a4) 
+  942  00bac 4e75            rts               
+  943  00bae 4aab L00bae     tst.l  8(a3)      
+  944  00bb2 6608            bne.s  L00bbc     
+  945  00bb4 48e7            movem.l a2/d6-d7,-(sp) 
+  946  00bb8 274f            move.l sp,8(a3)   
+  947  00bbc 4269 L00bbc     clr.w  8(a1)      
+  948  00bc0 0828            btst.b #2,18(a0)  
+  949  00bc6 665a            bne.s  L00c22     
+  950  00bc8 3028            move.w 12(a0),d0  
+  951  00bcc 6650            bne.s  L00c1e     
+  952  00bce 302c            move.w 726(a4),d0 
+  953  00bd2 674e            beq.s  L00c22     
+  954  00bd4 48e7            movem.l a0-a1/a5/d0-d1,-(sp) 
+  955  00bd8 426c            clr.w  726(a4)    
+  956  00bdc 7201            moveq  #1,d1      
+  957  00bde 2f0b            move.l a3,-(sp)   
+  958  00be0 266e            movea.l D003a4(a6),a3 
+  959  00be4 487a            pea    L00bf2(pc) 
+  960  00be8 2f2b            move.l 32(a3),-(sp) 
+  961  00bec 266b            movea.l 1056(a3),a3 
+  962  00bf0 4e75            rts               
+  963  00bf2 265f L00bf2     movea.l (sp)+,a3   
+  964  00bf4 4fef            lea.l  -40(sp),a7 
+  965  00bf8 2a4f            movea.l sp,a5      
+  966  00bfa 2f0b            move.l a3,-(sp)   
+  967  00bfc 266e            movea.l D003a4(a6),a3 
+  968  00c00 487a            pea    L00c0e(pc) 
+  969  00c04 2f2b            move.l 220(a3),-(sp) 
+  970  00c08 266b            movea.l 1244(a3),a3 
+  971  00c0c 4e75            rts               
+  972  00c0e 265f L00c0e     movea.l (sp)+,a3   
+  973  00c10 4fef            lea.l  40(sp),a7  
+  974  00c14 4269            clr.w  724(a1)    
+  975  00c18 4cdf            movem.l (sp)+,a0-a1/a5/d0-d1 
+  976  00c1c 6004            bra.s  L00c22     
+  977  00c1e 6100 L00c1e     bsr.w  L004e0     
+  978  00c22 6100 L00c22     bsr.w  L00b06     
+  979  00c26 7000            moveq  #0,d0      
+  980  00c28 377c            move.w #1,14(a3)  
+  981  00c2e 2f0b            move.l a3,-(sp)   
+  982  00c30 266e            movea.l D003a4(a6),a3 
+  983  00c34 487a            pea    L00c42(pc) 
+  984  00c38 2f2b            move.l 40(a3),-(sp) 
+  985  00c3c 266b            movea.l 1064(a3),a3 
+  986  00c40 4e75            rts               
+  987  00c42 265f L00c42     movea.l (sp)+,a3   
+  988  00c44 40c0            move   sr,d0      
+  989  00c46 007c            ori    #1792,sr   
+  990  00c4a 4a69            tst.w  8(a1)      
+  991  00c4e 6704            beq.s  L00c54     
+  992  00c50 46c0            move   d0,sr      
+  993  00c52 60ce            bra.s  L00c22     
+
+
+OS9 Cross Disassembler - Ver. 0.1.0    10/16/2026 21:40:41      Page 017
+
+  994  00c54 bfeb L00c54     cmpa.l 8(a3),a7   
+  995  00c58 6608            bne.s  L00c62     
+  996  00c5a 42ab            clr.l  8(a3)      
+  997  00c5e 4cdf            movem.l (sp)+,a2/d6-d7 
+  998  00c62 336c L00c62     move.w 0(a4),8(a1) 
+  999  00c68 536b            subq.w #1,16(a3)  
+ 1000  00c6c 6100            bsr.w  L00ac4     
+ 1001  00c70 53ac            subq.l #1,940(a4) 
+ 1002  00c74 46c0            move   d0,sr      
+ 1003  00c76 4a29            tst.b  126(a1)    
+ 1004  00c7a 662a            bne.s  L00ca6     
+ 1005  00c7c 322c            move.w 38(a4),d1  
+ 1006  00c80 670e            beq.s  L00c90     
+ 1007  00c82 0c41            cmpi.w #32,d1     
+ 1008  00c86 6518            bcs.s  L00ca0     
+ 1009  00c88 082c            btst.b #1,28(a4)  
+ 1010  00c8e 6610            bne.s  L00ca0     
+ 1011  00c90 4e75 L00c90     rts               
+ 1012  00c92 245f L00c92     movea.l (sp)+,a2   
+ 1013  00c94 6000            bra.w  L00c9c     
+ 1014  00c98 53ac L00c98     subq.l #1,940(a4) 
+ 1015  00c9c 323c L00c9c     move.w #245,d1    
+ 1016  00ca0 003c L00ca0     ori    #1,ccr     
+ 1017  00ca4 4e75            rts               
+ 1018  00ca6 323c L00ca6     move.w #173,d1    
+ 1019  00caa 60f4            bra.s  L00ca0     
+ 1020  00cac 2f0a L00cac     move.l a2,-(sp)   
+ 1021  00cae 2069            movea.l 100(a1),a0 
+ 1022  00cb2 2468            movea.l 104(a0),a2 
+ 1023  00cb6 b1ea            cmpa.l 108(a2),a0 
+ 1024  00cba 66d6            bne.s  L00c92     
+ 1025  00cbc 2069            movea.l 4(a1),a0   
+ 1026  00cc0 2068            movea.l 4(a0),a0   
+ 1027  00cc4 41e8            lea.l  -56(a0),a0 
+ 1028  00cc8 b1ca            cmpa.l a2,a0      
+ 1029  00cca 67c6            beq.s  L00c92     
+ 1030  00ccc 234a            move.l a2,100(a1) 
+ 1031  00cd0 41ea            lea.l  224(a2),a0 
+ 1032  00cd4 2469            movea.l 14(a1),a2  
+ 1033  00cd8 234a            move.l a2,68(a1)  
+ 1034  00cdc 234a            move.l a2,44(a1)  
+ 1035  00ce0 7220            moveq  #32,d1     
+ 1036  00ce2 2341            move.l d1,48(a1)  
+ 1037  00ce6 6100            bsr.w  L007c4     
+ 1038  00cea 245f            movea.l (sp)+,a2   
+ 1039  00cec 4e75            rts               
+ 1040  00cee 4e71            nop               
+ 1041  00cf0 7069            moveq  #105,d0    
+ 1042  00cf2 7065            moveq  #101,d0    
+ 1043  00cf4 6d61            dc.w   $6d61      
+ 1044  00cf6 6e00            dc.w   $6e00      
+ 1045  00cf8 0087            ori.l  #191299583,d7 
+ 1046
+ 1047  00cfe 0000            ends              
+ 1047

@@ -1,0 +1,59 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* pipe_68k.a -- Native Pipe File Manager (pipeman) for OS-9 / 68k
+* Q9-OS Subsystem
+*═════════════════════════════════════════════════════════════════════════════════════
+        nam     pipeman
+        ttl     OS-9/68k Native Pipe File Manager
+
+        use     q9defs.d
+        use     pipe_defs.a
+
+* Edition & Revision
+Edition         equ     1
+Revision        equ     0
+
+*═════════════════════════════════════════════════════════════════════════════════════
+* Modul-Header
+* FlMgr, Objct, SupStat, ReEnt sind in q9defs.d definiert
+*═════════════════════════════════════════════════════════════════════════════════════
+        psect   pipeman,(FlMgr<<8)|Objct,(SupStat+ReEnt<<8)|0,Edition,Revision,PipeEnt
+
+*═════════════════════════════════════════════════════════════════════════════════════
+* 13-Slot Sprungtabelle (M$Exec)
+* WICHTIG: Relativ zu PipeEnt kodiert ("Label-PipeEnt"), da IOMan a0=M$Exec lädt
+* und mit (a0,d0.w) relativ anspringt.
+* Indizierung: (I$-Callcode - $83) * 2
+*═════════════════════════════════════════════════════════════════════════════════════
+PipeEnt:
+        dc.w    Pipe_Create-PipeEnt     * Offset  0  I$Create  $83
+        dc.w    Pipe_Open-PipeEnt       * Offset  2  I$Open    $84
+        dc.w    Pipe_MakDir-PipeEnt     * Offset  4  I$MakDir  $85
+        dc.w    Pipe_ChgDir-PipeEnt     * Offset  6  I$ChgDir  $86
+        dc.w    Pipe_Delete-PipeEnt     * Offset  8  I$Delete  $87
+        dc.w    Pipe_Seek-PipeEnt       * Offset 10  I$Seek    $88
+        dc.w    Pipe_Read-PipeEnt       * Offset 12  I$Read    $89
+        dc.w    Pipe_Write-PipeEnt      * Offset 14  I$Write   $8A
+        dc.w    Pipe_ReadLn-PipeEnt     * Offset 16  I$ReadLn  $8B
+        dc.w    Pipe_WritLn-PipeEnt     * Offset 18  I$WritLn  $8C
+        dc.w    Pipe_GetStat-PipeEnt    * Offset 20  I$GetStt  $8D
+        dc.w    Pipe_SetStat-PipeEnt    * Offset 22  I$SetStt  $8E
+        dc.w    Pipe_Close-PipeEnt      * Offset 24  I$Close   $8F
+
+*═════════════════════════════════════════════════════════════════════════════════════
+* Untermodule einbinden
+*═════════════════════════════════════════════════════════════════════════════════════
+        use     pipe_sub.a
+        use     pipe_open.a
+        use     pipe_io.a
+        use     pipe_stat.a
+
+*═════════════════════════════════════════════════════════════════════════════════════
+* Modul-Abschluss
+*═════════════════════════════════════════════════════════════════════════════════════
+
+Pipe_UnkSvc:
+        move.w  #E_UNKSVC,d1
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        rts
+
+        ends

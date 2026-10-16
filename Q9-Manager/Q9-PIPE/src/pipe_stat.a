@@ -1,0 +1,197 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* pipe_stat.a -- GetStat, SetStat, Seek, MakDir, and ChgDir for Q9-PIPE
+*═════════════════════════════════════════════════════════════════════════════════════
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_GetStat
+* Liest Statusinformationen der Pipe (SS_Ready, SS_Size, SS_EOF, SS_Opt, SS_FD).
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*   a6 = System-Globals
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_GetStat:
+        movem.l d2-d3/a0/a2,-(sp)
+
+        * Master-Deskriptor ermitteln
+        movea.l PD_HEAD(a1),a2
+        cmpa.l  #0,a2
+        bne.s   Pipe_GetStatHaveHead
+        movea.l a1,a2
+
+Pipe_GetStatHaveHead:
+        move.w  REG_D1+2(a5),d1         * Status-Subcode (Low-Word von D1)
+
+        cmpi.w  #SS_Opt,d1              * SS_Opt ($00)
+        beq.s   Pipe_GetStatSuccess
+
+        cmpi.w  #SS_Ready,d1            * SS_Ready ($01)
+        beq.s   Pipe_GetStatReady
+
+        cmpi.w  #SS_Size,d1             * SS_Size ($02)
+        beq.s   Pipe_GetStatSize
+
+        cmpi.w  #SS_EOF,d1              * SS_EOF ($06)
+        beq.s   Pipe_GetStatEOF
+
+        cmpi.w  #SS_FD,d1               * SS_FD ($0F)
+        beq.s   Pipe_GetStatFD
+
+        * Unbekannter Funktionsaufruf
+        move.w  #E_UNKSVC,d1
+        bra.s   Pipe_GetStatErr
+
+Pipe_GetStatReady:
+        * Anzahl lesbarer Bytes in D1 des Aufrufers zurückmelden
+        move.l  PD_RDBYT(a2),d0
+        move.l  d0,REG_D1(a5)
+        tst.l   d0
+        bne.s   Pipe_GetStatSuccess
+        * Keine Daten bereit -> E_NOTRDY melden
+        move.w  #E_NOTRDY,d1
+        bra.s   Pipe_GetStatErr
+
+Pipe_GetStatSize:
+        * Pufferkapazität in D2 des Aufrufers zurückmelden
+        move.l  PD_BUFSZ(a2),REG_D2(a5)
+        bra.s   Pipe_GetStatSuccess
+
+Pipe_GetStatEOF:
+        * EOF liegt vor, wenn keine Schreiber mehr offen sind UND Puffer leer ist
+        tst.w   PD_WROPN(a2)
+        bne.s   Pipe_GetStatSuccess     * Noch Schreiber vorhanden -> kein EOF
+        tst.l   PD_RDBYT(a2)
+        bne.s   Pipe_GetStatSuccess     * Noch Daten im Puffer -> kein EOF
+        * Puffer leer und alle Schreiber zu -> EOF!
+        move.w  #E_EOF,d1
+        bra.s   Pipe_GetStatErr
+
+Pipe_GetStatFD:
+        * Metadaten kopieren
+        movea.l REG_A0(a5),a0
+        cmpa.l  #0,a0
+        beq.s   Pipe_GetStatSuccess
+        move.b  PD_PERM(a2),(a0)+       * Zugriffsrechte
+        move.b  PD_OWN(a2),(a0)+        * Eigentümer UID
+        move.b  PD_GRP(a2),(a0)+        * Gruppe GID
+
+Pipe_GetStatSuccess:
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        movem.l (sp)+,d2-d3/a0/a2
+        rts
+
+Pipe_GetStatErr:
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        movem.l (sp)+,d2-d3/a0/a2
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_SetStat
+* Setzt Statusinformationen der Pipe (SS_SSig, SS_Relea, SS_Size, SS_Opt, SS_FD).
+*
+* Eingabe:
+*   a1 = Pfaddeskriptor
+*   a4 = Prozessdeskriptor
+*   a5 = Registersatz des Aufrufers
+*   a6 = System-Globals
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_SetStat:
+        movem.l d2-d3/a0/a2,-(sp)
+
+        * Master-Deskriptor ermitteln
+        movea.l PD_HEAD(a1),a2
+        cmpa.l  #0,a2
+        bne.s   Pipe_SetStatHaveHead
+        movea.l a1,a2
+
+Pipe_SetStatHaveHead:
+        move.w  REG_D1+2(a5),d1
+
+        cmpi.w  #SS_Opt,d1
+        beq.w   Pipe_SetStatSuccess
+
+        cmpi.w  #SS_SSig,d1             * Signal bei Datenbereitschaft
+        beq.s   Pipe_SetStatSSig
+
+        cmpi.w  #SS_Relea,d1            * Signal freigeben
+        beq.s   Pipe_SetStatRelea
+
+        cmpi.w  #SS_Size,d1             * Größe ändern
+        beq.s   Pipe_SetStatSize
+
+        cmpi.w  #SS_FD,d1               * Metadaten setzen
+        beq.s   Pipe_SetStatFD
+
+        move.w  #E_UNKSVC,d1
+        bra.s   Pipe_SetStatErr
+
+Pipe_SetStatSSig:
+        * Registriere PID und Signalnummer für Datenbenachrichtigung
+        move.w  P_ID(a4),PD_RDSIG(a2)
+        move.w  REG_D2+2(a5),PD_RDSIG+2(a2)
+        * Falls bereits Daten im Puffer liegen: Sofort wecken/signalisieren!
+        tst.l   PD_RDBYT(a2)
+        beq.s   Pipe_SetStatSuccess
+        move.w  P_ID(a4),d0
+        move.w  REG_D2+2(a5),d1
+        clr.l   PD_RDSIG(a2)
+        bsr.w   Pipe_SysSend
+        bra.s   Pipe_SetStatSuccess
+
+Pipe_SetStatRelea:
+        clr.l   PD_RDSIG(a2)
+        bra.s   Pipe_SetStatSuccess
+
+Pipe_SetStatSize:
+        * Puffergröße darf nur geändert werden, wenn Puffer leer ist
+        tst.l   PD_RDBYT(a2)
+        bne.s   Pipe_SetStatDevBsy
+        * Zeiger auf Anfang zurücksetzen
+        movea.l PD_BUF(a2),a0
+        move.l  a0,PD_RDPTR(a2)
+        move.l  a0,PD_WRPTR(a2)
+        move.l  PD_BUFSZ(a2),PD_WRSPC(a2)
+        bra.s   Pipe_SetStatSuccess
+
+Pipe_SetStatDevBsy:
+        move.w  #E_DEVBSY,d1
+        bra.s   Pipe_SetStatErr
+
+Pipe_SetStatFD:
+        movea.l REG_A0(a5),a0
+        cmpa.l  #0,a0
+        beq.s   Pipe_SetStatSuccess
+        move.b  (a0)+,PD_PERM(a2)
+        move.b  (a0)+,PD_OWN(a2)
+        move.b  (a0)+,PD_GRP(a2)
+
+Pipe_SetStatSuccess:
+        andi    #$FE,ccr
+        movem.l (sp)+,d2-d3/a0/a2
+        rts
+
+Pipe_SetStatErr:
+        ori     #$01,ccr
+        movem.l (sp)+,d2-d3/a0/a2
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_Seek
+* Seek ist auf Pipes ein No-Op (kein Fehler, gibt Erfolg zurück).
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_Seek:
+        moveq   #0,d1
+        andi    #$FE,ccr                * Carry löschen (Erfolg)
+        rts
+
+*─────────────────────────────────────────────────────────────────────────────────────
+* Pipe_MakDir / Pipe_ChgDir
+* Verzeichnisoperationen sind auf Pipes unzulässig -> E_BMODE (214).
+*─────────────────────────────────────────────────────────────────────────────────────
+Pipe_MakDir:
+Pipe_ChgDir:
+        move.w  #E_BMODE,d1
+        ori     #$01,ccr                * Carry setzen (Fehler)
+        rts

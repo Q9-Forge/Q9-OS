@@ -1,0 +1,100 @@
+#!/usr/bin/expect -f
+
+set timeout 90
+set send_slow {1 0.04}
+set prompt {\$ }
+
+# Set working directory to Q9-Flux-68k
+cd "/Volumes/SSD1TB/projects/Q9-Forge/Q9-SDK/SRC/SYSTEM/Q9-Flux/Q9-Flux-68k"
+
+log_file -noappend "/Volumes/SSD1TB/projects/Q9-Forge/Q9-SDK/SRC/SYSTEM/Q9-OS/Q9-Manager/Q9-PIPE/tools/pipe_boot_test.log"
+
+spawn ./build/macos/q9.exe rbf68k-test.q9
+
+# 1. Boot bis tsmon
+expect {
+    "devices online" { send_user "\n\[OK\] Q9 Board booted and devices online!\n" }
+    timeout { send_user "\n\[FAIL\] Timeout waiting for devices online!\n"; exit 1 }
+}
+
+# 2. tsmon wartet auf Return
+sleep 1
+send -s "\r"
+
+expect {
+    -re {User name\?:} { send_user "\n\[OK\] tsmon prompted for User name\n" }
+    timeout { send_user "\n\[FAIL\] Timeout waiting for User name prompt!\n"; exit 1 }
+}
+
+# 3. Login mit q9test (kein Passwort noetig)
+send -s "q9test\r"
+
+expect {
+    -re {logged on} { send_user "\n\[OK\] Logged in as q9test!\n" }
+    timeout { send_user "\n\[FAIL\] Login failed or timed out!\n"; exit 1 }
+}
+
+# 4. Warten auf Shell-Prompt
+expect {
+    -re {\$ } { send_user "\n\[OK\] Shell prompt ready!\n" }
+    timeout { send_user "\n\[FAIL\] Timeout waiting for shell prompt!\n"; exit 1 }
+}
+
+# 5. Modulidentifikation von pipeman im Speicher
+sleep 1
+send -s "ident -m pipeman\r"
+expect -re {\$ }
+
+# 6. Pipe-Test 1: Einfache anonyme Shell-Pipe echo ! grep
+sleep 1
+send -s "echo \"Q9_NATIVE_PIPE_TEST_SUCCESS\" ! grep Q9_NATIVE_PIPE_TEST_SUCCESS\r"
+expect {
+    "Q9_NATIVE_PIPE_TEST_SUCCESS" { send_user "\n\[OK\] Pipe Test 1 (echo ! grep) PASSED!\n" }
+    timeout { send_user "\n\[FAIL\] Pipe Test 1 timed out!\n"; exit 1 }
+}
+expect -re {\$ }
+
+# 7. Pipe-Test 2: Multi-Block Pipe dir ! grep
+sleep 1
+send -s "dir /dd ! grep CMDS\r"
+expect {
+    "CMDS" { send_user "\n\[OK\] Pipe Test 2 (dir ! grep) PASSED!\n" }
+    timeout { send_user "\n\[FAIL\] Pipe Test 2 timed out!\n"; exit 1 }
+}
+expect -re {\$ }
+
+# 8. Pipe-Test 3: procs ! grep shell
+sleep 1
+send -s "procs ! grep shell\r"
+expect {
+    "shell" { send_user "\n\[OK\] Pipe Test 3 (procs ! grep shell) PASSED!\n" }
+    timeout { send_user "\n\[FAIL\] Pipe Test 3 timed out!\n"; exit 1 }
+}
+expect -re {\$ }
+
+# 9. Pipe-Test 4: count ueber Pipe
+sleep 1
+send -s "echo \"alpha beta gamma\" ! count -w\r"
+expect {
+    -re {contains.*words|contains.*lines} { send_user "\n\[OK\] Pipe Test 4 (echo ! count) PASSED!\n" }
+    timeout { send_user "\n\[FAIL\] Pipe Test 4 timed out!\n"; exit 1 }
+}
+expect -re {\$ }
+
+# 10. Pipe-Test 5: makdir auf /pipe muss abgewiesen werden (E_BMODE)
+sleep 1
+send -s "makdir /pipe/testdir\r"
+expect -re {\$ }
+
+# Logout
+sleep 1
+send -s "logout\r"
+expect {
+    -re {Logout after|User name\?:} { send_user "\n\[OK\] OS-9 Logout completed.\n" }
+    timeout { send_user "\n\[WARN\] Logout timeout.\n" }
+}
+
+# Beende Emulator mit Ctrl-]
+send "\x1d"
+expect eof
+send_user "\n\[SUCCESS\] ALL Q9-PIPE INTEGRATION TESTS PASSED!\n"

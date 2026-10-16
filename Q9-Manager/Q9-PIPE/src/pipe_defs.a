@@ -1,0 +1,134 @@
+*═════════════════════════════════════════════════════════════════════════════════════
+* pipe_defs.a -- Definitions and Offsets for Q9-PIPE File Manager (OS-9/68k)
+*═════════════════════════════════════════════════════════════════════════════════════
+
+* OS-9 Standard Error Codes
+E_BADDVR        equ     $C8             * Bad Device Driver
+E_BMOD          equ     $C9             * Bad Module
+E_PARAM         equ     $CA             * Bad Parameter (202)
+E_UNKSVC        equ     $D0             * Unknown Service (208)
+E_EOF           equ     $D3             * End of File (211)
+E_BMODE         equ     $D6             * Bad Mode (214)
+E_BPNAM         equ     $D7             * Bad Path Name (215)
+E_PNNF          equ     $D8             * Path Name Not Found (216)
+E_CErr          equ     $DA             * Bad Create / File Exists (218)
+E_BROKNP        equ     $F5             * Broken Pipe (245)
+E_NOTRDY        equ     $F6             * Device Not Ready (246)
+E_DEVBSY        equ     $F8             * Device Busy (248)
+E_READ          equ     $FA             * Read Error (250)
+E_WRITE         equ     $FB             * Write Error (251)
+E_SHARE         equ     $FD             * Sharing Error (253)
+
+* OS-9 System Call Equates (for use with OS9 macro)
+* F$Link and F$Exit are already defined in q9defs.d
+D_SysDis        equ     $03a4           * System Dispatch Table in System Globals (a6)
+F$PrsNam        equ     $10             * Parse Name
+F$Time          equ     $15             * Get system time
+F$CpyMem        equ     $1B             * Copy external memory
+F$Send          equ     $08             * Send signal to process (Callcode $08)
+F$Sleep         equ     $0A             * Sleep / await signal (Callcode $0A)
+F$SRqMem        equ     $28             * System Request Memory
+F$SRtMem        equ     $29             * System Return Memory
+I$Detach        equ     $81             * Detach device
+
+* GetStat / SetStat Function Codes
+SS_Opt          equ     $00             * Options
+SS_Ready        equ     $01             * Data ready check (returns byte count in D1)
+SS_Size         equ     $02             * Get/Set pipe buffer capacity
+SS_EOF          equ     $06             * EOF test
+SS_FD           equ     $0F             * File Descriptor metadata / permissions
+SS_SSig         equ     $1A             * Send signal on data ready (26)
+SS_Relea        equ     $1B             * Release signal (27)
+
+* Caller Register Stack Offsets in a5 (struct REGISTERS)
+REG_D0          equ     0               * Caller D0 (return code / function)
+REG_D1          equ     4               * Caller D1 (buffer size / byte count)
+REG_D2          equ     8               * Caller D2 (option parameter)
+REG_D3          equ     12              * Caller D3
+REG_A0          equ     32              * Caller A0 (data pointer / name pointer)
+REG_A1          equ     36              * Caller A1
+REG_A2          equ     40              * Caller A2
+REG_SR          equ     64              * Caller Status Register
+
+* Process Descriptor Offsets in a4
+P_ID            equ     0               * Process ID (word)
+P_User          equ     20              * User ID (word)
+P_State         equ     28              * Process state flags (byte)
+P_Signal        equ     38              * Pending signal code (word)
+
+* Device Table Offsets (Devicetbl pointed to by PD_DEV = 4(a1))
+DT_DRIV         equ     0               * Driver module pointer (V_driv)
+DT_STAT         equ     4               * Driver static storage pointer (V_stat)
+DT_DESC         equ     8               * Device descriptor pointer (V_desc)
+DT_FMGR         equ     12              * File manager module pointer (V_fmgr)
+
+* Driver Entry Table Function Offsets
+D_INIT          equ     0               * Driver Initialize
+D_READ          equ     2               * Driver Read
+D_WRIT          equ     4               * Driver Write
+D_GETST         equ     6               * Driver Get Status
+D_SETST         equ     8               * Driver Set Status
+D_TERM          equ     10              * Driver Terminate
+
+* Driver Static Storage System Variables (from iodev.a)
+V_PORT          equ     0               * Base port address (long)
+V_LPRC          equ     4               * Last active PID (word)
+V_BUSY          equ     6               * Current active PID, 0=idle (word)
+V_WAKE          equ     8               * Wake-up PID (word)
+V_Paths         equ     10              * Linked list of paths (long)
+
+* Path Descriptor: Allgemeine Felder (struct pathcom, 42 Bytes)
+PD_PD           equ     0               * Path number (word)
+PD_MOD          equ     2               * Mode (byte: READ_=1, WRITE_=2, DIR_=$80)
+PD_DEV          equ     4               * Device table pointer (long)
+PD_CPR          equ     8               * Current Process ID (word)
+PD_RGS          equ     10              * Caller's register stack pointer (REGISTERS*)
+PD_BUF          equ     14              * Buffer base address (long)
+PD_USER         equ     18              * Group/User ID of creator (word)
+PD_PATHS        equ     22              * List of open paths on device
+PD_COUNT        equ     26              * Actual open images use count (word)
+
+* Path Descriptor: Pipe Private Felder (ab Offset 42 = $2A)
+PD_RDPTR        equ     44              * Channel 0: Read buffer pointer (long)
+PD_RDBYT        equ     48              * Bytes currently in pipe available to read (long)
+PD_RDWAT        equ     56              * Reader wait state / PID (word)
+PD_RDOPN        equ     58              * Reader open count (word)
+PD_WROPN        equ     60              * Writer open count (word)
+PD_FLAGS        equ     62              * Pipe status flags (byte)
+PD_WRPTR        equ     68              * Channel 1: Write buffer pointer (long)
+PD_WRSPC        equ     72              * Free space currently in pipe to write (long)
+PD_WRWAT        equ     80              * Writer wait state / PID (word)
+PD_WRWAT2       equ     84              * Secondary writer wait state (word)
+PD_XMASK        equ     92              * XOR difference mask between Read & Write channels (long)
+PD_BUFEND       equ     96              * Buffer end pointer (PD_BUF + PD_BUFSZ)
+PD_HEAD         equ     100             * Head pipe descriptor (long)
+PD_PREV         equ     104             * Previous pipe in linked list (long)
+PD_NEXT         equ     108             * Next pipe in linked list (long)
+PD_DEL          equ     112             * Delete flag / count (byte)
+PD_PERM         equ     113             * Pipe access permissions (byte)
+PD_OWN          equ     114             * Pipe Owner UID (byte)
+PD_GRP          equ     115             * Pipe Owner GID (byte)
+PD_CREAT        equ     116             * Creation flag / timestamp (byte)
+PD_RDSIG        equ     118             * Signal PID for reader (long)
+PD_WRSIG        equ     122             * Signal PID for writer (long)
+PD_ERR          equ     126             * Error flag (byte)
+PD_BUFSZ        equ     130             * Buffer capacity in bytes (long, default 90)
+PD_EMBBUF       equ     134             * Embedded zero-allocation buffer (90 bytes: 134..224)
+PD_NAME         equ     224             * Pipe name (string, up to 28 bytes)
+PD_SELF         equ     252             * Pointer back to path descriptor base (long)
+
+* Default Pipe Konstanten
+PIPE_DEF_SZ     equ     90              * Standard Embedded Buffergroesse (90 Bytes)
+PIPE_MAX_NAM    equ     28              * Maximale Namenslaenge
+
+* Kanal-Offset-Struktur (relativ zu a3, wenn a3 = 44(a1) fuer Read bzw. 68(a1) fuer Write)
+CH_PTR          equ     0               * Aktueller Lese-/Schreibzeiger
+CH_CNT          equ     4               * Aktueller Byte-Zaehler (verfuegbar bzw. frei)
+CH_SP           equ     8               * Gespeicherter SP bei Prozess-Sleep
+CH_PID          equ     12              * Prozess-ID des aktuellen Besitzers (0 = frei)
+CH_SIG          equ     14              * Signalflag / Wartezustand
+CH_WAIT         equ     16              * Wartende Prozesse Zaehler
+CH_STAT         equ     18              * Kanal-Statusbyte:
+                                        * Bit 0: SS_SSig Signal aktiv
+                                        * Bit 1: Datentransfer aktiv
+                                        * Bit 2: Partner wartet auf Freigabe
