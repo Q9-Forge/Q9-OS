@@ -96,9 +96,9 @@ must not replace the later implementation.
 | ✅ | `0x1F` | F$GPrDBT | Pointer table assembled from the process pool, one entry per slot, 0 for a free one |
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | ✅ | `0x21` | F$TLink | Links trap modules, initializes their state, supports `namePtr=0` removal, and releases references/owned memory on process exit |
-| 🟢 | `0x22` | F$DFork | Suspended child, 72-byte register image and debugger ownership are implemented; host-tested |
-| 🟢 | `0x23` | F$DExec | Suspended-child resume, 72-byte register restore, 68000 trace-bit single-step budget, final trace stop, and debugger-parent wake-up are implemented and host-tested |
-| 🟢 | `0x24` | F$DExit | Validates debugger ownership and releases the suspended child and all owned resources |
+| ✅ | `0x22` | F$DFork | Suspended child, 72-byte register image and debugger ownership; emulator-verified (`dbgtest`, 16.10.2026) |
+| ✅ | `0x23` | F$DExec | Single-step budget, breakpoint list, register buffer written back at every stop, outputs d0 (executed) / d1 (remaining) / d2 (0), child exit returns carry + E$PrcAbt; emulator-verified (`dbgtest`). Not implemented: illegal-opcode breakpoints for d1 = -1 (list still honoured, slower), delivery of unexpected child exceptions, changing a7 via the buffer |
+| ✅ | `0x24` | F$DExit | Validates debugger ownership, releases the suspended child, its module link and all owned resources; emulator-verified (`dbgtest`, resource balance unchanged) |
 | ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
 | 🟡 | `0x27` | F$SetSys | Katalog erweitert: schreibbare Q9-Werte `$7C` (csl malloc increment), `$28` (`D_TckSec`) und `$76` (`D_TSlice`) sowie verifizierte schreibgeschützte Globals (`D_Init`, `D_Compat`, `D_SysConf`, `D_ModDir`, `D_Proc`, `D_SysPrc`, `D_FProc`, `D_SysROM`, `D_ExcJmp`, `D_TotRAM`, `D_Ticks`, `D_SysDis`, `D_UsrDis`, `D_Compat2`); unbekannte und schreibgeschützte Schreibzugriffe liefern sauber `E$UnkSvc`, hardware-/Microware-spezifische Variablen bleiben klassifiziert offen |

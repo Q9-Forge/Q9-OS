@@ -244,11 +244,21 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #ifndef Q9K_DEBUGFORK_REGIMAGE_SIZE
 #define Q9K_DEBUGFORK_REGIMAGE_SIZE 72UL
 #endif
+/* C2/B6 (2026-10-16): die Debug-Felder lagen bei $2A8/$2AC/$2B0 und ueberlappten die Trap-Groessentabelle
+ * ($280 + 4 x (Trap-1), q9kernel_traplink.c): Trap 11, 12 und 13 -- csl ist Trap 13 -- ueberschrieben P$DbgReg, P$DbgPar und
+ * P$DbgInstr, ein Kind mit csl haette also seinen eigenen Befehlszaehler zerstoert. Jetzt $2C0 ff. (frei: oberhalb der Tabelle,
+ * unter P$Preempt bei $3AC). Dieselben Werte stehen in q9kernel_procend.c. */
 #ifndef Q9K_PROCDESC_DBGREG_OFF
-#define Q9K_PROCDESC_DBGREG_OFF 0x2A8UL
-#define Q9K_PROCDESC_DBGPAR_OFF 0x2ACUL
-#define Q9K_PROCDESC_DBGINSTR_OFF 0x2B0UL
+#define Q9K_PROCDESC_DBGREG_OFF 0x2C0UL      /* Zeiger auf den Registerpuffer des Debuggers (72 Byte) */
+#define Q9K_PROCDESC_DBGPAR_OFF 0x2C4UL      /* Debugger-Elternprozess, 0 = kein Debug-Kind */
+#define Q9K_PROCDESC_DBGINSTR_OFF 0x2C8UL    /* verbleibendes Befehlsbudget, 0 = fortlaufend */
 #endif
+#ifndef Q9K_PROCDESC_DBGTOTAL_OFF
+#define Q9K_PROCDESC_DBGTOTAL_OFF 0x2CCUL    /* seit F$DFork ausgefuehrte Befehle (Ausgabe d0.l von F$DExec) */
+#define Q9K_PROCDESC_DBGBPS_OFF   0x2D0UL    /* Haltepunktliste (Zeiger auf Adressen, je 4 Byte) */
+#define Q9K_PROCDESC_DBGBPN_OFF   0x2D4UL    /* Anzahl Haltepunkte */
+#endif
+#define Q9K_DEBUGEXEC_E_PRCABT 0x00E4UL      /* E$PrcAbt: das Kind hat F$Exit gerufen / wurde abgebrochen */
 #ifndef Q9_D_PROC
 #define Q9_D_PROC 0x04CUL
 #endif
@@ -1316,11 +1326,18 @@ void Q9K_SysDForkImpl(void)
     Q9K_SetU16(0x1EE4UL, 1);
 }
 
-/* Start a suspended debug child and park its debugger parent.  The
- * instruction counter is recorded for the trace-exception continuation;
- * until that handler is active, execution proceeds until the child exits. */
+/* Start a suspended debug child and park its debugger parent (68k_tech.pdf S. 397, F$DExec).
+ *
+ * Befehlsbudget d1.l: n = genau n Befehle ausfuehren; 0 = fortlaufend. Mit Haltepunkten (bpCount > 0) laeuft das Kind in beiden
+ * Faellen im Einzelschritt und wird angehalten, sobald sein PC auf einen Haltepunkt zeigt (der Befehl dort ist noch NICHT
+ * ausgefuehrt). Ohne Haltepunkte laeuft es bei d1 = 0 mit voller Geschwindigkeit bis zum F$Exit. -1 ($FFFFFFFF) ("schnell mit
+ * Illegal-Opcode-Haltepunkten") wird wie 0 behandelt -- das Patchen der Haltepunkte mit Illegal-Opcodes ist nicht umgesetzt,
+ * die Haltepunktliste wirkt trotzdem (nur langsamer). Der Haltepunkt am allerersten PC wird nicht beachtet (kein Befehl
+ * ausgefuehrt, also kein Trace-Ereignis).
+ * Der Registerpuffer des Debuggers (P$DbgReg) wird beim Start in das Kind uebernommen (d0-a6, SR, PC; a7 nicht) und bei
+ * jedem Halt aus dem Kind zurueckgeschrieben (Q9K_ProcDebugTrace). */
 Q9_u32 Q9K_ProcDebugExec(Q9_u16 childPid, Q9_u32 instructionCount,
-                         Q9_u32 *outError)
+                         Q9_u32 bpCount, Q9_u32 bpList, Q9_u32 *outError)
 {
     Q9_u32 desc, parent, frame, regbuf, i;
 
@@ -1339,18 +1356,24 @@ Q9_u32 Q9K_ProcDebugExec(Q9_u16 childPid, Q9_u32 instructionCount,
         *outError = 0x00D2UL;
         return 0;
     }
+    if (instructionCount == 0xFFFFFFFFUL)
+        instructionCount = 0;                 /* s. Kopfkommentar */
+    if (bpList == 0 || bpCount > 255UL)
+        bpCount = (bpList == 0) ? 0UL : 255UL;
     for (i = 0; i < 60UL; ++i)
         Q9K_SetU8(frame + i, Q9K_GetU8(regbuf + i));
     for (i = 0; i < 8UL; ++i)
         Q9K_SetU8(frame + 60UL + i, Q9K_GetU8(regbuf + 64UL + i));
     {
         Q9_u16 sr = Q9K_GetU16(frame + 60UL);
-        sr = instructionCount != 0UL
+        sr = (instructionCount != 0UL || bpCount != 0UL)
            ? (Q9_u16)(sr | 0x8000U)
            : (Q9_u16)(sr & (Q9_u16)~0x8000U);
         Q9K_SetU16(frame + 60UL, sr);
     }
     Q9K_SetU32(desc + Q9K_PROCDESC_DBGINSTR_OFF, instructionCount);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGBPS_OFF, bpList);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGBPN_OFF, bpCount);
     Q9K_SetU8(parent + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
     Q9K_WaitQInsert(parent);
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
@@ -1358,20 +1381,79 @@ Q9_u32 Q9K_ProcDebugExec(Q9_u16 childPid, Q9_u32 instructionCount,
     return Q9K_SchedFirstPick();
 }
 
-/* Consume one 68000 trace event for the currently running debug child. */
+/* Groesse des Hardware-Rahmens nach seinem Format-Nibble (68020/030): 0 = 8 Byte, 2 = 12, 9 = 20, A = 32, B = 92. */
+static Q9_u32 Q9K_DebugHwFrameSize(Q9_u16 formatWord)
+{
+    switch ((formatWord >> 12) & 0xFU) {
+    case 0x2: return 12UL;
+    case 0x9: return 20UL;
+    case 0xA: return 32UL;
+    case 0xB: return 92UL;
+    default:  return 8UL;
+    }
+}
+
+/* Registerabbild des angehaltenen Kindes in den Registerpuffer des Debuggers zurueckschreiben (Layout wie beim Start:
+ * d0-a6 (60 Byte), a7, SR, PC, Format/Vektor). a7 ist der Stack des Kindes nach dem Abbau des Hardware-Rahmens. Das
+ * Trace-Bit im SR bleibt draussen -- es gehoert dem Debugger-Mechanismus, nicht dem Kind. */
+static void Q9K_DebugSaveRegs(Q9_u32 child, Q9_u32 frameSP)
+{
+    Q9_u32 regbuf = Q9K_GetU32(child + Q9K_PROCDESC_DBGREG_OFF);
+    Q9_u32 i;
+    Q9_u16 sr;
+
+    if (regbuf == 0)
+        return;
+    for (i = 0; i < 60UL; ++i)
+        Q9K_SetU8(regbuf + i, Q9K_GetU8(frameSP + i));
+    for (i = 0; i < 8UL; ++i)
+        Q9K_SetU8(regbuf + 64UL + i, Q9K_GetU8(frameSP + 60UL + i));
+    sr = Q9K_GetU16(regbuf + 64UL);
+    Q9K_SetU16(regbuf + 64UL, (Q9_u16)(sr & (Q9_u16)~0x8000U));
+    Q9K_SetFrameReg(regbuf, 15UL,
+                    frameSP + 60UL + Q9K_DebugHwFrameSize(Q9K_ReadHdrU16BE(frameSP + 66UL)));
+}
+
+/* Consume one 68000 trace event for the currently running debug child.  Rueckgabe: Deskriptor des Debugger-Elternprozesses,
+ * wenn das Kind anzuhalten ist (Budget aufgebraucht oder Haltepunkt erreicht), sonst 0 (Kind laeuft weiter).
+ * Beim Halt: Registerpuffer aktualisieren, Trace-Bit loeschen, und dem Elternprozess die Ausgaben von F$DExec in seinen
+ * gesicherten Registersatz schreiben: d0.l = bisher ausgefuehrte Befehle, d1.l = nicht ausgefuehrter Rest des Budgets,
+ * d2.w = 0 (keine Ausnahme). */
 Q9_u32 Q9K_ProcDebugTrace(Q9_u32 frameSP)
 {
     Q9_u32 child = Q9K_GetU32(Q9_D_PROC);
     Q9_u32 parent;
-    Q9_u32 remaining;
+    Q9_u32 remaining, notRun, total, pc, n, list, i;
+    int hitBp = 0;
 
     if (child == 0 ||
         Q9K_GetU8(child + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_ACTIVE)
         return 0;
+    total = Q9K_GetU32(child + Q9K_PROCDESC_DBGTOTAL_OFF) + 1UL;
+    Q9K_SetU32(child + Q9K_PROCDESC_DBGTOTAL_OFF, total);
     remaining = Q9K_GetU32(child + Q9K_PROCDESC_DBGINSTR_OFF);
-    if (remaining > 1UL) {
-        Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, remaining - 1UL);
-        return 0;
+
+    /* PC des NAECHSTEN Befehls (der Rahmen liegt nach dem Trace-Ereignis hinter dem soeben ausgefuehrten Befehl) */
+    pc = Q9K_ReadHdrU32BE(frameSP + 62UL);      /* byteweise Big-Endian, wie die CPU den Rahmen schreibt */
+    n = Q9K_GetU32(child + Q9K_PROCDESC_DBGBPN_OFF);
+    list = Q9K_GetU32(child + Q9K_PROCDESC_DBGBPS_OFF);
+    for (i = 0; list != 0 && i < n; ++i) {
+        if (Q9K_ReadHdrU32BE(list + 4UL * i) == pc) {
+            hitBp = 1;
+            break;
+        }
+    }
+
+    if (!hitBp) {
+        if (remaining == 0UL)
+            return 0;                          /* fortlaufend, nur Haltepunkte aktiv */
+        if (remaining > 1UL) {
+            Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, remaining - 1UL);
+            return 0;
+        }
+        notRun = 0UL;                          /* Budget genau aufgebraucht */
+    } else {
+        notRun = (remaining > 0UL) ? remaining - 1UL : 0UL;
     }
 
     Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, 0UL);
@@ -1382,9 +1464,16 @@ Q9_u32 Q9K_ProcDebugTrace(Q9_u32 frameSP)
         Q9K_GetU8(parent + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_WAITING)
         return 0;
 
+    Q9K_DebugSaveRegs(child, frameSP);
     Q9K_SetU8(child + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
     Q9K_WaitQRemove(parent);
     Q9K_SetU8(parent + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    {
+        Q9_u32 parentSP = Q9K_GetU32(parent + Q9K_PROCDESC_SAVEDSP_OFF);
+        Q9K_SetFrameReg(parentSP, 0UL, total);      /* d0.l ausgefuehrt */
+        Q9K_SetFrameReg(parentSP, 1UL, notRun);     /* d1.l Rest */
+        Q9K_SetFrameReg(parentSP, 2UL, 0UL);        /* d2.w keine Ausnahme */
+    }
     Q9K_SetU32(Q9_D_PROC, parent);
     return parent;
 }
@@ -1393,7 +1482,8 @@ void Q9K_SysDExecImpl(void)
 {
     Q9_u32 error = 0;
     Q9_u32 next = Q9K_ProcDebugExec(Q9K_GetU16(0x1F00UL),
-                                    Q9K_GetU32(0x1F04UL), &error);
+                                    Q9K_GetU32(0x1F04UL),
+                                    Q9K_GetU32(0x2544UL), Q9K_GetU32(0x2548UL), &error);   /* C2: Haltepunkte, s. Q9K_DExecScratch_* */
     Q9K_SetU32(0x1F08UL, next);
     Q9K_SetU32(0x1F0CUL, error);
     Q9K_SetU16(0x1F10UL, (Q9_u16)(next != 0 ? 1 : 0));

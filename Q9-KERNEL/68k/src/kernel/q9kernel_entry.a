@@ -870,6 +870,9 @@ Q9K_DExecScratch_Count      equ $1F04      * Q9_u32, d1.l EIN
 Q9K_DExecScratch_Next       equ $1F08      * Q9_u32, next descriptor AUS
 Q9K_DExecScratch_Error      equ $1F0C      * Q9_u32, d1.w AUS
 Q9K_DExecScratch_Ok         equ $1F10      * Q9_u16, 0/1
+Q9K_DExecScratch_Parent     equ $2540      * Q9_u32, C2: Deskriptor des Debuggers (Aufrufer von F$DExec)
+Q9K_DExecScratch_BpCount    equ $2544      * Q9_u32, C2: d2.w EIN = Anzahl Haltepunkte (im unteren Wort)
+Q9K_DExecScratch_BpList     equ $2548      * Q9_u32, C2: (a0) EIN = Haltepunktliste
 Q9K_ConSSigPid              equ $1F14      * Q9_u32, SS_SSig-Empfaenger der nativen Konsole (0 = keiner), s. q9kernel_alarm.c
 Q9K_ConSSigSignal           equ $1F18      * Q9_u32, zugehoeriger Signalcode
 Q9K_ConsoleViaIOMan         equ $1F1C      * Q9_u32, 1 = /term ueber IOMan/SCF statt nativ (echter Start) -- naechste freie Adresse $1F20
@@ -4967,6 +4970,10 @@ Q9K_SysDExit_Fail:
 Q9K_SysDExec:
         move.w  d0,Q9K_DExecScratch_Pid
         move.l  d1,Q9K_DExecScratch_Count
+        clr.l   Q9K_DExecScratch_BpCount
+        move.w  d2,Q9K_DExecScratch_BpCount+2
+        move.l  a0,Q9K_DExecScratch_BpList
+        move.l  Q9_D_Proc,Q9K_DExecScratch_Parent      * C2: der Debugger, bevor Q9K_ProcDebugExec den aktuellen Prozess wechselt
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a1,-(sp)
@@ -4978,13 +4985,21 @@ Q9K_SysDExec:
         beq     Q9K_SysDExec_Fail
         addq.l  #4,sp
         movem.l d0-d7/a0-a6,-(sp)
+* C2: den Registersatz des Debuggers wie beim Blockieren in F$Wait sichern -- P$SavedSP des Aufrufers, Carry im gesicherten
+* SR loeschen (Erfolg; bei Kind-Ende setzt Q9K_ProcDebugChildExit es wieder). Ohne SavedSP sprang der Debugger beim
+* Aufwecken auf einen veralteten Stack.
+        andi.w  #$fffe,60(sp)
+        movea.l Q9K_DExecScratch_Parent,a0
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
         movea.l Q9K_DExecScratch_Next,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         bsr     Q9K_ResumeTrapFlag          * selected debug context owns its flag (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysDExec_Fail:
-        move.w  Q9K_DExecScratch_Error,d1
+* C2: die C-Seite schreibt den Fehlercode als Langwort (Q9K_SetU32), das Wort bei +0 waere das obere (immer 0) -- live gemessen:
+* F$DExec auf eine unbekannte PID meldete Carry mit d1.w = 0 statt E$IPrcID ($E0).
+        move.w  Q9K_DExecScratch_Error+2,d1
         ori     #1,ccr
         rts
 
@@ -5005,6 +5020,7 @@ Q9K_TraceHandler:
         beq     Q9K_TraceResume
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        bsr     Q9K_ResumeTrapFlag          * C2: der Debugger setzt sein Trap-Flag fort (wie nach F$Wait)
 Q9K_TraceResume:
         movem.l (sp)+,d0-d7/a0-a6
         rte

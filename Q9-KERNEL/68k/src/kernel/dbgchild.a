@@ -1,0 +1,31 @@
+*******************************************************************************
+* dbgchild.a -- Testprogramm fuer Arbeitsplan C2: das Kind, das dbgtest.a per F$DFork startet und per F$DExec steuert.
+*
+* Fuenf unterscheidbare Befehle, danach F$Exit. d3 zaehlt die ausgefuehrten addq-Befehle mit, so dass der Registerpuffer
+* nach jedem Einzelschritt zeigt, wie weit das Kind gekommen ist:
+*     +0 moveq #0,d3     +2 addq.l #1,d3     +4 addq.l #1,d3     +6 addq.l #1,d3     +8 addq.l #1,d3
+*     +10 moveq #0,d1    +12 trap #0 / dc.w 6 (F$Exit)
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_DbgChildEdition     equ     1
+Q9K_DbgChildStackSize   equ     $400
+
+        psect   dbgchild,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_DbgChildEdition,Q9K_DbgChildStackSize,Q9K_DbgChildStart
+
+        vsect
+Q9K_DbgChildData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_DbgChildStart:
+        moveq   #0,d3
+        addq.l  #1,d3
+        addq.l  #1,d3
+        addq.l  #1,d3
+        addq.l  #1,d3
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+        endsect

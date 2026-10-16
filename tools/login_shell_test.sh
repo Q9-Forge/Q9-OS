@@ -72,7 +72,7 @@ done
 # A13: Skript fuer "mshell <loop" (Umleitung der Eingabe aus einer Datei)
 printf 'echo skript eins\recho skript zwei\r' > "$WORK/loop"
 "$OS9" copy "$WORK/loop" "$IMG,loop" >/dev/null 2>&1 || die "[$VARIANT] copy loop"
-for c in icptwait waitkid trapfail tlinkerr; do
+for c in icptwait waitkid trapfail tlinkerr dbgchild dbgtest; do
     "$OS9" copy "$WORK/kb/$c" "$IMG,CMDS/$c" >/dev/null 2>&1 || die "[$VARIANT] copy $c"
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
@@ -115,7 +115,7 @@ def check(name, cond, detail=''):
     print(('ok    ' if cond else 'FAIL  ') + '[%s] %s%s' % (variant, name, (' -- ' + detail) if (detail and not cond) else ''))
     if not cond: bad.append(name)
 check('Kernelbau (%s Byte), Boot, tsmon, login' % ksize, 'logged on' in raw)
-b1, b2, b3, b4, b5, b6, b7, b8, b9 = block(1), block(2), block(3), block(4), block(5), block(6), block(7), block(8), block(9)
+b1, b2, b3, b4, b5, b6, b7, b8, b9, b10 = block(1), block(2), block(3), block(4), block(5), block(6), block(7), block(8), block(9), block(10)
 def rawblock(n):
     # Ungefilterter Text zwischen den Marken. block() wirft Zeilen weg, die mit "$ " beginnen (Terminalecho); die Kindshell von
     # "mshell <loop" schreibt aber selbst "$ " vor jede Ausgabe (Eingabe aus einer Datei, kein Echo).
@@ -132,9 +132,14 @@ check('icptrte: zweites Signal bei F$RTE wird zugestellt (A10)', b6 is not None 
 check('icptwait: F$Wait mit anstehendem Signal (A11)', b7 is not None and all(w in b7 for w in ('w intercept', 'wait signal ok', 'child reaped')), repr(b7))
 check('mshell <loop: Skript aus umgeleiteter Eingabe (A13)', r8 is not None and 'skript eins' in r8 and 'skript zwei' in r8, repr(r8))
 check('tlinkerr: F$TLink-Fehlerpfade (B2): M$Init-Fehler zweimal, Speichermangel, Rueckbau', b9 is not None and all(w in b9 for w in ('tlink init err=A5', 'tlink init again err=A5', 'tlink mem err=CF', 'tlinkerr done 00')), repr(b9))
+check('dbgtest: F$DFork/F$DExec/F$DExit live (C2): Einzelschritt, Haltepunkte, Fehlerfaelle',
+      b10 is not None and all(w in b10 for w in (
+          'dfork err=00', 'step1 executed=02', 'step1 remaining=00', 'step1 d3=01', 'step1 pc+=04', 'step2 d3=02', 'step2 pc+=06',
+          'run carry=01', 'dexit err=00', 'dexit again err=E0', 'bp executed=04', 'bp remaining=00', 'bp d3=03', 'bp pc+=08',
+          'bp2 executed=05', 'bp2 remaining=63', 'bp2 pc+=0A', 'bad pid err=E0', 'dexit2 err=00', 'dbgtest done 00')), repr(b10))
 regchk = [l.strip() for l in raw.split('\n') if l.startswith('!R ')]
 check('keine Register-Erhaltungsmeldung (!R, Arbeitsplan A5)', not regchk, '; '.join(regchk[:3]))
-body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6, b7, b8, b9) if x)
+body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6, b7, b8, b9, b10) if x)
 errs = [e for e in ('Error #', "can't", 'Unhandled', 'syntax error', 'E$') if e in body]
 check('keine Fehlermeldung in den Befehlsausgaben', not errs, ' '.join(errs))
 sys.exit(1 if bad else 0)

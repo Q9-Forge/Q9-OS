@@ -98,6 +98,7 @@ block 6 "icptrte"
 block 7 "icptwait"
 block 8 "mshell <loop"
 block 9 "tlinkerr"
+block 10 "dbgtest"
 
 # 4. Debug-Dump anfordern (Ctrl-^), dann den Emulator beenden. Das Lesen
 #    mit Zeitlimit statt "sleep" laesst die Dump-Zeile noch ankommen.

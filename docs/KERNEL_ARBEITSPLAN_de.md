@@ -47,14 +47,14 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | Phase | Inhalt | Erledigt | Status |
 |---|---|---|---|
 | A | Kernel-Fundament | 16 / 16 | ✅ |
-| B | Technische Schulden | 4 / 5 | 🔄 |
-| C | Teilweise Syscalls abschließen | 1 / 8 | 🔄 |
+| B | Technische Schulden | 4 / 6 | 🔄 |
+| C | Teilweise Syscalls abschließen | 2 / 8 | 🔄 |
 | D | Eigener IOMan | 0 / 8 | ⬜ |
 | E | Eigene Filemanager | 0 / 7 | ⬜ |
 | F | Eigene Treiber, Statusumstellung | 0 / 3 | ⬜ |
 | G | Speicherschutz (MMU) | 0 / 5 | ⛔ |
 | H | Werkzeuge und Pflege | 0 / 4 | ⬜ |
-| **Teil 1 Kernel** | | **21 / 56** | |
+| **Teil 1 Kernel** | | **22 / 57** | |
 | I | Userland-Grundlagen | 0 / 5 | ⬜ |
 | J | Systemstart, Anmeldung, Shell | 0 / 8 | ⬜ |
 | K | Laufzeit und Bibliotheken | 0 / 7 | ⬜ |
@@ -63,7 +63,7 @@ mitziehen: ⬜ nichts begonnen, 🔄 teilweise erledigt, ✅ Phase komplett,
 | N | Netzwerk | 0 / 7 | ⬜ |
 | O | Grafik und übrige Programme | 0 / 6 | ⬜ |
 | **Teil 2 Userland** | | **0 / 43** | |
-| **Gesamt** | | **21 / 91** | |
+| **Gesamt** | | **22 / 92** | |
 
 | Meilenstein | Status |
 |---|---|
@@ -107,6 +107,7 @@ Zur Orientierung, damit nichts davon erneut angegangen wird.
 - **Syscalls** (101 Aufrufe laut `Q9-KERNEL/STATUS.md`): 52 voll umgesetzt,
   3 nur hostgetestet, 17 teilweise, 24 nur über den Microware-IOMan,
   1 fehlt (`F$MBuf`), 4 bewusst nicht (in OS-9/68K selbst zurückgezogen).
+  *(Stand 16.10.2026, nach C2: `F$DFork`, `F$DExec`, `F$DExit` sind live belegt — 55 voll umgesetzt, keiner mehr nur hostgetestet.)*
 - **I/O hängt vollständig an Microware.** Alle 16 `I$`-Aufrufe sowie
   `F$PErr`, `F$IOQu`, `F$IODel` laufen über den Microware-IOMan.
 - **Eigener IOMan** (`Q9-IOMAN`): Modul baut, Start und `F$SSvc`-Registrierung
@@ -176,13 +177,14 @@ Aus `KERNEL_NEXT_SESSION_de.md`, Abschnitt „Technische Schulden".
 | B3 | ✅ | **Scratch-Adressen und IRQ-Sperre im Trap-Pfad**: zentrale Belegungstabelle, Regel für Verschachtelung und Kontextwechsel | Keine Überlappung; Prüfskript läuft im Build mit (vgl. behobener `$3F0`/`$3F8`-Konflikt aus Fortsetzung 122) | — | `5b16faa`: 450 Zellen geprüft, drei Doppelbelegungen behoben (F$FModul zerstörte Alarm 0; TRAP-#1-15-Zellen auf dem Speicherprotokoll; Callcode-Wort von I$Open überschrieben); Prüfung läuft in `build.sh`; `docs/KERNEL_SPEICHERBELEGUNG_de.md`, `docs/KERNEL_IRQ_SPERRE_de.md` |
 | B4 | ✅ | **`Q9K_PatchCslFreelistBug`** prüfen: greift er überhaupt (erwartetes Bytemuster fehlte am 16.09.)? | Entscheidung belegt: als Kompatibilitätsmaßnahme gekennzeichnet oder entfernt | A1 | **Entscheidung: entfernt (16.10.2026).** Gemessen im Login-Test mit einer vorübergehenden Diagnosezeile im Developer-Kernel (`M C r=<Ausgang> a=<Modulkopf> s=<M$Size>`): bei **jedem** `F$TLink` von `csl` (Modulgröße `$BCEE`, Kopf `$366A0`) stimmte das erwartete Bytemuster an Dateiversatz `$56BC`, der Patch endete aber mit Ausgang 5 = „Sprung außer Reichweite“: der Stub lag im Arena-Speicher weit von `csl` entfernt, die Reichweitenprüfung aus Fortsetzung 109 verwarf ihn. Der Patch war also seit Fortsetzung 109 nie wirksam, und alle bisherigen Läufe (1001 Prozessenden, Parallellauf, Takt 1 ms) liefen ohne ihn. Die damals beobachtete zerstörte Verkettung hatte andere Ursachen (fremd relozierter Speicher, Fortsetzung 112; Arena über festen Diagnoseadressen, A12). Entfernt: `Q9K_PatchCslFreelistBug`, sein Aufruf in `Q9K_ProcTLink`, die Hosttest-Fälle F10a–F10d samt Stubs; im Quelltext steht ein Hinweis mit Fundort in der Git-Historie. 12 Stufen grün, 30/30 Hosttests. |
 | B5 | ⬜ | **`F$Link`/`F$UnLink` zählen nicht symmetrisch**: `F$Link` ruft die nebenwirkungsfreie Suche `Q9K_SysFLinkSearchImpl` (`Q9K_ModDirFindSlotByName`) und erhöht den Link-Zähler nicht, `F$UnLink` senkt ihn (bis 0), `F$Load` hinterlässt 0 (IOMans Wrapper zählt in einem eigenen Puffer, `Q9K_VMODUL_RETBUF`). Ein geladenes Modul verschwindet dadurch nach dem ersten Link/Unlink-Paar aus dem Verzeichnis, auch nach einem kernelinternen `F$TLink`/`F$Fork`, und ein `F$Link` aus einem Programm hält das Modul nicht fest | `F$Link` erhöht den Zähler, `F$UnLink` senkt ihn, `F$Load` hinterlässt 1 (wie Microware) — oder die Abweichung ist mit Beleg als bewusst begründet; IOMans Treiberanschluss (`F$Link` aus dem Trampolin) bleibt funktionsfähig; Hosttest und Login-Test grün | A8, B2 | Fund aus B2 (`tlinkerr.a`: nach Load + Link + `F$TLink` + Rückbau fehlte das Modul, gemessen per `F$Link`-Probe, 16.10.2026). Vorsicht: IOMan ruft `F$Link` auch direkt über das Trampolin; ein erhöhter Zähler muss dort wieder zurückgenommen werden, sonst wächst er mit jedem Treiberanschluss |
+| B6 | ⬜ | **Prozessdeskriptor: Trap-Tabelle überlappt andere Felder**: die eigene Trap-Tabelle (`$1CC` + 15 × 12 Byte bis `$280`) und die Größentabelle (`$280` + 4 × (Trap−1) bis `$2BC`) liegen über `P$IcptDepth` (`$1CC`, `q9kernel_icpt.c`), `Ev$Min`/`Ev$Max` (`$1D0`/`$1D4`, `q9kernel_event.c`) und dem echten `P$SigLvl` (`$210`, `q9kernel_procsleep.c`). Ein Prozess, der Trap 1 oder 6/7 per `F$TLink` installiert, überschreibt sie (Trap 11–13 überschrieb bis C2 auch die Debug-Felder, dort behoben) | Eine Belegungstabelle des Prozessdeskriptors wie `docs/KERNEL_SPEICHERBELEGUNG_de.md` (Skript, im Build geprüft: keine Überlappung); die kollidierenden Felder auf freie Offsets verlegt (frei: `$2D8`–`$3AB`); je ein Hosttest, der `F$TLink` auf Trap 1/6/7 mit gesetztem Feld kombiniert | B3, C2 | Fund aus C2 (die Debug-Felder). Vorsicht: `P$SigLvl` ist ein echtes OS-9-Feld, fremde Module (IOMan, Treiber) könnten es lesen; deshalb eher die Trap-Tabelle verlegen als das Feld |
 
 ## Phase C — Teilweise Syscalls abschließen
 
 | Nr | Status | Session-Ziel | Fertig, wenn | Vorauss. | Beleg |
 |---|---|---|---|---|---|
 | C1 | ✅ | **`date` und `F$VModul`**: Status-Hinweis „`date` erreicht `F$VModul` nie" ist vermutlich seit dem `F$Load`-Fix (Fortsetzung 108) überholt | Neu gemessen, Status korrigiert | A1 | `date` allein aus `/dd/CMDS` gebootet: `F$VModul`-Zellen im Q9-Flux-Dump hdr=`$ab3f0` size=`$c70` success=1 (Modul `$c64`, 16 Byte aufgerundet; `echo` ergibt `$c90`), 15.10.2026; `STATUS.md` korrigiert |
-| C2 | ⬜ | **Debugger-Aufrufe live**: `F$DFork`/`F$DExec`/`F$DExit` mit Einzelschritt-Testprogramm | Im Emulator verifiziert, 🟢 → ✅ | A1 | |
+| C2 | ✅ | **Debugger-Aufrufe live**: `F$DFork`/`F$DExec`/`F$DExit` mit Einzelschritt-Testprogramm | Im Emulator verifiziert, 🟢 → ✅ | A1 | **Live gemessen und behoben (16.10.2026).** Der erste Lauf von `dbgtest` zeigte, dass die „hostgetesteten“ Aufrufe live nicht funktionierten: (1) **`Q9K_SysDExec` setzte `P$SavedSP` des Debuggers nie** — der Elternprozess sprang beim Aufwecken auf einen veralteten Stack und starb (3 von 4 Läufen ohne Ausgabe); (2) die **Ausgaben fehlten**: `d0` blieb die Kind-PID (gemessen `executed=05` statt 2), `d1`/`d2` unbelegt, der **Registerpuffer wurde nie zurückgeschrieben** (`pc+=00`, `d3` blieb das Anfangsabbild); (3) **die Debug-Felder lagen bei `$2A8/$2AC/$2B0` im Bereich der Trap-Größentabelle** (`$280 + 4·(Trap−1)`): Trap 11–13 überschrieb sie, `csl` ist Trap 13 — ein Kind mit `csl` hätte seinen eigenen Befehlszähler zerstört (jetzt `$2C0` ff., s. B6); (4) ein `F$Exit` des Kindes gab es wie ein `F$Wait`-Ende (Kind freigegeben, `d0`=PID) statt wie im Handbuch (Carry, Kind bleibt für `F$DExit` stehen); (5) `F$DExit` gab den Modul-Link des Kindes nicht zurück (Linkzähler +1 je Lauf, Negativprobe +10 in 10 Läufen); (6) der Fehlerpfad von `F$DExec` las das obere Wort des Fehlercodes (`d1.w=0` statt `E$IPrcID`); (7) **der Emulator hatte das Trace-Bit abgeschaltet** (`M68K_EMULATE_TRACE` aus) — kein Einzelschritt möglich. **Umsetzung:** `Q9K_ProcDebugExec` (Budget, Haltepunktliste, `-1` wie fortlaufend), `Q9K_ProcDebugTrace` (zählt, prüft die Haltepunkte, schreibt bei jedem Halt `d0` = ausgeführt gesamt, `d1` = Rest, `d2` = 0 und den Registerpuffer zurück, `a7` nach der Größe des Hardware-Rahmens, Trace-Bit nie im Puffer), `Q9K_ProcDebugChildExit` (Carry + `E$PrcAbt`), `Q9K_SysDExec` rettet den Debugger wie `F$Wait`. **Nicht umgesetzt (Handbuch):** das Patchen der Haltepunkte mit Illegal-Opcodes bei `d1 = -1` (die Liste wirkt trotzdem, langsamer), Haltepunkt am allerersten PC, Zustellung unerwarteter Ausnahmen des Kindes an den Debugger (`d2`/`d3`–`d5` bleiben 0), Ändern von `a7` über den Puffer. **Beleg:** `dbgchild.a` + `dbgtest.a` (Block 10 im Login-Test, beide Varianten): `step1 executed=02 remaining=00 d3=01 pc+=04`, `step2 d3=02 pc+=06`, `run carry=01`, `dexit err=00`, `dexit again err=E0`, Haltepunkt `bp executed=04 remaining=00 d3=03 pc+=08`, mit Budget `bp2 executed=05 remaining=63 pc+=0A`, `bad pid err=E0`; Hosttests (Trace-Stop, Rückschreiben, Format-2-Rahmen, Haltepunkte, Kind-Ende, `F$DExit`, jeweils inkl. AddressSanitizer); Stufe „Debugger-Aufrufe, Ressourcenbilanz“ in `kernel_regress.sh` (Linkzähler/Modulverzeichnis/Freispeicher bleiben gleich). **Emulator:** `Makefile` von Q9-Flux setzt `-DM68K_EMULATE_TRACE=M68K_OPT_ON` für Musashi (**dort uncommittet**, wie die Timer-Änderung aus A15). |
 | C3 | ⬜ | **`F$Sema` P live** mit zwei Prozessen; **`F$Alarm`-Matrix** live | Beide ✅ | A1 | |
 | C4 | ⬜ | **`M$Extens`-Kaltstart-Scan** (OS9P2-Erweiterungen); damit wird `F$UAcct` möglich | Ein Testmodul installiert sich beim Boot | A1 | |
 | C5 | ⬜ | **`F$SetSys`-Restvariablen**, **`F$Panic`**-Feinheiten | Jede Variable klassifiziert: umgesetzt oder begründet offen | — | |

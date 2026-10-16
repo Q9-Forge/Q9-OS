@@ -42,8 +42,13 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_PROCDESC_ALLOCSIZE_OFF  0x30UL
 #define Q9K_WAIT_SIGNAL_OFF         0x38UL   /* Fortsetzung 120: P$Signal (Wort) */
 #define Q9K_WAIT_SIGLVL_OFF         0x3AUL   /* Fortsetzung 120: P$SigLvl (Byte) */
+/* C2: Debug-Felder (real $2C0 ff.), hier im Slot und 8 Byte auseinander (Q9_u32 = 8 Byte auf dem Host). */
+#define Q9K_PROCDESC_DBGREG_OFF     0x40UL
+#define Q9K_PROCDESC_DBGPAR_OFF     0x48UL
+#define Q9K_PROCDESC_DBGINSTR_OFF   0x50UL
+#define Q9K_PROCDESC_DBGTOTAL_OFF   0x58UL
 
-#define Q9K_TEST_DESC_SIZE 64UL
+#define Q9K_TEST_DESC_SIZE 0x300UL /* C2: statt 64 -- die Debug-Felder ($40 ff.) und die Trap-Tabelle ($1CC-$280, Q9K_ProcReleaseTrapLinks) liegen im Slot */
 #define Q9K_TEST_POOL_COUNT 4UL
 /* MUSS mit Q9K_TEST_DESC_SIZE uebereinstimmen -- q9kernel_procend.c
  * benutzt Q9K_PROCDESC_SIZE selbst als Pool-Scan-Schrittweite (Default
@@ -409,6 +414,56 @@ int main(void)
         checkU32("R2: Ueberschuss von PD 1 um 1 gesenkt", g_fakeMgrRefs[1], 1);
         checkU32("R2: PD 3 ohne Ueberschuss bleibt 0 (kein Unterlauf)", g_fakeMgrRefs[3], 0);
         checkU32("R2: Eintraege geraeumt", Q9K_GetU16(desc2 + Q9K_PROCDESC_PATH_OFF), 0);
+    }
+
+    /* Fall D1 (C2): F$Exit eines Debug-Kindes (F$DFork). Das Kind bleibt stehen (State w, Ressourcen unberuehrt), der Debugger
+     * wird mit Carry und d1.w = E$PrcAbt, d0.l = Zahl der ausgefuehrten Befehle fortgesetzt. F$DExit gibt dann alles frei. */
+    {
+        Q9_u32 next;
+        static unsigned char parentFrame[80];
+
+        resetPool(pool, poolBase);
+        memset(parentFrame, 0, sizeof(parentFrame));
+        Q9K_SetU16((Q9_u32)(unsigned long)parentFrame + 60UL, 0x0004);                       /* SR des Debuggers: Z gesetzt, Carry frei */
+        Q9K_SetU32(d1 + Q9K_PROCDESC_PARENT_OFF, d2);
+        Q9K_SetU32(d1 + Q9K_PROCDESC_DBGPAR_OFF, d2);                                       /* d1 ist Debug-Kind von d2 */
+        Q9K_SetU32(d1 + Q9K_PROCDESC_DBGTOTAL_OFF, 7);
+        Q9K_SetU32(d1 + Q9K_PROCDESC_MODHDR_OFF, 0x7770UL);
+        Q9K_SetU32(d1 + Q9K_PROCDESC_ALLOCBASE_OFF, 0x9000UL);
+        Q9K_SetU32(d1 + Q9K_PROCDESC_ALLOCSIZE_OFF, 0x200UL);
+        Q9K_SetU8(d2 + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);                  /* Debugger wartet in F$DExec */
+        Q9K_SetU32(d2 + Q9K_PROCDESC_SAVEDSP_OFF, (Q9_u32)(unsigned long)parentFrame);
+        g_modDirUnlinkCalls = 0; g_freeMemCalls = 0; g_waitQRemoveCalls = 0; g_schedInsertCalls = 0;
+        g_schedFirstPickReturn = d3;
+
+        next = Q9K_ProcExit(d1, 5);
+        checkU32("D1: Rueckgabe == Q9K_SchedFirstPick()-Ergebnis", next, d3);
+        checkU32("D1: Debugger d0.l = ausgefuehrte Befehle (7)", getBE32((Q9_u32)(unsigned long)parentFrame + 0), 7);
+        checkU32("D1: Debugger d1 = E$PrcAbt ($E4)", getBE32((Q9_u32)(unsigned long)parentFrame + 4), 0xE4);
+        checkU32("D1: Carry im gesicherten SR des Debuggers gesetzt",
+                 (Q9_u32)(Q9K_GetU16((Q9_u32)(unsigned long)parentFrame + 60UL) & 1U), 1);
+        checkU32("D1: uebrige SR-Bits des Debuggers unveraendert", (Q9_u32)(Q9K_GetU16((Q9_u32)(unsigned long)parentFrame + 60UL) & 0xFFFEU), 4);
+        checkU32("D1: Debugger zurueck auf 'a'", (Q9_u32)Q9K_GetU8(d2 + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'a');
+        checkU32("D1: Debugger aus der Wait-Queue genommen", g_waitQRemoveLastDesc, d2);
+        checkU32("D1: Debugger in die Bereit-Queue", g_schedInsertLastDesc, d2);
+        checkU32("D1: Kind bleibt stehen (State w)", (Q9_u32)Q9K_GetU8(d1 + Q9K_PROCDESC_STATE_OFF), (Q9_u32)'w');
+        checkU32("D1: Kind behaelt seinen Debugger-Eintrag", Q9K_GetU32(d1 + Q9K_PROCDESC_DBGPAR_OFF), d2);
+        checkU32("D1: Modul-Link des Kindes NICHT zurueckgegeben", (Q9_u32)g_modDirUnlinkCalls, 0);
+        checkU32("D1: Speicher des Kindes NICHT freigegeben", (Q9_u32)g_freeMemCalls, 0);
+        checkU32("D1: Kind NICHT in die Freiliste", (Q9_u32)(Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR) == d1), 0);
+        checkU32("D1: Exit-Status des Kindes gemerkt", (Q9_u32)Q9K_GetU16(d1 + Q9K_PROCDESC_EXITSTATUS_OFF), 5);
+
+        /* F$DExit: Debugger ist der Aufrufer */
+        Q9K_SetU32(Q9_D_PROC, d2);
+        {
+            Q9_u16 err = 0;
+            checkU32("D1: F$DExit auf das beendete Kind gelingt", (Q9_u32)Q9K_ProcDebugExit(2 /* PID = Slot d1 = zweiter Slot */, &err), 1);
+        }
+        checkU32("D1: F$DExit gibt den Modul-Link zurueck (genau ein Unlink)", (Q9_u32)g_modDirUnlinkCalls, 1);
+        checkU32("D1: ... und zwar den des Kindes", g_modDirUnlinkLastHdr, 0x7770UL);
+        checkU32("D1: F$DExit gibt den Speicher des Kindes frei", g_freeMemLastAddr, 0x9000UL);
+        checkU32("D1: Kind jetzt in der Freiliste", Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR), d1);
+        checkU32("D1: Debug-Eintrag des freien Slots geloescht", Q9K_GetU32(d1 + Q9K_PROCDESC_DBGPAR_OFF), 0);
     }
 
     printf("\n%s\n", failures == 0 ? "ALLE TESTS BESTANDEN" : "FEHLSCHLAEGE VORHANDEN");

@@ -67,6 +67,9 @@ static unsigned char g_fakeMgrRefsF[64];   /* A13 */
 #define Q9K_PROCDESC_DBGREG_OFF  0x340UL
 #define Q9K_PROCDESC_DBGPAR_OFF  0x348UL
 #define Q9K_PROCDESC_DBGINSTR_OFF 0x350UL
+#define Q9K_PROCDESC_DBGTOTAL_OFF 0x358UL
+#define Q9K_PROCDESC_DBGBPS_OFF   0x360UL
+#define Q9K_PROCDESC_DBGBPN_OFF   0x368UL
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x28UL
 /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): gleiche Grosszuegig-
  * keits-Begruendung wie oben -- reale Offsets waeren +0x04/+0x08/+0x0C. */
@@ -834,6 +837,7 @@ int main(void)
         Q9_u32 debugBase = (Q9_u32)(unsigned long)debugPool;
         Q9_u16 error = 0xFFFF;
         Q9_u32 debugPid;
+        unsigned char *parentFramePtr = 0;
 
         memset(debugPool, 0, sizeof(debugPool));
         memset(debugParent, 0, sizeof(debugParent));
@@ -874,7 +878,7 @@ int main(void)
         g_lastSchedInsert = 0;
         Q9_u32 execError = 0;
         checkU32("F$DExec waehlt den Debugger-Prozess als naechsten Kontext",
-                 Q9K_ProcDebugExec((Q9_u16)debugPid, 1, &execError),
+                 Q9K_ProcDebugExec((Q9_u16)debugPid, 1, 0, 0, &execError),
                  debugBase);
         checkU32("F$DExec parkt den Elternprozess",
                  (Q9_u32)*(Q9_u8 *)(debugParent + Q9K_PROCDESC_STATE_OFF), 'w');
@@ -890,6 +894,19 @@ int main(void)
                  0x8000UL);
         Q9K_SetU32(Q9_D_PROC, debugBase);
         Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 2);
+        /* C2: der gesicherte Registersatz des Debuggers (72 Byte), in den F$DExec seine Ausgaben schreibt */
+        {
+            static unsigned char parentFrame[72];
+            memset(parentFrame, 0xEE, sizeof(parentFrame));
+            Q9K_SetU32((Q9_u32)(unsigned long)debugParent + Q9K_PROCDESC_SAVEDSP_OFF, (Q9_u32)(unsigned long)parentFrame);
+            parentFramePtr = parentFrame;
+        }
+        {
+            /* Kind-Rahmen: PC (Rahmen+62) auf einen bekannten Wert, damit der Zuruecklesetest etwas zum Vergleichen hat */
+            unsigned long cf = Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF);
+            putBE16((unsigned char *)cf, 62, 0x0001); putBE16((unsigned char *)cf, 64, 0x2000);   /* PC = $00012000 */
+            putBE32((unsigned char *)cf, 12, 0xD3D3D3D3UL);                      /* d3 des Kindes */
+        }
         checkU32("Trace-Ereignis vor dem Budgetende laesst das Kind laufen",
                  Q9K_ProcDebugTrace(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF)), 0);
         checkU32("Trace-Ereignis zaehlt das Restbudget herunter",
@@ -904,6 +921,63 @@ int main(void)
         checkU32("Trace stop loescht das Trace-Bit",
                  (Q9_u32)(Q9K_GetU16(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF) + 60UL) & 0x8000U),
                  0);
+        /* C2: die Ausgaben von F$DExec im gesicherten Registersatz des Debuggers und der zurueckgeschriebene Registerpuffer */
+        checkU32("F$DExec-Ausgabe d0.l = ausgefuehrte Befehle (2)", getBE32((unsigned long)parentFramePtr + 0), 2UL);
+        checkU32("F$DExec-Ausgabe d1.l = Rest des Budgets (0)", getBE32((unsigned long)parentFramePtr + 4), 0UL);
+        checkU32("F$DExec-Ausgabe d2 = keine Ausnahme (0)", getBE32((unsigned long)parentFramePtr + 8), 0UL);
+        checkU32("Registerpuffer: d3 des Kindes zurueckgeschrieben", getBE32((unsigned long)registerImage + 12), 0xD3D3D3D3UL);
+        checkU32("Registerpuffer: PC des Kindes zurueckgeschrieben",
+                 ((Q9_u32)((registerImage[66] << 8) | registerImage[67]) << 16) | (Q9_u32)((registerImage[68] << 8) | registerImage[69]),
+                 0x00012000UL);
+        checkU32("Registerpuffer: Trace-Bit nicht im SR", (Q9_u32)(((registerImage[64] << 8) | registerImage[65]) & 0x8000), 0UL);
+        {
+            unsigned long cf = Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF);
+            checkU32("Registerpuffer: a7 = Rahmen + 60 + 8 (Format 0)", getBE32((unsigned long)registerImage + 60), (Q9_u32)(unsigned int)(cf + 68UL));
+            /* Format-2-Rahmen (68020/030-Trace): 12 Byte Hardware-Rahmen */
+            putBE16((unsigned char *)cf, 66, 0x2024);
+            Q9K_SetU8(cf + 60, (Q9_u8)0x80);                          /* Trace-Bit wieder setzen: Stop muss es loeschen */
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 1);
+            Q9K_SetU8(debugBase + Q9K_PROCDESC_STATE_OFF, 'a');
+            Q9K_SetU8((Q9_u32)(unsigned long)debugParent + Q9K_PROCDESC_STATE_OFF, 'w');
+            Q9K_SetU32(Q9_D_PROC, debugBase);
+            checkU32("Trace-Stop mit Format-2-Rahmen waehlt den Debugger", Q9K_ProcDebugTrace(cf), (Q9_u32)(unsigned long)debugParent);
+            checkU32("Registerpuffer: a7 = Rahmen + 60 + 12 (Format 2)", getBE32((unsigned long)registerImage + 60), (Q9_u32)(unsigned int)(cf + 72UL));
+            checkU32("Gesamtzaehler steht jetzt bei 3", getBE32((unsigned long)parentFramePtr + 0), 3UL);
+        }
+
+        /* Haltepunkt: das Kind laeuft fortlaufend (Budget 0) und haelt an, sobald sein PC auf $00012010 zeigt. */
+        {
+            static unsigned char bpList[8];
+            unsigned long cf = Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF);
+            putBE32(bpList, 0, 0x00012010UL);
+            putBE32(bpList, 4, 0x00012020UL);
+            Q9K_SetU8(debugBase + Q9K_PROCDESC_STATE_OFF, 'a');
+            Q9K_SetU8((Q9_u32)(unsigned long)debugParent + Q9K_PROCDESC_STATE_OFF, 'w');
+            Q9K_SetU32(Q9_D_PROC, debugBase);
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 0);                 /* fortlaufend */
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGBPS_OFF, (Q9_u32)(unsigned long)bpList);
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGBPN_OFF, 2);
+            Q9K_SetU8(cf + 60, (Q9_u8)0x80);
+            putBE16((unsigned char *)cf, 62, 0x0001); putBE16((unsigned char *)cf, 64, 0x200C);                     /* PC = $0001200C: kein Haltepunkt */
+            checkU32("Haltepunkte: PC ohne Haltepunkt laesst das Kind weiterlaufen", Q9K_ProcDebugTrace(cf), 0);
+            checkU32("Haltepunkte: Budget bleibt 0 (fortlaufend)", Q9K_GetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF), 0);
+            putBE16((unsigned char *)cf, 64, 0x2020);                                              /* zweiter Haltepunkt */
+            checkU32("Haltepunkte: PC auf Haltepunkt haelt das Kind an", Q9K_ProcDebugTrace(cf), (Q9_u32)(unsigned long)debugParent);
+            checkU32("Haltepunkte: Rest = 0 bei fortlaufender Ausfuehrung", getBE32((unsigned long)parentFramePtr + 4), 0UL);
+            checkU32("Haltepunkte: Gesamtzaehler 5", getBE32((unsigned long)parentFramePtr + 0), 5UL);
+
+            /* Haltepunkt VOR Budgetende: Rest = nicht ausgefuehrte Befehle (Budget 5 -> nach dem 2. Ereignis noch 3) */
+            Q9K_SetU8(debugBase + Q9K_PROCDESC_STATE_OFF, 'a');
+            Q9K_SetU8((Q9_u32)(unsigned long)debugParent + Q9K_PROCDESC_STATE_OFF, 'w');
+            Q9K_SetU32(Q9_D_PROC, debugBase);
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 5);
+            Q9K_SetU8(cf + 60, (Q9_u8)0x80);
+            putBE16((unsigned char *)cf, 64, 0x200C);
+            Q9K_ProcDebugTrace(cf);                                               /* Ereignis 1: Budget 5 -> 4 */
+            putBE16((unsigned char *)cf, 64, 0x2010);
+            checkU32("Haltepunkte: Haltepunkt vor Budgetende haelt an", Q9K_ProcDebugTrace(cf), (Q9_u32)(unsigned long)debugParent);
+            checkU32("Haltepunkte: Rest = Budget minus ausgefuehrte (3)", getBE32((unsigned long)parentFramePtr + 4), 3UL);
+        }
     }
 
 

@@ -167,7 +167,19 @@ extern void   Q9K_ModDirResTotals(Q9_u32 *outLinks, Q9_u32 *outEntries); /* q9ke
 #define Q9K_PROCDESC_STATE_ACTIVE  'a'
 #define Q9K_PROCDESC_STATE_ZOMBIE  'z'
 #define Q9K_PROCDESC_STATE_WAITING 'w'
-#define Q9K_PROCDESC_DBGPAR_OFF    0x2ACUL
+#ifndef Q9K_PROCDESC_DBGPAR_OFF
+#define Q9K_PROCDESC_DBGPAR_OFF    0x2C4UL    /* C2/B6: wie in q9kernel_firstproc.c (vorher $2AC, ueberlappte die Trap-Groessentabelle) */
+#endif
+#ifndef Q9K_PROCDESC_DBGINSTR_OFF
+#define Q9K_PROCDESC_DBGINSTR_OFF  0x2C8UL
+#endif
+#ifndef Q9K_PROCDESC_DBGTOTAL_OFF
+#define Q9K_PROCDESC_DBGTOTAL_OFF  0x2CCUL
+#endif
+#ifndef Q9K_PROCDESC_DBGREG_OFF
+#define Q9K_PROCDESC_DBGREG_OFF    0x2C0UL
+#endif
+#define Q9K_E_PRCABT               0x00E4U    /* E$PrcAbt: Debug-Kind hat F$Exit gerufen */
 
 #ifndef Q9K_PROCDESC_SIZE
 #define Q9K_PROCDESC_SIZE 0x400UL  /* = P$PrcBody (echte Groesse), s. q9kernel_tables.c */
@@ -369,6 +381,9 @@ static void Q9K_ProcPoolFree(Q9_u32 desc)
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
     Q9K_SetU16(desc + Q9K_PROCDESC_EXITSTATUS_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGPAR_OFF, 0);      /* C2: sonst hielte ein spaeterer Prozess in diesem Slot sich fuer ein Debug-Kind */
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGINSTR_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGTOTAL_OFF, 0);
 
     Q9K_SetU32(desc, Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR));
     Q9K_SetU32(Q9K_PROCPOOL_FREE_ADDR, desc);
@@ -398,10 +413,38 @@ static void Q9K_ProcExitFreeDeadChildren(Q9_u32 callerDesc)
  * Deskriptoradresse des als naechstes zu startenden Prozesses, oder 0
  * falls keiner mehr bereit ist (Aufrufer -- Q9K_SysFExit, q9kernel_entry.a
  * -- faellt dann in Q9K_HaltLoop, kein Fake-Fortschritt). */
+/* C2 (2026-10-16): F$Exit eines Debug-Kindes (F$DFork). 68k_tech.pdf S. 398/400: "If the child process terminates for any
+ * reason, the carry bit is set and returned [to the debugger]"; "normal termination by the child process does not release
+ * any of its resources" -- das Kind bleibt (angehalten, State w) stehen, bis der Debugger F$DExit ruft. Der Debugger wird
+ * mit Carry und d1.w = E$PrcAbt fortgesetzt, d0.l = Zahl der ausgefuehrten Befehle. Die Ressourcen (Modul-Link, Pfade,
+ * Speicher, Trap-Handler) gibt erst Q9K_ProcDebugExit frei. */
+static Q9_u32 Q9K_ProcDebugChildExit(Q9_u32 child, Q9_u32 owner, Q9_u16 exitStatus)
+{
+    Q9_u32 ownerSP = Q9K_GetU32(owner + Q9K_PROCDESC_SAVEDSP_OFF);
+
+    Q9K_SetU16(child + Q9K_PROCDESC_EXITSTATUS_OFF, exitStatus);
+    Q9K_SetU8(child + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
+    Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, 0);
+    if (owner == 0 || Q9K_GetU8(owner + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_WAITING)
+        return Q9K_SchedFirstPick();            /* kein wartender Debugger: das Kind bleibt unbeachtet stehen */
+
+    Q9K_SetFrameReg(ownerSP, 0UL, Q9K_GetU32(child + Q9K_PROCDESC_DBGTOTAL_OFF));   /* d0.l ausgefuehrt */
+    Q9K_SetFrameReg(ownerSP, 1UL, (Q9_u32)Q9K_E_PRCABT);                            /* d1.w Fehlercode */
+    Q9K_SetFrameReg(ownerSP, 2UL, 0UL);
+    Q9K_SetU16(ownerSP + 60UL, (Q9_u16)(Q9K_GetU16(ownerSP + 60UL) | 1U));          /* Carry im gesicherten SR */
+    Q9K_WaitQRemove(owner);
+    Q9K_SetU8(owner + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    Q9K_SchedInsert(owner);
+    return Q9K_SchedFirstPick();
+}
+
 Q9_u32 Q9K_ProcExit(Q9_u32 callerDesc, Q9_u16 exitStatus)
 {
     Q9_u32 modHdr     = Q9K_GetU32(callerDesc + Q9K_PROCDESC_MODHDR_OFF);
     Q9_u32 parentDesc = Q9K_GetU32(callerDesc + Q9K_PROCDESC_PARENT_OFF);
+
+    if (Q9K_GetU32(callerDesc + Q9K_PROCDESC_DBGPAR_OFF) != 0)
+        return Q9K_ProcDebugChildExit(callerDesc, Q9K_GetU32(callerDesc + Q9K_PROCDESC_DBGPAR_OFF), exitStatus);
 
     if (modHdr != 0) {
         Q9K_ModDirUnlinkByHeader(modHdr);
@@ -526,6 +569,15 @@ int Q9K_ProcDebugExit(Q9_u16 childPid, Q9_u16 *outError)
     if (owner == 0 || owner != Q9K_GetU32(Q9_D_PROC)) {
         *outError = 0x00E0U;
         return 0;
+    }
+    /* C2: Q9K_ProcPoolFree gibt Pfade, Trap-Handler und Speicher zurueck, den Modul-Link des Hauptmoduls aber nicht (den
+     * loest sonst Q9K_ProcExit) -- ohne diesen Schritt bliebe er nach jedem F$DFork/F$DExit stehen. */
+    {
+        Q9_u32 modHdr = Q9K_GetU32(desc + Q9K_PROCDESC_MODHDR_OFF);
+        if (modHdr != 0) {
+            Q9K_ModDirUnlinkByHeader(modHdr);
+            Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
+        }
     }
     Q9K_ProcPoolFree(desc);
     return 1;

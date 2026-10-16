@@ -12,7 +12,8 @@
 #   5. Offener Pfad tools/leak_test.sh 12 4 mit openleak (A16: Prozessende schliesst IOMan-Pfade; ~1 min)
 #   6. Interrupt-Injektion (A15): Langlauf, Parallellauf und Login-Test mit Q9_TIMER_PERIOD_MS=1 (zehnfacher Takt; ~5 min)
 #   7. F$TLink-Fehler tools/leak_test.sh 12 4 mit tlinkerr (B2: Rueckbau bei M$Init-Fehler und Speichermangel; ~1 min)
-#   8. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
+#   8. Debugger-Aufrufe tools/leak_test.sh 8 2 mit dbgtest (C2: F$DFork/F$DExec/F$DExit, Ressourcenbilanz; ~1 min)
+#   9. Bestandstests tools/startup_shell_test.sh, tools/mgrpath_probe_test.sh
 #                    (nur Standardvariante, laufen mit dem Kernel, den build.sh ohne Schalter baut)
 # --quick: nur Stufe 1 (ohne Emulator, ohne Wine-Bau).
 #
@@ -79,6 +80,11 @@ if [ "$QUICK" = 0 ]; then
     # wachsen; leak_test.sh prueft ausserdem die gemeldeten Fehlercodes (A5, A5, CF).
     stufe "F\$TLink-Fehlerpfade, Ressourcenbilanz" env Q9K_LEAK_PER=2 'Q9K_LEAK_CMDS=tlinkerr;tlinkerr;' \
         bash "$HERE/leak_test.sh" 12 4
+    # Debugger-Aufrufe (C2): dbgtest startet dbgchild per F$DFork, steuert es per F$DExec (Einzelschritt, Haltepunkte) und raeumt
+    # mit F$DExit auf; die Werte prueft der Login-Test (Block 10). Hier die Ressourcenbilanz ueber viele Laeufe: nach F$DExit
+    # muessen Link-Zaehler, Modulverzeichnis und Freispeicher unveraendert sein (frueher blieb der Modul-Link des Kindes stehen).
+    # Voraussetzung: ein Emulator mit eingeschaltetem Trace-Bit (Q9-Flux Makefile, M68K_EMULATE_TRACE).
+    stufe "Debugger-Aufrufe, Ressourcenbilanz" env Q9K_LEAK_PER=2 'Q9K_LEAK_CMDS=dbgtest;' bash "$HERE/leak_test.sh" 8 2
     for t in startup_shell_test.sh mgrpath_probe_test.sh; do
         if [ -f "$HERE/$t" ]; then stufe "$t" bash "$HERE/$t"
         else echo "(uebersprungen, fehlt: $t)"; fi
