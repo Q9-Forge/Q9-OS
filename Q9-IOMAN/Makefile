@@ -1,13 +1,14 @@
 CC ?= cc
 CFLAGS ?= -std=c99 -Wall -Wextra -Werror -pedantic -O2
 
-# In-tree Q9 toolchain. Paths are relative to Q9-OS/Q9-IOMAN.
-Q9_FORGE ?= ../..
-Q9_QCPP ?= $(Q9_FORGE)/Q9-QCC/Q9-FRONTEND-C/q9-qcpp/build/qcpp
-Q9_QCIR ?= $(Q9_FORGE)/Q9-QCC/Q9-FRONTEND-C/q9-qcir/build/qcir
-Q9_QIR68K ?= $(Q9_FORGE)/Q9-QCC/build/qir68k
-Q9_QR68K ?= $(Q9_FORGE)/Q9-QCC/Q9-BACKEND-68K/q9-qr68k/build/qr68k
-Q9_QL68K ?= $(Q9_FORGE)/Q9-QCC/Q9-BACKEND-68K/q9-ql68k/build/ql68k
+# In-tree Q9 toolchain. Paths default to the SDK's built-in host binaries.
+Q9_SDK ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../../../..)
+Q9_TOOLS_DIR ?= $(Q9_SDK)/macOS/ARM64/CMDS
+Q9_QCPP ?= $(Q9_TOOLS_DIR)/qcpp
+Q9_QCIR ?= $(Q9_TOOLS_DIR)/qcir
+Q9_QIR68K ?= $(Q9_TOOLS_DIR)/qir68k
+Q9_QR68K ?= $(Q9_TOOLS_DIR)/qr68k
+Q9_QL68K ?= $(Q9_TOOLS_DIR)/ql68k
 Q9_RFLAGS ?=
 Q9_CPPFLAGS ?= -Iinclude
 Q9_C_SOURCES := src/qioman.c src/qioman_system.c src/qioman_kernel.c

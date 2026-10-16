@@ -487,6 +487,68 @@ int main(void)
     }
 
     {
+        /* Complete Open -> Read -> Close triad test through kernel dispatch */
+        Q9IOMAN_Manager triad_manager;
+        Q9IOMAN_Path triad_paths[4];
+        MockBackend triad_mock;
+        unsigned char triad_frame[Q9IOMAN_R_SIZE];
+        const char triad_name[] = "/dd/triad.txt";
+        Q9IOMAN_u16 opened_h = 0;
+
+        memset(&triad_mock, 0, sizeof(triad_mock));
+        triad_mock.expected_name = triad_name;
+        triad_mock.close_status = Q9IOMAN_OK;
+
+        q9ioman_init(&triad_manager, triad_paths, 4);
+        q9ioman_register_backend(&triad_manager, "/dd", &backend, &triad_mock);
+
+        /* 1. I$Open */
+        memset(triad_frame, 0, sizeof(triad_frame));
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_D0, 1); /* read mode */
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_A0, 0x2000UL);
+        q9ioman_frame_write16(triad_frame, Q9IOMAN_R_SR, 0x2700U);
+        check("triad: I$Open returns handle 1 with Carry clear",
+              q9ioman_dispatch_kernel_request(0x0084, &triad_manager,
+                  triad_frame, resolve_test_path, (void *)triad_name) == Q9IOMAN_OK &&
+              q9ioman_frame_read16(triad_frame, Q9IOMAN_R_D0 + 2) == 1 &&
+              (q9ioman_frame_read16(triad_frame, Q9IOMAN_R_SR) & 1U) == 0);
+        opened_h = q9ioman_frame_read16(triad_frame, Q9IOMAN_R_D0 + 2);
+
+        /* 2. I$Read */
+        memset(triad_frame, 0, sizeof(triad_frame));
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_D0, opened_h);
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_D1, 16);
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_A0, 0x3000UL);
+        q9ioman_frame_write16(triad_frame, Q9IOMAN_R_SR, 0x2700U);
+        check("triad: I$Read transfers bytes with Carry clear",
+              q9ioman_dispatch_kernel_request(0x0089, &triad_manager,
+                  triad_frame, 0, 0) == Q9IOMAN_OK &&
+              q9ioman_frame_read32(triad_frame, Q9IOMAN_R_D1) == 16 &&
+              (q9ioman_frame_read16(triad_frame, Q9IOMAN_R_SR) & 1U) == 0);
+
+        /* 3. I$Close */
+        memset(triad_frame, 0, sizeof(triad_frame));
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_D0, opened_h);
+        q9ioman_frame_write16(triad_frame, Q9IOMAN_R_SR, 0x2700U);
+        check("triad: I$Close releases path with Carry clear",
+              q9ioman_dispatch_kernel_request(0x008f, &triad_manager,
+                  triad_frame, 0, 0) == Q9IOMAN_OK &&
+              (q9ioman_frame_read16(triad_frame, Q9IOMAN_R_SR) & 1U) == 0);
+
+        /* 4. Subsequent I$Read fails with E$BPNum ($C9) and Carry set */
+        memset(triad_frame, 0, sizeof(triad_frame));
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_D0, opened_h);
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_D1, 16);
+        q9ioman_frame_write32(triad_frame, Q9IOMAN_R_A0, 0x3000UL);
+        q9ioman_frame_write16(triad_frame, Q9IOMAN_R_SR, 0x2700U);
+        check("triad: subsequent I$Read fails with E$BPNum and Carry set",
+              q9ioman_dispatch_kernel_request(0x0089, &triad_manager,
+                  triad_frame, 0, 0) == Q9IOMAN_E_INVALID_PATH &&
+              q9ioman_frame_read16(triad_frame, Q9IOMAN_R_D1 + 2) == Q9IOMAN_OS9_E_BPNUM &&
+              (q9ioman_frame_read16(triad_frame, Q9IOMAN_R_SR) & 1U) != 0);
+    }
+
+    {
         MockBackend nested_mock;
         Q9IOMAN_u16 outer_path = 0;
         memset(&nested_mock, 0, sizeof(nested_mock));

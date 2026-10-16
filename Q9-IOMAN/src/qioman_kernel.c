@@ -115,14 +115,12 @@ Q9IOMAN_Status q9ioman_decode_kernel_request(
         return Q9IOMAN_OK;
     } else if (callcode == 0x0088) {
         request->type = Q9IOMAN_KERNEL_SEEK;
-        request->path = (Q9IOMAN_u16)q9ioman_frame_read32(
-            frame, Q9IOMAN_R_D0);
+        request->path = q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2);
         request->position = q9ioman_frame_read32(frame, Q9IOMAN_R_D1);
         return Q9IOMAN_OK;
     } else if (callcode == 0x0089) {
         request->type = Q9IOMAN_KERNEL_READ;
-        request->path = (Q9IOMAN_u16)q9ioman_frame_read32(
-            frame, Q9IOMAN_R_D0);
+        request->path = q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2);
         request->length = q9ioman_frame_read32(frame, Q9IOMAN_R_D1);
         request->buffer = q9ioman_frame_read32(frame, Q9IOMAN_R_A0);
         return Q9IOMAN_OK;
@@ -131,23 +129,20 @@ Q9IOMAN_Status q9ioman_decode_kernel_request(
         request->type = callcode == 0x008a ? Q9IOMAN_KERNEL_WRITE :
             (callcode == 0x008b ? Q9IOMAN_KERNEL_READ_LINE :
                                   Q9IOMAN_KERNEL_WRITE_LINE);
-        request->path = (Q9IOMAN_u16)q9ioman_frame_read32(
-            frame, Q9IOMAN_R_D0);
+        request->path = q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2);
         request->length = q9ioman_frame_read32(frame, Q9IOMAN_R_D1);
         request->buffer = q9ioman_frame_read32(frame, Q9IOMAN_R_A0);
         return Q9IOMAN_OK;
     } else if (callcode == 0x008d || callcode == 0x008e) {
         request->type = callcode == 0x008d ? Q9IOMAN_KERNEL_GET_STATUS :
                                              Q9IOMAN_KERNEL_SET_STATUS;
-        request->path = (Q9IOMAN_u16)q9ioman_frame_read32(
-            frame, Q9IOMAN_R_D0);
+        request->path = q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2);
         request->status_code = q9ioman_frame_read16(frame, Q9IOMAN_R_D1 + 2);
         request->buffer = q9ioman_frame_read32(frame, Q9IOMAN_R_A0);
         return Q9IOMAN_OK;
     } else if (callcode == 0x008f) {
         request->type = Q9IOMAN_KERNEL_CLOSE;
-        request->path = (Q9IOMAN_u16)q9ioman_frame_read32(
-            frame, Q9IOMAN_R_D0);
+        request->path = q9ioman_frame_read16(frame, Q9IOMAN_R_D0 + 2);
         return Q9IOMAN_OK;
     }
     return Q9IOMAN_E_UNSUPPORTED_OPERATION;
@@ -212,7 +207,7 @@ Q9IOMAN_Status q9ioman_dispatch_kernel_request(
                                             &path);
         if (status != Q9IOMAN_OK)
             goto failed;
-        q9ioman_frame_write16(frame, Q9IOMAN_R_D0 + 2, path);
+        q9ioman_frame_write32(frame, Q9IOMAN_R_D0, (Q9IOMAN_u32)path);
         q9ioman_frame_write32(frame, Q9IOMAN_R_A0,
                               request.buffer + name_bytes);
     } else if (request.type == Q9IOMAN_KERNEL_MAKDIR ||

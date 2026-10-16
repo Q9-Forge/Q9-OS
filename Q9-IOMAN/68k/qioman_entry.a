@@ -14,6 +14,8 @@ Q9_MA_SUPER     equ     $20
 Q9_R_D0         equ     $00
 Q9_R_D1         equ     $04
 Q9_R_A0         equ     $20
+Q9_D_Proc       equ     $004c
+Q9_P_Path       equ     $0168
 
         psect   qioman,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,1,0,Q9IOMAN_Entry
 
@@ -72,6 +74,17 @@ Q9IOMAN_OpenEntry:
         tst.l   d0
         bne     Q9IOMAN_OpenFailed
         move.l  Q9_R_D0(a5),d0
+        * Record active path in process descriptor P$Path table
+        movea.l Q9_D_Proc.w,a1
+        cmpa.l  #0,a1
+        beq.s   Q9IOMAN_OpenNoPD
+        move.w  d0,d1
+        cmpi.w  #32,d1
+        bcc.s   Q9IOMAN_OpenNoPD
+        add.w   d1,d1
+        adda.w  #Q9_P_Path,a1
+        move.w  d0,0(a1,d1.w)
+Q9IOMAN_OpenNoPD:
         move.l  Q9_R_D1(a5),d1
         move.l  Q9_R_A0(a5),a0
         movem.l (sp)+,d2-d7/a3-a5
@@ -116,6 +129,17 @@ Q9IOMAN_CloseEntry:
         tst.l   d0
         bne     Q9IOMAN_CloseFailed
         move.l  Q9_R_D0(a5),d0
+        * Clear path in process descriptor P$Path table upon close
+        movea.l Q9_D_Proc.w,a1
+        cmpa.l  #0,a1
+        beq.s   Q9IOMAN_CloseNoPD
+        move.w  d0,d1
+        cmpi.w  #32,d1
+        bcc.s   Q9IOMAN_CloseNoPD
+        add.w   d1,d1
+        adda.w  #Q9_P_Path,a1
+        clr.w   0(a1,d1.w)
+Q9IOMAN_CloseNoPD:
         move.l  Q9_R_D1(a5),d1
         move.l  Q9_R_A0(a5),a0
         movem.l (sp)+,d2-d7/a3-a5
@@ -166,6 +190,41 @@ Q9IOMAN_PathAddressBad:
         moveq   #1,d0
 Q9IOMAN_PathAddressDone:
         unlk    a5
+        rts
+
+* 68k-Core: int32 MUL (d0 * d1 -> d0), bare-metal safe without external dependencies
+tc_mul_i32:
+        move.l  d2,-(sp)
+        move.l  d3,-(sp)
+        move.l  d4,-(sp)
+        moveq   #0,d2
+        moveq   #0,d4
+        tst.l   d0
+        bpl.s   tc_mul_a_pos
+        neg.l   d0
+        addq.l  #1,d4
+tc_mul_a_pos:
+        tst.l   d1
+        bpl.s   tc_mul_b_pos
+        neg.l   d1
+        eori.l  #1,d4
+tc_mul_b_pos:
+        moveq   #31,d3
+tc_mul_loop:
+        lsr.l   #1,d1
+        bcc.s   tc_mul_skip
+        add.l   d0,d2
+tc_mul_skip:
+        add.l   d0,d0
+        dbra    d3,tc_mul_loop
+        tst.l   d4
+        beq.s   tc_mul_done
+        neg.l   d2
+tc_mul_done:
+        move.l  d2,d0
+        move.l  (sp)+,d4
+        move.l  (sp)+,d3
+        move.l  (sp)+,d2
         rts
 
 Q9IOMAN_SvcData:

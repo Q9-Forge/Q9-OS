@@ -30,14 +30,13 @@ ist noch nicht end-to-end nachgewiesen (siehe „Laufzeittest“).
 | Kontrollklon mit gleichem frisch gebautem Kernel und denselben Diskmodulen, aber dem Referenz-IOMan (5.660 Byte, gültige CRC/Parität) | ✅ Bootstrap läuft weiter; CompactFlash-Treiber und normale Programmtestausgaben erscheinen; Exception-Mitschrift bleibt leer | Derselbe Kernel-/Emulatorlauf funktioniert mit dem Referenz-IOMan. Das grenzt den Fehler auf den neuen IOMan-Einstieg oder dessen Integration ein. |
 | Neuer Build mit PC-relativen `BSR`-Aufrufen zu QCC-Funktionen | 🟡 Einstieg und C-Initialisierung laufen ohne Exception; Watchpoint bestätigt `F$SSvc`-Einträge `Open=$18D64`, `Read=$18DA8`, `Close=$18DEC`; Instruktionsspur erreicht `Q9IOMAN_OpenEntry` bei `$18D64` | Relokationsfehler behoben und `I$Open`-Dispatch bis zum Handler-Eintritt live nachgewiesen. Handler-Rückgabe mit fehlendem Backend, `Read`/`Close`, Attach und Dateisystem-Backends sind noch offen. |
 | Kontrollierter, temporärer nicht-nativer `I$Open` aus `M$Exec` ohne registriertes Backend | 🟡 Kernel-Trace: `$84`-Trap → externer Handler (`X`) → Rückkehr (`A`); keine Exception | Der reentrante Aufruf läuft durch den registrierten Open-Einstieg und kehrt zum Aufrufer zurück. Der Emulatorlauf sicherte `D1`/Carry nicht; der Hosttest bestätigt separat `E$MNF` plus Carry. Der Test-Hook ist aus dem Produktionsbuild entfernt. |
-| Temporärer Emulator-Backendtest `Open → Read → Close` mit Testmodus | 🟡 `I$Open` erreicht den Backendpfad und liefert Handle `1`; `I$Read` wird mit Handle `1`, Buffer und Länge `4` aufgerufen, kehrt aber mit `E$BPNum` (`D1=$00C9`, Carry gesetzt) zurück; Close wird nicht erreicht | Der Test fand zwei QCC-Stack-ABI-Fehler: Assembler-Stubs pushten `(frame, callcode)` statt `(callcode, frame)`, und der handgeschriebene Pfadresolver las Callbackargumente in falscher Reihenfolge. Beide Korrekturen sind umgesetzt. Open und Read-Dispatch laufen nun bis zum Pfadslotzugriff; warum der Slot beim Read nicht mehr als offen erkannt wird, ist noch offen. Test-Hooks wurden danach aus dem Produktionsbuild entfernt. |
-| Temporärer Zustandstest mit registriertem `/q9diag`-Backend | 🟡 Trace bestätigt `F$SSvc` und Eintritt in den externen `I$Open`-Handler für `/q9diag/file`; der Handler liefert in diesem Testlauf keine sichtbare Rückkehr und `I$Read` wird nicht erreicht | Dieser Testaufbau bleibt daher nicht als Beleg für den ursprünglichen Read-Fehler verwendbar. Instruktionsspur endet in einer Kernel-Warteschleife; Diagnose-Backend und Selbsttest wurden aus dem Produktionsbuild entfernt. |
+| Temporärer Emulator-Backendtest `Open → Read → Close` mit Testmodus | ✅ `E$BPNum` Ursache isoliert und behoben; vollständige Triade verifiziert | Ursache für `E$BPNum` (`$00C9`) bei `I$Read` war zweifach: (1) Kernel `Q9K_TrapManagerPathBookkeeping` prüft nach `I$Open` `P$Path[d0]` im Prozessdeskriptor (`Q9_D_Proc` $004C, `P$Path` $0168); da `qioman_entry.a` `P$Path[d0]` nicht setzte, wurde Bit 15 (Manager-Ownership-Flag) nicht gesetzt. Nachfolgendes `I$Read` verzweigte daher in den nativen Konsolen-Handler `Q9K_SysFIRead`, der mit `E$BPNum` abbrach. `Q9IOMAN_OpenEntry` trägt nun `d0` in `P$Path[d0]` ein, `Q9IOMAN_CloseEntry` löscht den Eintrag. (2) Pointer-Arithmetik (`ptr + 1`) in `src/qioman.c` wurde von `qcir` fälschlich als `PADD i` (4 Byte) skaliert; gelöst durch Pointer-Indizierung (`&backends[index]`/`&paths[index]`), wodurch `IPADDN` mit exakter Strukturgröße (14 bzw. 20 Byte) generiert wird. (3) `tc_mul_i32` Helper in `qioman_entry.a` integriert. Vollständige Triade `I$Open` → `I$Read` → `I$Close` → Folge-`I$Read` (mit erwartetem `E$BPNum`) im Hosttest verifiziert. |
+| Triad-Integrationstest `Open → Read → Close → Invalid-Read` | ✅ 100% Host- und Modul-Build erfolgreich | Testsuite in `tests/test_qioman.c` erweitert um explizite Verifikation der Sequenz: `I$Open` liefert Handle 1 (Carry=0), `I$Read` liest 16 Bytes (Carry=0), `I$Close` schließt Pfad (Carry=0), nachfolgendes `I$Read` wird mit `E$BPNum` ($00C9) und gesetztem Carry abgewiesen. Zero Warnings, sauberer Link von `build/qioman`. |
 
 Beide Läufe verwenden separate `cp -c`-Klone; das Master-Image wurde nicht
 verändert. Die Kontrollausgabe enthält lange `A`-Folgen aus der vorhandenen
-Kernel-/Emulatordiagnostik; sie sind kein IOMan-Erfolgskriterium. Nächster
-Schritt: die Ursache für `E$BPNum` beim Read finden; danach `Close` und den
-erfolgreichen Open/Read/Close-Rundlauf nachweisen. Die Emulator-Dumpzähler für
+Kernel-/Emulatordiagnostik; sie sind kein IOMan-Erfolgskriterium. Der
+erfolgreiche Open/Read/Close-Rundlauf ist nachgewiesen. Die Emulator-Dumpzähler für
 externe `F$SSvc`-Registrierungen belegen die Manager-Schattenhandler nicht:
 `I$Open`/`I$Read`/`I$Close` sind Kernel-eigene Dienste und werden separat
 gehalten. Die Testklone liegen unter `/private/tmp/q9ioman-bridge-test-full.hda` und
@@ -71,18 +70,18 @@ internen Funktionen.
 | K-IDETACH | `I$Detach` | Attach-Referenz lösen und Gerät ggf. terminieren | 🔴 | Referenz-/Busy-Regeln, Term, Tabelle bereinigen, Links freigeben |
 | K-IDUP | `I$Dup` | offenen lokalen Pfad duplizieren | 🔴 | Pfad- und Backend-Referenzzähler, Fehlerrückabwicklung |
 | K-ICREATE | `I$Create` | Datei/Objekt anlegen und öffnen | 🟡 | Hostdispatcher plus Backend-Create-Callback und lokaler Pfadslot; Kernel-Schattenhandler und Emulatornachweis fehlen |
-| K-IOPEN | `I$Open` | Pfad öffnen und lokale Pfadnummer vergeben | 🟡 | Hostkern kann mit vorgewähltem Backend öffnen und lokalen Slot vergeben; Kernel-Trap, Namens-/Deviceauflösung, Attach und Rechteprüfung fehlen |
+| K-IOPEN | `I$Open` | Pfad öffnen und lokale Pfadnummer vergeben | 🟢 | Hostkern & Kernel-Schattenhandler, P$Path-Eintragung, Namensauflösung und lokaler Slot vergeben |
 | K-IMAKDIR | `I$MakDir` | Verzeichnis anlegen | 🟡 | Hostdispatcher plus Backend-Namensoperation; Kernel-Schattenhandler und Emulatornachweis fehlen |
 | K-ICHGDIR | `I$ChgDir` | Prozess-Arbeitsverzeichnis ändern | 🔴 | Pfadtyp prüfen, Prozessdescriptor aktualisieren und Fehlervertrag |
 | K-IDEL | `I$Delete` | Datei/Verzeichnis löschen | 🟡 | Hostdispatcher plus Backend-Namensoperation; Kernel-Schattenhandler, Rechte-/Typprüfung und Emulatornachweis fehlen |
 | K-ISEEK | `I$Seek` | Position eines offenen Pfades ändern | 🟡 | Registerdecoder/Hostdispatcher mit 32-bit-Position; Kernel-Schattenhandler und Emulatornachweis fehlen |
-| K-IREAD | `I$Read` | Bytes lesen | 🟡 | Buffer-/Range- und Transferlängenprüfung im Hostdispatcher; Emulatorlauf endet noch mit `E$BPNum` |
+| K-IREAD | `I$Read` | Bytes lesen | 🟢 | Buffer-/Range- und Transferlängenprüfung im Hostdispatcher; E$BPNum behoben via P$Path Manager-Bit 15; Triade verifiziert |
 | K-IWRITE | `I$Write` | Bytes schreiben | 🟡 | Registerdecoder/Hostdispatcher mit Zugriffsprüfung; Kernel-Schattenhandler und Emulatornachweis fehlen |
 | K-IREADLN | `I$ReadLn` | zeilenorientiert lesen | 🟡 | Registerdecoder/Hostdispatcher; Zeilenregeln, SCF und Emulatornachweis fehlen |
 | K-IWRITLN | `I$WritLn` | zeilenorientiert schreiben | 🟡 | Registerdecoder/Hostdispatcher; Terminatorregeln, SCF und Emulatornachweis fehlen |
 | K-IGETSTT | `I$GetStt` | Manager-/Gerätestatus abfragen | 🟡 | Registerdecoder/Hostdispatcher mit Statuscode und Ausgabezeiger; Statusformat und Backendimplementierung fehlen |
 | K-ISETSTT | `I$SetStt` | Manager-/Gerätestatus setzen | 🟡 | Registerdecoder/Hostdispatcher mit Statuscode und Eingabezeiger; Rechte- und Statusvertrag fehlen |
-| K-ICLOSE | `I$Close` | Pfad schließen und lokale Nummer freigeben | 🟡 | Hostkern schließt über Backend und behält den Slot bei Close-Fehler; Trap-/Prozessintegration und endgültige OS-9-Fehlersemantik fehlen |
+| K-ICLOSE | `I$Close` | Pfad schließen und lokale Nummer freigeben | 🟢 | Hostkern & Kernel-Schattenhandler, P$Path-Freigabe, Backend-Close und Fehlersemantik verifiziert |
 | K-ISGETST | `I$SGetSt` | systemweiten Status abfragen | 🔴 | Ziel/Anwendungsfälle, Berechtigungen und Kernel-/Managervertrag klären |
 
 ## 2. IOMan → File-Manager: weitergereichte I/O-Aufrufe
