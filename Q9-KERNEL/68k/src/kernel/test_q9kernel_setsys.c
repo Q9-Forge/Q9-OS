@@ -20,6 +20,13 @@ static unsigned char g_fakeGlobals[0x2000];
 #define Q9K_SetSysScratch_Error   ((unsigned long)(g_fakeGlobals + 0x30))
 #define Q9K_SetSysScratch_Success ((unsigned long)(g_fakeGlobals + 0x40))
 
+/* C5: D_MinPty/D_MaxAge leben im Scheduler; hier einfache Ersatzzellen. */
+static unsigned long g_minPty = 0, g_maxAge = 0;
+unsigned long Q9K_SchedGetMinPty(void) { return g_minPty; }
+void Q9K_SchedSetMinPty(unsigned long v) { g_minPty = v & 0xFFFFUL; }
+unsigned long Q9K_SchedGetMaxAge(void) { return g_maxAge; }
+void Q9K_SchedSetMaxAge(unsigned long v) { g_maxAge = v & 0xFFFFUL; }
+
 #include "q9kernel_setsys.c"
 
 static int g_failures = 0;
@@ -61,7 +68,7 @@ int main(void)
     value = 0; error = 0xDEADUL;
     ok = Q9K_ProcSetSys(0x7CUL, 0UL /* kein GETFLAG = schreiben */, 12345UL, &value, &error);
     checkU32("F3: Schreiben meldet Erfolg", (unsigned long)ok, 1UL);
-    checkU32("F3: Schreiben liefert den geschriebenen Wert zurueck (nur bestaetigt)", value, 12345UL);
+    checkU32("F3: Schreiben liefert den VORHERIGEN Wert (Handbuch: original value)", value, 4096UL);
     checkU32("F3: kein Fehlercode", error, 0UL);
     value = 0;
     ok = Q9K_ProcSetSys(0x7CUL, Q9K_SETSYS_GETFLAG, 0UL, &value, &error);
@@ -100,11 +107,12 @@ int main(void)
     checkU32("F3e: D_Ticks ist lesbar", (unsigned long)ok, 1UL);
     checkU32("F3e: D_Ticks liefert Q9-Zaehler", value, 9876UL);
 
-    /* Schreibzugriffe auf schreibgeschuetzte Globals bleiben unbekannt. */
+    *(unsigned long *)(g_fakeGlobals + 0x4CUL) = 0UL;      /* kein laufender Prozess (Kernelkontext): darf schreiben */
+    /* Schreibzugriffe auf bekannte, nicht veraenderbare Globals: E$Param (C5; frueher E$UnkSvc). */
     value = 0xDEADUL; error = 0;
     ok = Q9K_ProcSetSys(0x6CUL, 0UL, 1UL, &value, &error);
     checkU32("F3f: D_TotRAM bleibt schreibgeschuetzt", (unsigned long)ok, 0UL);
-    checkU32("F3f: D_TotRAM Schreibfehler E$UnkSvc", error, 0xD0UL);
+    checkU32("F3f: D_TotRAM Schreibfehler E$Param (0xE1)", error, 0xE1UL);
 
     /* Fall 4: Scratch-Bruecke Q9K_SysSetSysImpl liest/schreibt die
      * richtigen Zellen -- Erfolgsfall. */
@@ -128,6 +136,69 @@ int main(void)
              *(unsigned long *)Q9K_SetSysScratch_Success, 0UL);
     checkU32("F5: Scratch-Bruecke setzt Error=0xD0",
              *(unsigned long *)Q9K_SetSysScratch_Error, 0xD0UL);
+
+    /* ---- C5: Groessen, Rechte, D_MinPty/D_MaxAge, D_ProcSz ---- */
+    {
+        static unsigned char fakePd[0x40];
+        unsigned long *userCell = (unsigned long *)(fakePd + 0x14UL);
+
+        *(unsigned long *)(g_fakeGlobals + 0x4CUL) = (unsigned long)fakePd;
+        *userCell = 0x00000007UL;                             /* Gruppe 0, Benutzer 7: Super-User */
+
+        value = 0xDEADUL; error = 0;
+        ok = Q9K_ProcSetSys(0x55EUL, Q9K_SETSYS_GETFLAG | 2UL, 0UL, &value, &error);
+        checkU32("C5-a: D_MinPty lesen (Wort)", (unsigned long)ok, 1UL);
+        checkU32("C5-a: D_MinPty startet mit 0", value, 0UL);
+        ok = Q9K_ProcSetSys(0x55EUL, 2UL, 5UL, &value, &error);
+        checkU32("C5-a: Super-User darf D_MinPty setzen", (unsigned long)ok, 1UL);
+        checkU32("C5-a: Schreiben liefert den vorherigen Wert (0)", value, 0UL);
+        checkU32("C5-a: der Scheduler-Wert ist gesetzt", g_minPty, 5UL);
+        ok = Q9K_ProcSetSys(0x55EUL, Q9K_SETSYS_GETFLAG | 2UL, 0UL, &value, &error);
+        checkU32("C5-a: Lesen danach liefert 5", value, 5UL);
+        ok = Q9K_ProcSetSys(0x55EUL, 2UL, 0UL, &value, &error);
+        checkU32("C5-a: D_MinPty zurueck auf 0, vorheriger Wert 5", value, 5UL);
+
+        ok = Q9K_ProcSetSys(0x560UL, 2UL, 7UL, &value, &error);
+        checkU32("C5-b: D_MaxAge setzen", (unsigned long)ok, 1UL);
+        checkU32("C5-b: Scheduler-Wert", g_maxAge, 7UL);
+        ok = Q9K_ProcSetSys(0x560UL, 2UL, 0UL, &value, &error);
+
+        /* Groessen */
+        ok = Q9K_ProcSetSys(0x55EUL, 2UL, 0x12345UL, &value, &error);
+        checkU32("C5-c: Wort-Schreiben schneidet auf 16 Bit ab", g_minPty, 0x2345UL);
+        ok = Q9K_ProcSetSys(0x55EUL, 2UL, 0UL, &value, &error);
+        g_minPty = 0x1234UL;
+        ok = Q9K_ProcSetSys(0x55EUL, Q9K_SETSYS_GETFLAG | 1UL, 0UL, &value, &error);
+        checkU32("C5-c: Byte-Lesen liefert nur das untere Byte", value, 0x34UL);
+        ok = Q9K_ProcSetSys(0x55EUL, Q9K_SETSYS_GETFLAG | 3UL, 0UL, &value, &error);
+        checkU32("C5-c: Groesse 3 -> Fehlschlag", (unsigned long)ok, 0UL);
+        checkU32("C5-c: Groesse 3 -> E$Param (0xE1)", error, 0xE1UL);
+        ok = Q9K_ProcSetSys(0x55EUL, Q9K_SETSYS_GETFLAG | 8UL, 0UL, &value, &error);
+        checkU32("C5-c: Groesse 8 -> E$Param", error, 0xE1UL);
+        g_minPty = 0;
+
+        /* D_ProcSz */
+        ok = Q9K_ProcSetSys(0x3E2UL, Q9K_SETSYS_GETFLAG | 2UL, 0UL, &value, &error);
+        checkU32("C5-d: D_ProcSz lesbar", (unsigned long)ok, 1UL);
+        checkU32("C5-d: D_ProcSz = 0x400", value, 0x400UL);
+        ok = Q9K_ProcSetSys(0x3E2UL, 2UL, 1UL, &value, &error);
+        checkU32("C5-d: D_ProcSz nicht veraenderbar (E$Param)", error, 0xE1UL);
+        /* D_TSlice unter dem Kopfzeilen-Offset ist dieselbe Zelle wie $76 */
+        ok = Q9K_ProcSetSys(0x42EUL, Q9K_SETSYS_GETFLAG | 2UL, 0UL, &value, &error);
+        checkU32("C5-d: D_TSlice ($42E) liest denselben Wert wie $76", value, 2UL);
+
+        /* Rechte: Gruppe ungleich 0 darf nicht schreiben, aber lesen */
+        *userCell = 0x00030007UL;                             /* Gruppe 3 */
+        ok = Q9K_ProcSetSys(0x55EUL, 2UL, 9UL, &value, &error);
+        checkU32("C5-e: Nicht-Super-User schreibt nicht", (unsigned long)ok, 0UL);
+        checkU32("C5-e: Fehlercode E$Permit (0xA4)", error, 0xA4UL);
+        checkU32("C5-e: Wert blieb unveraendert", g_minPty, 0UL);
+        ok = Q9K_ProcSetSys(0x55EUL, Q9K_SETSYS_GETFLAG | 2UL, 0UL, &value, &error);
+        checkU32("C5-e: Nicht-Super-User darf lesen", (unsigned long)ok, 1UL);
+        ok = Q9K_ProcSetSys(0x99UL, 2UL, 1UL, &value, &error);
+        checkU32("C5-e: unbekannte Variable schreiben: kein Recht -> E$Permit zuerst nur fuer bekannte", (unsigned long)ok, 0UL);
+        *(unsigned long *)(g_fakeGlobals + 0x4CUL) = 0UL;
+    }
 
     if (g_failures == 0) {
         printf("Alle Tests erfolgreich.\n");

@@ -21,6 +21,7 @@ static unsigned char g_fakeGlobals[0x2000];
 /* Systemweite Mindestprioritaet -- im Test in den Fake-Speicher
  * umgebogen, sonst greift der Scheduler auf die echte Adresse $55E zu. */
 #define Q9K_SCHED_MINPTY_ADDR                ((unsigned long)(g_fakeGlobals + 0x1F00))
+#define Q9K_SCHED_MAXAGE_ADDR                ((unsigned long)(g_fakeGlobals + 0x1F20))   /* C5 */
 #define Q9K_SCHED_SLICE_ADDR    ((unsigned long)(g_fakeGlobals + 0x010))
 #define Q9K_SCHED_NOSWITCH_ADDR ((unsigned long)(g_fakeGlobals + 0x1F10))   /* A7 */
 #define Q9K_WAITQ_SENTINEL_ADDR ((unsigned long)(g_fakeGlobals + 0x018))   /* NACHTRAG 2026-08-22 */
@@ -141,6 +142,27 @@ int main(void)
     checkU16("Nach Q9K_SchedAgeAll: p1.Age = 6 (5+1)", Q9K_GetU16(p1 + Q9K_PROCDESC_AGE_OFF), 6);
     checkU16("Nach Q9K_SchedAgeAll: p2.Age = 2 (1+1)", Q9K_GetU16(p2 + Q9K_PROCDESC_AGE_OFF), 2);
     checkU16("Nach Q9K_SchedAgeAll: p3.Age = 11 (10+1)", Q9K_GetU16(p3 + Q9K_PROCDESC_AGE_OFF), 11);
+
+    /* Fall 3b (C5): D_MaxAge. Aktiv (> 0) teilt es die Prozesse in zwei Klassen (68k_tech.pdf S. 92): Prioritaet >= D_MaxAge altert
+     * nicht ("do not age"), niedrigere altern hoechstens bis D_MaxAge. p1=5/Alter 6, p2=1/Alter 2, p3=10/Alter 11 (aus Fall 3). */
+    Q9K_SetU16(Q9K_SCHED_MAXAGE_ADDR, 7);
+    Q9K_SchedAgeAll();
+    checkU16("MaxAge=7: p3 (Prio 10 >= 7) altert nicht", Q9K_GetU16(p3 + Q9K_PROCDESC_AGE_OFF), 11);
+    checkU16("MaxAge=7: p1 (Prio 5 < 7) altert weiter, 6 -> 7", Q9K_GetU16(p1 + Q9K_PROCDESC_AGE_OFF), 7);
+    checkU16("MaxAge=7: p2 (Prio 1 < 7) altert, 2 -> 3", Q9K_GetU16(p2 + Q9K_PROCDESC_AGE_OFF), 3);
+    Q9K_SchedAgeAll();
+    checkU16("MaxAge=7: p1 bleibt an der Obergrenze 7", Q9K_GetU16(p1 + Q9K_PROCDESC_AGE_OFF), 7);
+    Q9K_SchedAgeAll(); Q9K_SchedAgeAll(); Q9K_SchedAgeAll(); Q9K_SchedAgeAll(); Q9K_SchedAgeAll();
+    checkU16("MaxAge=7: p2 erreicht die Obergrenze 7 und nicht mehr", Q9K_GetU16(p2 + Q9K_PROCDESC_AGE_OFF), 7);
+    checkU16("MaxAge=7: p3 hat nie ueber seine Prioritaet gealtert", Q9K_GetU16(p3 + Q9K_PROCDESC_AGE_OFF), 11);
+    Q9K_SetU16(Q9K_SCHED_MAXAGE_ADDR, 0);
+    Q9K_SchedAgeAll();
+    checkU16("MaxAge=0 (aus): wieder normales Altern (p3 11 -> 12)", Q9K_GetU16(p3 + Q9K_PROCDESC_AGE_OFF), 12);
+    checkU16("MaxAge=0: p1 7 -> 8", Q9K_GetU16(p1 + Q9K_PROCDESC_AGE_OFF), 8);
+    /* Zustand fuer Fall 4 wiederherstellen: p1=6, p2=2, p3=11 wie vor 3b */
+    Q9K_SetU16(p1 + Q9K_PROCDESC_AGE_OFF, 6);
+    Q9K_SetU16(p2 + Q9K_PROCDESC_AGE_OFF, 2);
+    Q9K_SetU16(p3 + Q9K_PROCDESC_AGE_OFF, 11);
 
     /* Fall 4: Q9K_SchedReschedule mit voller Zeitscheibe (Slice>0) --
      * KEIN Wechsel, Slice dekrementiert. */

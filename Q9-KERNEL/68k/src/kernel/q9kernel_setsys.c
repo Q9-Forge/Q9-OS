@@ -58,6 +58,12 @@
 
 typedef unsigned long Q9_u32;
 
+/* C5 (2026-10-17): D_MinPty und D_MaxAge leben im Scheduler (Q9-eigene Felder, s. q9kernel_sched.c). */
+extern Q9_u32 Q9K_SchedGetMinPty(void);
+extern void   Q9K_SchedSetMinPty(Q9_u32 value);
+extern Q9_u32 Q9K_SchedGetMaxAge(void);
+extern void   Q9K_SchedSetMaxAge(Q9_u32 value);
+
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
 
@@ -90,6 +96,14 @@ static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr =
 /* System-global values with a Q9-owned implementation.  $7c is the value
  * used by csl; $28 and $76 are the kernel's tick-rate and scheduler quantum
  * and therefore have stable Q9 semantics as well. */
+#define Q9K_SETSYS_VAR_MINPTY          0x55EUL   /* D_MinPty, Wort -- nach dem Handbuch veraenderbar */
+#define Q9K_SETSYS_VAR_MAXAGE          0x560UL   /* D_MaxAge, Wort -- nach dem Handbuch veraenderbar */
+#define Q9K_SETSYS_VAR_PROCSZ          0x3E2UL   /* D_ProcSz, Wort: Groesse eines Prozessdeskriptors */
+#define Q9K_SETSYS_VAR_TSLICE_HDR      0x42EUL   /* D_TSlice laut q9sysglob.h; $76 bleibt der aeltere Code derselben Zelle */
+#define Q9K_SETSYS_PROCSZ_VALUE        0x400UL
+#define Q9K_SETSYS_USER_OFF            0x14UL    /* P$User im Prozessdeskriptor: Gruppe im oberen Wort */
+#define Q9K_ERR_PERMIT                 0x00A4UL  /* E$Permit (000:164) */
+#define Q9K_ERR_PARAM                  0x00E1UL  /* E$Param (000:225) */
 #define Q9K_SETSYS_VAR_CSL_MALLOC_INCR 0x7CUL
 #define Q9K_SETSYS_VAR_TCKSEC          0x28UL
 #define Q9K_SETSYS_VAR_TSLICE          0x76UL
@@ -181,56 +195,110 @@ static Q9_u32 Q9K_GetSetSysTimeSlice(void)
 /* E$UnkSvc -- s. Kopfkommentar. */
 #define Q9K_ERR_UNKSVC 0x00D0UL
 
+/* C5: Ausgabewert auf die gemeldete Groesse kuerzen (1, 2 oder 4 Byte). */
+static Q9_u32 Q9K_SetSysTruncate(Q9_u32 value, Q9_u32 size)
+{
+    if (size == 1UL) return value & 0xFFUL;
+    if (size == 2UL) return value & 0xFFFFUL;
+    return value & 0xFFFFFFFFUL;
+}
+
+/* C5: darf der Aufrufer System-Globals aendern? 68k_tech.pdf S. 493: "Only a super-user can change system variables" -- Gruppe 0
+ * (S. 91: "Users with a group ID of zero (super users)"). Ohne laufenden Prozess (Kernelkontext) ja. */
+static int Q9K_SetSysCallerIsSuper(void)
+{
+    Q9_u32 desc = Q9K_GetU32(Q9K_SETSYS_ADDR(Q9K_SETSYS_VAR_PROC));
+
+    if (desc == 0UL)
+        return 1;
+    return (Q9K_GetU32(desc + Q9K_SETSYS_USER_OFF) & 0xFFFF0000UL) == 0UL;
+}
+
 /* Q9K_ProcSetSys -- echte F$SetSys-Kernlogik (s. Kopfkommentar).
+ *
+ * C5 (2026-10-17), gegen das Handbuch (68k_tech.pdf S. 492 f.) nachgezogen:
+ *   - d1.w ist die Groesse (1, 2 oder 4 Byte); 0 wird wie bisher als 4 gelesen (aeltere Aufrufer), alles andere ist E$Param.
+ *   - Bit 31 in d1 = Lesen. Die Ausgabe d2 ist der VORHERIGE Wert -- auch beim Schreiben ("d2.l = original value"). Frueher kam
+ *     beim Schreiben der neue Wert zurueck.
+ *   - Schreiben darf nur ein Super-User (Gruppe 0), sonst E$Permit ($A4). Nur D_MinPty, D_MaxAge und die drei Q9-Werte unten sind
+ *     veraenderbar ("The only useful variables that may be changed are D_MinPty and D_MaxAge"); jede andere bekannte Variable meldet
+ *     beim Schreiben E$Param, eine unbekannte E$UnkSvc.
+ *   - Lesen: nur Variablen, die dieser Kernel wirklich fuehrt (docs/KERNEL_SETSYS_VARIABLEN_de.md); sonst E$UnkSvc -- ein ehrlicher
+ *     Fehlschlag statt eines geratenen Werts. Das ist eine bewusste Abweichung vom Handbuch ("Any system variable may be examined"),
+ *     weil die echten Offsets in diesem System auf fremdem Speicher liegen (live gemessen: $55E ist nicht D_MinPty).
  * Rueckgabe 1 = Erfolg, 0 = Fehlschlag (*outError gesetzt). */
 int Q9K_ProcSetSys(Q9_u32 varCode, Q9_u32 flags, Q9_u32 valueIn, Q9_u32 *outValue, Q9_u32 *outError)
 {
-    *outError = 0UL;
+    Q9_u32 size = flags & 0xFFFFUL;
+    Q9_u32 old = 0UL;
+    int known = 1;
+    int writable = 0;
 
-    if ((flags & Q9K_SETSYS_GETFLAG) != 0) {
-        if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
-            *outValue = Q9K_GetSetSysMallocIncrement();
-        } else if (varCode == Q9K_SETSYS_VAR_TCKSEC) {
-            *outValue = Q9K_GetSetSysTickSeconds();
-        } else if (varCode == Q9K_SETSYS_VAR_TSLICE) {
-            *outValue = Q9K_GetSetSysTimeSlice();
-        } else if (Q9K_ReadSetSysReadonly(varCode, outValue)) {
-            /* Verifizierte System-Globals sind lesbar, aber nicht ueber
-             * diesen Pfad veraenderbar. */
-        } else {
-            *outValue = 0UL;
-            *outError = Q9K_ERR_UNKSVC;
-            return 0;
-        }
-        return 1;
-    } else if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
-        if (valueIn == 0UL) {
-            *outValue = 0UL;
-            *outError = Q9K_ERR_UNKSVC;
-            return 0;
-        }
-        Q9K_SetSysMallocIncrement = valueIn;
+    *outError = 0UL;
+    *outValue = 0UL;
+
+    if (size == 0UL)
+        size = 4UL;
+    if (size != 1UL && size != 2UL && size != 4UL) {
+        *outError = Q9K_ERR_PARAM;
+        return 0;
+    }
+
+    /* aktueller Wert der Variable; writable = der Wert darf geaendert werden */
+    if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR) {
+        old = Q9K_GetSetSysMallocIncrement(); writable = 1;
     } else if (varCode == Q9K_SETSYS_VAR_TCKSEC) {
-        if (valueIn == 0UL) {
-            *outValue = 0UL;
-            *outError = Q9K_ERR_UNKSVC;
-            return 0;
-        }
-        Q9K_SetSysTickSeconds = valueIn;
-    } else if (varCode == Q9K_SETSYS_VAR_TSLICE) {
-        if (valueIn == 0UL) {
-            *outValue = 0UL;
-            *outError = Q9K_ERR_UNKSVC;
-            return 0;
-        }
-        Q9K_SetSysTimeSlice = valueIn;
+        old = Q9K_GetSetSysTickSeconds(); writable = 1;
+    } else if (varCode == Q9K_SETSYS_VAR_TSLICE || varCode == Q9K_SETSYS_VAR_TSLICE_HDR) {
+        old = Q9K_GetSetSysTimeSlice(); writable = 1;
+    } else if (varCode == Q9K_SETSYS_VAR_MINPTY) {
+        old = Q9K_SchedGetMinPty(); writable = 1;
+    } else if (varCode == Q9K_SETSYS_VAR_MAXAGE) {
+        old = Q9K_SchedGetMaxAge(); writable = 1;
+    } else if (varCode == Q9K_SETSYS_VAR_PROCSZ) {
+        old = Q9K_SETSYS_PROCSZ_VALUE;
+    } else if (Q9K_ReadSetSysReadonly(varCode, &old)) {
+        /* Verifizierte System-Globals: lesbar, nicht veraenderbar. */
     } else {
-        *outValue = 0UL;
+        known = 0;
+    }
+
+    if (!known) {
         *outError = Q9K_ERR_UNKSVC;
         return 0;
     }
 
-    *outValue = valueIn;
+    if ((flags & Q9K_SETSYS_GETFLAG) != 0UL) {
+        *outValue = Q9K_SetSysTruncate(old, size);
+        return 1;
+    }
+
+    /* Schreiben */
+    if (!Q9K_SetSysCallerIsSuper()) {
+        *outError = Q9K_ERR_PERMIT;
+        return 0;
+    }
+    if (!writable) {
+        *outError = Q9K_ERR_PARAM;
+        return 0;
+    }
+    valueIn = Q9K_SetSysTruncate(valueIn, size);
+    if ((varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR || varCode == Q9K_SETSYS_VAR_TCKSEC ||
+         varCode == Q9K_SETSYS_VAR_TSLICE || varCode == Q9K_SETSYS_VAR_TSLICE_HDR) && valueIn == 0UL) {
+        *outError = Q9K_ERR_UNKSVC;    /* wie bisher: 0 ist fuer diese Werte unsinnig */
+        return 0;
+    }
+    if (varCode == Q9K_SETSYS_VAR_CSL_MALLOC_INCR)
+        Q9K_SetSysMallocIncrement = valueIn;
+    else if (varCode == Q9K_SETSYS_VAR_TCKSEC)
+        Q9K_SetSysTickSeconds = valueIn;
+    else if (varCode == Q9K_SETSYS_VAR_TSLICE || varCode == Q9K_SETSYS_VAR_TSLICE_HDR)
+        Q9K_SetSysTimeSlice = valueIn;
+    else if (varCode == Q9K_SETSYS_VAR_MINPTY)
+        Q9K_SchedSetMinPty(valueIn);
+    else if (varCode == Q9K_SETSYS_VAR_MAXAGE)
+        Q9K_SchedSetMaxAge(valueIn);
+    *outValue = Q9K_SetSysTruncate(old, size);          /* "d2.l = original value" */
     return 1;
 }
 

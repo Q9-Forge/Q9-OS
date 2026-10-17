@@ -73,7 +73,7 @@ done
 # A13: Skript fuer "mshell <loop" (Umleitung der Eingabe aus einer Datei)
 printf 'echo skript eins\recho skript zwei\r' > "$WORK/loop"
 "$OS9" copy "$WORK/loop" "$IMG,loop" >/dev/null 2>&1 || die "[$VARIANT] copy loop"
-for c in icptwait waitkid trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest p2test; do
+for c in icptwait waitkid trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest p2test setsystest; do
     "$OS9" copy "$WORK/kb/$c" "$IMG,CMDS/$c" >/dev/null 2>&1 || die "[$VARIANT] copy $c"
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
@@ -116,7 +116,7 @@ def check(name, cond, detail=''):
     print(('ok    ' if cond else 'FAIL  ') + '[%s] %s%s' % (variant, name, (' -- ' + detail) if (detail and not cond) else ''))
     if not cond: bad.append(name)
 check('Kernelbau (%s Byte), Boot, tsmon, login' % ksize, 'logged on' in raw)
-b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13 = block(1), block(2), block(3), block(4), block(5), block(6), block(7), block(8), block(9), block(10), block(11), block(12), block(13)
+b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14 = block(1), block(2), block(3), block(4), block(5), block(6), block(7), block(8), block(9), block(10), block(11), block(12), block(13), block(14)
 def rawblock(n):
     # Ungefilterter Text zwischen den Marken. block() wirft Zeilen weg, die mit "$ " beginnen (Terminalecho); die Kindshell von
     # "mshell <loop" schreibt aber selbst "$ " vor jede Ausgabe (Eingabe aus einer Datei, kein Echo).
@@ -164,9 +164,25 @@ if variant == 'development':
 p2_lines = [l.strip() for l in (b13 or '').split('\n')]
 check('p2test: Erweiterungsmodul os9p2 beim Boot ausgefuehrt, Dienst $70 und sein statischer Speicher (C4)',
       b13 is not None and all(w in p2_lines for w in ('p2 svc=42', 'p2 svc again=42', 'p2 unknown err=D0', 'p2test done 00')), repr(b13))
+ss = {}
+for l in (b14 or '').split('\n'):
+    m = re.match(r'^(.+?) (ok|err)=([0-9A-F]{4})\s*$', l.strip())
+    if m:
+        ss[m.group(1)] = (m.group(2), m.group(3))
+ss_want = [('init', ('ok', '0001')), ('totram', ('ok', '0001')), ('procsz', ('ok', '0400')), ('minpty now', ('ok', '0005')),
+           ('maxage now', ('ok', '00C8')), ('unknown', ('err', '00D0')), ('init wr', ('err', '00E1')), ('size3', ('err', '00E1')),
+           ('tslice', ('ok', '0002')), ('setsystest done', ('ok', '0000'))]
+ss_bad = [n for n, v in ss_want if ss.get(n) != v]
+for a, b in (('minpty0', 'minpty wr'), ('minpty0', 'minpty back'), ('maxage0', 'maxage wr'), ('maxage0', 'maxage back')):
+    if a not in ss or ss.get(a) != ss.get(b) or ss[a][0] != 'ok':
+        ss_bad.append('%s==%s' % (a, b))
+if ss.get('minpty rs', ('', ''))[0] != 'ok' or ss.get('maxage rs', ('', ''))[0] != 'ok':
+    ss_bad.append('rs')
+check('setsystest: F$SetSys liest Init/TotRAM/ProcSz, MinPty/MaxAge schreiben und zuruecksetzen, E$UnkSvc/E$Param (C5)',
+      b14 is not None and not ss_bad, 'abweichend: %s in %r' % (', '.join(ss_bad), b14))
 regchk = [l.strip() for l in raw.split('\n') if l.startswith('!R ')]
 check('keine Register-Erhaltungsmeldung (!R, Arbeitsplan A5)', not regchk, '; '.join(regchk[:3]))
-body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13) if x)
+body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14) if x)
 errs = [e for e in ('Error #', "can't", 'Unhandled', 'syntax error', 'E$') if e in body]
 check('keine Fehlermeldung in den Befehlsausgaben', not errs, ' '.join(errs))
 sys.exit(1 if bad else 0)

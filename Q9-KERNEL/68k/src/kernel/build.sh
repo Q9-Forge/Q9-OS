@@ -40,7 +40,7 @@ cd "$OUTDIR"
 # mit einem alten .r "erfolgreich" bauen. Jetzt wird zuerst aufgeraeumt, und
 # jede Werkzeugausgabe wird auf Fehlermeldungen durchsucht.
 rm -f ./*.r ./*.map ./*.lines makefile q9kernel forkchild trace hellosvc \
-      chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest os9p2 p2test
+      chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest os9p2 p2test setsystest
 rm -rf srcdebug
 
 # scan_log <Modus> <Beschreibung> <Logdatei>: 0 = keine Fehlermeldung gefunden.
@@ -96,6 +96,11 @@ fi
 if [ -f "$Q9OS_ROOT/tools/q9_scratch_map.py" ] && [ -f "$Q9OS_ROOT/docs/KERNEL_SPEICHERBELEGUNG_de.md" ]; then
     python3 "$Q9OS_ROOT/tools/q9_scratch_map.py" --check --doc "$Q9OS_ROOT/docs/KERNEL_SPEICHERBELEGUNG_de.md" || {
         echo "== BUILD ABGEBROCHEN: Scratch-Belegung (s. docs/KERNEL_SPEICHERBELEGUNG_de.md) =="; exit 1; }
+fi
+# C5: jede F$SetSys-Variable aus q9sysglob.h ist klassifiziert, umgesetzte stehen im Code, die Tabelle ist aktuell.
+if [ -f "$Q9OS_ROOT/tools/setsys_table.py" ] && [ -f "$Q9OS_ROOT/docs/KERNEL_SETSYS_VARIABLEN_de.md" ]; then
+    python3 "$Q9OS_ROOT/tools/setsys_table.py" --check --doc "$Q9OS_ROOT/docs/KERNEL_SETSYS_VARIABLEN_de.md" || {
+        echo "== BUILD ABGEBROCHEN: F\$SetSys-Variablen (s. docs/KERNEL_SETSYS_VARIABLEN_de.md) =="; exit 1; }
 fi
 
 cp "$SRCDIR"/q9kernel_entry.a "$SRCDIR"/q9kernel_cinit.c "$SRCDIR"/q9kernel_modcheck.c \
@@ -504,6 +509,15 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/p2test =="
 file p2test || true
 
+echo "== setsystest.a bauen (Regressionstest: F\$SetSys, C5) =="
+cp "$SRCDIR"/setsystest.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=setsystest.r "setsystest.a" < /dev/null
+wine_tool l68 \
+    -o=setsystest -f=orowoe setsystest.r < /dev/null
+echo "== Fertig: $OUTDIR/setsystest =="
+file setsystest || true
+
 echo "== icptrte.a bauen (Regressionstest: zweites Signal waehrend der Intercept-Routine, A10) =="
 cp "$SRCDIR"/icptrte.a .
 wine_tool r68 \
@@ -540,7 +554,7 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/iattachsvc =="
 file iattachsvc || true
 
-for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest os9p2 p2test; do
+for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest os9p2 p2test setsystest; do
     [ -s "$f" ] || { echo "FEHLER: Ergebnis $f fehlt oder ist leer" >&2; exit 1; }
 done
 echo "== BUILD OK: alle Ergebnisse frisch erzeugt, keine Werkzeugfehler =="

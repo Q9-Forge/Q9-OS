@@ -1,0 +1,248 @@
+*******************************************************************************
+* setsystest.a -- Regressionstest fuer Arbeitsplan C5: F$SetSys ($27) liest und aendert System-Globals.
+*
+* Ausgabe (Zeilen "Name ok=XXXX" bei Erfolg, "Name err=XXXX" bei Fehler, XXXX = d2.w bzw. der Fehlercode):
+*   init/totram        Lesen (Wert nur als "ungleich 0" gemeldet: ok=0001)
+*   procsz             D_ProcSz = 0400
+*   minpty0 / maxage0  Ausgangswerte; "... wr" = beim Schreiben zurueckgegebener VORHERIGER Wert (muss gleich dem Ausgangswert sein);
+*   "... now" = gelesener neuer Wert (0005 / 00C8); "... back" = nach dem Zurueckschreiben (muss gleich dem Ausgangswert sein)
+*   unknown            unbekannte Variable: err=00D0 (E$UnkSvc)
+*   init wr            Schreiben auf eine nicht veraenderbare Variable: err=00E1 (E$Param)
+*   size3              Groesse 3: err=00E1
+*   tslice             D_TSlice (Q9-Wert 2)
+*   setsystest done 00
+* Der Login-Test laeuft als Gruppe 0 (Super-User), Schreiben ist also erlaubt; den Fehlerfall E$Permit pruefen die Hosttests.
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_SSTEdition          equ     1
+Q9K_SSTStackSize        equ     $400
+Q9K_SSTGet              equ     $80000000       * d1: Lesen
+Q9K_SSTVarMinPty        equ     $55E
+Q9K_SSTVarMaxAge        equ     $560
+
+        psect   setsystest,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_SSTEdition,Q9K_SSTStackSize,Q9K_SSTStart
+
+        vsect
+Q9K_SSTData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_SSTStart:
+        moveq   #0,d6
+* D_Init und D_TotRAM: gelesen, nur als "ungleich 0" gemeldet
+        move.l  #$20,d0
+        move.l  #Q9K_SSTGet!4,d1
+        moveq   #1,d7
+        lea     Q9K_SSTTxtInit(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #$6C,d0
+        move.l  #Q9K_SSTGet!4,d1
+        moveq   #1,d7
+        lea     Q9K_SSTTxtTotRam(pc),a0
+        bsr     Q9K_SSTRun
+* D_ProcSz
+        move.l  #$3E2,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtProcSz(pc),a0
+        bsr     Q9K_SSTRun
+* D_MinPty: lesen, mit 5 beschreiben, lesen, zurueckschreiben, lesen
+        move.l  #Q9K_SSTVarMinPty,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMin0(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  d2,d6                           * Ausgangswert merken
+        move.l  #Q9K_SSTVarMinPty,d0
+        moveq   #2,d1
+        moveq   #5,d2
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMinWr(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #Q9K_SSTVarMinPty,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMinNow(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #Q9K_SSTVarMinPty,d0
+        moveq   #2,d1
+        move.l  d6,d2
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMinRs(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #Q9K_SSTVarMinPty,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMinBack(pc),a0
+        bsr     Q9K_SSTRun
+* D_MaxAge: ebenso mit 200
+        move.l  #Q9K_SSTVarMaxAge,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMax0(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  d2,d6
+        move.l  #Q9K_SSTVarMaxAge,d0
+        moveq   #2,d1
+        move.l  #200,d2
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMaxWr(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #Q9K_SSTVarMaxAge,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMaxNow(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #Q9K_SSTVarMaxAge,d0
+        moveq   #2,d1
+        move.l  d6,d2
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMaxRs(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #Q9K_SSTVarMaxAge,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtMaxBack(pc),a0
+        bsr     Q9K_SSTRun
+* Fehlerfaelle
+        move.l  #$F00,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtUnknown(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #$20,d0
+        moveq   #4,d1
+        moveq   #1,d2
+        moveq   #0,d7
+        lea     Q9K_SSTTxtInitWr(pc),a0
+        bsr     Q9K_SSTRun
+        move.l  #Q9K_SSTVarMinPty,d0
+        move.l  #Q9K_SSTGet!3,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtSize3(pc),a0
+        bsr     Q9K_SSTRun
+* D_TSlice
+        move.l  #$76,d0
+        move.l  #Q9K_SSTGet!2,d1
+        moveq   #0,d7
+        lea     Q9K_SSTTxtTSlice(pc),a0
+        bsr     Q9K_SSTRun
+        moveq   #0,d2
+        moveq   #0,d3
+        lea     Q9K_SSTTxtDone(pc),a0
+        bsr     Q9K_SSTPrint
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+* a0 = Name, d0/d1/d2 = Eingaben von F$SetSys, d7 = 1: bei Erfolg d2 auf 0/1 (ungleich 0) verdichten.
+* Ausgabe: Name + " ok=" bzw. " err=" + vier Hexziffern. Zurueck: d2 = Ergebnis (bei Fehler der Code).
+Q9K_SSTRun:
+        trap    #0
+        dc.w    $0027                            * F$SetSys
+        bcs.s   Q9K_SSTRunErr
+        moveq   #0,d3
+        tst.l   d7
+        beq.s   Q9K_SSTRunPrint
+        moveq   #0,d4
+        tst.l   d2
+        beq.s   Q9K_SSTRunNz
+        moveq   #1,d4
+Q9K_SSTRunNz:
+        move.l  d4,d2
+        bra.s   Q9K_SSTRunPrint
+Q9K_SSTRunErr:
+        moveq   #1,d3
+        moveq   #0,d2
+        move.w  d1,d2
+Q9K_SSTRunPrint:
+        bsr     Q9K_SSTPrint
+        rts
+
+* a0 = Name, d3 = 0 ok / 1 Fehler, d2.w = Wert
+Q9K_SSTPrint:
+        movem.l d0-d1/d4/a0-a2,-(sp)
+        lea     -64(sp),sp
+        movea.l sp,a1
+Q9K_SSTCopy:
+        move.b  (a0)+,d0
+        beq.s   Q9K_SSTCopyEnd
+        move.b  d0,(a1)+
+        bra.s   Q9K_SSTCopy
+Q9K_SSTCopyEnd:
+        tst.l   d3
+        bne.s   Q9K_SSTCopyErr
+        lea     Q9K_SSTTxtOk(pc),a2
+        bra.s   Q9K_SSTCopy2
+Q9K_SSTCopyErr:
+        lea     Q9K_SSTTxtErr(pc),a2
+Q9K_SSTCopy2:
+        move.b  (a2)+,d0
+        beq.s   Q9K_SSTHexes
+        move.b  d0,(a1)+
+        bra.s   Q9K_SSTCopy2
+Q9K_SSTHexes:
+        move.w  d2,d4
+        moveq   #3,d1
+Q9K_SSTHexLoop:
+        rol.w   #4,d4
+        move.w  d4,d0
+        andi.w  #$f,d0
+        move.b  Q9K_SSTHex(pc,d0.w),(a1)+
+        dbra    d1,Q9K_SSTHexLoop
+        move.b  #$0d,(a1)+
+        move.l  a1,d1
+        movea.l sp,a0
+        sub.l   a0,d1                           * d1.l = Laenge
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        lea     64(sp),sp
+        movem.l (sp)+,d0-d1/d4/a0-a2
+        rts
+
+Q9K_SSTHex:
+        dc.b    "0123456789ABCDEF"
+Q9K_SSTTxtOk:
+        dc.b    " ok=",0
+Q9K_SSTTxtErr:
+        dc.b    " err=",0
+Q9K_SSTTxtInit:
+        dc.b    "init",0
+Q9K_SSTTxtTotRam:
+        dc.b    "totram",0
+Q9K_SSTTxtProcSz:
+        dc.b    "procsz",0
+Q9K_SSTTxtMin0:
+        dc.b    "minpty0",0
+Q9K_SSTTxtMinWr:
+        dc.b    "minpty wr",0
+Q9K_SSTTxtMinNow:
+        dc.b    "minpty now",0
+Q9K_SSTTxtMinRs:
+        dc.b    "minpty rs",0
+Q9K_SSTTxtMinBack:
+        dc.b    "minpty back",0
+Q9K_SSTTxtMax0:
+        dc.b    "maxage0",0
+Q9K_SSTTxtMaxWr:
+        dc.b    "maxage wr",0
+Q9K_SSTTxtMaxNow:
+        dc.b    "maxage now",0
+Q9K_SSTTxtMaxRs:
+        dc.b    "maxage rs",0
+Q9K_SSTTxtMaxBack:
+        dc.b    "maxage back",0
+Q9K_SSTTxtUnknown:
+        dc.b    "unknown",0
+Q9K_SSTTxtInitWr:
+        dc.b    "init wr",0
+Q9K_SSTTxtSize3:
+        dc.b    "size3",0
+Q9K_SSTTxtTSlice:
+        dc.b    "tslice",0
+Q9K_SSTTxtDone:
+        dc.b    "setsystest done",0
+
+        endsect
