@@ -1,0 +1,288 @@
+*******************************************************************************
+* dbgtest.a -- Regressionstest fuer Arbeitsplan C2: F$DFork / F$DExec / F$DExit live.
+*
+* Ablauf (Zeilen "Text XX", XX = Wert hex, niedrigstes Byte). Kind = dbgchild.a: moveq d3 (+0), vier addq d3 (+2/+4/+6/+8),
+* moveq d1 (+10), F$Exit (+12).
+*   Runde 1 (Einzelschritt): F$Load + F$DFork -> "dfork err="; F$DExec mit 2 Befehlen -> "step1 executed=02 remaining=00 d3=01 pc+=04";
+*     mit 1 Befehl -> "step2 d3=02 pc+=06"; fortlaufend (d1 = 0) bis zum F$Exit -> "run carry=01" (Kind beendet, wie im Handbuch);
+*     F$DExit -> "dexit err=00"; nochmal -> "dexit again err=E0" (E$IPrcID).
+*   Runde 2 (Haltepunkte): neues Kind; Liste [+8], d1 = 0 -> "bp executed=04 remaining=00 d3=03 pc+=08";
+*     Liste [+10], d1 = 100 -> "bp2 executed=05 remaining=63 pc+=0A" (Rest = Budget minus die EINEN neu ausgefuehrten Befehle);
+*     F$DExec auf eine unbekannte PID -> "bad pid err=E0"; F$DExit -> "dexit2 err=00".
+*   "dbgtest done 00".
+* Registerpuffer-Offsets: R$d0=$00, R$a0=$20, R$sr=$40, R$pc=$42 (68k_tech.pdf S. 397 ff.).
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_DbgTestEdition      equ     1
+Q9K_DbgTestStackSize    equ     $1000
+
+        psect   dbgtest,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_DbgTestEdition,Q9K_DbgTestStackSize,Q9K_DbgTestStart
+
+        vsect
+Q9K_DbgTestData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_DbgTestStart:
+        lea     -72(sp),sp
+        movea.l sp,a3                           * a3 = Registerpuffer (a3 und d6/d7 bleiben ueber Syscalls erhalten)
+
+*--- Runde 1: Einzelschritt -------------------------------------------------------------------------------------------
+        bsr     Q9K_DbgTestStartChild
+        bcs     Q9K_DbgTestFail
+        moveq   #0,d1
+        lea     Q9K_DbgTestTxtFork(pc),a0
+        bsr     Q9K_DbgTestReport
+
+        moveq   #2,d1                           * zwei Befehle (moveq, addq)
+        moveq   #0,d2
+        suba.l  a0,a0
+        bsr     Q9K_DbgTestExec
+        bcs     Q9K_DbgTestFail
+        move.l  d0,d4                           * ausgefuehrt
+        move.l  d1,d5                           * verbleibend
+        move.l  d4,d1
+        lea     Q9K_DbgTestTxtS1Exec(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  d5,d1
+        lea     Q9K_DbgTestTxtS1Rem(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  12(a3),d1                       * Kind-d3
+        lea     Q9K_DbgTestTxtS1D3(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  $42(a3),d1
+        sub.l   d7,d1                           * PC-Fortschritt
+        lea     Q9K_DbgTestTxtS1Pc(pc),a0
+        bsr     Q9K_DbgTestReport
+
+        moveq   #1,d1                           * ein weiterer Befehl
+        moveq   #0,d2
+        suba.l  a0,a0
+        bsr     Q9K_DbgTestExec
+        bcs     Q9K_DbgTestFail
+        move.l  12(a3),d1
+        lea     Q9K_DbgTestTxtS2D3(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  $42(a3),d1
+        sub.l   d7,d1
+        lea     Q9K_DbgTestTxtS2Pc(pc),a0
+        bsr     Q9K_DbgTestReport
+
+        moveq   #0,d1                           * fortlaufend bis zum F$Exit des Kindes
+        moveq   #0,d2
+        suba.l  a0,a0
+        bsr     Q9K_DbgTestExec
+        scs     d1                              * FF wenn Carry gesetzt: Kind beendet
+        andi.l  #1,d1
+        lea     Q9K_DbgTestTxtRun(pc),a0
+        bsr     Q9K_DbgTestReport
+
+        bsr     Q9K_DbgTestDExit
+        bcs     Q9K_DbgTestFail
+        moveq   #0,d1
+        lea     Q9K_DbgTestTxtExit(pc),a0
+        bsr     Q9K_DbgTestReport
+        bsr     Q9K_DbgTestDExit                * zweites F$DExit: das Kind ist weg
+        bcc     Q9K_DbgTestFail
+        lea     Q9K_DbgTestTxtExit2(pc),a0      * d1.w = E$IPrcID
+        bsr     Q9K_DbgTestReport
+
+*--- Runde 2: Haltepunkte ---------------------------------------------------------------------------------------------
+        bsr     Q9K_DbgTestStartChild
+        bcs     Q9K_DbgTestFail
+        lea     -8(sp),sp                       * Haltepunktliste (eine Adresse): Kind-Start + 8
+        move.l  d7,d0
+        addq.l  #8,d0
+        move.l  d0,(sp)
+        moveq   #0,d1                           * fortlaufend, nur Haltepunkte
+        moveq   #1,d2
+        movea.l sp,a0
+        bsr     Q9K_DbgTestExec
+        bcs     Q9K_DbgTestFail
+        move.l  d0,d4
+        move.l  d1,d5
+        move.l  d4,d1
+        lea     Q9K_DbgTestTxtBExec(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  d5,d1
+        lea     Q9K_DbgTestTxtBRem(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  12(a3),d1
+        lea     Q9K_DbgTestTxtBD3(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  $42(a3),d1
+        sub.l   d7,d1
+        lea     Q9K_DbgTestTxtBPc(pc),a0
+        bsr     Q9K_DbgTestReport
+
+        move.l  d7,d0                           * Haltepunkt jetzt bei Start + 10, Budget 100
+        addi.l  #10,d0
+        move.l  d0,(sp)
+        moveq   #100,d1
+        moveq   #1,d2
+        movea.l sp,a0
+        bsr     Q9K_DbgTestExec
+        bcs     Q9K_DbgTestFail
+        move.l  d0,d4
+        move.l  d1,d5
+        move.l  d4,d1
+        lea     Q9K_DbgTestTxtB2Exec(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  d5,d1
+        lea     Q9K_DbgTestTxtB2Rem(pc),a0
+        bsr     Q9K_DbgTestReport
+        move.l  $42(a3),d1
+        sub.l   d7,d1
+        lea     Q9K_DbgTestTxtB2Pc(pc),a0
+        bsr     Q9K_DbgTestReport
+        lea     8(sp),sp
+
+* F$DExec auf eine unbekannte PID
+        move.l  #$00ff,d0
+        moveq   #1,d1
+        moveq   #0,d2
+        suba.l  a0,a0
+        trap    #0
+        dc.w    $0023
+        bcc     Q9K_DbgTestFail                 * muss fehlschlagen; d1.w = E$IPrcID
+        lea     Q9K_DbgTestTxtBad(pc),a0
+        bsr     Q9K_DbgTestReport
+
+        bsr     Q9K_DbgTestDExit
+        bcs     Q9K_DbgTestFail
+        moveq   #0,d1
+        lea     Q9K_DbgTestTxtExit3(pc),a0
+        bsr     Q9K_DbgTestReport
+
+        moveq   #0,d1
+        lea     Q9K_DbgTestTxtDone(pc),a0
+        bsr     Q9K_DbgTestReport
+Q9K_DbgTestEnd:
+        lea     72(sp),sp
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+* F$Load dbgchild, F$DFork. Aus: Carry gesetzt bei Fehler (d1.w = Code); sonst d6.w = Kind-PID, d7 = Start-PC des Kindes.
+Q9K_DbgTestStartChild:
+        lea     Q9K_DbgTestName(pc),a0
+        moveq   #0,d0                           * Typ/Sprache: beliebig
+        trap    #0
+        dc.w    $0001                            * F$Load
+        bcs.s   Q9K_DbgTestStartRts
+        moveq   #0,d0
+        moveq   #0,d1                           * kein zusaetzlicher Stack
+        moveq   #0,d2                           * keine Parameter
+        moveq   #0,d3                           * keine Pfade vererben
+        moveq   #0,d4                           * Prioritaet des Aufrufers
+        lea     Q9K_DbgTestName(pc),a0
+        lea     Q9K_DbgTestParam(pc),a1
+        movea.l a3,a2
+        trap    #0
+        dc.w    $0022                            * F$DFork -> d0.w = Kind-PID
+        bcs.s   Q9K_DbgTestStartRts
+        move.w  d0,d6
+        move.l  $42(a3),d7                      * Start-PC (Registerpuffer R$pc)
+        andi    #$fe,ccr
+Q9K_DbgTestStartRts:
+        rts
+
+* F$DExec auf d6.w: d1 = Budget, d2 = Anzahl Haltepunkte, a0 = Liste. Aus: wie F$DExec (Carry bei Fehler/Kind-Ende).
+Q9K_DbgTestExec:
+        moveq   #0,d0
+        move.w  d6,d0
+        trap    #0
+        dc.w    $0023                            * F$DExec
+        rts
+
+Q9K_DbgTestDExit:
+        moveq   #0,d0
+        move.w  d6,d0
+        trap    #0
+        dc.w    $0024                            * F$DExit
+        rts
+
+Q9K_DbgTestFail:
+        lea     Q9K_DbgTestTxtFail(pc),a0       * d1.w = Fehlercode des Aufrufs
+        bsr     Q9K_DbgTestReport
+        bra     Q9K_DbgTestEnd
+
+* a0 = Text (0-terminiert), d1 = Wert: schreibt "Text" + zwei Hexziffern (niedrigstes Byte) + CR auf Pfad 1.
+Q9K_DbgTestReport:
+        movem.l d0-d2/a0-a1,-(sp)
+        lea     -48(sp),sp
+        movea.l sp,a1
+Q9K_DbgTestCopy:
+        move.b  (a0)+,d2
+        beq.s   Q9K_DbgTestCopyEnd
+        move.b  d2,(a1)+
+        bra.s   Q9K_DbgTestCopy
+Q9K_DbgTestCopyEnd:
+        move.w  d1,d2
+        lsr.w   #4,d2
+        andi.w  #$f,d2
+        move.b  Q9K_DbgTestHex(pc,d2.w),(a1)+
+        andi.w  #$f,d1
+        move.b  Q9K_DbgTestHex(pc,d1.w),(a1)+
+        move.b  #$0d,(a1)+
+        move.l  a1,d1
+        movea.l sp,a0
+        sub.l   a0,d1                           * d1.l = Laenge
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        lea     48(sp),sp
+        movem.l (sp)+,d0-d2/a0-a1
+        rts
+
+Q9K_DbgTestHex:
+        dc.b    "0123456789ABCDEF"
+Q9K_DbgTestTxtFork:
+        dc.b    "dfork err=",0
+Q9K_DbgTestTxtS1Exec:
+        dc.b    "step1 executed=",0
+Q9K_DbgTestTxtS1Rem:
+        dc.b    "step1 remaining=",0
+Q9K_DbgTestTxtS1D3:
+        dc.b    "step1 d3=",0
+Q9K_DbgTestTxtS1Pc:
+        dc.b    "step1 pc+=",0
+Q9K_DbgTestTxtS2D3:
+        dc.b    "step2 d3=",0
+Q9K_DbgTestTxtS2Pc:
+        dc.b    "step2 pc+=",0
+Q9K_DbgTestTxtRun:
+        dc.b    "run carry=",0
+Q9K_DbgTestTxtExit:
+        dc.b    "dexit err=",0
+Q9K_DbgTestTxtExit2:
+        dc.b    "dexit again err=",0
+Q9K_DbgTestTxtExit3:
+        dc.b    "dexit2 err=",0
+Q9K_DbgTestTxtBExec:
+        dc.b    "bp executed=",0
+Q9K_DbgTestTxtBRem:
+        dc.b    "bp remaining=",0
+Q9K_DbgTestTxtBD3:
+        dc.b    "bp d3=",0
+Q9K_DbgTestTxtBPc:
+        dc.b    "bp pc+=",0
+Q9K_DbgTestTxtB2Exec:
+        dc.b    "bp2 executed=",0
+Q9K_DbgTestTxtB2Rem:
+        dc.b    "bp2 remaining=",0
+Q9K_DbgTestTxtB2Pc:
+        dc.b    "bp2 pc+=",0
+Q9K_DbgTestTxtBad:
+        dc.b    "bad pid err=",0
+Q9K_DbgTestTxtDone:
+        dc.b    "dbgtest done ",0
+Q9K_DbgTestTxtFail:
+        dc.b    "dbgtest failed err=",0
+Q9K_DbgTestName:
+        dc.b    "dbgchild",0
+Q9K_DbgTestParam:
+        dc.b    $0d
+
+        endsect

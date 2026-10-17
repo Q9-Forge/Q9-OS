@@ -1,0 +1,31 @@
+*******************************************************************************
+* trapfail.a -- Trap-Modul (Typ TrapLib) mit fehlschlagender Initialisierung, Testmodul fuer Arbeitsplan B2.
+*
+* TrapInit (M$Init) meldet Carry und d1.w = $00A5, wie es das Handbuch (68k_tech.pdf S. 172, "cc = carry set,
+* d1.w = error code if error") vorsieht. F$TLink muss den Fehler melden und alles zurueckgeben, was es fuer den
+* Handler erworben hat: Modul-Link, statischen Speicher ($100 Byte) und den Trap-Slot. Gegenstueck: tlinkerr.a.
+*******************************************************************************
+Q9TrapLib               equ     11              * Modultyp TrapLib
+Q9Objct                 equ     1               * Maschinencode
+Q9ReEnt                 equ     $80             * wiedereintrittsfaehig
+Q9K_TrapFailEdition     equ     1
+
+        psect   trapfail,(Q9TrapLib<<8)!Q9Objct,(Q9ReEnt<<8)!1,Q9K_TrapFailEdition,$100,Q9K_TrapFailEnt
+        dc.l    Q9K_TrapFailInit                * M$Init
+        dc.l    Q9K_TrapFailTerm                * M$Term
+
+* Trap-Einsprung (wird nie erreicht: die Initialisierung scheitert)
+Q9K_TrapFailEnt:
+        rts
+
+Q9K_TrapFailTerm:
+        rts
+
+Q9K_TrapFailInit:
+        movem.l (a7),a6                         * Rahmen verbrauchen wie jedes TrapInit (Handbuch)
+        addq.l  #8,a7
+        move.w  #$00a5,d1                       * Fehlercode
+        ori.b   #1,ccr                          * Carry = Fehler
+        rts
+
+        endsect

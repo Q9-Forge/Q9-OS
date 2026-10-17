@@ -400,8 +400,9 @@ Eigenes Paket, nach dem Trace. Stand: 2026-10-12; Messwerte in
   `bsr` fuer Aufrufe aus q9kernel_entry.a in C, PC-relativ ueber eine
   Label-Differenz (`lea *(pc),a0 / adda.l #Ziel-*,a0 / jsr (a0)`), die der
   Linker als Konstante aufloest. **Geprueft (Fortsetzung 122):** l68 kann
-  das, Makro `Q9K_FARCALL` steht bereit; die Massenumstellung der 42
-  Aufrufstellen brach aber den Start -- Ursache wird per Bisektion gesucht.
+  das. Die Massenumstellung der Aufrufstellen brach zunaechst den Start: das Makro
+  ueberschrieb `a0`, das in den Trap-Pfaden noch dem Aufrufer gehoert (Bisektion,
+  15.10.2026). Seit der registerneutralen Fassung sind alle 43 Stellen umgestellt.
 - **QCC:** eigener Weg mit frei waehlbarem Format -- `LINE datei zeile` im
   IR, das Backend setzt Labels und schreibt eine Zeilentabelle neben das
   Modul. Gehoert ins QCC-Repo.

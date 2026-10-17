@@ -1,0 +1,94 @@
+*******************************************************************************
+* p2test.a -- Regressionstest fuer Arbeitsplan C4: der beim Boot von os9p2.a installierte Systemaufruf $70 ist da.
+*
+* Ausgabe (Zeilen "Text XX"): "p2 svc=42" (Marker aus dem statischen Speicher der Erweiterung), "p2 svc again=42" (zweiter Aufruf:
+* der Speicher lebt weiter), "p2 unknown err=D0" (ein nie installierter Aufruf $71 meldet E$UnkSvc), "p2test done 00".
+* Ohne das Testmodul im Bootfile meldet der erste Aufruf "p2 svc err=D0".
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_P2TestEdition       equ     1
+Q9K_P2TestStackSize     equ     $400
+
+        psect   p2test,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_P2TestEdition,Q9K_P2TestStackSize,Q9K_P2TestStart
+
+        vsect
+Q9K_P2TestData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_P2TestStart:
+        moveq   #0,d0
+        trap    #0
+        dc.w    $0070                            * der von der Erweiterung installierte Dienst
+        bcs.s   Q9K_P2TestNoSvc
+        move.l  d0,d1
+        lea     Q9K_P2TestTxtSvc(pc),a0
+        bsr     Q9K_P2TestReport
+        moveq   #0,d0
+        trap    #0
+        dc.w    $0070
+        bcs.s   Q9K_P2TestNoSvc
+        move.l  d0,d1
+        lea     Q9K_P2TestTxtAgain(pc),a0
+        bsr     Q9K_P2TestReport
+        bra.s   Q9K_P2TestUnknown
+Q9K_P2TestNoSvc:
+        lea     Q9K_P2TestTxtNo(pc),a0          * d1.w = Fehlercode
+        bsr     Q9K_P2TestReport
+Q9K_P2TestUnknown:
+        trap    #0
+        dc.w    $0071                            * nie installiert
+        bcc.s   Q9K_P2TestDone
+        lea     Q9K_P2TestTxtUnk(pc),a0
+        bsr     Q9K_P2TestReport
+Q9K_P2TestDone:
+        moveq   #0,d1
+        lea     Q9K_P2TestTxtDone(pc),a0
+        bsr     Q9K_P2TestReport
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+* a0 = Text (0-terminiert), d1 = Wert: schreibt "Text" + zwei Hexziffern + CR auf Pfad 1.
+Q9K_P2TestReport:
+        movem.l d0-d2/a0-a1,-(sp)
+        lea     -48(sp),sp
+        movea.l sp,a1
+Q9K_P2TestCopy:
+        move.b  (a0)+,d2
+        beq.s   Q9K_P2TestCopyEnd
+        move.b  d2,(a1)+
+        bra.s   Q9K_P2TestCopy
+Q9K_P2TestCopyEnd:
+        move.w  d1,d2
+        lsr.w   #4,d2
+        andi.w  #$f,d2
+        move.b  Q9K_P2TestHex(pc,d2.w),(a1)+
+        andi.w  #$f,d1
+        move.b  Q9K_P2TestHex(pc,d1.w),(a1)+
+        move.b  #$0d,(a1)+
+        move.l  a1,d1
+        movea.l sp,a0
+        sub.l   a0,d1                           * d1.l = Laenge
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        lea     48(sp),sp
+        movem.l (sp)+,d0-d2/a0-a1
+        rts
+
+Q9K_P2TestHex:
+        dc.b    "0123456789ABCDEF"
+Q9K_P2TestTxtSvc:
+        dc.b    "p2 svc=",0
+Q9K_P2TestTxtAgain:
+        dc.b    "p2 svc again=",0
+Q9K_P2TestTxtNo:
+        dc.b    "p2 svc err=",0
+Q9K_P2TestTxtUnk:
+        dc.b    "p2 unknown err=",0
+Q9K_P2TestTxtDone:
+        dc.b    "p2test done ",0
+
+        endsect

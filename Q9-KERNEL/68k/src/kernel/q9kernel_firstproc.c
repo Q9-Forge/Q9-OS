@@ -197,6 +197,11 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #define Q9K_PROCDESC_DIO_SIZE    32UL
 /* Nativer Pfad-Pool (s. q9kernel_procend.c / q9kernel_tables.c) -- fuer die
  * Referenzzaehlung geerbter Pfade (Fortsetzung 112); per #define umlenkbar. */
+/* A13: Ueberschuss-Zaehler der IOMan-Pfade (s. q9kernel_procend.c, Q9K_MGRREF_ADDR). */
+#ifndef Q9K_FORK_MGRREF_ADDR
+#define Q9K_FORK_MGRREF_ADDR 0x2500UL
+#endif
+
 #ifndef Q9K_FORK_PATHPOOL_BASE_ADDR
 #define Q9K_FORK_PATHPOOL_BASE_ADDR 0x1214UL
 #endif
@@ -239,11 +244,21 @@ extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);  /* q9kernel_procapi.c -- Deskript
 #ifndef Q9K_DEBUGFORK_REGIMAGE_SIZE
 #define Q9K_DEBUGFORK_REGIMAGE_SIZE 72UL
 #endif
+/* C2/B6 (2026-10-16): die Debug-Felder lagen bei $2A8/$2AC/$2B0 und ueberlappten die Trap-Groessentabelle
+ * ($280 + 4 x (Trap-1), q9kernel_traplink.c): Trap 11, 12 und 13 -- csl ist Trap 13 -- ueberschrieben P$DbgReg, P$DbgPar und
+ * P$DbgInstr, ein Kind mit csl haette also seinen eigenen Befehlszaehler zerstoert. Jetzt $2C0 ff. (frei: oberhalb der Tabelle,
+ * unter P$Preempt bei $3AC). Dieselben Werte stehen in q9kernel_procend.c. */
 #ifndef Q9K_PROCDESC_DBGREG_OFF
-#define Q9K_PROCDESC_DBGREG_OFF 0x2A8UL
-#define Q9K_PROCDESC_DBGPAR_OFF 0x2ACUL
-#define Q9K_PROCDESC_DBGINSTR_OFF 0x2B0UL
+#define Q9K_PROCDESC_DBGREG_OFF 0x2C0UL      /* Zeiger auf den Registerpuffer des Debuggers (72 Byte) */
+#define Q9K_PROCDESC_DBGPAR_OFF 0x2C4UL      /* Debugger-Elternprozess, 0 = kein Debug-Kind */
+#define Q9K_PROCDESC_DBGINSTR_OFF 0x2C8UL    /* verbleibendes Befehlsbudget, 0 = fortlaufend */
 #endif
+#ifndef Q9K_PROCDESC_DBGTOTAL_OFF
+#define Q9K_PROCDESC_DBGTOTAL_OFF 0x2CCUL    /* seit F$DFork ausgefuehrte Befehle (Ausgabe d0.l von F$DExec) */
+#define Q9K_PROCDESC_DBGBPS_OFF   0x2D0UL    /* Haltepunktliste (Zeiger auf Adressen, je 4 Byte) */
+#define Q9K_PROCDESC_DBGBPN_OFF   0x2D4UL    /* Anzahl Haltepunkte */
+#endif
+#define Q9K_DEBUGEXEC_E_PRCABT 0x00E4UL      /* E$PrcAbt: das Kind hat F$Exit gerufen / wurde abgebrochen */
 #ifndef Q9_D_PROC
 #define Q9_D_PROC 0x04CUL
 #endif
@@ -435,6 +450,7 @@ Q9_u32 Q9K_ProcDebugFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
 #define Q9K_E_MNF     0x00DDU   /* Module Not Found */
 #define Q9K_E_MEMFUL  0x00CFU   /* Process Memory Full */
 #define Q9K_E_PRCFUL  0x00E5U   /* Process Table Full */
+#define Q9K_E_BMID    0x00CDU   /* Illegal module header (E$BMID): M$IData/M$IRefs ungueltig, B1 */
 #define Q9K_E_PRCID   0x00E0U   /* Invalid Process ID (E$IPrcID), s. q9kernel_procapi.c */
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
@@ -804,8 +820,8 @@ Q9_u32 Q9K_ProcCreateIdle(Q9_u32 entryPC)
  *     GENAU ZWEI Gruppen hintereinander (Manual: Code- und Datenzeiger
  *     werden unterschiedlich behandelt -- zwei Gruppen sind die
  *     natuerliche Kodierung dafuer), jede Gruppe:
- *       +0  MS-Wort (2 Byte, bei allen bisher gesehenen Werten 0 --
- *           Bedeutung sonst unbekannt, wird gelesen und verworfen)
+ *       +0  MS-Wort (2 Byte) = obere 16 Bit des Offsets (Offset = MS<<16 | LS),
+ *           seit Fortsetzung 112/B1 geklaert (68k_tech.pdf Table 1-8)
  *       +2  Anzahl Eintraege M (2 Byte)
  *       +4  M Woerter (je 2 Byte): Datenbereich-Versatz eines bereits
  *           per M$IData kopierten 32-Bit-Zeigerfeldes
@@ -828,62 +844,84 @@ Q9_u32 Q9K_ProcCreateIdle(Q9_u32 entryPC)
  * werden NICHT gelesen -- vermutlich die reale OS-9-Modul-CRC (letzte 3
  * Byte des Moduls) plus ein Fuellbyte; da die Anzahl der Gruppen fest
  * (zwei) ist, muss danach ohnehin nichts mehr gelesen werden. */
-void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)             /* s. Hinweis bei Q9K_ReadHdrU32BE */
+/* B1 (2026-10-16): gehaertet. Vorher vertraute die Funktion allen Zahlen aus dem Modul: ein Eintrag mit grosser Anzahl oder
+ * Zieloffset schrieb hinter den Datenblock, ein Tabellenende hinter dem Modul wurde nie gefunden. Jetzt wird jeder Zugriff
+ * geprueft; bei einem Verstoss bricht die Funktion ab und liefert Q9K_E_BMID (E$BMID, "illegal module header") -- der Aufrufer
+ * gibt Block und Modul-Link zurueck.
+ *
+ * Unterstuetzter Umfang (festgelegt, 68k_tech.pdf Table 1-8):
+ *   - M$IData: Eintraege [Zieloffset.l, Anzahl.l, Nutzlast] bis zum Beginn von M$IRefs. Ohne M$IRefs gibt es kein Tabellenende
+ *     -- dann wird (wie bisher) nichts kopiert. Ein Rest von weniger als 8 Byte vor M$IRefs gilt als Fuellbytes.
+ *   - M$IRefs: genau zwei Tabellen (Kodezeiger: Wert += Modulanfang, Datenzeiger: Wert += Datenblock), jede eine Folge von
+ *     Laeufen [MS.w, Anzahl.w, Anzahl x LS.w], Offset = MS<<16 | LS, Ende bei MS = 0 UND Anzahl = 0. Das MS-Wort ist damit
+ *     geklaert (frueher "verworfen"): es sind die oberen 16 Bit des Offsets, relevant fuer Datenbereiche ueber 64 KByte.
+ *   - Keine weiteren Relokationsarten.
+ * Geprueft werden: M$IData/M$IRefs liegen im Modul (M$Size) und M$IData vor M$IRefs; jede Nutzlast liegt vor M$IRefs; jeder
+ * Schreibzugriff (Kopierziel, relozierte 32-Bit-Felder) liegt im Zielblock [block, block + blockSize); jede Tabelle ist
+ * innerhalb des Moduls abgeschlossen. Rueckgabe 0 = Erfolg. */
+Q9_u32 Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block, Q9_u32 blockSize)   /* s. Hinweis bei Q9K_ReadHdrU32BE */
 {
+    Q9_u32 modSize  = Q9K_ReadHdrU32BE(hdrAddr + 4UL);                      /* M$Size */
     Q9_u32 idataOff = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_IDATA);
     Q9_u32 irefsOff = Q9K_ReadHdrU32BE(hdrAddr + Q9K_MH_IREFS);
+    Q9_u32 modEnd   = hdrAddr + modSize;
     Q9_u32 p, end;
     Q9_u32 group;
     Q9_u32 relocBase;
 
     if (idataOff == 0 && irefsOff == 0)
-        return;   /* Normalfall fuer reinen Assembler-Code -- unveraendert */
+        return 0;   /* Normalfall fuer reinen Assembler-Code -- unveraendert */
 
-    /* M$IData kopieren -- laeuft bis zum Beginn von M$IRefs (s.
-     * Kopfkommentar: kein eigener Endemarker noetig/vorhanden). */
-    if (idataOff != 0) {
+    if (idataOff >= modSize || irefsOff >= modSize)
+        return Q9K_E_BMID;   /* Tabelle ausserhalb des Moduls (auch bei M$Size = 0) */
+    if (idataOff != 0 && irefsOff != 0 && idataOff > irefsOff)
+        return Q9K_E_BMID;   /* M$IData muss vor M$IRefs liegen */
+
+    /* M$IData kopieren -- laeuft bis zum Beginn von M$IRefs. */
+    if (idataOff != 0 && irefsOff != 0) {
         p = hdrAddr + idataOff;
         end = hdrAddr + irefsOff;
-        while (p < end) {
+        while (end - p >= 8UL) {
             Q9_u32 dstOff = Q9K_ReadHdrU32BE(p);
-            Q9_u32 count  = Q9K_ReadHdrU32BE(p + 4);
+            Q9_u32 count  = Q9K_ReadHdrU32BE(p + 4UL);
             Q9_u32 i;
+
+            if (count > end - p - 8UL)
+                return Q9K_E_BMID;   /* Nutzlast ragt ueber M$IRefs hinaus */
+            if (dstOff > blockSize || count > blockSize - dstOff)
+                return Q9K_E_BMID;   /* Ziel ausserhalb des Datenblocks */
             for (i = 0; i < count; i++)
-                Q9K_SetU8(block + dstOff + i, Q9K_GetU8(p + 8 + i));
-            p += 8 + count;
+                Q9K_SetU8(block + dstOff + i, Q9K_GetU8(p + 8UL + i));
+            p += 8UL + count;
         }
     }
 
-    /* M$IRefs anwenden -- genau zwei Gruppen (Kodezeiger, dann
-     * Datenzeiger), s. Kopfkommentar. */
+    /* M$IRefs anwenden -- genau zwei Tabellen (Kodezeiger, dann Datenzeiger). */
     if (irefsOff != 0) {
         p = hdrAddr + irefsOff;
-        /* FIX (2026-10-06, Fortsetzung 112): 68k_tech.pdf, M$IRefs: jede der
-         * zwei Tabellen (Code-, dann Datenzeiger) ist eine Folge von Laeufen
-         * [MS-Wort, Anzahl, Anzahl x LS-Wort]; der Offset ist MS<<16 | LS; die
-         * Tabelle endet erst bei MS=0 UND Anzahl=0. Frueher wurde genau EIN
-         * Lauf gelesen, das MS-Wort verworfen und danach pauschal ein
-         * Abschlusspaar uebersprungen. Bei einer LEEREN Tabelle (nur 0/0,
-         * z. B. sysgo) wurde so das naechste Paar mit verschluckt; sysgos
-         * zweite Tabelle kam dadurch aus der CRC (MS=$009E, Anzahl=$9459)
-         * und relozierte zehntausendfach fremden Speicher -- gemessen als
-         * zerstoerte Arena-Freiliste und "Sysgo can't fork mshell" (E$MemFul). */
         for (group = 0; group < 2; group++) {
             relocBase = (group == 0) ? hdrAddr : block;
             for (;;) {
-                Q9_u32 ms    = Q9K_ReadHdrU16BE(p);
-                Q9_u32 count = Q9K_ReadHdrU16BE(p + 2);
-                Q9_u32 j;
+                Q9_u32 ms, count, j;
 
-                p += 4;
+                if (modEnd - p < 4UL)
+                    return Q9K_E_BMID;   /* Tabelle im Modul nicht abgeschlossen */
+                ms    = Q9K_ReadHdrU16BE(p);
+                count = Q9K_ReadHdrU16BE(p + 2UL);
+                p += 4UL;
                 if (ms == 0 && count == 0)
                     break;                     /* Ende dieser Tabelle */
+                if (count > (modEnd - p) / 2UL)
+                    return Q9K_E_BMID;   /* Lauf ragt ueber das Modul hinaus */
                 for (j = 0; j < count; j++) {
                     Q9_u32 fieldOff = (ms << 16) | (Q9_u32)Q9K_ReadHdrU16BE(p);
-                    Q9_u32 fieldAddr = block + fieldOff;
+                    Q9_u32 fieldAddr;
                     Q9_u32 newVal;
 
-                    p += 2;
+                    p += 2UL;
+                    if (fieldOff > blockSize || blockSize - fieldOff < 4UL)
+                        return Q9K_E_BMID;   /* Zeigerfeld ausserhalb des Datenblocks */
+                    fieldAddr = block + fieldOff;
                     /* byteweise, s. Q9K_SetFrameReg (64-Bit-Testhost) */
                     newVal = Q9K_ReadHdrU32BE(fieldAddr) + relocBase;
                     Q9K_SetU8(fieldAddr + 0, (Q9_u8)(newVal >> 24));
@@ -894,6 +932,7 @@ void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)             /* s. Hi
             }
         }
     }
+    return 0;
 }
 
 Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
@@ -966,7 +1005,13 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
         for (n = 0; n < totalSize; n++)
             z[n] = 0;
     }
-    Q9K_ApplyInitializedData(hdrAddr, block);
+    if (Q9K_ApplyInitializedData(hdrAddr, block, totalSize) != 0) {
+        /* B1: ungueltige M$IData/M$IRefs -- Fork bricht ab, nichts bleibt belegt */
+        Q9K_FreeMem(block, totalSize);
+        Q9K_ModDirUnlinkByHeader(hdrAddr);
+        *outError = (Q9_u16)Q9K_E_BMID;
+        return 0;
+    }
 
     desc = Q9K_ProcPoolAlloc();
     if (desc == 0) {
@@ -1133,6 +1178,15 @@ Q9_u32 Q9K_ProcFork(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
                             ((Q9_u32)v - 3UL) * Q9K_FORK_PATHDESC_SIZE;
                 Q9K_SetU16(pd + Q9K_FORK_PATHDESC_REF_OFF,
                            (Q9_u16)(Q9K_GetU16(pd + Q9K_FORK_PATHDESC_REF_OFF) + 1U));
+            } else if (v != 0U && (v & 0x8000U) != 0U) {
+                /* A13: IOMan-eigener Pfad, nur kopiert. IOMans Zaehler steigt dadurch nicht; ohne Gegenmassnahme
+                 * gibt der fruehe I$Close des Erzeugers (Shell-Umleitung: Datei oeffnen, forken, Pfad 0 schliessen)
+                 * den Deskriptor frei, waehrend das Kind ihn noch liest (E$BPNUM). Der Ueberschuss-Zaehler merkt sich
+                 * den zusaetzlichen Mitbenutzer; Q9K_TrapTryManagerPathIO und das Prozessende zaehlen ihn herunter. */
+                Q9_u32 cell = Q9K_FORK_MGRREF_ADDR + (Q9_u32)(v & 0x3FU);
+                Q9_u8 r = Q9K_GetU8(cell);
+                if (r < 255U)
+                    Q9K_SetU8(cell, (Q9_u8)(r + 1U));
             }
         }
         /* FIX (2026-10-05, Fortsetzung 111): auch die Standardverzeichnisse
@@ -1272,11 +1326,18 @@ void Q9K_SysDForkImpl(void)
     Q9K_SetU16(0x1EE4UL, 1);
 }
 
-/* Start a suspended debug child and park its debugger parent.  The
- * instruction counter is recorded for the trace-exception continuation;
- * until that handler is active, execution proceeds until the child exits. */
+/* Start a suspended debug child and park its debugger parent (68k_tech.pdf S. 397, F$DExec).
+ *
+ * Befehlsbudget d1.l: n = genau n Befehle ausfuehren; 0 = fortlaufend. Mit Haltepunkten (bpCount > 0) laeuft das Kind in beiden
+ * Faellen im Einzelschritt und wird angehalten, sobald sein PC auf einen Haltepunkt zeigt (der Befehl dort ist noch NICHT
+ * ausgefuehrt). Ohne Haltepunkte laeuft es bei d1 = 0 mit voller Geschwindigkeit bis zum F$Exit. -1 ($FFFFFFFF) ("schnell mit
+ * Illegal-Opcode-Haltepunkten") wird wie 0 behandelt -- das Patchen der Haltepunkte mit Illegal-Opcodes ist nicht umgesetzt,
+ * die Haltepunktliste wirkt trotzdem (nur langsamer). Der Haltepunkt am allerersten PC wird nicht beachtet (kein Befehl
+ * ausgefuehrt, also kein Trace-Ereignis).
+ * Der Registerpuffer des Debuggers (P$DbgReg) wird beim Start in das Kind uebernommen (d0-a6, SR, PC; a7 nicht) und bei
+ * jedem Halt aus dem Kind zurueckgeschrieben (Q9K_ProcDebugTrace). */
 Q9_u32 Q9K_ProcDebugExec(Q9_u16 childPid, Q9_u32 instructionCount,
-                         Q9_u32 *outError)
+                         Q9_u32 bpCount, Q9_u32 bpList, Q9_u32 *outError)
 {
     Q9_u32 desc, parent, frame, regbuf, i;
 
@@ -1295,18 +1356,24 @@ Q9_u32 Q9K_ProcDebugExec(Q9_u16 childPid, Q9_u32 instructionCount,
         *outError = 0x00D2UL;
         return 0;
     }
+    if (instructionCount == 0xFFFFFFFFUL)
+        instructionCount = 0;                 /* s. Kopfkommentar */
+    if (bpList == 0 || bpCount > 255UL)
+        bpCount = (bpList == 0) ? 0UL : 255UL;
     for (i = 0; i < 60UL; ++i)
         Q9K_SetU8(frame + i, Q9K_GetU8(regbuf + i));
     for (i = 0; i < 8UL; ++i)
         Q9K_SetU8(frame + 60UL + i, Q9K_GetU8(regbuf + 64UL + i));
     {
         Q9_u16 sr = Q9K_GetU16(frame + 60UL);
-        sr = instructionCount != 0UL
+        sr = (instructionCount != 0UL || bpCount != 0UL)
            ? (Q9_u16)(sr | 0x8000U)
            : (Q9_u16)(sr & (Q9_u16)~0x8000U);
         Q9K_SetU16(frame + 60UL, sr);
     }
     Q9K_SetU32(desc + Q9K_PROCDESC_DBGINSTR_OFF, instructionCount);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGBPS_OFF, bpList);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGBPN_OFF, bpCount);
     Q9K_SetU8(parent + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
     Q9K_WaitQInsert(parent);
     Q9K_SetU8(desc + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
@@ -1314,20 +1381,79 @@ Q9_u32 Q9K_ProcDebugExec(Q9_u16 childPid, Q9_u32 instructionCount,
     return Q9K_SchedFirstPick();
 }
 
-/* Consume one 68000 trace event for the currently running debug child. */
+/* Groesse des Hardware-Rahmens nach seinem Format-Nibble (68020/030): 0 = 8 Byte, 2 = 12, 9 = 20, A = 32, B = 92. */
+static Q9_u32 Q9K_DebugHwFrameSize(Q9_u16 formatWord)
+{
+    switch ((formatWord >> 12) & 0xFU) {
+    case 0x2: return 12UL;
+    case 0x9: return 20UL;
+    case 0xA: return 32UL;
+    case 0xB: return 92UL;
+    default:  return 8UL;
+    }
+}
+
+/* Registerabbild des angehaltenen Kindes in den Registerpuffer des Debuggers zurueckschreiben (Layout wie beim Start:
+ * d0-a6 (60 Byte), a7, SR, PC, Format/Vektor). a7 ist der Stack des Kindes nach dem Abbau des Hardware-Rahmens. Das
+ * Trace-Bit im SR bleibt draussen -- es gehoert dem Debugger-Mechanismus, nicht dem Kind. */
+static void Q9K_DebugSaveRegs(Q9_u32 child, Q9_u32 frameSP)
+{
+    Q9_u32 regbuf = Q9K_GetU32(child + Q9K_PROCDESC_DBGREG_OFF);
+    Q9_u32 i;
+    Q9_u16 sr;
+
+    if (regbuf == 0)
+        return;
+    for (i = 0; i < 60UL; ++i)
+        Q9K_SetU8(regbuf + i, Q9K_GetU8(frameSP + i));
+    for (i = 0; i < 8UL; ++i)
+        Q9K_SetU8(regbuf + 64UL + i, Q9K_GetU8(frameSP + 60UL + i));
+    sr = Q9K_GetU16(regbuf + 64UL);
+    Q9K_SetU16(regbuf + 64UL, (Q9_u16)(sr & (Q9_u16)~0x8000U));
+    Q9K_SetFrameReg(regbuf, 15UL,
+                    frameSP + 60UL + Q9K_DebugHwFrameSize(Q9K_ReadHdrU16BE(frameSP + 66UL)));
+}
+
+/* Consume one 68000 trace event for the currently running debug child.  Rueckgabe: Deskriptor des Debugger-Elternprozesses,
+ * wenn das Kind anzuhalten ist (Budget aufgebraucht oder Haltepunkt erreicht), sonst 0 (Kind laeuft weiter).
+ * Beim Halt: Registerpuffer aktualisieren, Trace-Bit loeschen, und dem Elternprozess die Ausgaben von F$DExec in seinen
+ * gesicherten Registersatz schreiben: d0.l = bisher ausgefuehrte Befehle, d1.l = nicht ausgefuehrter Rest des Budgets,
+ * d2.w = 0 (keine Ausnahme). */
 Q9_u32 Q9K_ProcDebugTrace(Q9_u32 frameSP)
 {
     Q9_u32 child = Q9K_GetU32(Q9_D_PROC);
     Q9_u32 parent;
-    Q9_u32 remaining;
+    Q9_u32 remaining, notRun, total, pc, n, list, i;
+    int hitBp = 0;
 
     if (child == 0 ||
         Q9K_GetU8(child + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_ACTIVE)
         return 0;
+    total = Q9K_GetU32(child + Q9K_PROCDESC_DBGTOTAL_OFF) + 1UL;
+    Q9K_SetU32(child + Q9K_PROCDESC_DBGTOTAL_OFF, total);
     remaining = Q9K_GetU32(child + Q9K_PROCDESC_DBGINSTR_OFF);
-    if (remaining > 1UL) {
-        Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, remaining - 1UL);
-        return 0;
+
+    /* PC des NAECHSTEN Befehls (der Rahmen liegt nach dem Trace-Ereignis hinter dem soeben ausgefuehrten Befehl) */
+    pc = Q9K_ReadHdrU32BE(frameSP + 62UL);      /* byteweise Big-Endian, wie die CPU den Rahmen schreibt */
+    n = Q9K_GetU32(child + Q9K_PROCDESC_DBGBPN_OFF);
+    list = Q9K_GetU32(child + Q9K_PROCDESC_DBGBPS_OFF);
+    for (i = 0; list != 0 && i < n; ++i) {
+        if (Q9K_ReadHdrU32BE(list + 4UL * i) == pc) {
+            hitBp = 1;
+            break;
+        }
+    }
+
+    if (!hitBp) {
+        if (remaining == 0UL)
+            return 0;                          /* fortlaufend, nur Haltepunkte aktiv */
+        if (remaining > 1UL) {
+            Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, remaining - 1UL);
+            return 0;
+        }
+        notRun = 0UL;                          /* Budget genau aufgebraucht */
+    } else {
+        notRun = (remaining > 0UL) ? remaining - 1UL : 0UL;
     }
 
     Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, 0UL);
@@ -1338,9 +1464,16 @@ Q9_u32 Q9K_ProcDebugTrace(Q9_u32 frameSP)
         Q9K_GetU8(parent + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_WAITING)
         return 0;
 
+    Q9K_DebugSaveRegs(child, frameSP);
     Q9K_SetU8(child + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
     Q9K_WaitQRemove(parent);
     Q9K_SetU8(parent + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    {
+        Q9_u32 parentSP = Q9K_GetU32(parent + Q9K_PROCDESC_SAVEDSP_OFF);
+        Q9K_SetFrameReg(parentSP, 0UL, total);      /* d0.l ausgefuehrt */
+        Q9K_SetFrameReg(parentSP, 1UL, notRun);     /* d1.l Rest */
+        Q9K_SetFrameReg(parentSP, 2UL, 0UL);        /* d2.w keine Ausnahme */
+    }
     Q9K_SetU32(Q9_D_PROC, parent);
     return parent;
 }
@@ -1349,7 +1482,8 @@ void Q9K_SysDExecImpl(void)
 {
     Q9_u32 error = 0;
     Q9_u32 next = Q9K_ProcDebugExec(Q9K_GetU16(0x1F00UL),
-                                    Q9K_GetU32(0x1F04UL), &error);
+                                    Q9K_GetU32(0x1F04UL),
+                                    Q9K_GetU32(0x2544UL), Q9K_GetU32(0x2548UL), &error);   /* C2: Haltepunkte, s. Q9K_DExecScratch_* */
     Q9K_SetU32(0x1F08UL, next);
     Q9K_SetU32(0x1F0CUL, error);
     Q9K_SetU16(0x1F10UL, (Q9_u16)(next != 0 ? 1 : 0));

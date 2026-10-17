@@ -206,10 +206,15 @@ int Q9K_IcptDeliver(Q9_u32 desc, Q9_u16 signal)
  *
  * Rueckgabe 1 = in Ordnung. 0 = es gab keinen Intercept, aus dem man
  * haette zurueckkehren koennen. */
-int Q9K_IcptReturn(Q9_u32 desc, Q9_u16 *outError)
+/* Q9K_IcptPop -- der Teil von F$RTE, der den obersten Rahmen abraeumt, OHNE ein weiteres anstehendes Signal
+ * zuzustellen. Der Kernelpfad (Q9K_SysRTEImpl) braucht das getrennt: bei der erneuten Zustellung entsteht
+ * der neue Rahmen bei (altes P$SavedSP - 68), und dort laeuft zu diesem Zeitpunkt noch der Stack der
+ * Intercept-Routine samt der C-Aufrufkette von F$RTE -- die Zustellung ueberschriebe deren Ruecksprung
+ * (A10, gleiche Klasse wie A9). Q9K_SysFRTE (q9kernel_entry.a) stellt deshalb erst zu, nachdem es auf den
+ * Stack des Hauptprogramms gewechselt hat und 68 Byte Luft darunter gelassen hat (Q9K_SysRTERedeliverImpl). */
+int Q9K_IcptPop(Q9_u32 desc, Q9_u16 *outError)
 {
     Q9_u32 depth, frame;
-    Q9_u16 pending;
 
     if (desc == 0UL) {
         *outError = (Q9_u16)Q9K_E_BPADDR;
@@ -228,6 +233,15 @@ int Q9K_IcptReturn(Q9_u32 desc, Q9_u16 *outError)
     frame = Q9K_GetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF) + Q9K_FAKEFRAME_SIZE;
     Q9K_SetU32(desc + Q9K_PROCDESC_SAVEDSP_OFF, frame);
     Q9K_SetU32(desc + Q9K_PROCDESC_ICPTDEPTH_OFF, depth - 1UL);
+    return 1;
+}
+
+int Q9K_IcptReturn(Q9_u32 desc, Q9_u16 *outError)
+{
+    Q9_u16 pending;
+
+    if (!Q9K_IcptPop(desc, outError))
+        return 0;
 
     /* Noch etwas in der Warteschlange? Dann gleich wieder hinein. */
     pending = Q9K_GetU16(desc + Q9K_PROCDESC_SIGNAL_OFF);
@@ -262,13 +276,24 @@ void Q9K_SysRTEImpl(void)
     Q9_u32 desc = Q9K_GetU32(Q9_D_PROC);
 
     Q9K_SetU32(Q9K_ICPT_SCRATCH_OK, 0UL);
-    if (!Q9K_IcptReturn(desc, &err)) {
+    if (!Q9K_IcptPop(desc, &err)) {       /* Zustellung folgt in Q9K_SysFRTE, s. Q9K_IcptPop */
         Q9K_SetU32(Q9K_ICPT_SCRATCH_ERROR, (Q9_u32)err);
         return;
     }
     Q9K_SetU32(Q9K_ICPT_SCRATCH_DEPTH,
                Q9K_GetU32(desc + Q9K_PROCDESC_ICPTDEPTH_OFF));
     Q9K_SetU32(Q9K_ICPT_SCRATCH_OK, 1UL);
+}
+
+/* Von Q9K_SysFRTE gerufen, NACHDEM es auf den Stack des Hauptprogramms gewechselt hat: ein weiteres anstehendes
+ * Signal wird jetzt zugestellt (neuer Rahmen bei P$SavedSP - 68, dort ist dank Q9K_IcptFrameGap nichts in Benutzung). */
+void Q9K_SysRTERedeliverImpl(void)
+{
+    Q9_u32 desc = Q9K_GetU32(Q9_D_PROC);
+    Q9_u16 pending = Q9K_GetU16(desc + Q9K_PROCDESC_SIGNAL_OFF);
+
+    if (pending != 0U)
+        (void)Q9K_IcptDeliver(desc, pending);
 }
 
 void Q9K_SysSigResetImpl(void)

@@ -1038,7 +1038,7 @@ int Q9K_ProcNativeRead(Q9_u16 pathNum, Q9_u32 bufferPtr, Q9_u32 count,
 #define Q9K_IOpenScratch_PathNum  0x136CUL   /* Q9_u32, d0.w AUS (0 = Fehlschlag) */
 #endif
 #ifndef Q9K_IOpenScratch_Error
-#define Q9K_IOpenScratch_Error    0x1370UL   /* Q9_u32, d1.w AUS bei Fehler */
+#define Q9K_IOpenScratch_Error    0x1374UL   /* Q9_u32, d1.w AUS bei Fehler (B3: vorher $1370 = Callcode-Wort des Dispatchers) */
 #endif
 
 /* Q9K_SysIOpenImpl -- duenne, PARAMETERLOSE Bruecke zwischen dem

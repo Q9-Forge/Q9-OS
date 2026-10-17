@@ -30,14 +30,9 @@
  * demselben Format, und die absoluten Varianten sind das, was sie sein
  * sollten: ein Vergleich zweier Zahlen.
  *
- * ZEITEINHEIT: Die Beschreibung sagt, das Intervall koenne "in system
- * clock ticks, or 256ths of a second" angegeben werden, nennt aber an
- * dieser Stelle nicht, woran der Kernel beides unterscheidet. Diese
- * Fassung rechnet deshalb ausschliesslich in Ticks -- das ist die
- * Einheit, die der Tickzaehler dieses Kernels ohnehin fuehrt (10 ms, s.
- * Q9K_TimerIRQHandler). Ein Aufrufer, der Sekundenbruchteile meint,
- * bekommt also eine andere Wartezeit als erwartet; das ist dokumentiert
- * und nicht stillschweigend geraten.
+ * ZEITEINHEIT (C3, 16.10.2026): Bit 31 des Intervalls waehlt die Einheit -- gesetzt: untere 31 Bit in 256steln einer Sekunde,
+ * sonst Ticks; alle Zeiten werden auf ganze Ticks aufgerundet (68k_tech.pdf S. 357, s. Q9K_AlarmIntervalToTicks). Ein Tick sind
+ * 10 ms. Frueher rechnete diese Datei nur in Ticks und behauptete, das Handbuch nenne die Unterscheidung nicht -- es nennt sie.
  *
  * WARUM EIGENE TABELLE: Der Q9-Header kennt die beiden Warteschlangen des
  * Referenzkernels (Q9_D_ALMQ1/ALMQ2), und q9kernel_cinit.c legt sie beim Boot
@@ -102,6 +97,10 @@ extern void   Q9K_ClockRead(Q9_u32 *outDay, Q9_u32 *outSeconds);      /* q9kerne
 #define Q9K_ALARM_NEXTID (Q9K_ALARM_BASE + Q9K_ALARM_SLOTS * Q9K_ALARM_STRIDE)
 #endif
 
+#ifndef Q9K_TICKS_PER_SEC
+#define Q9K_TICKS_PER_SEC 100UL   /* wie q9kernel_clock.c / q9kernel_procsleep.c: 10 ms je Tick */
+#endif
+
 #define Q9K_A_DELETE 0U
 #define Q9K_A_SET    1U
 #define Q9K_A_CYCLE  2U
@@ -115,6 +114,22 @@ extern void   Q9K_ClockRead(Q9_u32 *outDay, Q9_u32 *outSeconds);      /* q9kerne
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
 static void   Q9K_SetU32(Q9_u32 addr, Q9_u32 value) { *(volatile Q9_u32 *)addr = value; }
+
+/* Q9K_AlarmIntervalToTicks -- C3 (2026-10-16). 68k_tech.pdf S. 357 (F$Alarm, User-State): "The time interval is the number of
+ * system clock ticks (or 256ths of a second) to wait before an alarm signal is sent. If the high order bit is set, the low
+ * 31 bits are interpreted as 256ths of a second. All times are rounded up to the nearest clock tick." Die Unterscheidung
+ * steht also doch im Handbuch (das fruehere Kopfkommentar-Argument "nennt nicht, woran der Kernel beides unterscheidet"
+ * war falsch): Bit 31. Aufgerundet auf ganze Ticks, ohne Ueberlauf (n / 256 getrennt vom Rest). */
+Q9_u32 Q9K_AlarmIntervalToTicks(Q9_u32 interval)
+{
+    Q9_u32 n;
+
+    if ((interval & 0x80000000UL) == 0UL)
+        return interval;
+    n = interval & 0x7FFFFFFFUL;
+    return (n / 256UL) * Q9K_TICKS_PER_SEC
+         + (((n % 256UL) * Q9K_TICKS_PER_SEC + 255UL) / 256UL);
+}
 
 /* Q9K_AlarmSet -- A$Set und A$Cycle. cycleTicks = 0 bedeutet einmalig,
  * sonst das Wiederholungsintervall. Rueckgabe 1 = Erfolg, *outId traegt
@@ -130,6 +145,8 @@ int Q9K_AlarmSet(Q9_u16 signal, Q9_u32 ticks, Q9_u32 cycleTicks,
     *outId = 0;
     *outError = 0;
 
+    ticks = Q9K_AlarmIntervalToTicks(ticks);              /* Bit 31: 256stel Sekunden */
+    cycleTicks = Q9K_AlarmIntervalToTicks(cycleTicks);
     if (ticks == 0UL) {
         /* Ein Alarm ohne Wartezeit haette keine Bedeutung -- er muesste
          * sofort und damit noch im laufenden Aufruf ausloesen. */
@@ -184,6 +201,7 @@ int Q9K_AlarmReset(Q9_u32 id, Q9_u16 signal, Q9_u32 ticks,
     Q9_u32 i;
 
     *outError = 0;
+    ticks = Q9K_AlarmIntervalToTicks(ticks);              /* Bit 31: 256stel Sekunden */
     if (ticks == 0UL) {
         *outError = Q9K_E_BPADDR;
         return 0;

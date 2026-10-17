@@ -93,10 +93,14 @@ void Q9K_FreeMem(Q9_u32 addr, Q9_u32 size)
 static int g_trapReleaseCalls;
 void Q9K_ProcTrapReleaseAll(Q9_u32 proc) { (void)proc; g_trapReleaseCalls++; }
 
-void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
+static Q9_u32 g_applyResult = 0;     /* B1: Rueckgabe des Stubs (0 = Erfolg) */
+static Q9_u32 g_applyBlockSize = 0;
+Q9_u32 Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block, Q9_u32 blockSize)
 {
     (void)hdrAddr;
     g_appliedTo = block;
+    g_applyBlockSize = blockSize;
+    return g_applyResult;
 }
 
 /* Modulkopffelder im Stub-Modul: Daten 0x40, Stack 0x80, Einstieg 0x10.
@@ -159,7 +163,7 @@ static void reset(void)
     memset(g_frameRegs, 0, sizeof g_frameRegs);
     g_linkFails = g_allocFails = 0;
     g_linkCalls = g_unlinkCalls = g_allocCalls = g_freeCalls = 0;
-    g_unlinkLast = g_freeLastAddr = g_freeLastSize = 0; g_appliedTo = 0;
+    g_unlinkLast = g_freeLastAddr = g_freeLastSize = 0; g_appliedTo = 0; g_applyResult = 0; g_applyBlockSize = 0;
 
     /* Ein laufender Prozess mit altem Programm und altem Speicher. */
     Q9K_SetU32(Q9_D_PROC, DESC);
@@ -264,6 +268,22 @@ int main(void)
      * bleibt sein Linkzaehler fuer immer zu hoch. */
     check("das neu gelinkte Modul wird zurueckgegeben", (Q9_u32)g_unlinkCalls, 1);
     check("und zwar das NEUE, nicht das alte", g_unlinkLast, MODULE);
+    check("der Prozess behaelt sein altes Modul",
+          Q9K_GetU32(DESC + Q9K_PROCDESC_MODHDR_OFF), OLDMODULE);
+    check("und seinen alten Speicher",
+          Q9K_GetU32(DESC + Q9K_PROCDESC_ALLOCBASE_OFF), OLDBLOCK);
+
+    /* B1: ungueltige M$IData/M$IRefs des neuen Programms -- gleiche Abwicklung wie fehlender Speicher: Block und Link zurueck. */
+    reset();
+    g_applyResult = 0xCD;
+    err = 0;
+    check("ungueltige M$IData/M$IRefs lassen den Chain scheitern",
+          (Q9_u32)Q9K_ProcChain(1, 0, 0, 0, 0, 0, 0, &err), 0);
+    check("mit E_BMID", (Q9_u32)err, 0xCD);
+    check("die Blockgroesse wurde an die Pruefung uebergeben", (Q9_u32)(g_applyBlockSize != 0), 1);
+    check("das neu gelinkte Modul wird zurueckgegeben", (Q9_u32)g_unlinkCalls, 1);
+    check("der neue Block wird freigegeben", (Q9_u32)g_freeCalls, 1);
+    check("und zwar genau dieser Block", g_freeLastAddr, NEWBLOCK);
     check("der Prozess behaelt sein altes Modul",
           Q9K_GetU32(DESC + Q9K_PROCDESC_MODHDR_OFF), OLDMODULE);
     check("und seinen alten Speicher",

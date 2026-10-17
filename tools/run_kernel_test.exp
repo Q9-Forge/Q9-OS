@@ -14,7 +14,11 @@ if {[info exists env(Q9_TEST_TIMEOUT)]} {
 }
 
 log_file -noappend $logfile
-spawn "$flux/build/macos/q9.exe" --rom "$flux/local_images/roms/romimage.dev.running.BIN" --cf $image
+# Q9K_EMU: eigenes Emulator-Exemplar (kernel_regress.sh legt es unter einem anderen Namen an), damit ein "pkill q9.exe" anderer
+# Sitzungen auf diesem Rechner den Lauf nicht beendet. Ohne die Variable gilt der Emulator im Q9-Flux-Baum.
+set emu "$flux/build/macos/q9.exe"
+if {[info exists env(Q9K_EMU)]} { set emu $env(Q9K_EMU) }
+spawn "$emu" --rom "$flux/local_images/roms/romimage.dev.running.BIN" --cf $image
 expect {
     -exact $marker { set result "marker" }
     timeout       { set result "timeout" }

@@ -47,6 +47,13 @@ static unsigned char g_fakeGlobals[0x2000];
 /* F$VModul/F$DatMod legen ihre Rueckgabewerte hier ab -- ohne
  * Umlenkung greift der Test auf die echte Kerneladresse $1650 zu. */
 #define Q9K_VMODUL_RETBUF       ((unsigned long)(g_fakeGlobals + 0x100))
+/* F$Link-Suchdiagnose (Q9K_ModDirFindSlotByName): ohne Umlenkung schreibt
+ * der Test auf die echte Kerneladresse $154180 und stuerzt ab. Auf dem
+ * 64-Bit-Host je 16 Byte Abstand (Q9_u32 ist dort 8 Byte breit). */
+#define Q9K_FLINK_DIAG_ITER     ((unsigned long)(g_fakeGlobals + 0x200))
+#define Q9K_FLINK_DIAG_SLOT     ((unsigned long)(g_fakeGlobals + 0x210))
+#define Q9K_FLINK_DIAG_HEADER   ((unsigned long)(g_fakeGlobals + 0x220))
+#define Q9K_FLINK_DIAG_GUARD    ((unsigned long)(g_fakeGlobals + 0x230))
 
 /* Real nur 4/8/10/12 Byte auseinander (echtes 32-Bit-Ziel) -- auf
  * diesem 64-Bit-Testhost ist Q9_u32 8 Byte breit, deshalb hier

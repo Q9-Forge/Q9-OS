@@ -76,6 +76,37 @@ extern Q9_u32 Q9K_FIRQStatics[];
 extern const Q9_u8 *Q9K_FindModuleByName(const Q9_u8 *regionList, const char *targetName, Q9_u32 *outAvailableLen);
 extern Q9_u32 Q9K_GetCpuCount(const Q9_u8 *initModAddr, Q9_u32 availableLen);
 extern void Q9K_ArenaInit(Q9_u32 freeBase, Q9_u32 freeSize);
+extern void Q9K_FreeMem(Q9_u32 addr, Q9_u32 size);   /* q9kernel_arena.c */
+
+/* A12 (2026-10-15): die Diagnosezellen und die Q9K_RaceRing-Aufzeichnung des Trap-Dispatchers (q9kernel_entry.a:
+ * Q9K_ExcInfo_* ab $144020, Q9K_RaceRingBase $1440C0, 8192 Eintraege zu 8 Byte, dahinter die Indexzelle $1540C0
+ * und die Trace-Zellen bis $1541BB) liegen an FESTEN Adressen im oberen RAM.
+ * Die Arena reichte bisher bis zum RAM-Ende und schloss diesen Bereich ein: sobald der Heap $1440C0 erreichte,
+ * ueberschrieb jeder Trap (zwei Schreibzugriffe) Freilistenknoten und Prozessspeicher -- der Kernel stuerzte
+ * nach rund 25 Fork-Zyklen ab (Nullspeicher, Allocator ohne Block). Beleg: Q9_WATCH_ADDR auf den beschaedigten
+ * Knoten zeigte pc=$8CAC/$8CAE (Q9K_TrapDispatch-RaceRing) als Schreiber. Die Arena spart den Bereich jetzt aus. */
+#define Q9K_RACERING_LO 0x144000UL   /* ab hier feste Diagnosezellen: Q9K_ExcInfo_* ($144020..$1440BF), dann der Ring */
+#define Q9K_RACERING_HI 0x1541C0UL   /* Ring bis $1540BF, Indexzelle $1540C0, Trace-Zellen bis $1541BB */
+
+static void Q9K_ArenaInitSkipRing(Q9_u32 freeBase, Q9_u32 top)
+{
+    int haveLow = 0;
+
+    if (top <= Q9K_RACERING_LO || freeBase >= Q9K_RACERING_HI) {
+        Q9K_ArenaInit(freeBase, top - freeBase);          /* kein Ueberschnitt */
+        return;
+    }
+    if (freeBase + 16UL <= Q9K_RACERING_LO) {              /* Bereich vor dem Ring */
+        Q9K_ArenaInit(freeBase, Q9K_RACERING_LO - freeBase);
+        haveLow = 1;
+    }
+    if (top >= Q9K_RACERING_HI + 16UL) {                   /* Bereich hinter dem Ring */
+        if (haveLow)
+            Q9K_FreeMem(Q9K_RACERING_HI, top - Q9K_RACERING_HI);
+        else
+            Q9K_ArenaInit(Q9K_RACERING_HI, top - Q9K_RACERING_HI);
+    }
+}
 extern Q9_u32 Q9K_BuildExcTable(void);
 extern int Q9K_MmuInit(void); /* q9kernel_mmu.c -- explicit flat/MMU gate */
 extern Q9_u32 Q9K_SetupTables(const Q9_u8 *initMod);
@@ -437,7 +468,7 @@ void Q9K_CInit(void)
         /* Die letzten Q9K_BOOTSTACK_SIZE Byte gehoeren dem Boot-Stack
          * (s. Definition oben) -- die Arena endet davor. */
         if (totalRam > freeBase + Q9K_BOOTSTACK_SIZE) {
-            Q9K_ArenaInit(freeBase, totalRam - Q9K_BOOTSTACK_SIZE - freeBase);
+            Q9K_ArenaInitSkipRing(freeBase, totalRam - Q9K_BOOTSTACK_SIZE);
 #ifdef Q9K_DEBUG
             /* Debug-Konzept (Fortsetzung 118): Trace-Ringpuffer/Filter
              * erst NACH einem erfolgreichen Q9K_ArenaInit anlegen --

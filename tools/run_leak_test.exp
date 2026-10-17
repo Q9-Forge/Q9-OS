@@ -1,0 +1,90 @@
+#!/usr/bin/expect -f
+# run_leak_test.exp -- Langlauf fuer Arbeitsplan A8: bootet bis zur Anmeldung, startet "mshell <loop"
+# (ein Skript mit sehr vielen echo/date/pd-Aufrufen = ebenso viele F$Fork/F$Exit-Zyklen samt Laden und
+# F$TLink) und wartet auf die Schlussmarke. Die Speicherbilanz wertet leak_test.sh aus dem Konsolenlog aus.
+#
+# Aufruf: run_leak_test.exp <flux-root> <image> <logfile>
+# Umgebung: Q9_TEST_TIMEOUT (Boot/Login, Standard 90), Q9_LEAK_TIMEOUT (Schleife, Standard 900)
+# Ausgang: 0 = Schlussmarke erreicht, 2 = Boot/Login haengt, 3 = Schleife endet nicht.
+
+set flux  [lindex $argv 0]
+set image [lindex $argv 1]
+set logfile [lindex $argv 2]
+set timeout 90
+if {[info exists env(Q9_TEST_TIMEOUT)]} { set timeout $env(Q9_TEST_TIMEOUT) }
+set loop_timeout 900
+if {[info exists env(Q9_LEAK_TIMEOUT)]} { set loop_timeout $env(Q9_LEAK_TIMEOUT) }
+set user q9test
+set send_slow {1 0.04}
+
+log_file -noappend $logfile
+# Q9K_EMU: eigenes Emulator-Exemplar (kernel_regress.sh legt es unter einem anderen Namen an), damit ein "pkill q9.exe" anderer
+# Sitzungen auf diesem Rechner den Lauf nicht beendet. Ohne die Variable gilt der Emulator im Q9-Flux-Baum.
+set emu "$flux/build/macos/q9.exe"
+if {[info exists env(Q9K_EMU)]} { set emu $env(Q9K_EMU) }
+spawn "$emu" --rom "$flux/local_images/roms/romimage.dev.running.BIN" --cf $image
+
+proc fail {code msg} {
+    puts "\nLEAK-TEST: FEHLER: $msg"
+    catch {send "\x1e"}
+    expect -timeout 2 eof
+    catch {exec kill -TERM [exp_pid]}
+    exit $code
+}
+
+expect {
+    -re {devices online}  {}
+    timeout               { fail 2 "kein 'devices online' (tsmon) nach ${timeout}s" }
+    eof                   { fail 2 "Emulator beendet sich waehrend des Boots" }
+}
+send -s "\r"
+expect {
+    -re {User name\?:}    {}
+    timeout               { fail 2 "kein 'User name?:' nach ${timeout}s" }
+    eof                   { fail 2 "Emulator endet vor der Anmeldung" }
+}
+send -s "$user\r"
+expect {
+    -re {logged on}       {}
+    -re {Who\?}           { fail 2 "login kennt den Benutzer $user nicht (Who?)" }
+    timeout               { fail 2 "kein 'logged on' nach der Anmeldung" }
+    eof                   { fail 2 "Emulator beendet sich bei der Anmeldung" }
+}
+expect {
+    -re {\n\$ }          {}
+    timeout               { fail 2 "keine Shell-Eingabeaufforderung nach der Anmeldung" }
+    eof                   { fail 2 "Emulator endet vor der Eingabeaufforderung" }
+}
+expect -timeout 1 eof
+
+# Lange Zeilen mit je 8 Zyklen "echo a;date;pd" (24 Forks), danach wieder auf den Prompt warten.
+# (mshell <loop scheiterte: "error getting path options" am umgeleiteten Eingabepfad -- eigener Fund.)
+set cycles 100
+if {[info exists env(Q9K_LEAK_CYCLES)]} { set cycles $env(Q9K_LEAK_CYCLES) }
+# Befehle je Zyklus (Standard echo, date, pd); Q9K_LEAK_CMDS="date;" wiederholt nur date (Eingrenzung von Abstuerzen).
+set cmds "echo a;date;pd;"
+if {[info exists env(Q9K_LEAK_CMDS)]} { set cmds $env(Q9K_LEAK_CMDS) }
+set per 8
+if {[info exists env(Q9K_LEAK_PER)]} { set per $env(Q9K_LEAK_PER) }
+set line ""
+for {set i 0} {$i < $per} {incr i} { append line $cmds }
+set timeout $loop_timeout
+proc run {cmd} {
+    send -s "$cmd\r"
+    expect {
+        -re {\n\$ }        {}
+        timeout             { fail 3 "keine Eingabeaufforderung nach '[string range $cmd 0 30]...'" }
+        eof                 { fail 3 "Emulator endet waehrend der Schleife" }
+    }
+}
+run "${line}echo zqmid1"
+set done $per
+while {$done + $per <= $cycles} { run "${line}echo a"; incr done $per }
+run "echo zqend1"
+expect -timeout 2 eof
+send "\x1e"
+expect -timeout 3 eof
+catch {exec kill -TERM [exp_pid]}
+expect -timeout 3 eof
+puts "\nLEAK-TEST: Schlussmarke erreicht"
+exit 0

@@ -332,3 +332,30 @@ Anfangsadresse. Es gibt keine automatische Kollisionsprüfung.
 **ABI nie raten.** Fehlercodes, Strukturoffsets und Aufrufkonventionen aus
 `68k_tech.pdf` belegen — und wo das Handbuch schweigt, durch Beobachtung am
 Referenzsystem bestimmen (erprobt mit `F$Sema`, `F$FModul`, `F$Mem`).
+
+## Regressionslauf mit einem Kommando (Arbeitsplan A1/A4/B3, 15.10.2026)
+
+```
+tools/kernel_regress.sh [--variant atomic|development|both] [--quick]
+```
+
+Stufen nacheinander (Wine-Bauten dürfen nicht parallel laufen): `hosttests.sh`, dann
+`login_shell_test.sh` je Variante, dann `startup_shell_test.sh` und `mgrpath_probe_test.sh`.
+`--quick` führt nur die Hosttests aus (~5 s, ohne Emulator). Exit 0 nur, wenn alles grün ist.
+Umgebung: `FLUX` (Q9-Flux-68k) und `REFBOOT` (Referenz-Bootdatei); ohne Angabe gelten die kanonischen Mac-Pfade.
+
+| Werkzeug | Zweck |
+|---|---|
+| `tools/hosttests.sh` | baut und startet **alle** `test_q9kernel_*.c` auf dem Host. Flags `-DQ9K_KERNEL_DEVELOPMENT -DQ9K_ALLOC_STANDARD`; Suiten mit `dbg`, `trace`, `ringbuf` im Namen zusätzlich `-DQ9K_DEBUG` (ohne dieses Flag ist z. B. `dbg_live` rot — die frühere Angabe „zwei Pflichtschalter“ war unvollständig) |
+| `tools/login_shell_test.sh [atomic\|development]` | Bau mit `Q9K_BOOT=sysgo`, Boot, startup (mit `setime`), tsmon, login, mshell; prüft `echo`, `pd`, `dir /dd/SYS`, `date` und den Q9-Flux-Dump (`Vektor=0`). ~2 min je Variante |
+| `tools/build_honesty_test.sh` | prüft, dass `build.sh` bei C-, Assembler- und Linkfehlern abbricht und kein veraltetes `q9kernel` liegen lässt |
+| `tools/fcbisect.sh [--mode farcall\|far2\|pad] <Stellen>` | stellt gewaehlte `bsr`-Aufrufe einer Quellkopie um und fuehrt den Login-Test aus (`--list` nummeriert die 43 Stellen); `tools/fcddmin.py` sucht damit per Delta-Debugging die kleinste rote Stellenmenge |
+| Register-Erhaltungsprüfung (Developer-Kernel) | `!R c=<Callcode> <Reg> <vorher> <nachher>` auf der Konsole = ein Syscall hat ein Register verändert, das der Aufrufer unverändert zurückbekommen muss (d2–d7, a2–a6). Erlaubte Ausgaben stehen mit Beleg in `Q9K_RegChkExempt` (q9kernel_entry.a). `login_shell_test.sh` schlägt bei jeder Meldung an. Verschachtelte Traps werden nicht geprüft |
+| `tools/leak_test.sh [Zyklen] [Warmup]` | Langlauf (Fork/Exit mit Laden und F$TLink) mit Speicherbilanz aus den `M A`/`M F`-Zeilen; `Q9K_LEAK_CMDS="date;"` wählt die Befehle, `Q9_LEAK_TIMEOUT` die Wartezeit. Seit der A12-Korrektur stabil (333 Zyklen = 1001 Forks, 6 min); `kernel_regress.sh` fährt `leak_test.sh 64 8` als Stufe, dazu eine Parallelvariante mit fünf gleichzeitigen Prozessen (`Q9K_LEAK_CMDS`, `Q9K_LEAK_PER`: Zyklen je Eingabezeile) |
+| Freilisten-Prüfung (Developer-Kernel) | `M L r=<Stelle> a=<Knoten> s=<Größe> e=<nächster>` und Halt = `Q9K_ArenaAudit` hat bei einer Belegung/Freigabe einen beschädigten oder überlappenden Freilistenknoten gefunden (`r=1` bei Belegung, `r=2` bei Freigabe; `r` 0x21/0x22 im Op-Feld = Knoten kaputt/Überlappung). Der Timeout des Tests löst danach den Q9-Flux-Dump aus. Emulator-Hilfen dazu: `Q9_WATCH_ADDR=0x… Q9_WATCH_LEN=8` nennt Schreiber-PCs, `Q9_TRACE_INSTR=1 Q9_FREEZE_PC=0x…` friert die Instruktionsspur ein |
+| `tools/q9_farcall_check.py` | meldet jedes `bsr` auf eine C-Funktion in `q9kernel_entry.a`; `build.sh` ruft es vor dem Bau auf |
+| `tools/q9_scratch_map.py` | Belegungsprüfung der Scratch-Zellen, erzeugt `docs/KERNEL_SPEICHERBELEGUNG_de.md`; `build.sh` ruft `--check --doc` vor dem Bau auf |
+
+Eingabe in Emulator-Tests: nur nach der Eingabeaufforderung tippen (`\n$ `), das Zeichen `@` meiden,
+Marker nur aus Buchstaben und Ziffern. Der Login-Test wartet vor jeder Eingabe `Q9K_LOGIN_PAUSE`
+Sekunden (Standard 1); mit `0` tritt der offene Absturz aus `KERNEL_IRQ_SPERRE_de.md` auf.

@@ -202,6 +202,7 @@ typedef char Q9K_ProcDescShiftMatchesSize[
 #define Q9K_PROCDESC_STATE_ACTIVE   'a'
 #define Q9K_PROCDESC_STATE_WAITING  'w'
 #define Q9K_PROCDESC_STATE_SLEEPING 's'
+#define Q9K_PROCDESC_STATE_SEMA     'p'     /* C3: wartet auf einen Semaphor (F$Sema P), s. q9kernel_sema.c */
 #define Q9K_PROCDESC_STATE_ZOMBIE   'z'
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
@@ -213,13 +214,15 @@ static void Q9K_SetU8(Q9_u32 addr, Q9_u8 value) { *(volatile Q9_u8 *)addr = valu
 
 /* Freie Pool-Slots enthalten an Offset 0 den Freilistenzeiger.  Daher darf
  * eine PID nicht allein aus ihrem Bereich abgeleitet werden: nur einer der
- * vier bekannten internen Zustandswerte markiert einen belegten Slot. */
+ * fuenf bekannten internen Zustandswerte markiert einen belegten Slot. C3: 'p' (wartet auf einen Semaphor) fehlte --
+ * F$Sema(V) bekam fuer den ersten Warter E$PrcID, live gemessen. */
 static int Q9K_ProcIsAllocated(Q9_u32 desc)
 {
     Q9_u8 state = Q9K_GetU8(desc + Q9K_PROCDESC_STATE_OFF);
     return state == Q9K_PROCDESC_STATE_ACTIVE
         || state == Q9K_PROCDESC_STATE_WAITING
         || state == Q9K_PROCDESC_STATE_SLEEPING
+        || state == Q9K_PROCDESC_STATE_SEMA
         || state == Q9K_PROCDESC_STATE_ZOMBIE;
 }
 

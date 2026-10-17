@@ -1,0 +1,93 @@
+*******************************************************************************
+* icptrte.a -- Regressionstest fuer Arbeitsplan A10: zweites Signal waehrend die Intercept-
+* Routine laeuft, dann F$RTE.
+*
+* Ablauf: F$Icpt, F$Send an sich selbst (Signal 32), F$Sleep. Der Kernel stellt Signal 32
+* zu, die Routine laeuft. Sie sendet sich selbst Signal 33 (der Prozess laeuft, das Signal
+* wird nur abgelegt) und ruft F$RTE. Q9K_IcptReturn findet das anstehende Signal und
+* liefert es sofort erneut zu: der neue Rahmen entsteht bei (altes P$SavedSP - 68) -- dort
+* liegt aber gerade der Stack der noch laufenden Routine samt der C-Aufrufkette von F$RTE.
+* Gleiche Fehlerklasse wie bei F$Sleep (A9, icptsleep.a).
+*
+* Erwartete Ausgabe (je eine Zeile):
+*     h32
+*     h33
+*     main done
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_RteEdition          equ     1
+Q9K_RteStackSize        equ     $1000
+
+        psect   icptrte,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_RteEdition,Q9K_RteStackSize,Q9K_RteStart
+
+        vsect
+Q9K_RteData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_RteStart:
+        lea     Q9K_RteHandler(pc),a0           * (a0) = Intercept-Routine, a6 bleibt der Datenbereich
+        trap    #0
+        dc.w    $09                              * F$Icpt
+        bcs     Q9K_RteFail
+        trap    #0
+        dc.w    $0c                              * F$ID -> d0.w = eigene Prozess-ID
+        bcs     Q9K_RteFail
+        move.w  #32,d1                          * Signal 32 an sich selbst
+        trap    #0
+        dc.w    $08                              * F$Send
+        bcs     Q9K_RteFail
+        moveq   #10,d0
+        trap    #0
+        dc.w    $0a                              * F$Sleep -- mit anstehendem Signal sofort zurueck
+        lea     Q9K_RteTextDone(pc),a0
+        move.l  #Q9K_RteDoneLen,d1
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+Q9K_RteFail:
+        trap    #0
+        dc.w    6                                * F$Exit, d1 = Fehlercode des Syscalls
+
+* Intercept-Routine: d1.w = Signalcode. Bei Signal 32 meldet sie sich und sendet Signal 33 an
+* den eigenen (laufenden) Prozess; bei Signal 33 meldet sie sich nur. Beide enden mit F$RTE.
+Q9K_RteHandler:
+        cmp.w   #33,d1
+        beq.s   Q9K_RteHandler33
+        lea     Q9K_RteText32(pc),a0
+        move.l  #Q9K_RteText32Len,d1
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn "h32"
+        trap    #0
+        dc.w    $0c                              * F$ID -> d0.w
+        move.w  #33,d1
+        trap    #0
+        dc.w    $08                              * F$Send Signal 33 an sich selbst: bleibt anstehend
+        trap    #0
+        dc.w    $1e                              * F$RTE -> stellt Signal 33 sofort erneut zu
+Q9K_RteHandler33:
+        lea     Q9K_RteText33(pc),a0
+        move.l  #Q9K_RteText33Len,d1
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn "h33"
+        trap    #0
+        dc.w    $1e                              * F$RTE
+
+Q9K_RteText32:
+        dc.b    "h32",$0d
+Q9K_RteText32Len        equ     4
+Q9K_RteText33:
+        dc.b    "h33",$0d
+Q9K_RteText33Len        equ     4
+Q9K_RteTextDone:
+        dc.b    "main done",$0d
+Q9K_RteDoneLen          equ     10
+
+        endsect

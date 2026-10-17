@@ -150,6 +150,54 @@ void Q9K_ArenaInit(Q9_u32 freeBase, Q9_u32 freeSize)
     Q9K_SetU32(Q9K_ARENA_TAIL, freeBase);
 }
 
+#if defined(Q9K_MEMTRACE_ARENA)
+/* Freilisten-Pruefung (Arbeitsplan A12, nur Developer-Kernel mit Speicherprotokoll). Laeuft bei JEDER
+ * Belegung und Freigabe, noch vor der Aenderung, im gesperrten Abschnitt. Prueft jeden Knoten
+ * (Adresse 16-Byte-ausgerichtet, Groesse >= 16, im 16-MByte-Bereich; ungerade Groessen sind erlaubt: F$SRtMem
+ * gibt Bloecke teils ungerundet zurueck, z.B. 0x101 -- das kostet nur einige Byte) und dass sich keine
+ * zwei Knoten ueberlappen. Bei der ersten Abweichung erscheint "M L r=<Aufrufstelle> a=<Knoten> s=<Groesse>
+ * e=<naechster>" und der Kernel haelt an -- der Test-Timeout loest dann den Q9-Flux-Dump aus. Damit zeigt
+ * sich die Beschaedigung bei der ersten Operation NACH ihrem Entstehen, nicht erst bei der Folge. */
+#define Q9K_ARENA_AUDIT_MAX 256
+/* Keine Felder auf dem Stack: der Kernel-Stack ist klein, und die Stackpruefung des Compilers haelt bei
+ * Ueberlauf stumm an (so gesehen beim ersten Entwurf mit zwei Feldern zu je 128 Eintraegen). */
+static void Q9K_ArenaAudit(Q9_u32 where)
+{
+    Q9_u32 node = Q9K_GetU32(Q9K_ARENA_HEAD);
+    Q9_u32 count = 0, bad = 0, badNode = 0, badSize = 0, badNext = 0;
+
+    while (node != 0 && count < Q9K_ARENA_AUDIT_MAX && !bad) {
+        Q9_u32 size = Q9K_GetU32(node + sizeof(Q9_u32));
+        Q9_u32 next = Q9K_GetU32(node);
+        Q9_u32 other, steps = 0;
+
+        if ((node & 15UL) != 0 || size < 16UL || node + size > 0x1000000UL ||
+            (next != 0 && ((next & 15UL) != 0 || next >= 0x1000000UL))) {
+            bad = 1; badNode = node; badSize = size; badNext = next;
+            break;
+        }
+        /* Ueberlappung mit einem der NACHFOLGENDEN Knoten */
+        other = next;
+        while (other != 0 && steps < Q9K_ARENA_AUDIT_MAX) {
+            Q9_u32 osize = Q9K_GetU32(other + sizeof(Q9_u32));
+            if (other == node || (node < other + osize && other < node + size)) {
+                bad = 2; badNode = node; badSize = size; badNext = other;
+                break;
+            }
+            other = Q9K_GetU32(other);
+            steps++;
+        }
+        node = next;
+        count++;
+    }
+    if (bad) {
+        Q9K_MemTraceEmit(0x20UL + bad, where, badNode, badSize, badNext, count);
+        for (;;)
+            ;
+    }
+}
+#endif
+
 /* First-Fit-Allokation, rundet requestedSize auf 16 Byte auf. Gibt die
  * Adresse des allozierten Blocks zurueck, oder 0 bei Fehlschlag (kein
  * ausreichend grosser Block gefunden). */
@@ -164,6 +212,9 @@ Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize)
 #endif
     Q9_u32 savedSr = Q9K_IntLock();   /* s. Kopfkommentar oben -- ganze Funktion ist kritischer Abschnitt */
 
+#if defined(Q9K_MEMTRACE_ARENA)
+    Q9K_ArenaAudit(1UL);
+#endif
     curAddr = Q9K_GetU32(Q9K_ARENA_HEAD);
     while (curAddr != 0) {
         Q9_u32 curSize = Q9K_GetU32(curAddr + sizeof(Q9_u32));
@@ -276,14 +327,19 @@ void Q9K_FreeMem(Q9_u32 addr, Q9_u32 size)
     Q9_u32 oldHead;
     Q9_u32 savedSr;
 
+    /* A14 (2026-10-15): Q9K_AllocMem rundet auf 16 Byte auf; die Aufrufer geben die UNGERUNDETE Groesse zurueck
+     * (gesehen: 0x101 beim Boot). Ohne Aufrunden kaeme ein zu kleiner Knoten in die Liste, und Bloecke unter
+     * 16 Byte gingen ganz verloren. Gleiche Rundung wie beim Belegen ist fuer alle Aufrufer exakt. */
+    size = Q9K_RoundUp16(size);
     if (size < Q9K_MIN_SPLIT_REMAINDER)
-        return; /* zu klein, um selbst als Freiblock zu dienen -- verloren, TODO
+        return; /* size == 0 -- nichts freizugeben; zu klein, um selbst als Freiblock zu dienen -- verloren, TODO
                   * (ruehrt die Freiliste noch nicht an, deshalb VOR dem
                   * Q9K_IntLock -- s. Kopfkommentar bei Q9K_AllocMem) */
 
     savedSr = Q9K_IntLock();
     oldHead = Q9K_GetU32(Q9K_ARENA_HEAD);
 #if defined(Q9K_MEMTRACE_ARENA)
+    Q9K_ArenaAudit(2UL);
     /* Log before changing the list.  This is essential when the old head is
      * already corrupt: the post-write event may never be observable. */
     Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_FREE, size, addr, size, oldHead,

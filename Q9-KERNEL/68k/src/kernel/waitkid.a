@@ -1,0 +1,26 @@
+*******************************************************************************
+* waitkid.a -- Hilfsprogramm fuer icptwait.a (Arbeitsplan A11): schlaeft rund eine halbe Sekunde und
+* beendet sich dann mit Status 0. Dient nur als "lebendes Kind", damit F$Wait des Elternprozesses blockieren
+* wuerde, wenn nicht schon ein Signal ansteht.
+*******************************************************************************
+Q9Prgrm                 equ     1
+Q9Objct                 equ     1
+Q9K_KidEdition          equ     1
+Q9K_KidStackSize        equ     $400
+
+        psect   waitkid,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_KidEdition,Q9K_KidStackSize,Q9K_KidStart
+
+        vsect
+Q9K_KidData:
+        ds.l    1
+        ends
+
+Q9K_KidStart:
+        moveq   #50,d0                          * 50 Ticks = 0,5 s
+        trap    #0
+        dc.w    $0a                              * F$Sleep
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+        endsect

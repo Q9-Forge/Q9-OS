@@ -39,6 +39,8 @@ static unsigned long g_fakePoolNext;
 static unsigned char g_fakePathPoolCellF[16];
 static unsigned char g_fakePathPoolF[8 * 256];
 #define Q9K_FORK_PATHPOOL_BASE_ADDR ((unsigned long)g_fakePathPoolCellF)
+static unsigned char g_fakeMgrRefsF[64];   /* A13 */
+#define Q9K_FORK_MGRREF_ADDR ((unsigned long)g_fakeMgrRefsF)
 
 /* State/Priority/Age/Next/Prev/SavedSP/EntryPC liegen im echten Deskriptor
  * nur wenige Byte auseinander (+0x00/+0x01/+0x02/+0x30/+0x34/+0x38/+0x3C)
@@ -65,6 +67,9 @@ static unsigned char g_fakePathPoolF[8 * 256];
 #define Q9K_PROCDESC_DBGREG_OFF  0x340UL
 #define Q9K_PROCDESC_DBGPAR_OFF  0x348UL
 #define Q9K_PROCDESC_DBGINSTR_OFF 0x350UL
+#define Q9K_PROCDESC_DBGTOTAL_OFF 0x358UL
+#define Q9K_PROCDESC_DBGBPS_OFF   0x360UL
+#define Q9K_PROCDESC_DBGBPN_OFF   0x368UL
 #define Q9K_PROCDESC_ENTRYPC_OFF 0x28UL
 /* NACHTRAG 2026-08-22 (Abschnitt "F$Exit/F$Wait"): gleiche Grosszuegig-
  * keits-Begruendung wie oben -- reale Offsets waeren +0x04/+0x08/+0x0C. */
@@ -608,6 +613,7 @@ int main(void)
             Q9K_SetU32(Q9_D_PROC, 0);
 
             memset(fakeHdr5, 0, sizeof(fakeHdr5));
+            putBE32(fakeHdr5, 0x04, 0x80);   /* M$Size (B1: Tabellen muessen im Modul liegen) */
             putBE32(fakeHdr5, 0x30, 0x20);   /* M$Exec = 0x20 (fiktiv) */
             putBE32(fakeHdr5, 0x38, 0x40);   /* M$Mem  = 64 -- reicht fuer Datenoffset $10/$14 */
             putBE32(fakeHdr5, 0x3C, 256);    /* M$Stack = 256 */
@@ -673,6 +679,7 @@ int main(void)
 
         memset(hdr5b, 0, sizeof(hdr5b));
         memset(area5b, 0xA5, sizeof(area5b));
+        putBE32(hdr5b, 0x04, 0x80);              /* M$Size */
         putBE32(hdr5b, 0x40, 0x50);              /* M$IData */
         putBE32(hdr5b, 0x44, 0x58);              /* M$IRefs */
         putBE32(hdr5b, 0x50, 0x100);             /* IData: Ziel $100 ... */
@@ -680,13 +687,14 @@ int main(void)
         putBE16(hdr5b, 0x58, 0); putBE16(hdr5b, 0x5A, 0);   /* Code-Tabelle: leer */
         putBE16(hdr5b, 0x5C, 0); putBE16(hdr5b, 0x5E, 0);   /* Daten-Tabelle: leer */
         hdr5b[0x60] = 0x00; hdr5b[0x61] = 0x9E; hdr5b[0x62] = 0x94; hdr5b[0x63] = 0x59; /* CRC */
-        Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk);
+        checkU32("F5b: Rueckgabe 0 (gueltig)", Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk, 0x200), 0);
         for (k = 0; k < sizeof(area5b); k++)
             if (area5b[k] != 0xA5) changed++;
         checkU32("F5b: leere M$IRefs-Tabellen (sysgo) -- kein Byte veraendert", changed, 0);
 
         memset(hdr5b, 0, sizeof(hdr5b));
         memset(area5b, 0, sizeof(area5b));
+        putBE32(hdr5b, 0x04, 0x80);              /* M$Size */
         putBE32(hdr5b, 0x44, 0x58);              /* nur M$IRefs */
         putBE16(hdr5b, 0x58, 0); putBE16(hdr5b, 0x5A, 0);   /* Code-Tabelle: leer */
         putBE16(hdr5b, 0x5C, 0); putBE16(hdr5b, 0x5E, 1); putBE16(hdr5b, 0x60, 0x10); /* Lauf 1 */
@@ -694,11 +702,129 @@ int main(void)
         putBE16(hdr5b, 0x68, 0); putBE16(hdr5b, 0x6A, 0);   /* Ende */
         putBE32(area5b + 0x100, 0x10, 7);
         putBE32(area5b + 0x100, 0x20, 9);
-        Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk);
+        checkU32("F5c: Rueckgabe 0 (gueltig)", Q9K_ApplyInitializedData((Q9_u32)(unsigned long)hdr5b, (Q9_u32)blk, 0x100), 0);
         checkU32("F5c: Daten-Tabelle Lauf 1 reloziert (7+block)",
                  (Q9_u32)getBE32(blk + 0x10), (Q9_u32)(unsigned int)(7 + blk));
         checkU32("F5c: Daten-Tabelle Lauf 2 reloziert (9+block)",
                  (Q9_u32)getBE32(blk + 0x20), (Q9_u32)(unsigned int)(9 + blk));
+    }
+
+    /* F5d (B1): Grenzpruefungen. Jeder Fall baut ein Modul, dessen Tabellen etwas Unzulaessiges verlangen; erwartet wird E$BMID
+     * ($CD), und der Bereich HINTER dem erlaubten Datenblock bleibt unberuehrt (Fuellmuster $A5). Der Datenblock ist
+     * [blk, blk+0x100); davor und dahinter liegt Umgebung. */
+    {
+        static unsigned char hdr5d[0x80];
+        static unsigned char area5d[0x400];
+        unsigned long blk = (unsigned long)(area5d + 0x100);
+        Q9_u32 h = (Q9_u32)(unsigned long)hdr5d;
+        unsigned int k, changedOutside;
+
+#define F5D_RESET()                                                          \
+        do {                                                                 \
+            memset(hdr5d, 0, sizeof(hdr5d));                                 \
+            memset(area5d, 0xA5, sizeof(area5d));                            \
+            putBE32(hdr5d, 0x04, 0x80);   /* M$Size */                       \
+        } while (0)
+#define F5D_OUTSIDE()                                                        \
+        do {                                                                 \
+            changedOutside = 0;                                              \
+            for (k = 0; k < 0x100; k++) if (area5d[k] != 0xA5) changedOutside++;          \
+            for (k = 0x200; k < sizeof(area5d); k++) if (area5d[k] != 0xA5) changedOutside++; \
+        } while (0)
+
+        /* a) IData-Eintrag mit Anzahl hinter M$IRefs */
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x50); putBE32(hdr5d, 0x44, 0x58);
+        putBE32(hdr5d, 0x50, 0x10); putBE32(hdr5d, 0x54, 0x100);      /* Anzahl 256, aber nur 0 Byte bis M$IRefs */
+        checkU32("F5d-a: IData-Nutzlast ragt ueber M$IRefs -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_OUTSIDE(); checkU32("F5d-a: nichts ausserhalb des Blocks veraendert", changedOutside, 0);
+
+        /* b) Zieloffset + Anzahl ausserhalb des Datenblocks */
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x50); putBE32(hdr5d, 0x44, 0x60);
+        putBE32(hdr5d, 0x50, 0xF8); putBE32(hdr5d, 0x54, 8);          /* $F8+8 = $100: passt gerade noch */
+        putBE16(hdr5d, 0x60, 0); putBE16(hdr5d, 0x62, 0); putBE16(hdr5d, 0x64, 0); putBE16(hdr5d, 0x66, 0);
+        checkU32("F5d-b: Ziel genau am Blockende -- gueltig", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0);
+        putBE32(hdr5d, 0x50, 0xFC);                                   /* $FC+8 = $104: ueberschreitet */
+        memset(area5d, 0xA5, sizeof(area5d));
+        checkU32("F5d-b: Ziel hinter dem Blockende -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_OUTSIDE(); checkU32("F5d-b: nichts ausserhalb des Blocks veraendert", changedOutside, 0);
+        putBE32(hdr5d, 0x50, 0xFFFFFFF0UL);                           /* Ueberlauf-Versuch: Zieloffset nahe 2^32 */
+        checkU32("F5d-b: Zieloffset nahe 2^32 -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+
+        /* c) relozierbares Zeigerfeld ausserhalb des Datenblocks (Daten-Tabelle, Feld $FE: $FE+4 > $100) */
+        F5D_RESET();
+        putBE32(hdr5d, 0x44, 0x58);
+        putBE16(hdr5d, 0x58, 0); putBE16(hdr5d, 0x5A, 0);             /* Kode-Tabelle leer */
+        putBE16(hdr5d, 0x5C, 0); putBE16(hdr5d, 0x5E, 1); putBE16(hdr5d, 0x60, 0xFE);
+        putBE16(hdr5d, 0x62, 0); putBE16(hdr5d, 0x64, 0);
+        checkU32("F5d-c: Zeigerfeld ragt ueber das Blockende -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_OUTSIDE(); checkU32("F5d-c: nichts ausserhalb des Blocks veraendert", changedOutside, 0);
+        putBE16(hdr5d, 0x5C, 1);                                      /* MS = 1: Offset $100FE, weit hinter dem Block */
+        putBE16(hdr5d, 0x60, 0x00);
+        checkU32("F5d-c: MS-Wort ergibt Offset ueber 64 KByte -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+
+        /* d) Tabelle im Modul nicht abgeschlossen (kein 0/0-Paar vor dem Modulende) */
+        F5D_RESET();
+        putBE32(hdr5d, 0x04, 0x5C);                                   /* M$Size $5C: die Kode-Tabelle ($58-$5B) endet genau am Modulende */
+        putBE32(hdr5d, 0x44, 0x58);
+        putBE16(hdr5d, 0x58, 0); putBE16(hdr5d, 0x5A, 0);             /* Kode-Tabelle abgeschlossen, Daten-Tabelle fehlt */
+        checkU32("F5d-d: Daten-Tabelle faengt hinter dem Modulende an -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+
+        /* e) Lauf mit grosser Anzahl ragt ueber das Modul hinaus */
+        F5D_RESET();
+        putBE32(hdr5d, 0x44, 0x58);
+        putBE16(hdr5d, 0x58, 0); putBE16(hdr5d, 0x5A, 0xFFFF);        /* 65535 Eintraege, Modul nur $80 gross */
+        checkU32("F5d-e: Lauf laenger als das Modul -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_OUTSIDE(); checkU32("F5d-e: nichts ausserhalb des Blocks veraendert", changedOutside, 0);
+
+        /* f) Tabellen ausserhalb des Moduls / M$IData hinter M$IRefs / M$Size = 0 */
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x200);
+        checkU32("F5d-f: M$IData hinter dem Modulende -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x60); putBE32(hdr5d, 0x44, 0x50);
+        checkU32("F5d-f: M$IData hinter M$IRefs -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+        F5D_RESET();
+        putBE32(hdr5d, 0x04, 0);
+        putBE32(hdr5d, 0x44, 0x58);
+        checkU32("F5d-f: M$Size = 0 mit Tabellen -- E$BMID", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0xCDUL);
+
+        /* g) Fuellbytes (weniger als 8) vor M$IRefs sind erlaubt */
+        F5D_RESET();
+        putBE32(hdr5d, 0x40, 0x50); putBE32(hdr5d, 0x44, 0x5C);
+        putBE32(hdr5d, 0x50, 0x10); putBE32(hdr5d, 0x54, 0);          /* leerer Eintrag, danach 4 Fuellbytes bis $5C */
+        putBE16(hdr5d, 0x5C, 0); putBE16(hdr5d, 0x5E, 0); putBE16(hdr5d, 0x60, 0); putBE16(hdr5d, 0x62, 0);
+        checkU32("F5d-g: Fuellbytes vor M$IRefs -- gueltig", Q9K_ApplyInitializedData(h, (Q9_u32)blk, 0x100), 0);
+#undef F5D_RESET
+#undef F5D_OUTSIDE
+    }
+
+    /* F5e (B1): ProcFork gibt bei ungueltiger M$IData/M$IRefs alles zurueck. */
+    {
+        static unsigned char forkPool5e[Q9K_PROCDESC_SIZE];
+        static unsigned char hdr5e[0x80];
+        Q9_u32 base5e = (Q9_u32)(unsigned long)forkPool5e;
+        Q9_u16 error = 0;
+        Q9_u32 pid;
+        int unlinksBefore = g_stubModDirUnlinkCalls;
+        unsigned long savedHdr5e = g_stubModDirHdr;
+
+        memset(forkPool5e, 0, sizeof(forkPool5e));
+        buildFreeList(base5e, Q9K_PROCDESC_SIZE, 1, Q9K_PROCPOOL_FREE_ADDR);
+        Q9K_SetU32(Q9K_PROCPOOL_BASE_ADDR, base5e);
+        Q9K_SetU32(Q9_D_PROC, 0);
+        memset(hdr5e, 0, sizeof(hdr5e));
+        putBE32(hdr5e, 0x04, 0x80);
+        putBE32(hdr5e, 0x30, 0x20);  putBE32(hdr5e, 0x38, 0x40); putBE32(hdr5e, 0x3C, 256);
+        putBE32(hdr5e, 0x40, 0x50);  putBE32(hdr5e, 0x44, 0x58);
+        putBE32(hdr5e, 0x50, 0x10);  putBE32(hdr5e, 0x54, 0x200);     /* Nutzlast ragt ueber M$IRefs */
+        g_stubModDirHdr = (unsigned long)hdr5e;
+        pid = Q9K_ProcFork(0x0101, 0, 0, (Q9_u32)(unsigned long)"prog", 0, 1, &error);
+        checkU32("F5e: ProcFork mit ungueltiger M$IData scheitert", pid, 0);
+        checkU32("F5e: Fehlercode E$BMID ($CD)", (Q9_u32)error, 0xCDUL);
+        checkU32("F5e: Modul-Link zurueckgegeben", (Q9_u32)(g_stubModDirUnlinkCalls - unlinksBefore), 1);
+        g_stubModDirHdr = savedHdr5e;
     }
 
     /* F$DFork: the child receives the initial register image but is removed
@@ -711,6 +837,7 @@ int main(void)
         Q9_u32 debugBase = (Q9_u32)(unsigned long)debugPool;
         Q9_u16 error = 0xFFFF;
         Q9_u32 debugPid;
+        unsigned char *parentFramePtr = 0;
 
         memset(debugPool, 0, sizeof(debugPool));
         memset(debugParent, 0, sizeof(debugParent));
@@ -751,7 +878,7 @@ int main(void)
         g_lastSchedInsert = 0;
         Q9_u32 execError = 0;
         checkU32("F$DExec waehlt den Debugger-Prozess als naechsten Kontext",
-                 Q9K_ProcDebugExec((Q9_u16)debugPid, 1, &execError),
+                 Q9K_ProcDebugExec((Q9_u16)debugPid, 1, 0, 0, &execError),
                  debugBase);
         checkU32("F$DExec parkt den Elternprozess",
                  (Q9_u32)*(Q9_u8 *)(debugParent + Q9K_PROCDESC_STATE_OFF), 'w');
@@ -767,6 +894,19 @@ int main(void)
                  0x8000UL);
         Q9K_SetU32(Q9_D_PROC, debugBase);
         Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 2);
+        /* C2: der gesicherte Registersatz des Debuggers (72 Byte), in den F$DExec seine Ausgaben schreibt */
+        {
+            static unsigned char parentFrame[72];
+            memset(parentFrame, 0xEE, sizeof(parentFrame));
+            Q9K_SetU32((Q9_u32)(unsigned long)debugParent + Q9K_PROCDESC_SAVEDSP_OFF, (Q9_u32)(unsigned long)parentFrame);
+            parentFramePtr = parentFrame;
+        }
+        {
+            /* Kind-Rahmen: PC (Rahmen+62) auf einen bekannten Wert, damit der Zuruecklesetest etwas zum Vergleichen hat */
+            unsigned long cf = Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF);
+            putBE16((unsigned char *)cf, 62, 0x0001); putBE16((unsigned char *)cf, 64, 0x2000);   /* PC = $00012000 */
+            putBE32((unsigned char *)cf, 12, 0xD3D3D3D3UL);                      /* d3 des Kindes */
+        }
         checkU32("Trace-Ereignis vor dem Budgetende laesst das Kind laufen",
                  Q9K_ProcDebugTrace(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF)), 0);
         checkU32("Trace-Ereignis zaehlt das Restbudget herunter",
@@ -781,6 +921,63 @@ int main(void)
         checkU32("Trace stop loescht das Trace-Bit",
                  (Q9_u32)(Q9K_GetU16(Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF) + 60UL) & 0x8000U),
                  0);
+        /* C2: die Ausgaben von F$DExec im gesicherten Registersatz des Debuggers und der zurueckgeschriebene Registerpuffer */
+        checkU32("F$DExec-Ausgabe d0.l = ausgefuehrte Befehle (2)", getBE32((unsigned long)parentFramePtr + 0), 2UL);
+        checkU32("F$DExec-Ausgabe d1.l = Rest des Budgets (0)", getBE32((unsigned long)parentFramePtr + 4), 0UL);
+        checkU32("F$DExec-Ausgabe d2 = keine Ausnahme (0)", getBE32((unsigned long)parentFramePtr + 8), 0UL);
+        checkU32("Registerpuffer: d3 des Kindes zurueckgeschrieben", getBE32((unsigned long)registerImage + 12), 0xD3D3D3D3UL);
+        checkU32("Registerpuffer: PC des Kindes zurueckgeschrieben",
+                 ((Q9_u32)((registerImage[66] << 8) | registerImage[67]) << 16) | (Q9_u32)((registerImage[68] << 8) | registerImage[69]),
+                 0x00012000UL);
+        checkU32("Registerpuffer: Trace-Bit nicht im SR", (Q9_u32)(((registerImage[64] << 8) | registerImage[65]) & 0x8000), 0UL);
+        {
+            unsigned long cf = Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF);
+            checkU32("Registerpuffer: a7 = Rahmen + 60 + 8 (Format 0)", getBE32((unsigned long)registerImage + 60), (Q9_u32)(unsigned int)(cf + 68UL));
+            /* Format-2-Rahmen (68020/030-Trace): 12 Byte Hardware-Rahmen */
+            putBE16((unsigned char *)cf, 66, 0x2024);
+            Q9K_SetU8(cf + 60, (Q9_u8)0x80);                          /* Trace-Bit wieder setzen: Stop muss es loeschen */
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 1);
+            Q9K_SetU8(debugBase + Q9K_PROCDESC_STATE_OFF, 'a');
+            Q9K_SetU8((Q9_u32)(unsigned long)debugParent + Q9K_PROCDESC_STATE_OFF, 'w');
+            Q9K_SetU32(Q9_D_PROC, debugBase);
+            checkU32("Trace-Stop mit Format-2-Rahmen waehlt den Debugger", Q9K_ProcDebugTrace(cf), (Q9_u32)(unsigned long)debugParent);
+            checkU32("Registerpuffer: a7 = Rahmen + 60 + 12 (Format 2)", getBE32((unsigned long)registerImage + 60), (Q9_u32)(unsigned int)(cf + 72UL));
+            checkU32("Gesamtzaehler steht jetzt bei 3", getBE32((unsigned long)parentFramePtr + 0), 3UL);
+        }
+
+        /* Haltepunkt: das Kind laeuft fortlaufend (Budget 0) und haelt an, sobald sein PC auf $00012010 zeigt. */
+        {
+            static unsigned char bpList[8];
+            unsigned long cf = Q9K_GetU32(debugBase + Q9K_PROCDESC_SAVEDSP_OFF);
+            putBE32(bpList, 0, 0x00012010UL);
+            putBE32(bpList, 4, 0x00012020UL);
+            Q9K_SetU8(debugBase + Q9K_PROCDESC_STATE_OFF, 'a');
+            Q9K_SetU8((Q9_u32)(unsigned long)debugParent + Q9K_PROCDESC_STATE_OFF, 'w');
+            Q9K_SetU32(Q9_D_PROC, debugBase);
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 0);                 /* fortlaufend */
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGBPS_OFF, (Q9_u32)(unsigned long)bpList);
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGBPN_OFF, 2);
+            Q9K_SetU8(cf + 60, (Q9_u8)0x80);
+            putBE16((unsigned char *)cf, 62, 0x0001); putBE16((unsigned char *)cf, 64, 0x200C);                     /* PC = $0001200C: kein Haltepunkt */
+            checkU32("Haltepunkte: PC ohne Haltepunkt laesst das Kind weiterlaufen", Q9K_ProcDebugTrace(cf), 0);
+            checkU32("Haltepunkte: Budget bleibt 0 (fortlaufend)", Q9K_GetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF), 0);
+            putBE16((unsigned char *)cf, 64, 0x2020);                                              /* zweiter Haltepunkt */
+            checkU32("Haltepunkte: PC auf Haltepunkt haelt das Kind an", Q9K_ProcDebugTrace(cf), (Q9_u32)(unsigned long)debugParent);
+            checkU32("Haltepunkte: Rest = 0 bei fortlaufender Ausfuehrung", getBE32((unsigned long)parentFramePtr + 4), 0UL);
+            checkU32("Haltepunkte: Gesamtzaehler 5", getBE32((unsigned long)parentFramePtr + 0), 5UL);
+
+            /* Haltepunkt VOR Budgetende: Rest = nicht ausgefuehrte Befehle (Budget 5 -> nach dem 2. Ereignis noch 3) */
+            Q9K_SetU8(debugBase + Q9K_PROCDESC_STATE_OFF, 'a');
+            Q9K_SetU8((Q9_u32)(unsigned long)debugParent + Q9K_PROCDESC_STATE_OFF, 'w');
+            Q9K_SetU32(Q9_D_PROC, debugBase);
+            Q9K_SetU32(debugBase + Q9K_PROCDESC_DBGINSTR_OFF, 5);
+            Q9K_SetU8(cf + 60, (Q9_u8)0x80);
+            putBE16((unsigned char *)cf, 64, 0x200C);
+            Q9K_ProcDebugTrace(cf);                                               /* Ereignis 1: Budget 5 -> 4 */
+            putBE16((unsigned char *)cf, 64, 0x2010);
+            checkU32("Haltepunkte: Haltepunkt vor Budgetende haelt an", Q9K_ProcDebugTrace(cf), (Q9_u32)(unsigned long)debugParent);
+            checkU32("Haltepunkte: Rest = Budget minus ausgefuehrte (3)", getBE32((unsigned long)parentFramePtr + 4), 3UL);
+        }
     }
 
 

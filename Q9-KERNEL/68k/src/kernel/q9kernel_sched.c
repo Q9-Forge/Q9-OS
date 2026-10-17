@@ -174,6 +174,15 @@ typedef unsigned char  Q9_u8;
 
 /* Eigene Kernel-Global-Erweiterung -- Restticks der aktuellen Zeitscheibe.
  * Direkt hinter Q9K_MODDIR_HEAD_ADDR ($1238, q9kernel_moddir.c). */
+/* A7 (2026-10-15): Q9K_TimerIRQHandler setzt diese Zelle <> 0, wenn der UNTERBROCHENE Code selbst mit einer
+ * Interrupt-Maske lief (gesichertes SR & $0700 <> 0), also in einem Interrupt-Behandler niedrigerer Stufe (z. B. der
+ * UART-ISR auf Level 3) oder in einem gesperrten Abschnitt. Dann gibt es nur die Tick-Buchfuehrung, KEINEN
+ * Prozesswechsel: ein Wechsel liesse die unterbrochene ISR halb ausgefuehrt auf dem Stack des alten Prozesses liegen,
+ * waehrend der Level wieder frei ist und die ISR erneut betreten werden kann. */
+#ifndef Q9K_SCHED_NOSWITCH_ADDR
+#define Q9K_SCHED_NOSWITCH_ADDR 0x2488UL   /* Q9_u32 */
+#endif
+
 #ifndef Q9K_SCHED_SLICE_ADDR
 #define Q9K_SCHED_SLICE_ADDR 0x123CUL
 #endif
@@ -203,6 +212,15 @@ typedef unsigned char  Q9_u8;
  * kann keine Prioritaet darunter liegen, das Verhalten ist dann
  * unveraendert. */
 #define Q9K_SCHED_MINPTY_ADDR 0x19E0UL
+#endif
+
+#ifndef Q9K_SCHED_MAXAGE_ADDR
+/* C5 (2026-10-17): D_MaxAge, die systemweite Altersobergrenze (68k_tech.pdf S. 92: "D_MaxAge is the maximum age to which a process can
+ * increment. When D_MaxAge is activated, tasks are divided into two classes: High priority tasks receive all of the available CPU time
+ * and do not age. Low priority tasks do not age past D_MaxAge."). Wie D_MinPty ein Q9-eigenes Feld, aus demselben Grund: das echte
+ * Systemglobal ($560) liegt in diesem System auf fremdem Speicher. 0 = nicht aktiv (Standard, wie im Handbuch). Gelesen und gesetzt wird
+ * es ueber F$SetSys (q9kernel_setsys.c, Q9K_SchedGetMaxAge/-SetMaxAge). */
+#define Q9K_SCHED_MAXAGE_ADDR 0x2550UL
 #endif
 
 static Q9_u32 Q9K_GetU32(Q9_u32 addr) { return *(volatile Q9_u32 *)addr; }
@@ -390,6 +408,12 @@ static void Q9K_SleepQDecrementAll(void)
     }
 }
 
+/* C5: Zugriff fuer F$SetSys (q9kernel_setsys.c) auf D_MinPty und D_MaxAge. */
+Q9_u32 Q9K_SchedGetMinPty(void) { return (Q9_u32)Q9K_GetU16(Q9K_SCHED_MINPTY_ADDR); }
+void   Q9K_SchedSetMinPty(Q9_u32 value) { Q9K_SetU16(Q9K_SCHED_MINPTY_ADDR, (Q9_u16)value); }
+Q9_u32 Q9K_SchedGetMaxAge(void) { return (Q9_u32)Q9K_GetU16(Q9K_SCHED_MAXAGE_ADDR); }
+void   Q9K_SchedSetMaxAge(Q9_u32 value) { Q9K_SetU16(Q9K_SCHED_MAXAGE_ADDR, (Q9_u16)value); }
+
 /* Erhoeht das Alter ALLER Eintraege in der Ready-Queue um 1 ("the ages
  * of all other processes increment", "Ages never increment beyond
  * $ffff"). Der GERADE laufende Prozess ist bewusst NICHT Teil dieser
@@ -400,12 +424,19 @@ static void Q9K_SleepQDecrementAll(void)
 static void Q9K_SchedAgeAll(void)
 {
     Q9_u32 node = Q9K_GetU32(Q9K_READYQ_SENTINEL_ADDR + Q9K_READYQ_NEXT_OFF);
+    Q9_u16 maxAge = Q9K_GetU16(Q9K_SCHED_MAXAGE_ADDR);
 
     while (node != Q9K_READYQ_SENTINEL_ADDR) {
         Q9_u16 age = Q9K_GetU16(node + Q9K_PROCDESC_AGE_OFF);
 
-        if (age != 0xFFFFU)
-            Q9K_SetU16(node + Q9K_PROCDESC_AGE_OFF, (Q9_u16)(age + 1));
+        if (maxAge == 0U) {
+            if (age != 0xFFFFU)
+                Q9K_SetU16(node + Q9K_PROCDESC_AGE_OFF, (Q9_u16)(age + 1));
+        } else if ((Q9_u16)Q9K_GetU8(node + Q9K_PROCDESC_PRIORITY_OFF) >= maxAge) {
+            /* D_MaxAge aktiv, hohe Prioritaet: "do not age" */
+        } else if (age < maxAge) {
+            Q9K_SetU16(node + Q9K_PROCDESC_AGE_OFF, (Q9_u16)(age + 1));   /* niedrige: nicht ueber D_MaxAge hinaus */
+        }
 
         node = Q9K_GetU32(node + Q9K_READYQ_NEXT_OFF);
     }
@@ -472,6 +503,9 @@ Q9_u32 Q9K_SchedReschedule(void)
     Q9K_ClockTick();            /* NACHTRAG 2026-09-18, Systemuhr -- VOR den Alarmen waere falsch: ein absoluter
                                  * Alarm soll den Zeitpunkt sehen, der beim Eintragen galt, nicht den um einen
                                  * Tick vorgerueckten (s. q9kernel_clock.c) */
+
+    if (Q9K_GetU32(Q9K_SCHED_NOSWITCH_ADDR) != 0UL)
+        return 0;               /* A7: Unterbrochener ist selbst ein Interrupt -- kein Wechsel, Zeitscheibe bleibt */
 
     slice = Q9K_GetU16(Q9K_SCHED_SLICE_ADDR);
     if (slice > 0) {

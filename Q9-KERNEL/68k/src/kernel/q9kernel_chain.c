@@ -71,7 +71,7 @@ extern void   Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);
 extern Q9_u32 Q9K_AllocMem(Q9_u32 size);
 extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size);
 extern void   Q9K_ProcTrapReleaseAll(Q9_u32 proc);   /* q9kernel_traplink.c */
-extern void   Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block);
+extern Q9_u32 Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block, Q9_u32 blockSize);   /* B1: 0 = Erfolg */
 extern Q9_u32 Q9K_ReadHdrU32BE(Q9_u32 addr);
 extern void   Q9K_SetFrameReg(Q9_u32 frameBase, Q9_u32 index, Q9_u32 value);
 extern Q9_u16 Q9K_ProcIdForDesc(Q9_u32 desc);
@@ -79,6 +79,9 @@ extern void   Q9K_AlarmCleanupProcess(Q9_u32 desc); /* native F$UAcct lifecycle 
 
 #ifndef Q9K_E_MNF
 #define Q9K_E_MNF    0xDDU
+#endif
+#ifndef Q9K_E_BMID
+#define Q9K_E_BMID   0xCDU   /* Illegal module header (E$BMID), B1 */
 #endif
 #ifndef Q9K_E_MEMFUL
 #define Q9K_E_MEMFUL 0xCFU
@@ -228,7 +231,13 @@ int Q9K_ProcChain(Q9_u16 typeLang, Q9_u32 addMem, Q9_u32 paramSize,
         for (n = 0; n < totalSize; n++)
             z[n] = 0;
     }
-    Q9K_ApplyInitializedData(hdrAddr, block);
+    if (Q9K_ApplyInitializedData(hdrAddr, block, totalSize) != 0) {
+        /* B1: ungueltige M$IData/M$IRefs -- der Aufrufer bleibt unversehrt (Schritt 1 ist noch nicht abgeschlossen) */
+        Q9K_FreeMem(block, totalSize);
+        Q9K_ModDirUnlinkByHeader(hdrAddr);
+        *outError = (Q9_u16)Q9K_E_BMID;
+        return 0;
+    }
 
     blockTop   = block + totalSize;
     spBoundary = blockTop - paramSize;

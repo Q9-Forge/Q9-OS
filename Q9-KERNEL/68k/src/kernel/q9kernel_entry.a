@@ -445,19 +445,20 @@ Q9K_TLinkScratch_StaticPtr equ $16AC     * Q9_u32, AUS -- wird a6 beim M$Init-Au
 Q9K_TLinkScratch_Error     equ $16B0     * Q9_u32, d1.w AUS bei Fehler
 Q9K_TLinkScratch_Success   equ $16B4     * Q9_u32, 0 = Fehlschlag / 1 = Erfolg
 
-* Q9K_TCallDispatch (TRAP #1-15, s. dort) -- eigene Scratch-Zellen,
-* freier Bereich direkt dahinter.
-Q9K_TCallScratch_TrapNum   equ $16C0     * Q9_u32
-Q9K_TCallScratch_ModPtr    equ $16C4     * Q9_u32
-Q9K_TCallScratch_ExecEntry equ $16C8     * Q9_u32
-Q9K_TCallScratch_StaticPtr equ $16CC     * Q9_u32
-Q9K_TCallScratch_RetPC     equ $16D0     * Q9_u32
+* Q9K_TCallDispatch (TRAP #1-15, s. dort) -- eigene Scratch-Zellen.
+* B3 (2026-10-15): vorher auf $16C0-$16D7 und damit auf den Zellen von
+* Q9K_MemTrace*; jetzt hinter dem Debug-Block (naechste freie Adresse $2434).
+Q9K_TCallScratch_TrapNum   equ $2400     * Q9_u32
+Q9K_TCallScratch_ModPtr    equ $2404     * Q9_u32
+Q9K_TCallScratch_ExecEntry equ $2408     * Q9_u32
+Q9K_TCallScratch_StaticPtr equ $240C     * Q9_u32
+Q9K_TCallScratch_RetPC     equ $2410     * Q9_u32
 * NEU (Fortsetzung 35, s. Kopfkommentar bei Q9K_TCallDispatch): Vektorwort
 * und Funktionscode werden jetzt VOR der Aufrufer-Registerwiederherstellung
 * in eigenen Zellen zwischengelagert, statt d0/a4 spaeter nochmal als
 * Rechenregister zu missbrauchen.
-Q9K_TCallScratch_VectorWord equ $16D4    * Q9_u16
-Q9K_TCallScratch_FuncCode   equ $16D6    * Q9_u16
+Q9K_TCallScratch_VectorWord equ $2414    * Q9_u16
+Q9K_TCallScratch_FuncCode   equ $2416    * Q9_u16
 Q9K_PROCDESC_TRAPTBL_OFF   equ $1CC      * s. q9kernel_traplink.c Kopfkommentar, 15x12 Byte
 
 Q9K_InTrapPath            equ $13E4      * 1 = Handler laeuft ueber Q9K_TrapDispatch, 0 = Trampolin
@@ -548,9 +549,18 @@ Q9K_IOpenScratch_Mode     equ $1360      * Q9_u32, d0.b EIN (nur unteres Byte re
 Q9K_IOpenScratch_NamePtr  equ $1364      * Q9_u32, (a0) EIN
 Q9K_IOpenScratch_PastName equ $1368      * Q9_u32, (a0) AUS
 Q9K_IOpenScratch_PathNum  equ $136C      * Q9_u32, d0.w AUS (0 = Fehlschlag)
-Q9K_IOpenScratch_Error    equ $1370      * Q9_u32, d1.w AUS bei Fehler
-Q9K_FLinkCall_TyLang      equ $1A00
-Q9K_FLinkCall_Name        equ $1A04
+Q9K_IOpenScratch_Error    equ $1374      * Q9_u32, d1.w AUS bei Fehler
+Q9K_DispatchCallCode      equ $1370      * Q9_u16, Callcode des laufenden Traps: schreibt Q9K_TrapDispatch bei JEDEM Trap (move.w d7,($1370).w), gelesen u. a. von F$-Wrappern und q9kernel_dbg.c (unteres Byte bei +1). B3: vorher teilte sich die Zelle der native I$Open mit Q9K_IOpenScratch_Error (Langwort) und loeschte so den Callcode.
+Q9K_IcptFrameGap          equ 68         * = Q9K_FAKEFRAME_SIZE (q9kernel_icpt.c): Groesse eines Intercept-Rahmens, s. Q9K_SysFSleep_Block
+* A5 (2026-10-15): Register-Erhaltungspruefung, nur Q9K_DEBUG (s. Q9K_RegChkReturn).
+Q9K_RegChkSnap            equ $2440      * 15 x Q9_u32, d0-d7/a0-a6 des Aufrufers beim Handlereintritt
+Q9K_RegChkSP              equ $247C      * Q9_u32, sp beim Eintritt (= Adresse des Hardware-Frames; Schluessel gegen Verschachtelung)
+Q9K_RegChkCode            equ $2480      * Q9_u16, Callcode des Schnappschusses
+Q9K_RegChkCount           equ $2484      * Q9_u32, Anzahl gemeldeter Abweichungen seit dem Boot
+Q9K_SchedNoSwitch         equ $2488      * Q9_u32, A7: <> 0, wenn der vom Timer Unterbrochene selbst eine Interrupt-Maske hatte (q9kernel_sched.c)
+Q9K_MgrRefs               equ $2500      * 64 Byte, A13: Ueberschuss-Zaehler je IOMan-Pfad (Index = PD-Nummer & $3F), s. q9kernel_firstproc.c
+* (entfernt, B3: Q9K_FLinkCall_TyLang/_Name auf $1A00/$1A04 wurden nirgends benutzt und
+*  lagen auf Eintrag 0 der Alarmtabelle.)
 Q9K_FLinkSearch_TyLang    equ $154170
 Q9K_FLinkSearch_Name      equ $154174
 Q9K_FLinkSearch_Slot      equ $154178
@@ -618,13 +628,13 @@ Q9K_UnloadScratch_TyLang   equ $18E8      * Q9_u32, d0.w EIN
 Q9K_UnloadScratch_Name     equ $18EC      * Q9_u32, (a0) EIN
 Q9K_UnloadScratch_Error    equ $18F0      * Q9_u32, d1.w AUS bei Fehler
 Q9K_UnloadScratch_Success  equ $18F4      * Q9_u32, 0/1
-Q9K_FModulScratch_TyLang   equ $1A00      * Q9_u32, d0.w EIN
-Q9K_FModulScratch_Name     equ $1A04      * Q9_u32, (a0) EIN
-Q9K_FModulScratch_OutTy    equ $1A08      * Q9_u32, d0.w AUS
-Q9K_FModulScratch_OutAR    equ $1A0C      * Q9_u32, d1.w AUS
-Q9K_FModulScratch_Entry    equ $1A10      * Q9_u32, a2 AUS
-Q9K_FModulScratch_Error    equ $1A14      * Q9_u32, d1.w AUS bei Fehler
-Q9K_FModulScratch_Ok       equ $1A18      * Q9_u32, 0/1
+Q9K_FModulScratch_TyLang   equ $2418      * Q9_u32, d0.w EIN
+Q9K_FModulScratch_Name     equ $241C      * Q9_u32, (a0) EIN
+Q9K_FModulScratch_OutTy    equ $2420      * Q9_u32, d0.w AUS
+Q9K_FModulScratch_OutAR    equ $2424      * Q9_u32, d1.w AUS
+Q9K_FModulScratch_Entry    equ $2428      * Q9_u32, a2 AUS
+Q9K_FModulScratch_Error    equ $242C      * Q9_u32, d1.w AUS bei Fehler
+Q9K_FModulScratch_Ok       equ $2430      * Q9_u32, 0/1
 Q9K_MemScratch_Request     equ $1E74      * Q9_u32, d0.l EIN
 Q9K_MemScratch_OutSize     equ $1E78      * Q9_u32, d0.l AUS
 Q9K_MemScratch_OutUpper    equ $1E7C      * Q9_u32, a1 AUS
@@ -860,6 +870,9 @@ Q9K_DExecScratch_Count      equ $1F04      * Q9_u32, d1.l EIN
 Q9K_DExecScratch_Next       equ $1F08      * Q9_u32, next descriptor AUS
 Q9K_DExecScratch_Error      equ $1F0C      * Q9_u32, d1.w AUS
 Q9K_DExecScratch_Ok         equ $1F10      * Q9_u16, 0/1
+Q9K_DExecScratch_Parent     equ $2540      * Q9_u32, C2: Deskriptor des Debuggers (Aufrufer von F$DExec)
+Q9K_DExecScratch_BpCount    equ $2544      * Q9_u32, C2: d2.w EIN = Anzahl Haltepunkte (im unteren Wort)
+Q9K_DExecScratch_BpList     equ $2548      * Q9_u32, C2: (a0) EIN = Haltepunktliste
 Q9K_ConSSigPid              equ $1F14      * Q9_u32, SS_SSig-Empfaenger der nativen Konsole (0 = keiner), s. q9kernel_alarm.c
 Q9K_ConSSigSignal           equ $1F18      * Q9_u32, zugehoeriger Signalcode
 Q9K_ConsoleViaIOMan         equ $1F1C      * Q9_u32, 1 = /term ueber IOMan/SCF statt nativ (echter Start) -- naechste freie Adresse $1F20
@@ -893,17 +906,30 @@ Q9K_SRqMemFrameScratch    equ $13A4      * Q9_u32, Rahmenbasis oder 0
 * FALSCH -- genau der Fund vom vorherigen Kernel-Link). Ein fehlender
 * Parameter ergibt dagegen echte 0, passend zum verifizierten M$Excpt=0
 * am realen Referenzkernel.
-* Q9K_FARCALL <Ziel> (Fortsetzung 121) -- lageunabhaengiger Aufruf ohne
-* die +-32-KB-Grenze von bsr (68000 kennt nur 16-Bit-PC-Distanzen). l68
-* loest die Label-Differenz "Ziel-*" als Konstante auf, auch ueber
-* Dateigrenzen (an einem 40-KB-Beispiel geprueft). Benutzt a0 -- in der
-* Microware-C-Konvention ohnehin ein freies Arbeitsregister; deshalb NUR fuer
-* Aufrufe in C-Funktionen. 12 statt 4 Byte. Noetig, seit der Kernel an der
-* bsr-Grenze sitzt (schon zwei unoptimierte -g-Dateien sprengten sie).
+* Q9K_FARCALL <Ziel> (Fortsetzung 121, umgestellt 2026-10-15 = Arbeitsplan A3) --
+* lageunabhaengiger Aufruf ohne die +-32-KB-Grenze von bsr (68000 kennt nur
+* 16-Bit-PC-Distanzen). l68 loest die Label-Differenz "Ziel-*" als Konstante auf,
+* auch ueber Dateigrenzen.
+*
+* REGISTERNEUTRAL (A2): die erste Fassung (lea/adda/jsr (a0)) ueberschrieb a0.
+* In den Trap-Pfaden ist noch der Registersatz des Aufrufers aktiv, und der
+* Blockierpfad von F$Wait sichert ihn als Wiederaufnahme-Rahmen -- der Aufrufer
+* bekam a0 zerstoert zurueck. Gemessen (fcbisect/fcddmin, 15.10.2026): schon die
+* eine Stelle Q9K_SysWaitImpl liess den Boot mit Vektor 4 (PC im Datenbereich)
+* scheitern; dieselbe Stelle als bsr plus vier NOPs (gleiche Codegroesse) war
+* gruen, also kein Layout-Effekt. Mit dieser Fassung laufen alle 43 Stellen.
+* Ablauf: Ruecksprungadresse und a0 auf den Stack, a0 = Ziel berechnen, Ziel
+* an die Stelle des geretteten a0 schreiben, a0 zurueckholen, per rts springen.
+* 26 Byte statt 4; veraendert nur das CCR (wie vorher lea/adda).
 Q9K_FARCALL macro
+        pea     *+26(pc)            * Ruecksprungadresse = Befehl hinter dem rts
+        move.l  a0,-(sp)            * a0 des Aufrufers retten
         lea     *(pc),a0
-        adda.l  #\1-*+4,a0
-        jsr     (a0)
+        adda.l  #\1-*+4,a0          * a0 = Ziel
+        move.l  a0,-(sp)
+        move.l  4(sp),a0            * a0 des Aufrufers zurueck
+        move.l  (sp)+,(sp)          * Ziel an die Stelle des geretteten a0
+        rts                         * Sprung ins Ziel, Ruecksprung hinter dieses Makro
         endm
 
         psect   q9kernel,(Q9_MT_SYSTEM<<8)!Q9_ML_OBJECT,((Q9_MA_REENT!Q9_MA_SUPER)<<8)!0,Q9K_Edition,0,Q9K_Entry
@@ -1050,6 +1076,113 @@ Q9K_DiagHexWait:
         movem.l (sp)+,d4/d6/d7/a4
         rts
 
+        ifne    Q9K_DEBUG
+* Q9K_RegChkReturn (Arbeitsplan A5) -- laeuft unmittelbar vor dem RTE eines Syscalls.
+* Die Register d2-d7 und a2-a6 muss der Aufrufer unveraendert zurueckbekommen, ausser
+* dem, was die Beschreibung des Syscalls als Ausgabe nennt (Q9K_RegChkExempt). d0/d1 sind
+* Ergebnisregister, a0/a1 C-Arbeitsregister und werden nicht geprueft. Eine Abweichung
+* erscheint als Zeile  "!R c=<Callcode> <Reg> <vorher> <nachher>"  auf der Konsole (hoechstens 32).
+* Anlass: d7 (Fortsetzung 111) und a0 (FARCALL, A2) wurden von Syscalls zerstoert und blieben lange unentdeckt.
+* Erhaelt alle Register; sperrt Interrupts, weil Schnappschuss und Zaehler globale Zellen sind.
+Q9K_RegChkReturn:
+        movem.l d0-d7/a0-a6,-(sp)           * 60 Byte: so sieht der Aufrufer die Register gleich
+        move.w  sr,-(sp)
+        ori.w   #$0700,sr
+        moveq   #0,d0
+        move.w  Q9K_RegChkCode,d0
+        moveq   #0,d3                       * d3 = Maske der als Ausgabe erlaubten Register (Bit n = Register n)
+        lea     Q9K_RegChkExempt(pc),a0
+Q9K_RegChkFind:
+        move.w  (a0)+,d1
+        cmpi.w  #$ffff,d1
+        beq.s   Q9K_RegChkCmp
+        move.w  (a0)+,d2
+        cmp.w   d0,d1
+        bne.s   Q9K_RegChkFind
+        or.w    d2,d3
+        bra.s   Q9K_RegChkFind
+Q9K_RegChkCmp:
+        moveq   #2,d4                       * Registernummer 0..14 = d0..d7,a0..a6
+Q9K_RegChkLoop:
+        cmpi.w  #8,d4
+        blt.s   Q9K_RegChkDo                * d2-d7
+        cmpi.w  #10,d4
+        blt   Q9K_RegChkNext              * a0/a1 auslassen
+Q9K_RegChkDo:
+        btst    d4,d3
+        bne   Q9K_RegChkNext
+        move.w  d4,d5
+        lsl.w   #2,d5
+        lea     2(sp,d5.w),a1               * sp -> [SR.w][Register ...]
+        move.l  (a1),d6                     * nachher
+        lea     Q9K_RegChkSnap,a2
+        move.l  0(a2,d5.w),d7               * vorher
+        cmp.l   d6,d7
+        beq   Q9K_RegChkNext
+        addq.l  #1,Q9K_RegChkCount
+        cmpi.l  #32,Q9K_RegChkCount
+        bhi.s   Q9K_RegChkNext
+        movem.l d4/d6/d7,-(sp)              * Index, nachher, vorher fuer die Ausgabe
+        moveq   #'!',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'R',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'c',d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #'=',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  d0,d5
+        bsr     Q9K_DiagWriteHex32
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  (sp),d4                     * Registerindex
+        cmpi.w  #8,d4
+        bge.s   Q9K_RegChkAReg
+        moveq   #'d',d7
+        add.w   #'0',d4
+        bra.s   Q9K_RegChkName
+Q9K_RegChkAReg:
+        moveq   #'a',d7
+        add.w   #'0'-8,d4
+Q9K_RegChkName:
+        bsr     Q9K_DiagWriteD7
+        move.b  d4,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  8(sp),d5                    * vorher
+        bsr     Q9K_DiagWriteHex32
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  4(sp),d5                    * nachher
+        bsr     Q9K_DiagWriteHex32
+        moveq   #13,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #10,d7
+        bsr     Q9K_DiagWriteD7
+        movem.l (sp)+,d4/d6/d7
+Q9K_RegChkNext:
+        addq.w  #1,d4
+        cmpi.w  #15,d4
+        blt     Q9K_RegChkLoop
+        move.w  (sp)+,sr
+        movem.l (sp)+,d0-d7/a0-a6
+        rts
+
+* Registerausgaben der Syscalls: dc.w Callcode, dc.w Maske (Bit n = Register n: d0-d7 = 0-7, a0-a6 = 8-14).
+* Jeder Eintrag steht hier mit Beleg (Beschreibung des Syscalls bzw. gemessener Fund); Ende = $FFFF.
+Q9K_RegChkExempt:
+        dc.w    $00,$0400               * F$Link:    Ausgabe (a2) = Modulkopf  (syscall-reference.md, F$Link)
+        dc.w    $21,$0400               * F$TLink:   Ausgabe (a2) = Modulkopf  (ebd.)
+        dc.w    $27,$0004               * F$SetSys:  Ausgabe d2 = Wert         (q9kernel_setsys.c, Kopfkommentar)
+        dc.w    $28,$0400               * F$SRqMem:  Ausgabe (a2) = Block      (syscall-reference.md)
+        dc.w    $5c,$0400               * F$SRqCMem: Ausgabe (a2) = Block      (Kommentar bei Q9K_SysFSRqCMem)
+        dc.w    $8d,$0004               * I$GetStt:  SS.Size (Code 2) liefert das Ergebnis in d2 (syscall-reference.md, I$GetStt)
+        dc.w    $ffff
+        endc
+
 * Q9K_MemTraceConsoleBackend -- first memory-event backend.  It emits a
 * compact, machine-readable line directly through the DUART and does not
 * enter any syscall or allocator path.  A later ring-buffer backend can
@@ -1075,7 +1208,12 @@ Q9K_MemTraceConsoleBackend:
         beq     Q9K_MemTraceFree
         cmpi.l  #6,d6
         beq     Q9K_MemTraceProcRelease
+        cmpi.l  #8,d6
+        beq     Q9K_MemTraceResources
         moveq   #'L',d7
+        bra     Q9K_MemTraceCompactOp
+Q9K_MemTraceResources:
+        moveq   #'R',d7                         * A8: r=Link-Summe a=Moduleintraege s=Trap-Slots
         bra     Q9K_MemTraceCompactOp
 Q9K_MemTraceAlloc:
         moveq   #'A',d7
@@ -1515,7 +1653,7 @@ Q9K_NoRomDebugger:
         move.l  #$7FFFFFFF,_stklimit(a6)
         moveq   #'Y',d7                * DIAGNOSE TEMP: _stklimit gesetzt
         bsr     Q9K_DiagWriteD7
-        bsr     Q9K_CInit
+        Q9K_FARCALL     Q9K_CInit
 
 *******************************************************************************
 * Q9K_KernelPanic/Q9K_SysFPanic -- echte F$Panic-Implementierung
@@ -3316,8 +3454,17 @@ Q9K_TimerIRQHandler:
 * (gemessen nach dem Login: mshell/pd weg, nur noch Idle).
         move.w  Q9K_InTrapPath,Q9K_PROCDESC_RESUMETRAP_OFF(a0)
 
+* A7 (2026-10-15): lief der UNTERBROCHENE Code selbst mit einer Interrupt-Maske (SR & $0700 <> 0 = z. B. die UART-ISR
+* auf Level 3), darf der Tick nur die Buchfuehrung machen, aber nicht umschalten: sonst bliebe die ISR halb ausgefuehrt
+* auf dem Stack des alten Prozesses liegen, waehrend ihr Level wieder frei ist und sie erneut betreten werden kann.
+* Das gesicherte SR liegt hinter dem 60-Byte-Registerblock (60(sp)).
+        moveq   #0,d1
+        move.w  60(sp),d1
+        andi.w  #$0700,d1
+        move.l  d1,Q9K_SchedNoSwitch
+
         lea     Q9K_CRuntimeData(pc),a6           * a6 fuer den C-Aufruf (Q9K_SchedReschedule) auf den Kernel-Laufzeitpuffer setzen
-        bsr     Q9K_SchedReschedule                 * -> d0 = 0 (kein Wechsel) / neuer Deskriptorzeiger
+        Q9K_FARCALL     Q9K_SchedReschedule                 * -> d0 = 0 (kein Wechsel) / neuer Deskriptorzeiger
 
         movea.l Q9_D_Proc,a0                          * fortgesetzter Prozess (neu oder derselbe)
         tst.l   d0
@@ -3508,6 +3655,13 @@ Q9K_DbgLogEntryImpl_Skip:
 * gesicherte Registerkopie verwerfen -- sp zeigt jetzt wieder GENAU auf
 * den echten Hardware-Frame.
         lea     36(sp),sp
+        ifne    Q9K_DEBUG
+* A5: voller Registersatz des Aufrufers (alle Register sind jetzt wieder seine eigenen).
+* movem aendert das CCR nicht, der Handler sieht es unveraendert.
+        movem.l d0-d7/a0-a6,Q9K_RegChkSnap
+        move.l  sp,Q9K_RegChkSP
+        move.w  ($1370).w,Q9K_RegChkCode
+        endc
 * echter Syscall-Aufruf -- Handler bekommt/aendert a0/a1/a2/d0/d1 frei
 * (reale F$-Konvention), MUSS d2-d7/a3-a5 unangetastet lassen (gleiche
 * Disziplin wie schon bei den Diagnose-Routinen gefunden+gefixt).
@@ -3602,6 +3756,26 @@ Q9K_TrapTryManagerPathIO:
         adda.w  d0,a1
         btst    #7,(a1)                    * high byte bit 7 = P$Path word bit 15
         beq.s   Q9K_TrapCheckManagerPath_Own
+* A13 (2026-10-15): F$Fork kopiert IOMan-eigene P$Path-Eintraege, ohne IOMans Zaehler zu erhoehen. Schliesst der
+* Erzeuger seinen Eintrag, waehrend ein Kind ihn noch benutzt (Shell-Umleitung "mshell <datei": Datei oeffnen,
+* forken, Pfad 0 schliessen), gaebe IOMan den Deskriptor frei und das Kind laese E$BPNUM. Deshalb merkt sich
+* Q9K_MgrRefs je PD den Ueberschuss an Eintraegen; solange er > 0 ist, zaehlt ein I$Close ($8F) nur herunter, raeumt den
+* Eintrag des Aufrufers und gelingt, ohne IOMan zu rufen. Erst der letzte Mitbenutzer schliesst wirklich.
+        cmpi.w  #$8f,($1370).w
+        bne.s   Q9K_TrapMgrNotClose
+        moveq   #0,d0
+        move.w  (a1),d0
+        andi.w  #$003f,d0                  * PD-Nummer (ohne Bit 15)
+        movea.l #Q9K_MgrRefs,a0
+        adda.w  d0,a0
+        tst.b   (a0)
+        beq.s   Q9K_TrapMgrNotClose        * kein kopierter Mitbenutzer: Close geht an IOMan
+        subq.b  #1,(a0)
+        clr.w   (a1)                       * Eintrag des Aufrufers frei, IOMan sieht den Close nicht
+        movem.l (sp)+,d0-d1/a0-a1          * Eingaberegister zurueck (Stack wieder auf dem Frame)
+        andi    #$fe,ccr                   * Erfolg
+        bra     Q9K_TrapAfterCall
+Q9K_TrapMgrNotClose:
         move.w  ($1370).w,d0
         subi.w  #$80,d0
         lsl.w   #2,d0
@@ -4043,6 +4217,12 @@ Q9K_DbgLogReturnImpl_Skip:
         movea.l (sp)+,a6
         movem.l (sp)+,d0-d2/a0-a1
         endc
+        ifne    Q9K_DEBUG
+        cmpa.l  Q9K_RegChkSP,sp             * A5: nur wenn der Schnappschuss zu DIESEM Aufruf gehoert
+        bne.s   Q9K_RegChkSkip              *     (verschachtelte Traps ueberschreiben ihn -- dann keine Aussage)
+        bsr     Q9K_RegChkReturn
+Q9K_RegChkSkip:
+        endc
         move.l  2(sp),Q9K_FLinkFrame_RTEPC
         move.l  (sp),Q9K_FLinkFrame_RTESR
         rte
@@ -4202,7 +4382,7 @@ Q9K_SysFSend:
         move.l  d0,Q9K_SendScratch_Pid
         andi.l  #$0000ffff,d1                  * dito d1.w
         move.l  d1,Q9K_SendScratch_Signal
-        bsr     Q9K_SysSendImpl
+        Q9K_FARCALL     Q9K_SysSendImpl
         movem.l (sp)+,d0-d7/a0-a6              * Aufrufer sieht seine Register unveraendert
 
         tst.w   Q9K_SendScratch_Success+2
@@ -4594,7 +4774,7 @@ Q9K_SysFUnLink:
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  a2,d0                    * d0 = 1. C-Parameter (Modulkopfadresse)
-        bsr     Q9K_ModDirUnlinkByHeader   * -> d0 = 0 (Erfolg) / 1 (nicht gefunden)
+        Q9K_FARCALL     Q9K_ModDirUnlinkByHeader   * -> d0 = 0 (Erfolg) / 1 (nicht gefunden)
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         tst.l   d0
         beq     Q9K_SysFUnLink_Ok
@@ -4700,7 +4880,7 @@ Q9K_SysFForkOnce:
         move.l  d1,-(sp)              * echten Aufrufer-d1 sichern (s. Kopfkommentar)
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
-        bsr     Q9K_SysForkImpl
+        Q9K_FARCALL     Q9K_SysForkImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         move.l  (sp)+,d1              * echten Aufrufer-d1 zurueckholen
 
@@ -4790,6 +4970,10 @@ Q9K_SysDExit_Fail:
 Q9K_SysDExec:
         move.w  d0,Q9K_DExecScratch_Pid
         move.l  d1,Q9K_DExecScratch_Count
+        clr.l   Q9K_DExecScratch_BpCount
+        move.w  d2,Q9K_DExecScratch_BpCount+2
+        move.l  a0,Q9K_DExecScratch_BpList
+        move.l  Q9_D_Proc,Q9K_DExecScratch_Parent      * C2: der Debugger, bevor Q9K_ProcDebugExec den aktuellen Prozess wechselt
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a1,-(sp)
@@ -4801,29 +4985,42 @@ Q9K_SysDExec:
         beq     Q9K_SysDExec_Fail
         addq.l  #4,sp
         movem.l d0-d7/a0-a6,-(sp)
+* C2: den Registersatz des Debuggers wie beim Blockieren in F$Wait sichern -- P$SavedSP des Aufrufers, Carry im gesicherten
+* SR loeschen (Erfolg; bei Kind-Ende setzt Q9K_ProcDebugChildExit es wieder). Ohne SavedSP sprang der Debugger beim
+* Aufwecken auf einen veralteten Stack.
+        andi.w  #$fffe,60(sp)
+        movea.l Q9K_DExecScratch_Parent,a0
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
         movea.l Q9K_DExecScratch_Next,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         bsr     Q9K_ResumeTrapFlag          * selected debug context owns its flag (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
 Q9K_SysDExec_Fail:
-        move.w  Q9K_DExecScratch_Error,d1
+* C2: die C-Seite schreibt den Fehlercode als Langwort (Q9K_SetU32), das Wort bei +0 waere das obere (immer 0) -- live gemessen:
+* F$DExec auf eine unbekannte PID meldete Carry mit d1.w = 0 statt E$IPrcID ($E0).
+        move.w  Q9K_DExecScratch_Error+2,d1
         ori     #1,ccr
         rts
 
 *******************************************************************************
 * Q9K_TraceHandler -- vector 9, single-step continuation for F$DExec.
 Q9K_TraceHandler:
+* A7 (2026-10-15): die Trace-Ausnahme ist kein Systemaufruf und laeuft mit der Maske des Unterbrochenen (meist 0);
+* Q9K_ProcDebugTrace fasst Queues an und waere gegen den Timer ungeschuetzt. Wie im Trap-Dispatch: am Eintritt
+* sperren, die Sperre endet mit dem rte (massgeblich ist das gesicherte SR im Frame).
+        ori.w   #$0700,sr
         movem.l d0-d7/a0-a6,-(sp)
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
         move.l  sp,d0
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_ProcDebugTrace
+        Q9K_FARCALL     Q9K_ProcDebugTrace
         tst.l   d0
         beq     Q9K_TraceResume
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+        bsr     Q9K_ResumeTrapFlag          * C2: der Debugger setzt sein Trap-Flag fort (wie nach F$Wait)
 Q9K_TraceResume:
         movem.l (sp)+,d0-d7/a0-a6
         rte
@@ -4851,7 +5048,7 @@ Q9K_SysFWait:
 * Assembler, braucht kein korrektes A6.
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
-        bsr     Q9K_SysWaitImpl
+        Q9K_FARCALL     Q9K_SysWaitImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
 
 * FIX (2026-10-06, Fortsetzung 112): Ergebnis im Speicher vergleichen, NICHT
@@ -4864,6 +5061,8 @@ Q9K_SysFWait:
         beq     Q9K_SysFWait_Reaped
         cmpi.w  #2,Q9K_WaitScratch_Outcome
         beq     Q9K_SysFWait_NoChld
+        cmpi.w  #3,Q9K_WaitScratch_Outcome
+        beq     Q9K_SysFWait_Signal             * A11: Signal steht an und eine Intercept-Routine ist eingetragen
 
 * Outcome 0: Kinder vorhanden, aber keins Zombie -- der Aufrufer muss
 * blockieren. GENAU WIE Q9K_TimerIRQHandler: kompletten Registersatz DES
@@ -4898,6 +5097,11 @@ Q9K_SysFWait:
 * in diesem Kernel nach dem Blockieren nie fehl (kein Fehlerpfad fuer
 * den bereits-blockierten Fall vorgesehen).
         andi.w  #$fffe,60(sp)             * Carry im gesicherten SR-Wort explizit loeschen (60 = Registersatzgroesse, s. o.)
+* A11: wird der wartende Prozess durch ein SIGNAL geweckt (nicht durch ein Kind), muss d0.w = 0 zurueckkommen
+* (68k_tech.pdf F$Wait: "d0.w contains zero, since no child process has terminated"). Ein Kind, das endet,
+* ueberschreibt d0/d1 im gesicherten Rahmen mit Kind-ID und Status (Q9K_ProcExit), der Vorbelegung schadet das nicht.
+        clr.l   (sp)                      * d0 im gesicherten Rahmen
+        clr.l   4(sp)                     * d1 im gesicherten Rahmen
 
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
@@ -4911,14 +5115,33 @@ Q9K_SysFWait:
 * (Marker 'S', gemessen: a6=$6D5B0, Ruecksprung in Q9K_WaitQInsert). Der
 * Registersatz des Aufrufers liegt bereits gesichert auf seinem Stack.
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_WaitQInsert                      * in die eigene Wait-Queue einhaengen (q9kernel_sched.c)
+        Q9K_FARCALL     Q9K_WaitQInsert                      * in die eigene Wait-Queue einhaengen (q9kernel_sched.c)
 
-        bsr     Q9K_SchedFirstPick                        * -> d0 = neuer Deskriptor oder 0 (kein aktueller zum Wiedereinreihen)
+        Q9K_FARCALL     Q9K_SchedFirstPick                        * -> d0 = neuer Deskriptor oder 0 (kein aktueller zum Wiedereinreihen)
 
         tst.l   d0
         bne     Q9K_SysFWait_SwitchTo
 * Kein Prozess mehr bereit -- nicht mehr automatisch K$Idle, s.
 * Q9K_IdleFallback-Kopfkommentar weiter unten im File.
+        bsr     Q9K_IdleFallback
+        bra     Q9K_SysFWait_SwitchTo
+
+* A11: Signal steht an, Intercept-Routine eingetragen: nicht blockieren, sondern zustellen. Wie F$Sleep (A9):
+* Registersatz sichern, P$SavedSP setzen, 68 Byte Luft unter dem Rahmen lassen (dort entsteht der Rahmen der Routine),
+* dann den C-Teil rufen. d0/d1 = 0 im gesicherten Rahmen: "kein Kind beendet" (Handbuch).
+Q9K_SysFWait_Signal:
+        addq.l  #4,sp                    * jsr-Ruecksprungadresse (Q9K_TrapDispatch) verwerfen, wie im Blockierpfad
+        movem.l d0-d7/a0-a6,-(sp)
+        andi.w  #$fffe,60(sp)            * Carry loeschen: F$Wait gelingt
+        clr.l   (sp)
+        clr.l   4(sp)
+        movea.l Q9_D_Proc,a0
+        move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)
+        lea     -Q9K_IcptFrameGap(sp),sp
+        lea     Q9K_CRuntimeData(pc),a6
+        Q9K_FARCALL     Q9K_ProcWaitDeliver      * -> d0 = naechster Deskriptor oder 0
+        tst.l   d0
+        bne     Q9K_SysFWait_SwitchTo
         bsr     Q9K_IdleFallback
         bra     Q9K_SysFWait_SwitchTo
 
@@ -4960,6 +5183,11 @@ Q9K_SysFWait_NoChld:
 * der Wechsel-Pfad von Q9K_TimerIRQHandler (derselbe "movem.l
 * (sp)+,d0-d7/a0-a6 / rte"-Wiederaufnahme-Mechanismus).
 Q9K_SysFExit:
+* A16 (2026-10-16): offene IOMan-Pfade des endenden Prozesses ueber IOMan schliessen (s. Q9K_ExitCloseMgrPaths).
+* d1.w (Exit-Status) bleibt auf dem Stack, weil die Schliessaufrufe d1 veraendern.
+        move.w  d1,-(sp)
+        bsr     Q9K_ExitCloseMgrPaths
+        move.w  (sp)+,d1
 * ECHTER BUG GEFUNDEN + GEFIXT (2026-09-01, gleiches Muster wie bei
 * Q9K_SysFLink/SysFUnLink/SysFFork/SysFWait/SysFSRtMem): A6-Schutz fuer
 * den C-Aufruf fehlte hier komplett -- eine fruehere Pruefung hatte das
@@ -4976,7 +5204,7 @@ Q9K_SysFExit:
         move.l  a6,-(sp)              * eingehendes a6 sichern (kann 0 sein, s.o.)
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.w  d1,Q9K_ExitScratch_Status
-        bsr     Q9K_SysExitImpl
+        Q9K_FARCALL     Q9K_SysExitImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         move.l  Q9K_ExitScratch_Next,d0
 
@@ -4993,6 +5221,46 @@ Q9K_SysFExit_SwitchTo:
         bsr     Q9K_ResumeTrapFlag          * the next process starts outside a trap (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
+
+*******************************************************************************
+* Q9K_ExitCloseMgrPaths -- A16 (2026-10-16): vor dem Aufraeumen jeden IOMan-Pfad (P$Path-Wort mit Bit 15) des endenden
+* Prozesses per I$Close ($8F) ueber IOMan schliessen. Ohne diesen Schritt raeumte Q9K_ProcReleasePaths nur den Eintrag
+* aus der Prozesstabelle; IOMans Pfaddeskriptor und die Sperre der Datei blieben fuer immer stehen (gemessen: der
+* naechste Open derselben Datei scheitert mit $D6).
+*
+* Der Aufruf ist ein gewoehnliches "trap #0" aus dem F$Exit-Handler: der Prozess laeuft im Supervisormodus auf seinem
+* eigenen Stack, der Trap-Dispatcher legt einen neuen Exception-Frame darueber und kehrt per RTE hierher zurueck.
+* Q9K_TrapTryManagerPathIO behandelt dabei auch den Mitbenutzer-Fall aus A13: bei Q9K_MgrRefs > 0 zaehlt der Close nur
+* herunter und raeumt den Eintrag, IOMan sieht ihn erst beim letzten Mitbenutzer.
+* Der Schleifenzaehler liegt auf dem Stack, nicht in einem Register: ein externer Handler darf d2-d7 veraendern.
+* Nicht im Trampolin-Pfad (Q9K_InTrapPath = 0: IOMan selbst ruft F$Exit) -- IOMan wuerde sich dort selbst schliessen.
+* Fehler der Closes sind folgenlos; Q9K_ProcReleasePaths raeumt Reste anschliessend wie bisher.
+Q9K_ExitCloseMgrPaths:
+        tst.w   Q9K_InTrapPath
+        beq.s   Q9K_ExitClose_Done
+        tst.l   Q9_D_Proc
+        beq.s   Q9K_ExitClose_Done
+        movem.l d0/a0,-(sp)
+        clr.w   -(sp)                              * Pfadindex 0..31
+Q9K_ExitClose_Loop:
+        move.w  (sp),d0
+        add.w   d0,d0                              * Wortoffset in P$Path
+        movea.l Q9_D_Proc,a0
+        adda.l  #$168,a0                           * P$Path
+        tst.w   0(a0,d0.w)
+        bpl.s   Q9K_ExitClose_Next                 * Bit 15 nicht gesetzt: kein IOMan-Pfad
+        move.w  (sp),d0                            * d0.w = Pfadnummer (Index)
+        trap    #0
+        dc.w    $008f                               * I$Close
+Q9K_ExitClose_Next:
+        addq.w  #1,(sp)
+        cmpi.w  #32,(sp)
+        bcs.s   Q9K_ExitClose_Loop
+        addq.l  #2,sp
+        move.w  #1,Q9K_InTrapPath                  * der Nested-Trap hat es beim Rueckweg geloescht; wir sind weiter im F$Exit-Trap
+        movem.l (sp)+,d0/a0
+Q9K_ExitClose_Done:
+        rts
 
 *******************************************************************************
 * Q9K_SysFSleep -- TRAP-#0-Handler fuer den echten F$Sleep-Callcode
@@ -5090,8 +5358,14 @@ Q9K_SysFSleep_Block:
         movea.l Q9_D_Proc,a0
         move.l  sp,Q9K_PROCDESC_SAVEDSP_OFF(a0)   * SavedSP aktualisieren -- Register liegen jetzt sicher auf SEINEM Stack
 
+* A9 (2026-10-15): Platz fuer einen Intercept-Rahmen UNTER P$SavedSP freihalten. Steht beim F$Sleep schon ein
+* Signal an, stellt Q9K_ProcSleep es dem Aufrufer selbst zu, und Q9K_IcptDeliver baut dort einen 68-Byte-
+* Rahmen (SavedSP - 68). Ohne diese Luecke lief die C-Aufrufkette genau in diesem Bereich: der Rahmen
+* ueberschrieb ihre Ruecksprungadresse, der Kernel sprang nach PC=1 und rutschte durch Nullspeicher bis zum
+* ersten ungueltigen Opcode ($128c). Beleg: icptsleep.a; Instruktionsspur des Absturzes (Q9_TRACE_INSTR).
+        lea     -Q9K_IcptFrameGap(sp),sp
         lea     Q9K_CRuntimeData(pc),a6              * fuer den folgenden C-Aufruf, gleiches Muster wie oben
-        bsr     Q9K_SysSleepImpl                        * -> Q9K_SleepScratch_Next = naechster Deskriptor oder 0
+        Q9K_FARCALL     Q9K_SysSleepImpl                        * -> Q9K_SleepScratch_Next = naechster Deskriptor oder 0
 
         move.l  Q9K_SleepScratch_Next,d0
         tst.l   d0
@@ -5127,7 +5401,7 @@ Q9K_SysFPrsNam_InputReady:
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
         move.l  a0,Q9K_PrsNamScratch_Path
-        bsr     Q9K_SysPrsNamImpl
+        Q9K_FARCALL     Q9K_SysPrsNamImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         tst.w   Q9K_PrsNamScratch_Ok+2
@@ -5382,7 +5656,7 @@ Q9K_SysFIRQ:
         move.l  a0,Q9K_IRQScratch_Isr
         move.l  a2,Q9K_IRQScratch_Static
         move.l  a3,Q9K_IRQScratch_Port
-        bsr     Q9K_SysIRQImpl
+        Q9K_FARCALL     Q9K_SysIRQImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         tst.w   Q9K_IRQScratch_Success+2
@@ -5405,7 +5679,7 @@ Q9K_SysFFIRQ:
         move.l  d1,Q9K_FIRQScratch_Reserved
         move.l  a0,Q9K_FIRQScratch_Isr
         move.l  a2,Q9K_FIRQScratch_Static
-        bsr     Q9K_SysFFIRQImpl
+        Q9K_FARCALL     Q9K_SysFFIRQImpl
         movea.l (sp)+,a6
         tst.w   Q9K_FIRQScratch_Success+2
         beq     Q9K_SysFFIRQ_Fail
@@ -5475,7 +5749,7 @@ Q9K_SysFAllPD_FrameDone:
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf umschalten
         move.l  a0,Q9K_AllPDScratch_DbtIn
-        bsr     Q9K_SysAllPDImpl
+        Q9K_FARCALL     Q9K_SysAllPDImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         tst.w   Q9K_AllPDScratch_Success+2
@@ -5554,7 +5828,7 @@ Q9K_SysFSRqMem_FrameDone:
         move.l  a6,-(sp)                    * eingehendes a6 sichern (0 bei externem Direktaufruf, sonst Q9K_CRuntimeData)
         lea     Q9K_CRuntimeData(pc),a6       * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  d0,Q9K_SRqMemScratch_SizeIn
-        bsr     Q9K_SysSRqMemImpl
+        Q9K_FARCALL     Q9K_SysSRqMemImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen -- WICHTIG fuer externe Aufrufer wie IOMan
         movem.l (sp)+,d1/a0-a1                 * unveraenderte D1/A0/A1-Werte wiederherstellen
         movem.l (sp)+,d2-d7/a3-a5
@@ -5619,7 +5893,7 @@ Q9K_SysFSRqCMem_FrameDone:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d0,Q9K_SRqMemScratch_SizeIn
-        bsr     Q9K_SysSRqMemImpl
+        Q9K_FARCALL     Q9K_SysSRqMemImpl
         movea.l (sp)+,a6
         movem.l (sp)+,d1/a0-a1
         movem.l (sp)+,d2-d7/a3-a5
@@ -5683,7 +5957,7 @@ Q9K_SysFVModul:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_VModulScratch_Hdr
         move.l  d1,Q9K_VModulScratch_Size
-        bsr     Q9K_SysVModulImpl
+        Q9K_FARCALL     Q9K_SysVModulImpl
         movea.l (sp)+,a6
 
         tst.l   Q9K_VModulScratch_Success
@@ -5772,6 +6046,10 @@ Q9K_SysFTLink:
         tst.l   Q9K_TLinkScratch_Success
         beq     Q9K_SysFTLink_Fail
 
+* A5 (2026-10-15): die Register-Erhaltungspruefung meldete a4 = M$Init-Einsprung und ein veraendertes d2 im
+* Aufrufer nach F$TLink. M$Init laeuft mit den Aufruferregistern; d2-d7/a3-a5 gehoeren nach dem Aufruf wieder dem
+* Aufrufer (F$TLink hat laut Beschreibung nur (a0),(a1),(a2) als Ausgabe).
+        movem.l d2-d7/a3-a5,-(sp)
         movea.l Q9K_TLinkScratch_InitEntry,a4
         tst.l   Q9K_TLinkScratch_InitEntry
         beq     Q9K_SysFTLink_NoInit             * kein M$Init -- selten, aber laut Manual erlaubt
@@ -5779,6 +6057,9 @@ Q9K_SysFTLink:
         move.l  a3,Q9K_TLinkTrace_PreInitA3
         move.l  a6,Q9K_TLinkTrace_PreInitA6
 
+* B2 (2026-10-16): Trap-Nummer fuer den Rueckbau merken, falls M$Init einen Fehler meldet (der Rahmen darueber wird
+* von M$Init selbst verbraucht, s. unten; diese Zelle liegt darunter und bleibt unberuehrt).
+        move.l  Q9K_TLinkScratch_TrapNum,-(sp)
         move.l  a6,-(sp)                            * caller A6, restore after M$Init
         pea     Q9K_SysFTLink_AfterInit(pc)       * Rahmen: Ruecksprung-PC (liegt am Ende bei +8)
         clr.l   -(sp)                              * Rahmen: Fuellwortpaar 0000/0000 (bei +4)
@@ -5788,15 +6069,42 @@ Q9K_SysFTLink:
         movea.l Q9K_TLinkScratch_PastName,a0         * a0 = Name, hinter den Namen aktualisiert
         movea.l Q9K_TLinkScratch_ExecEntry,a1        * a1 = Ausfuehrungs-Einsprung
         movea.l Q9K_TLinkScratch_ModPtr,a2           * a2 = Modulzeiger
+        andi    #$fe,ccr                             * M$Init startet mit geloeschtem Carry (Fehler = Carry bei der Rueckkehr)
         jmp     (a4)                                  * M$Init -- KEIN jsr, s.o.
 Q9K_SysFTLink_AfterInit:
+* B2: das erste, was nach M$Init geschieht, muss der Carry-Test sein -- jeder move veraendert das CCR. Handbuch
+* (68k_tech.pdf S. 172): "cc = carry set, d1.w = error code if error".
+        bcs     Q9K_SysFTLink_InitFail
         move.l  a3,Q9K_TLinkTrace_PostInitA3
         move.l  a6,Q9K_TLinkTrace_PostInitA6
         movea.l (sp)+,a6                            * restore caller data base
+        addq.l  #4,sp                               * B2: gemerkte Trap-Nummer verwerfen
+        movem.l (sp)+,d2-d7/a3-a5                   * A5: Aufruferregister zurueck (movem aendert das CCR nicht)
         andi    #$fe,ccr                            * Carry loeschen -- Erfolg (a0/a1/a2 unveraendert von M$Init erwartet)
         rts
 
+* B2: M$Init meldete einen Fehler. Der Handler ist dann nicht benutzbar -- Modul-Link, statischen Speicher und Slot
+* zurueckgeben (dasselbe wie F$TLink mit Namenszeiger 0 fuer diese Trap-Nummer) und den Fehlercode des Moduls melden.
+* Das Handbuch regelt nur die Rueckgabe von M$Init; der Rueckbau ist die sichere Folge (kein halb installierter Handler).
+Q9K_SysFTLink_InitFail:
+        movea.l (sp)+,a6                            * caller A6 (wie nach dem Erfolg)
+        move.l  (sp)+,d0                            * gemerkte Trap-Nummer
+        move.w  d1,-(sp)                            * Fehlercode von M$Init
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  d0,Q9K_TLinkScratch_TrapNum
+        clr.l   Q9K_TLinkScratch_MemOvr
+        clr.l   Q9K_TLinkScratch_NamePtr            * Namenszeiger 0 = Handler entfernen
+        movea.l Q9K_TLinkImplPtr,a1
+        jsr     (a1)
+        movea.l (sp)+,a6
+        move.w  (sp)+,d1                            * Fehlercode zurueck
+        movem.l (sp)+,d2-d7/a3-a5
+        ori     #1,ccr                              * Carry setzen -- Fehlschlag
+        rts
+
 Q9K_SysFTLink_NoInit:
+        movem.l (sp)+,d2-d7/a3-a5                   * A5: Aufruferregister zurueck (a4 trug InitEntry = 0)
         movea.l Q9K_TLinkScratch_PastName,a0
         movea.l Q9K_TLinkScratch_ExecEntry,a1
         movea.l Q9K_TLinkScratch_ModPtr,a2
@@ -5932,7 +6240,7 @@ Q9K_SysFSRtMem:
         lea     Q9K_CRuntimeData(pc),a6  * fuer den C-Aufruf auf unsere eigene Konvention umschalten
         move.l  a2,Q9K_SRtMemScratch_AddrIn
         move.l  d0,Q9K_SRtMemScratch_SizeIn
-        bsr     Q9K_SysSRtMemImpl
+        Q9K_FARCALL     Q9K_SysSRtMemImpl
         movea.l (sp)+,a6              * eingehendes a6 wiederherstellen
         movem.l (sp)+,d1-d7/a0-a1/a3-a5
 
@@ -6194,18 +6502,17 @@ Q9K_SysFSema_Wait:
 
         move.l  Q9K_SemaScratch_Next,d0
         tst.l   d0
-        beq     Q9K_SysFSema_Idle
+        bne     Q9K_SysFSema_SwitchTo
+* C3 (2026-10-16): kein Prozess mehr bereit -- das ist KEIN Deadlock, solange ein anderer Prozess schlaeft (Elternprozess in
+* F$Sleep, Kind blockiert in F$Sema(P)): der naechste Tick weckt ihn. Frueher stand hier ein Kernel-Halt (K_IDLE, "P00000001H",
+* live gemessen mit semtest.a); F$Sleep/F$Wait/F$Exit nutzen seit A-Phase Q9K_IdleFallback, F$Sema blieb auf dem alten Stand.
+        bsr     Q9K_IdleFallback
+Q9K_SysFSema_SwitchTo:
         movea.l d0,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
         bsr     Q9K_ResumeTrapFlag          * wake the next process cleanly (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
-Q9K_SysFSema_Idle:
-* Kein Prozess mehr bereit -- gleiche reale K$Idle-Semantik wie bei
-* F$Sleep. Dass ALLE Prozesse auf Semaphore warten, waere ein Deadlock im
-* Anwendungsentwurf; der Kernel meldet ihn, statt still stehenzubleiben.
-        moveq   #K_IDLE,d0
-        bra     Q9K_KernelPanic
 
 * Gemeinsamer Einsprung fuer die Wartepfade weiter unten (Ev$Wait,
 * F$NProc).  Sie liegen so weit hinten im Modul, dass ein "bra
@@ -6368,6 +6675,18 @@ Q9K_SysFRTE:
 
         movea.l Q9_D_Proc,a0
         movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp
+* A10 (2026-10-15): jetzt steht sp auf dem Rahmen des Hauptprogramms, der Stack der Intercept-Routine ist tot.
+* Steht noch ein Signal an, wird es HIER zugestellt (Q9K_SysRTERedeliverImpl), mit 68 Byte Luft unter dem Rahmen --
+* in Q9K_IcptReturn geschah das, solange die Routine und die C-Aufrufkette von F$RTE noch auf genau diesem
+* Bereich liefen (Absturz: Ruecksprung nach PC=0). Beleg: icptrte.a.
+        tst.w   $26(a0)                     * P$Signal
+        beq.s   Q9K_SysFRTE_Resume
+        lea     -Q9K_IcptFrameGap(sp),sp
+        lea     Q9K_CRuntimeData(pc),a6
+        Q9K_FARCALL Q9K_SysRTERedeliverImpl
+        movea.l Q9_D_Proc,a0
+        movea.l Q9K_PROCDESC_SAVEDSP_OFF(a0),sp   * Rahmen der erneut aufgerufenen Routine
+Q9K_SysFRTE_Resume:
         bsr     Q9K_ResumeTrapFlag          * resumed intercept owns its context (Fortsetzung 114: aus dem Deskriptor)
         movem.l (sp)+,d0-d7/a0-a6
         rte
@@ -6896,7 +7215,7 @@ Q9K_SysFIRead_NativeFile:
         move.l  d3,Q9K_NATIVE_READ_SCRATCH_COUNT
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysNativeReadImpl
+        Q9K_FARCALL     Q9K_SysNativeReadImpl
         movea.l (sp)+,a6
         tst.l   Q9K_NATIVE_READ_SCRATCH_OK
         beq     Q9K_SysFIRead_NativeFile_Fail
@@ -7433,7 +7752,7 @@ Q9K_SysFIOpen:
         clr.l   Q9K_IOpenScratch_Mode           * oberes 3 Byte definiert nullen (nur d0.b ist echte Eingabe)
         move.b  d0,Q9K_IOpenScratch_Mode+3    * unteres Byte (d0.b)
         move.l  a0,Q9K_IOpenScratch_NamePtr
-        bsr     Q9K_SysIOpenImpl
+        Q9K_FARCALL     Q9K_SysIOpenImpl
         movea.l (sp)+,a6                        * eingehendes a6 wiederherstellen
 
         move.l  Q9K_IOpenScratch_PathNum,d0
@@ -7480,7 +7799,7 @@ Q9K_SysFIOpen_FailHaveError:
 Q9K_SysFID:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysIDImpl
+        Q9K_FARCALL     Q9K_SysIDImpl
         movea.l (sp)+,a6
         tst.w   Q9K_IDScratch_Success
         beq     Q9K_SysFID_Fail
@@ -7508,7 +7827,7 @@ Q9K_SysFSPrior:
         lea     Q9K_CRuntimeData(pc),a6
         move.w  d0,Q9K_SPriorScratch_PID
         move.w  d1,Q9K_SPriorScratch_Priority
-        bsr     Q9K_SysSPriorImpl
+        Q9K_FARCALL     Q9K_SysSPriorImpl
         movea.l (sp)+,a6
         tst.w   Q9K_SPriorScratch_Success
         beq     Q9K_SysFSPrior_Fail
@@ -7535,7 +7854,7 @@ Q9K_SysFCmpNam:
         move.l  a1,Q9K_CmpNamScratch_Target
         clr.l   Q9K_CmpNamScratch_PatLen        * oberes Wort nullen, C liest 32 Bit
         move.w  d1,Q9K_CmpNamScratch_PatLen+2
-        bsr     Q9K_SysCmpNamImpl
+        Q9K_FARCALL     Q9K_SysCmpNamImpl
         movea.l (sp)+,a6
         tst.w   Q9K_CmpNamScratch_Success+2
         beq     Q9K_SysFCmpNam_Fail
@@ -7557,7 +7876,7 @@ Q9K_SysFSUser:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d1,Q9K_SUserScratch_GroupUser
-        bsr     Q9K_SysSUserImpl
+        Q9K_FARCALL     Q9K_SysSUserImpl
         movea.l (sp)+,a6
         tst.w   Q9K_SUserScratch_Success+2
         beq     Q9K_SysFSUser_Fail
@@ -7583,7 +7902,7 @@ Q9K_SysFCpyMem:
         move.l  d1,Q9K_CpyMemScratch_Count
         move.l  a0,Q9K_CpyMemScratch_Src
         move.l  a1,Q9K_CpyMemScratch_Dst
-        bsr     Q9K_SysCpyMemImpl
+        Q9K_FARCALL     Q9K_SysCpyMemImpl
         movea.l (sp)+,a6
         tst.w   Q9K_CpyMemScratch_Success+2
         beq     Q9K_SysFCpyMem_Fail
@@ -7606,7 +7925,7 @@ Q9K_SysFFModul:
         clr.l   Q9K_FModulScratch_TyLang
         move.w  d0,Q9K_FModulScratch_TyLang+2
         move.l  a0,Q9K_FModulScratch_Name
-        bsr     Q9K_SysFModulImpl
+        Q9K_FARCALL     Q9K_SysFModulImpl
         movea.l (sp)+,a6
         tst.w   Q9K_FModulScratch_Ok+2
         beq     Q9K_SysFFModul_Fail
@@ -7692,7 +8011,7 @@ Q9K_SysFUnLoad:
         clr.l   Q9K_UnloadScratch_TyLang        * oberes Wort nullen, C liest 32 Bit
         move.w  d0,Q9K_UnloadScratch_TyLang+2
         move.l  a0,Q9K_UnloadScratch_Name
-        bsr     Q9K_SysUnloadImpl
+        Q9K_FARCALL     Q9K_SysUnloadImpl
         movea.l (sp)+,a6
         tst.w   Q9K_UnloadScratch_Success+2
         beq     Q9K_SysFUnLoad_Fail
@@ -7731,7 +8050,7 @@ Q9K_SysFCRC:
         move.l  d0,Q9K_CrcScratch_Count
         move.l  d1,Q9K_CrcScratch_Accum
         move.l  a0,Q9K_CrcScratch_Addr
-        bsr     Q9K_SysCrcImpl
+        Q9K_FARCALL     Q9K_SysCrcImpl
         movea.l (sp)+,a6
         move.l  Q9K_CrcScratch_Accum,d1
         andi    #$fe,ccr
@@ -7746,7 +8065,7 @@ Q9K_SysFSetCRC:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_SetCRCScratch_Addr
-        bsr     Q9K_SysSetCRCImpl
+        Q9K_FARCALL     Q9K_SysSetCRCImpl
         movea.l (sp)+,a6
         tst.w   Q9K_SetCRCScratch_Success+2
         beq     Q9K_SysFSetCRC_Fail
@@ -7768,7 +8087,7 @@ Q9K_SysFGModDr:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_GModDrScratch_Buf
         move.l  d1,Q9K_GModDrScratch_Count
-        bsr     Q9K_SysGModDrImpl
+        Q9K_FARCALL     Q9K_SysGModDrImpl
         movea.l (sp)+,a6
         move.l  Q9K_GModDrScratch_Count,d1
         andi    #$fe,ccr
@@ -7787,7 +8106,7 @@ Q9K_SysFGPrDsc:
         clr.l   Q9K_GPrDscScratch_Count
         move.w  d1,Q9K_GPrDscScratch_Count+2
         move.l  a0,Q9K_GPrDscScratch_Buf
-        bsr     Q9K_SysGPrDscImpl
+        Q9K_FARCALL     Q9K_SysGPrDscImpl
         movea.l (sp)+,a6
         tst.w   Q9K_GPrDscScratch_Success+2
         beq     Q9K_SysFGPrDsc_Fail
@@ -7862,7 +8181,7 @@ Q9K_SysFAProc:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_AProcScratch_Desc
-        bsr     Q9K_SysAProcImpl
+        Q9K_FARCALL     Q9K_SysAProcImpl
         movea.l (sp)+,a6
         tst.w   Q9K_AProcScratch_Success+2
         beq     Q9K_SysFAProc_Fail
@@ -7875,7 +8194,7 @@ Q9K_SysFAProc:
         move.l  Q9K_AProcScratch_Desc,d0
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SchedCommitPreempt
+        Q9K_FARCALL     Q9K_SchedCommitPreempt
         movea.l (sp)+,a6
         tst.l   d0
         beq     Q9K_SysFAProc_FailSaved
@@ -7907,7 +8226,7 @@ Q9K_SysFGPrDBT:
         lea     Q9K_CRuntimeData(pc),a6
         move.l  a0,Q9K_GPrDBTScratch_Buf
         move.l  d1,Q9K_GPrDBTScratch_Count
-        bsr     Q9K_SysGPrDBTImpl
+        Q9K_FARCALL     Q9K_SysGPrDBTImpl
         movea.l (sp)+,a6
         move.l  Q9K_GPrDBTScratch_Count,d1
         andi    #$fe,ccr
@@ -7921,7 +8240,7 @@ Q9K_SysFGPrDBT:
 Q9K_SysFAllPrc:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysAllPrcImpl
+        Q9K_FARCALL     Q9K_SysAllPrcImpl
         movea.l (sp)+,a6
         tst.w   Q9K_AllPrcScratch_Success+2
         beq     Q9K_SysFAllPrc_Fail
@@ -7943,7 +8262,7 @@ Q9K_SysFDelPrc:
         lea     Q9K_CRuntimeData(pc),a6
         clr.l   Q9K_DelPrcScratch_PID           * oberes Wort nullen, C liest 32 Bit
         move.w  d0,Q9K_DelPrcScratch_PID+2
-        bsr     Q9K_SysDelPrcImpl
+        Q9K_FARCALL     Q9K_SysDelPrcImpl
         movea.l (sp)+,a6
         tst.w   Q9K_DelPrcScratch_Success+2
         beq     Q9K_SysFDelPrc_Fail
@@ -7966,7 +8285,7 @@ Q9K_SysFFindPD:
         clr.l   Q9K_FindPDScratch_Num           * oberes Wort nullen, C liest 32 Bit
         move.w  d0,Q9K_FindPDScratch_Num+2
         move.l  a0,Q9K_FindPDScratch_Dbt
-        bsr     Q9K_SysFindPDImpl
+        Q9K_FARCALL     Q9K_SysFindPDImpl
         movea.l (sp)+,a6
         tst.w   Q9K_FindPDScratch_Success+2
         beq     Q9K_SysFFindPD_Fail
@@ -7990,7 +8309,7 @@ Q9K_SysFSigMask:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.l  d1,Q9K_SigMaskScratch_Level
-        bsr     Q9K_SysSigMaskImpl
+        Q9K_FARCALL     Q9K_SysSigMaskImpl
         movea.l (sp)+,a6
         tst.w   Q9K_SigMaskScratch_Success+2
         beq     Q9K_SysFSigMask_Fail
@@ -8019,7 +8338,7 @@ Q9K_SysFIcpt:
         move.l  a0,Q9K_IcptScratch_Vec
         move.l  a6,Q9K_IcptScratch_Dat          * noch VOR dem Umschalten ablegen
         lea     Q9K_CRuntimeData(pc),a6
-        bsr     Q9K_SysIcptImpl
+        Q9K_FARCALL     Q9K_SysIcptImpl
         movea.l (sp)+,a6
         move.l  Q9K_IcptScratch_Pending,d0
         andi    #$fe,ccr
@@ -8038,7 +8357,7 @@ Q9K_SysFTrans:
         move.l  d0,Q9K_TransScratch_Size
         move.l  d1,Q9K_TransScratch_Mode
         move.l  a0,Q9K_TransScratch_Addr
-        bsr     Q9K_SysTransImpl
+        Q9K_FARCALL     Q9K_SysTransImpl
         movea.l (sp)+,a6
         tst.w   Q9K_TransScratch_Mode+2
         beq     Q9K_SysFTrans_Fail
@@ -8071,7 +8390,7 @@ Q9K_SysFDatMod:
         clr.l   Q9K_DatModScratch_TyLang
         move.w  d3,Q9K_DatModScratch_TyLang+2
         move.l  a0,Q9K_DatModScratch_Name
-        bsr     Q9K_SysDatModImpl
+        Q9K_FARCALL     Q9K_SysDatModImpl
         movea.l (sp)+,a6
         tst.w   Q9K_DatModScratch_Success+2
         beq     Q9K_SysFDatMod_Fail
@@ -8276,7 +8595,7 @@ Q9K_SysFGProcP:
         move.l  a6,-(sp)
         lea     Q9K_CRuntimeData(pc),a6
         move.w  d0,Q9K_GProcPScratch_PID
-        bsr     Q9K_SysGProcPImpl
+        Q9K_FARCALL     Q9K_SysGProcPImpl
         movea.l (sp)+,a6
         tst.w   Q9K_GProcPScratch_Success
         beq     Q9K_SysFGProcP_Fail
@@ -8525,6 +8844,8 @@ Q9K_SysStartProc:
         movea.l Q9_D_Proc,a4                  * A4 = aktueller Prozessdeskriptor
         jsr     (a1)                          * IOMan-Init
         movea.l a5,a6
+        bsr     Q9K_ExtensScan                * C4: Erweiterungsmodule aus M$Extens des Init-Moduls (OS9P2 ...)
+        bcs     Q9K_SysStartFail              * "If an error is returned, the system stops" (68k_tech.pdf S. 81)
         moveq   #0,d0                         * beliebiger Typ (init: TyLang $0C00)
         lea     Q9K_SysStartInitName(pc),a0
         trap    #0
@@ -8564,6 +8885,203 @@ Q9K_SysStartFail:
         bsr     Q9K_DiagWriteHex32
 Q9K_SysStartHalt:
         bra     Q9K_SysStartHalt
+*******************************************************************************
+* Q9K_ExtensScan -- C4 (2026-10-17): Kaltstart-Scan der Erweiterungsmodule (Customization Modules, "OS9P2").
+*
+* 68k_tech.pdf S. 65 (Init-Modul, M$Extens $44) und S. 81: der Offset zeigt auf eine Liste von Modulnamen, durch Leerzeichen
+* getrennt, Standard "OS9P2"; 0 = keine. "OS-9 searches for these modules during startup ... They are executed in system state if
+* found." Wird ein Modul nicht gefunden, bleibt es unbeachtet ("if found"); meldet eines einen Fehler (Carry), bleibt das System stehen.
+* Der Aufruf kommt wie im Original nach IOMan (Reihenfolge PreIO, IOMan, Extens), damit ein Modul F$SSvc und die I/O-Aufrufe nutzen kann.
+*
+* Aufruf: wie IOMans Init -- a6 = 0 (Systemglobals), a2 = Modulkopf, a3 = statischer Speicher des Moduls (M$Mem Byte, vom Kernel
+* bereitgestellt und genullt, 0 wenn M$Mem = 0), jsr auf den Ausfuehrungseinsprung. Ein Modul darf nur d0, d1 und ccr veraendern.
+* Der Speicher stammt direkt aus der Arena (nicht aus F$SRqMem): er gehoert dem System und bleibt stehen, wenn der Startprozess per
+* F$Chain in sysgo wechselt.
+*
+* BEWUSSTE AUSNAHME: "syscache", "ssm" und "fpu" aus der Microware-Referenzbootdatei werden NICHT aufgerufen. Sie schreiben in
+* Systemglobals, die dieser Kernel nicht fuehrt ($764/$768/$76c, $7a0, $3c8, $3d8 relativ zu a6, dazu ssm fuer eine MMU, die der
+* Emulator nicht modelliert): Cache-Steuerung (F$CCtl) macht der Kernel nativ, eine MMU gibt es nicht, und die FPU stellt der
+* Emulatorkern bereit. Die Liste steht in Q9K_ExtensSkipTab; ein Eigenbau-Erweiterungsmodul unter diesen Namen wuerde ebenfalls
+* uebersprungen.
+* Aus: Carry geloescht = alle gut; Carry gesetzt, d1.w = Fehlercode des Moduls (E$MemFul wenn der Speicher fehlt).
+Q9K_ExtensScan:
+* EIGENER STACK (live gemessen): der Startprozess laeuft auf einem winzigen Stack (sein ganzer Block ist 272 Byte gross). Mit Namenspuffer,
+* Registersicherung und den Aufrufen der Module (F$SSvc, ...) lief er nach unten in den davor liegenden statischen Speicher des Moduls und
+* ueberschrieb ihn (der Dienst lieferte statt des Markers Rest-Daten). Deshalb arbeitet der Scan auf einem 2-KByte-Stack aus der Arena
+* und gibt ihn am Ende per F$SRtMem zurueck.
+        movem.l d2-d7/a2-a5,-(sp)
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  #2048,d0
+        Q9K_FARCALL     Q9K_AllocMem            * d0 = Groesse -> d0 = Adresse oder 0
+        movea.l (sp)+,a6
+        tst.l   d0
+        bne.s   Q9K_ExtensHaveStack
+        move.w  #$00cf,d1                       * E$MemFul
+        movem.l (sp)+,d2-d7/a2-a5
+        ori     #1,ccr
+        rts
+Q9K_ExtensHaveStack:
+        move.l  d0,d5                           * Stackblock (d5 bleibt ueber Syscalls und Module erhalten)
+        movea.l d0,a0
+        adda.l  #2048,a0                        * Stackende
+        move.l  sp,-(a0)                        * alten Stackzeiger ganz oben auf dem neuen Stack ablegen
+        movea.l a0,sp                           * ab hier der eigene Stack
+        lea     -64(sp),sp                      * Namenspuffer (63 Zeichen + 0)
+        moveq   #0,d0
+        lea     Q9K_SysStartInitName(pc),a0
+        trap    #0
+        dc.w    $0000                            * F$Link init -> a2 = Modulkopf
+        bcs     Q9K_ExtensNone                  * ohne Init-Modul gibt es nichts zu tun (der spaetere Link meldet den Fehler)
+        moveq   #0,d0
+        move.w  $44(a2),d0                      * M$Extens
+        beq     Q9K_ExtensNone
+        lea     0(a2,d0.l),a4                   * a4 = Listenzeiger (a4, d6, d7 bleiben ueber Syscalls erhalten)
+Q9K_ExtensNext:
+        cmpi.b  #' ',(a4)
+        bne.s   Q9K_ExtensStart
+        addq.l  #1,a4
+        bra.s   Q9K_ExtensNext
+Q9K_ExtensStart:
+        tst.b   (a4)
+        beq     Q9K_ExtensNone                  * Listenende
+        movea.l sp,a0
+        moveq   #62,d2
+Q9K_ExtensCopy:
+        move.b  (a4),d1
+        beq.s   Q9K_ExtensCopyEnd
+        cmpi.b  #' ',d1
+        beq.s   Q9K_ExtensCopyEnd
+        addq.l  #1,a4
+        subq.l  #1,d2
+        bmi.s   Q9K_ExtensCopy                  * Name laenger als der Puffer: Rest lesen, aber nicht speichern
+        move.b  d1,(a0)+
+        bra.s   Q9K_ExtensCopy
+Q9K_ExtensCopyEnd:
+        clr.b   (a0)
+        lea     Q9K_ExtensSkipTab(pc),a1        * Ausnahmeliste: Name gleich?
+Q9K_ExtensSkipLoop:
+        tst.b   (a1)
+        beq.s   Q9K_ExtensLink                  * Ende der Liste: nicht ausgenommen
+        movea.l sp,a0
+Q9K_ExtensEq:
+        move.b  (a0)+,d0
+        cmpi.b  #'A',d0
+        bcs.s   Q9K_ExtensEqCmp
+        cmpi.b  #'Z',d0
+        bhi.s   Q9K_ExtensEqCmp
+        addi.b  #$20,d0                         * Grossschreibung ignorieren
+Q9K_ExtensEqCmp:
+        move.b  (a1)+,d1
+        cmp.b   d1,d0
+        bne.s   Q9K_ExtensEqNo
+        tst.b   d1
+        bne.s   Q9K_ExtensEq
+        ifne    Q9K_DEBUG
+        moveq   #'x',d1                         * Developer-Kernel: "!x name" = ausgenommen (nicht aufgerufen)
+        bsr     Q9K_ExtensTrace
+        endc
+        bra.s   Q9K_ExtensNext                  * gleich bis zur 0: ausgenommen, naechster Name
+Q9K_ExtensEqNo:
+        tst.b   (a1)+                           * Rest dieses Eintrags der Ausnahmeliste ueberspringen
+        bne.s   Q9K_ExtensEqNo
+        bra.s   Q9K_ExtensSkipLoop
+Q9K_ExtensLink:
+        moveq   #0,d0                           * Typ/Sprache: beliebig
+        movea.l sp,a0
+        trap    #0
+        dc.w    $0000                            * F$Link name -> a1 = Einsprung, a2 = Modulkopf
+        bcs     Q9K_ExtensNext                  * nicht gefunden: uebergehen
+        move.l  a1,d6                           * Einsprung
+        move.l  a2,d7                           * Modulkopf
+        suba.l  a3,a3                           * a3 = 0: kein statischer Speicher
+        move.l  $38(a2),d0                      * M$Mem
+        beq.s   Q9K_ExtensCall
+        move.l  d0,d3                           * Groesse merken
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        Q9K_FARCALL     Q9K_AllocMem            * d0 = Groesse -> d0 = Adresse oder 0
+        movea.l (sp)+,a6
+        tst.l   d0
+        beq.s   Q9K_ExtensNoMem
+        movea.l d0,a3
+        movea.l a3,a0
+        move.l  d3,d2
+Q9K_ExtensClear:
+        clr.b   (a0)+
+        subq.l  #1,d2
+        bne.s   Q9K_ExtensClear
+Q9K_ExtensCall:
+        ifne    Q9K_DEBUG
+        moveq   #'X',d1                         * Developer-Kernel: "!X name" = Erweiterung wird aufgerufen
+        bsr     Q9K_ExtensTrace
+        endc
+        movea.l d6,a1
+        movea.l d7,a2                           * a2 = Modulkopf
+        move.l  a6,-(sp)
+        movea.l #0,a6                           * Systemglobals (wie bei IOMans Init)
+        jsr     (a1)
+        movea.l (sp)+,a6                        * movea laesst das Carry der Erweiterung stehen
+        bcs.s   Q9K_ExtensFail
+        bra     Q9K_ExtensNext
+Q9K_ExtensNoMem:
+        move.w  #$00cf,d1                       * E$MemFul
+Q9K_ExtensFail:
+        move.w  d1,d4                           * Fehlercode merken (d3/d4/d5 bleiben ueber Syscalls und Module erhalten)
+        moveq   #1,d3                           * Fehlerflag
+        bra.s   Q9K_ExtensLeave
+Q9K_ExtensNone:
+        moveq   #0,d3
+* Zurueck auf den alten Stack, den Scan-Stack per F$SRtMem freigeben, Register wiederherstellen und ruecksprung in den Aufrufer
+* (Rueckkehradresse und gesicherte Register liegen auf dem alten Stack). Fehlerflag/-code gehen ueber d0/d1, die ein
+* Erweiterungsmodul laut Handbuch ohnehin veraendern darf.
+Q9K_ExtensLeave:
+        lea     64(sp),sp                       * Namenspuffer weg
+        movea.l (sp),sp                         * alter Stack (der Zeiger lag ganz oben auf dem Scan-Stack)
+        movea.l d5,a2                           * F$SRtMem: (a2) = Block, d0.l = Groesse
+        move.l  #2048,d0
+        trap    #0
+        dc.w    $0029
+        move.w  d4,d1
+        move.l  d3,d0
+        movem.l (sp)+,d2-d7/a2-a5
+        tst.l   d0
+        bne.s   Q9K_ExtensLeaveErr
+        andi    #$fe,ccr
+        rts
+Q9K_ExtensLeaveErr:
+        ori     #1,ccr
+        rts
+        ifne    Q9K_DEBUG
+* "!<d1> <Name>" + CR LF direkt auf den DUART (wie die uebrigen Diagnosezeilen, ohne Syscall). Der Name liegt im Namenspuffer ab sp+4.
+Q9K_ExtensTrace:
+        movem.l d0-d2/d7/a0,-(sp)
+        move.l  d1,d2
+        moveq   #'!',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  d2,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        lea     20(sp),a0                       * Namenspuffer des Scans (5 Register x 4 Byte + Ruecksprungadresse 4 Byte = 24; Puffer beginnt dahinter)
+        lea     4(a0),a0
+Q9K_ExtensTraceLoop:
+        move.b  (a0)+,d7
+        beq.s   Q9K_ExtensTraceEnd
+        bsr     Q9K_DiagWriteD7
+        bra.s   Q9K_ExtensTraceLoop
+Q9K_ExtensTraceEnd:
+        moveq   #$0d,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #$0a,d7
+        bsr     Q9K_DiagWriteD7
+        movem.l (sp)+,d0-d2/d7/a0
+        rts
+        endc
+Q9K_ExtensSkipTab:
+        dc.b    "syscache",0,"ssm",0,"fpu",0,0
+        align
+
 Q9K_SysStartIOManName:
         dc.b    "ioman",0
 Q9K_SysStartInitName:

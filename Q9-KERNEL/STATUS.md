@@ -36,7 +36,7 @@ supported.
   fallback (Q9-Flux `6271936`). STB symbols are accepted only when their stored
   24-bit CRC matches the loaded guest module (Q9-Flux `5ebf5b5`).
 - Source-level kernel debugging per file: `Q9K_SRCDEBUG="file.c ..."`; the
-  far-call macro `Q9K_FARCALL` is ready but deployment is still pending.
+  all 43 kernel calls from `q9kernel_entry.a` into C functions now use the register-neutral far-call macro `Q9K_FARCALL` (15.10.2026; `build.sh` rejects a plain `bsr` to a C function).
 - Details: `docs/OWN_KERNEL_STATUS.md` (short overview),
   `docs/archive/OWN_KERNEL_STATUS_chronik_2026-10-12.md` (continuations 1-144),
   `docs/DEBUG_KONZEPT_de.md`.
@@ -96,19 +96,19 @@ must not replace the later implementation.
 | ✅ | `0x1F` | F$GPrDBT | Pointer table assembled from the process pool, one entry per slot, 0 for a free one |
 | ✅ | `0x20` | F$Julian | Packed date/time to OS-9 Julian day; zero point anchored on JULBASE from time.h, 1582 changeover implemented |
 | ✅ | `0x21` | F$TLink | Links trap modules, initializes their state, supports `namePtr=0` removal, and releases references/owned memory on process exit |
-| 🟢 | `0x22` | F$DFork | Suspended child, 72-byte register image and debugger ownership are implemented; host-tested |
-| 🟢 | `0x23` | F$DExec | Suspended-child resume, 72-byte register restore, 68000 trace-bit single-step budget, final trace stop, and debugger-parent wake-up are implemented and host-tested |
-| 🟢 | `0x24` | F$DExit | Validates debugger ownership and releases the suspended child and all owned resources |
+| ✅ | `0x22` | F$DFork | Suspended child, 72-byte register image and debugger ownership; emulator-verified (`dbgtest`, 16.10.2026) |
+| ✅ | `0x23` | F$DExec | Single-step budget, breakpoint list, register buffer written back at every stop, outputs d0 (executed) / d1 (remaining) / d2 (0), child exit returns carry + E$PrcAbt; emulator-verified (`dbgtest`). Not implemented: illegal-opcode breakpoints for d1 = -1 (list still honoured, slower), delivery of unexpected child exceptions, changing a7 via the buffer |
+| ✅ | `0x24` | F$DExit | Validates debugger ownership, releases the suspended child, its module link and all owned resources; emulator-verified (`dbgtest`, resource balance unchanged) |
 | ✅ | `0x25` | F$DatMod | Creates a real data module: header, cleared data area, name, parity and CRC, entered into the module directory |
 | ✅ | `0x26` | F$SetCRC | Updates header parity and module CRC; verified by re-checking the module against CRCCon afterwards |
-| 🟡 | `0x27` | F$SetSys | Katalog erweitert: schreibbare Q9-Werte `$7C` (csl malloc increment), `$28` (`D_TckSec`) und `$76` (`D_TSlice`) sowie verifizierte schreibgeschützte Globals (`D_Init`, `D_Compat`, `D_SysConf`, `D_ModDir`, `D_Proc`, `D_SysPrc`, `D_FProc`, `D_SysROM`, `D_ExcJmp`, `D_TotRAM`, `D_Ticks`, `D_SysDis`, `D_UsrDis`, `D_Compat2`); unbekannte und schreibgeschützte Schreibzugriffe liefern sauber `E$UnkSvc`, hardware-/Microware-spezifische Variablen bleiben klassifiziert offen |
+| ✅ | `0x27` | F$SetSys | C5 (17.10.2026): alle 108 Variablen klassifiziert (`docs/KERNEL_SETSYS_VARIABLEN_de.md`, geprüft von `tools/setsys_table.py`); lesbar was der Kernel führt (sonst `E$UnkSvc`), Ausgabe = vorheriger Wert, Schreiben nur Gruppe 0 (`E$Permit`), veränderbar `D_MinPty`/`D_MaxAge` (wirken im Scheduler), `D_TckSec`, `D_TSlice`, `$7C`; Größe ≠ 1/2/4 und nicht veränderbare Variable → `E$Param`; live getestet (`setsystest`) |
 | ✅ | `0x28` | F$SRqMem | Allocation, rounding, process tracking; two real register-image bugs were found and fixed here (frame detection via `sp+8` failing for a direct-call image, and `D0`/`A2` not passed back through the caller's register image), and the frame-recognition logic it introduced was later reused by F$AllPD |
 | ✅ | `0x29` | F$SRtMem | Explicit return and process cleanup; shares the A6 trampoline guard pattern documented at F$Link/F$Fork/F$Wait and the `E$Param` reserved-value check noted in the F$SRqMem investigation |
 | 🟡 | `0x2A` | F$IRQ | Native registration/removal now validates reserved vectors, clears stale metadata, restores default handlers after the last removal, and is host-tested; complete hardware-/treiber-spezifische Interruptabdeckung remains open |
 | 🔷 | `0x2B` | F$IOQu | The reference IOMan path is the supported implementation; supervisor-only call, available when IOMan is loaded, while a Q9-native replacement remains open |
 | ✅ | `0x2C` | F$AProc | Makes a runnable descriptor schedulable; refuses one without a saved stack; higher-priority descriptors now preempt immediately from the trap context |
 | ✅ | `0x2D` | F$NProc | Takes the next process off the ready list and switches into it. The caller is deliberately not re-queued — that is the manual's own semantics. Emulator-verified with a forked process that calls it and correctly never comes back |
-| 🟡 | `0x2E` | F$VModul | Native header-parity/CRC validation, null/short-buffer and declared-size bounds, directory-pool exhaustion handling, return-buffer ABI, host tests, and live validation of `echo`/`csl` succeed; `/dd/CMDS/date` still never reaches F$VModul because Microware F$Load fails earlier in the RBF/path-read step with `E$MNF` |
+| 🟡 | `0x2E` | F$VModul | Native header-parity/CRC validation, null/short-buffer and declared-size bounds, directory-pool exhaustion handling, return-buffer ABI, host tests, and live validation of `echo`/`csl`/`date` succeed (15.10.2026: `date` booted alone from `/dd/CMDS` reaches F$VModul with module size $C64, reported rounded up to $C70, success=1; the earlier `E$MNF` note is obsolete) |
 | ✅ | `0x2F` | F$FindPD | Path/process number to descriptor address, same DBT structure as F$AllPD/F$RetPD |
 | ✅ | `0x30` | F$AllPD | DBT allocation and descriptor clearing, host tests, and the direct `iattachsvc` emulator regression are verified; the marker sequence reaches the allocation before the later Microware attach/detach checks |
 | ✅ | `0x31` | F$RetPD | DBT return with descriptor-number validation, host tests, and the direct `iattachsvc` emulator regression are verified; the allocated descriptor is returned before the later Microware attach/detach checks |
@@ -128,10 +128,10 @@ must not replace the later implementation.
 | ✅ | `0x53` | F$Event | All twelve functions — create, delete, link, unlink, read, set, set-relative, signal, pulse, info, wait, wait-relative. Emulator-verified on both wait paths, the blocking one with a forked second process doing the signalling |
 | ✅ | `0x54` | F$Gregor | Exact inverse of F$Julian, verified over every day from 1582-10-15 to 2200-12-31 |
 | ✅ | `0x55` | F$SysID | Version and copyright text plus processor identification; OEM and serial are honestly zero |
-| 🟡 | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul, A$AtDate and A$Reset are implemented; cycle intervals now retain full 32-bit ABI values, timer delivery and host regression coverage pass, while complete alarm matrix/live validation remains open |
+| ✅ | `0x56` | F$Alarm | A$Set, A$Cycle, A$Delete, A$AtJul, A$AtDate and A$Reset; interval unit by bit 31 (256ths of a second, rounded up to ticks) as the manual states; full matrix emulator-verified with signal delivery in seconds of the system clock (`alarmtest`, 16.10.2026). A$Reset is not in the manual (semantics from the DPIO API); A$Delete of an unknown ID succeeds silently |
 | ✅ | `0x57` | F$SigMask | Nesting-safe signal mask counter; F$Send honours it, S$Kill and S$Wake break through |
 | 🟡 | `0x58` | F$ChkMem | Native flat-address-space handler follows the OS-9 no-SSM semantics: accepts every non-wrapping range and ignores d1.w permissions, while rejecting 32-bit range wraparound; SSM/MMU permission validation remains open |
-| 🟡 | `0x59` | F$UAcct | Optional OS9P2 extension callback, not a standalone kernel implementation; Q9 natively performs alarm cleanup on Chain/Exit/reap, while accounting-hook installation still requires the `M$Extens` cold-start scan |
+| 🟡 | `0x59` | F$UAcct | Optional OS9P2 extension callback, not a standalone kernel implementation; Q9 natively performs alarm cleanup on Chain/Exit/reap. The `M$Extens` cold-start scan now exists (`Q9K_ExtensScan`, emulator-verified with a test extension, 17.10.2026), so an OS9P2 module can install the service; the kernel does not yet call it at fork/chain/exit |
 | ✅ | `0x5A` | F$CCtl | Default cache-control handler is wired and live dispatch-verified; on the cacheless Q9 target every control request is intentionally a successful no-op, matching the OS-9 kernel behavior when no SysCache customization module is installed |
 | 🟡 | `0x5B` | F$GSPUMp | Flat-address-space compatibility handler is wired and now returns the documented no-SSM result (`d0=0`, `d2=0`, buffer untouched); real per-process MMU/task-map reporting remains SSM-specific and open |
 | 🟡 | `0x5C` | F$SRqCMem | Shares the working memory-allocation path, preserves the color/input register across the external C bridge, and uses the single-area fallback for all colors; colored-memory selection remains limited |
@@ -140,7 +140,7 @@ must not replace the later implementation.
 | ❌ | `0x5F` | F$MBuf | Not implemented |
 | ✅ | `0x60` | F$Trans | Identity mapping, which is the correct answer on a machine without a second bus |
 | 🟡 | `0x61` | F$FIRQ | Supervisor-only fast-IRQ registration/removal is implemented with one handler per vector, D1.b reservation, Static-Zeiger-Prüfung and shared exception dispatch; the target's true minimal-latency prologue and hardware/live FIRQ delivery remain open |
-| 🟡 | `0x62` | F$Sema | P and V implemented against the register convention described in the F$Sema notes below; V and the refusals are emulator-verified, P is host-tested only (it blocks by design) |
+| ✅ | `0x62` | F$Sema | P and V against the register convention in the F$Sema notes below; emulator-verified with two blocked children (queue length, FIFO wake-up, refusals; `semtest`, 16.10.2026). P blocks without halting the kernel when the parent sleeps; the wait state `p` counts as an allocated process |
 | ✅ | `0x63` | F$SigReset | Discards the saved intercept context, for a routine left via `longjmp()`; emulator-verified |
 
 ## I$ input/output system calls
@@ -913,10 +913,12 @@ ring lists stay untouched.
 | A$AtJul (4) | Julian day, seconds after midnight; returns ID | Absolute alarm with `>=` due-time semantics | Exact time, missed time, day boundary, range errors | Emulator/live RTC marker |
 | A$Reset (5) | ID, new signal, new relative ticks | Keeps ID, restarts relative deadline, preserves cycle mode | ID preservation, signal/interval replacement | Confirm reference-system edge cases live |
 
-The matrix is complete for the six documented A$ operations. “Remaining” is
-verification scope, not an unimplemented dispatch case; the row stays 🟡 until
-the native path is observed independently of a loaded foreign alarm/clock
-module and the interval unit convention is settled.
+The matrix is complete for the six A$ operations and emulator-verified
+(`alarmtest`, 16.10.2026; delivery measured in seconds of the system clock, as
+`F$Time` offers no ticks). The interval unit is settled by the manual itself:
+bit 31 set means 256ths of a second, otherwise ticks, rounded up to whole ticks.
+The earlier statement that the manual does not say how the two are told apart
+was wrong.
 
 The emulator regression now ends `…KNX` … `Wvtkbhiolw@#0003(*)>+TiyzYe` followed
 by `C` from the chained-to module — the four digits being the kernel's own tick
@@ -1384,10 +1386,12 @@ P is split across two calls into C, which matters: the queueing happens only
 `SavedSP`. Queueing first would leave the waiting process with a stale stack
 pointer, and the wake-up would land nowhere.
 
-The live test covers V and both refusals. **P is host-tested only** — it blocks
-the caller by design until another process releases, so proving it in the
-emulator needs a second process. That gap is named rather than papered over
-with a marker that would suggest otherwise.
+The live test (`semtest`/`semchild`, 16.10.2026) covers P and V with two blocked
+children, the FIFO wake-up order and both refusals. Running it found two faults
+that no host test could: P halted the kernel (`P00000001H`) when the only other
+process was asleep — it used the old K$Idle halt instead of `Q9K_IdleFallback` —
+and V failed with `E$PrcID` for the first waiter because the wait state `p`
+was not counted as an allocated process slot.
 
 **F$GBlkMp** (`0x19`) is the status report that `mfree` and similar tools use:
 the addresses and sizes of the free RAM blocks, copied into the caller's buffer

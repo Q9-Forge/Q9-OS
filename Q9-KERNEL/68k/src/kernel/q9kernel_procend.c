@@ -87,6 +87,7 @@ extern Q9_u32 Q9K_SchedFirstPick(void);             /* q9kernel_sched.c -- "naec
                                                        * kein aktueller zum Wiedereinreihen", exakt das,
                                                        * was F$Exits erzwungener Wechsel braucht */
 extern void   Q9K_WaitQRemove(Q9_u32 desc);         /* q9kernel_sched.c */
+extern int    Q9K_IcptDeliver(Q9_u32 desc, Q9_u16 signal);  /* q9kernel_icpt.c */
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr); /* q9kernel_moddir.c */
 extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size); /* q9kernel_arena.c */
 extern void   Q9K_ProcMemReleaseAll(Q9_u32 owner);   /* q9kernel_sysmem.c */
@@ -101,7 +102,9 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
                                Q9_u32 error,
                                Q9_u32 freeHead);
 #define Q9K_MEMTRACE_OP_PROC_RELEASE 6UL
+#define Q9K_MEMTRACE_OP_RESOURCES    8UL
 #define Q9K_D_FREEMEM 0x0404UL
+extern void   Q9K_ModDirResTotals(Q9_u32 *outLinks, Q9_u32 *outEntries); /* q9kernel_moddir.c */
 #endif
 
 /* Deskriptor-Feldoffsets -- lokal dupliziert, gleiche schlanke Konvention
@@ -145,6 +148,13 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #define Q9K_TRAPTBL_OFF_EXECENTRY   4UL
 #define Q9K_TRAPTBL_OFF_STATICPTR   8UL
 #define Q9K_TRAPTBL_SIZE_BASE       0x280UL
+/* A13 (2026-10-15): Ueberschuss-Zaehler fuer IOMan-Pfade, die per F$Fork kopiert wurden (je 64 Byte, Index = PD-Nummer
+ * & $3F). refs = Zahl der P$Path-Eintraege ueber IOMans eigene Zaehlung hinaus. Ein I$Close mit refs > 0 zaehlt nur
+ * herunter (Q9K_TrapTryManagerPathIO), das Prozessende ebenso. */
+#ifndef Q9K_MGRREF_ADDR
+#define Q9K_MGRREF_ADDR 0x2500UL
+#endif
+
 #ifndef Q9K_PATHPOOL_BASE_ADDR             /* per #define vor dem #include umlenkbar (Hosttest) */
 #define Q9K_PATHPOOL_BASE_ADDR      0x1214UL
 #endif
@@ -157,7 +167,19 @@ extern void   Q9K_MemTraceEmit(Q9_u32 operation,
 #define Q9K_PROCDESC_STATE_ACTIVE  'a'
 #define Q9K_PROCDESC_STATE_ZOMBIE  'z'
 #define Q9K_PROCDESC_STATE_WAITING 'w'
-#define Q9K_PROCDESC_DBGPAR_OFF    0x2ACUL
+#ifndef Q9K_PROCDESC_DBGPAR_OFF
+#define Q9K_PROCDESC_DBGPAR_OFF    0x2C4UL    /* C2/B6: wie in q9kernel_firstproc.c (vorher $2AC, ueberlappte die Trap-Groessentabelle) */
+#endif
+#ifndef Q9K_PROCDESC_DBGINSTR_OFF
+#define Q9K_PROCDESC_DBGINSTR_OFF  0x2C8UL
+#endif
+#ifndef Q9K_PROCDESC_DBGTOTAL_OFF
+#define Q9K_PROCDESC_DBGTOTAL_OFF  0x2CCUL
+#endif
+#ifndef Q9K_PROCDESC_DBGREG_OFF
+#define Q9K_PROCDESC_DBGREG_OFF    0x2C0UL
+#endif
+#define Q9K_E_PRCABT               0x00E4U    /* E$PrcAbt: Debug-Kind hat F$Exit gerufen */
 
 #ifndef Q9K_PROCDESC_SIZE
 #define Q9K_PROCDESC_SIZE 0x400UL  /* = P$PrcBody (echte Groesse), s. q9kernel_tables.c */
@@ -219,9 +241,15 @@ static void Q9K_ProcReleasePaths(Q9_u32 desc)
          * nativen Pfad-Pool -- frueher wurde hier ($80xx - 3) * 256 als
          * Pool-Deskriptor gedeutet und dessen "Referenzzaehler" irgendwo im
          * Speicher heruntergezaehlt. IOMans eigener Deskriptor wird hier
-         * (noch) nicht geschlossen; der Eintrag wird nur geraeumt. */
-        if (pathNum & 0x8000U)
+         * (noch) nicht geschlossen; der Eintrag wird nur geraeumt.
+         * A13: war der Eintrag per F$Fork kopiert (Ueberschuss-Zaehler > 0), zaehlt das Prozessende ihn herunter. */
+        if (pathNum & 0x8000U) {
+            Q9_u32 cell = Q9K_MGRREF_ADDR + (Q9_u32)(pathNum & 0x3FU);
+            Q9_u8 r = Q9K_GetU8(cell);
+            if (r > 0)
+                Q9K_SetU8(cell, (Q9_u8)(r - 1));
             continue;
+        }
 
         pathDesc = Q9K_GetU32(Q9K_PATHPOOL_BASE_ADDR) +
                    ((Q9_u32)pathNum - 3UL) * Q9K_PATHDESC_SIZE;
@@ -312,6 +340,28 @@ static void Q9K_ProcReleaseMemory(Q9_u32 desc)
     Q9K_ProcMemReleaseAll(desc);
 }
 
+#if defined(Q9K_MEMTRACE_ARENA)
+/* A8 (2026-10-16): Ressourcenbilanz beim Prozessende, Zeile "M R r=<Summe der Link-Zaehler> a=<Eintraege im Modul-
+ * verzeichnis> s=<belegte Trap-Slots in allen Prozessen>". Nach dem Aufraeumen des endenden Prozesses ausgegeben:
+ * zwischen zwei Marken muessen alle drei Werte gleich bleiben (tools/leak_test.sh). */
+static void Q9K_ProcResAudit(void)
+{
+    Q9_u32 base  = Q9K_GetU32(Q9K_PROCPOOL_BASE_ADDR);
+    Q9_u32 count = Q9K_GetU32(Q9K_PROCPOOL_COUNT_ADDR);
+    Q9_u32 links = 0, entries = 0, trapSlots = 0, i, k;
+
+    Q9K_ModDirResTotals(&links, &entries);
+    for (i = 0; i < count; i++) {
+        Q9_u32 desc = base + i * Q9K_PROCDESC_SIZE;
+
+        for (k = 0; k < Q9K_TRAPTBL_ENTRIES; k++)
+            if (Q9K_GetU32(desc + Q9K_PROCDESC_TRAPTBL_OFF + k * Q9K_TRAPTBL_ENTRY_SIZE + Q9K_TRAPTBL_OFF_MODPTR) != 0)
+                trapSlots++;
+    }
+    Q9K_MemTraceEmit(Q9K_MEMTRACE_OP_RESOURCES, links, entries, trapSlots, 0UL, 0UL);
+}
+#endif
+
 /* Gibt einen Deskriptor-Pool-Slot zurueck in die Freiliste (Gegenstueck
  * zu Q9K_ProcPoolAlloc, q9kernel_firstproc.c -- dort static, deshalb hier
  * eine eigene, aber identische Umkehr-Implementierung statt eines
@@ -331,6 +381,9 @@ static void Q9K_ProcPoolFree(Q9_u32 desc)
     Q9K_SetU32(desc + Q9K_PROCDESC_PARENT_OFF, 0);
     Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
     Q9K_SetU16(desc + Q9K_PROCDESC_EXITSTATUS_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGPAR_OFF, 0);      /* C2: sonst hielte ein spaeterer Prozess in diesem Slot sich fuer ein Debug-Kind */
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGINSTR_OFF, 0);
+    Q9K_SetU32(desc + Q9K_PROCDESC_DBGTOTAL_OFF, 0);
 
     Q9K_SetU32(desc, Q9K_GetU32(Q9K_PROCPOOL_FREE_ADDR));
     Q9K_SetU32(Q9K_PROCPOOL_FREE_ADDR, desc);
@@ -360,10 +413,38 @@ static void Q9K_ProcExitFreeDeadChildren(Q9_u32 callerDesc)
  * Deskriptoradresse des als naechstes zu startenden Prozesses, oder 0
  * falls keiner mehr bereit ist (Aufrufer -- Q9K_SysFExit, q9kernel_entry.a
  * -- faellt dann in Q9K_HaltLoop, kein Fake-Fortschritt). */
+/* C2 (2026-10-16): F$Exit eines Debug-Kindes (F$DFork). 68k_tech.pdf S. 398/400: "If the child process terminates for any
+ * reason, the carry bit is set and returned [to the debugger]"; "normal termination by the child process does not release
+ * any of its resources" -- das Kind bleibt (angehalten, State w) stehen, bis der Debugger F$DExit ruft. Der Debugger wird
+ * mit Carry und d1.w = E$PrcAbt fortgesetzt, d0.l = Zahl der ausgefuehrten Befehle. Die Ressourcen (Modul-Link, Pfade,
+ * Speicher, Trap-Handler) gibt erst Q9K_ProcDebugExit frei. */
+static Q9_u32 Q9K_ProcDebugChildExit(Q9_u32 child, Q9_u32 owner, Q9_u16 exitStatus)
+{
+    Q9_u32 ownerSP = Q9K_GetU32(owner + Q9K_PROCDESC_SAVEDSP_OFF);
+
+    Q9K_SetU16(child + Q9K_PROCDESC_EXITSTATUS_OFF, exitStatus);
+    Q9K_SetU8(child + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_WAITING);
+    Q9K_SetU32(child + Q9K_PROCDESC_DBGINSTR_OFF, 0);
+    if (owner == 0 || Q9K_GetU8(owner + Q9K_PROCDESC_STATE_OFF) != Q9K_PROCDESC_STATE_WAITING)
+        return Q9K_SchedFirstPick();            /* kein wartender Debugger: das Kind bleibt unbeachtet stehen */
+
+    Q9K_SetFrameReg(ownerSP, 0UL, Q9K_GetU32(child + Q9K_PROCDESC_DBGTOTAL_OFF));   /* d0.l ausgefuehrt */
+    Q9K_SetFrameReg(ownerSP, 1UL, (Q9_u32)Q9K_E_PRCABT);                            /* d1.w Fehlercode */
+    Q9K_SetFrameReg(ownerSP, 2UL, 0UL);
+    Q9K_SetU16(ownerSP + 60UL, (Q9_u16)(Q9K_GetU16(ownerSP + 60UL) | 1U));          /* Carry im gesicherten SR */
+    Q9K_WaitQRemove(owner);
+    Q9K_SetU8(owner + Q9K_PROCDESC_STATE_OFF, Q9K_PROCDESC_STATE_ACTIVE);
+    Q9K_SchedInsert(owner);
+    return Q9K_SchedFirstPick();
+}
+
 Q9_u32 Q9K_ProcExit(Q9_u32 callerDesc, Q9_u16 exitStatus)
 {
     Q9_u32 modHdr     = Q9K_GetU32(callerDesc + Q9K_PROCDESC_MODHDR_OFF);
     Q9_u32 parentDesc = Q9K_GetU32(callerDesc + Q9K_PROCDESC_PARENT_OFF);
+
+    if (Q9K_GetU32(callerDesc + Q9K_PROCDESC_DBGPAR_OFF) != 0)
+        return Q9K_ProcDebugChildExit(callerDesc, Q9K_GetU32(callerDesc + Q9K_PROCDESC_DBGPAR_OFF), exitStatus);
 
     if (modHdr != 0) {
         Q9K_ModDirUnlinkByHeader(modHdr);
@@ -418,6 +499,9 @@ Q9_u32 Q9K_ProcExit(Q9_u32 callerDesc, Q9_u16 exitStatus)
      * Wiedereinreihen (anders als Q9K_SchedReschedule), deshalb
      * Q9K_SchedFirstPick statt Q9K_SchedReschedule, exakt wie beim
      * allerersten Prozessstart (Q9K_SchedRun). */
+#if defined(Q9K_MEMTRACE_ARENA)
+    Q9K_ProcResAudit();
+#endif
     return Q9K_SchedFirstPick();
 }
 
@@ -486,6 +570,15 @@ int Q9K_ProcDebugExit(Q9_u16 childPid, Q9_u16 *outError)
         *outError = 0x00E0U;
         return 0;
     }
+    /* C2: Q9K_ProcPoolFree gibt Pfade, Trap-Handler und Speicher zurueck, den Modul-Link des Hauptmoduls aber nicht (den
+     * loest sonst Q9K_ProcExit) -- ohne diesen Schritt bliebe er nach jedem F$DFork/F$DExit stehen. */
+    {
+        Q9_u32 modHdr = Q9K_GetU32(desc + Q9K_PROCDESC_MODHDR_OFF);
+        if (modHdr != 0) {
+            Q9K_ModDirUnlinkByHeader(modHdr);
+            Q9K_SetU32(desc + Q9K_PROCDESC_MODHDR_OFF, 0);
+        }
+    }
     Q9K_ProcPoolFree(desc);
     return 1;
 }
@@ -531,6 +624,9 @@ int Q9K_ProcDebugExit(Q9_u16 childPid, Q9_u16 *outError)
 #ifndef Q9K_WAIT_SIGLVL_OFF
 #define Q9K_WAIT_SIGLVL_OFF  0x210UL   /* P$SigLvl (Byte) */
 #endif
+#ifndef Q9K_WAIT_SIGVEC_OFF
+#define Q9K_WAIT_SIGVEC_OFF  0x28UL    /* P$SigVec: eingetragene Intercept-Routine (0 = keine) */
+#endif
 /* Maske loeschen (F$Wait-Regel) und melden, ob ein Signal ansteht. */
 static int Q9K_WaitSignalPending(Q9_u32 desc)
 {
@@ -558,14 +654,37 @@ void Q9K_SysWaitImpl(void)
     } else if (Q9K_WaitSignalPending(callerDesc)) {
         /* Fortsetzung 120, 68k_tech.pdf F$SigMask: F$Wait loescht die
          * Signalmaske; steht schon ein Signal an, kehrt der Aufruf sofort
-         * zurueck (Kind-ID 0) statt zu blockieren. OFFEN: die Zustellung an
-         * die Intercept-Routine aus diesem Pfad (F$Sleep macht sie bereits). */
-        Q9K_SetU16(Q9K_WAIT_SCRATCH_CHILDPID, 0);
-        Q9K_SetU16(Q9K_WAIT_SCRATCH_EXITSTATUS, 0);
-        Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 1);
+         * zurueck (Kind-ID 0) statt zu blockieren.
+         * A11 (2026-10-15): hat der Prozess eine Intercept-Routine eingetragen, wird das Signal jetzt auch
+         * ZUGESTELLT (Ausgang 3: Q9K_SysFWait_Signal baut dafuer wie bei F$Sleep den Rahmen unter P$SavedSP und
+         * wechselt; die Routine laeuft zuerst, danach kehrt F$Wait mit d0=0 zurueck). Ohne Routine bleibt es beim
+         * sofortigen Ruecksprung (Ausgang 1). */
+        if (Q9K_GetU32(callerDesc + Q9K_WAIT_SIGVEC_OFF) != 0UL) {
+            Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 3);
+        } else {
+            Q9K_SetU16(Q9K_WAIT_SCRATCH_CHILDPID, 0);
+            Q9K_SetU16(Q9K_WAIT_SCRATCH_EXITSTATUS, 0);
+            Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 1);
+        }
     } else {
         Q9K_SetU16(Q9K_WAIT_SCRATCH_OUTCOME, 0);   /* Aufrufer (Trampolin) muss blockieren */
     }
+}
+
+/* Q9K_ProcWaitDeliver (A11) -- vom Assembler-Pfad Q9K_SysFWait_Signal gerufen, NACHDEM der Registersatz des
+ * Aufrufers gesichert, P$SavedSP gesetzt und 68 Byte Luft darunter gelassen wurden (Q9K_IcptFrameGap, wie bei
+ * F$Sleep, A9). Legt den Aufrufer zurueck in die Ready-Queue, stellt das anstehende Signal zu (der Rahmen der
+ * Intercept-Routine entsteht bei P$SavedSP-68) und liefert den als naechsten zu startenden Deskriptor
+ * (0 = keiner). Rueckgabe in d0, wie Q9K_SchedFirstPick. */
+Q9_u32 Q9K_ProcWaitDeliver(void)
+{
+    Q9_u32 desc = Q9K_GetU32(Q9_D_PROC);
+    Q9_u16 pending = Q9K_GetU16(desc + Q9K_WAIT_SIGNAL_OFF);
+
+    Q9K_SchedInsert(desc);
+    if (pending != 0U)
+        (void)Q9K_IcptDeliver(desc, pending);
+    return Q9K_SchedFirstPick();
 }
 
 /* Q9K_SysExitImpl -- gleiches Bruecken-Muster wie Q9K_SysWaitImpl oben,

@@ -1,0 +1,3 @@
+# Gewollte gemeinsame Nutzung einer Adresse: '$ADRESSE name1 name2 ...  # Begruendung'.
+# Namen asm- oder C-Schreibweise. Nur eintragen, wenn die Zellen NIE gleichzeitig leben.
+$1370 Q9K_DispatchCallCode Q9DBG_A_DISPATCH_CODE_LOW  # q9kernel_dbg.c liest das untere Byte (+1, big-endian) derselben Zelle

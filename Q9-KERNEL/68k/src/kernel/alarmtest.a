@@ -1,0 +1,408 @@
+*******************************************************************************
+* alarmtest.a -- Regressionstest fuer Arbeitsplan C3: die F$Alarm-Matrix live (User-State, Signal an das eigene Programm).
+*
+* Das Programm meldet eine Intercept-Routine an (F$Icpt, a6 = Datenbereich auf dem Stack: +0 Zaehler der Signale, +4 letzter
+* Signalcode), setzt je Zeile der Matrix einen Alarm und wartet in F$Sleep-Schritten (50 Ticks) auf den Zaehler. Gemessen wird in
+* SEKUNDEN der Systemuhr (F$Time liefert nur Sekunden; Tick-Aufloesung gibt der Kernel nicht her), deshalb sind die Intervalle
+* ganze Sekunden. Jede Zeile "Text XX" (XX = Wert hex):
+*   set          A$Set  200 Ticks (2 s)                      "set elapsed=02|03"  "set sig=28"
+*   set256       A$Set  $80000200 (512/256 s = 2 s)          "set256 elapsed=02|03"   -- haette der Kernel 512 als Ticks gelesen, waeren es 5 s
+*   cycle        A$Cycle 100 Ticks, bis 3 Signale da sind    "cycle elapsed=03|04"  "cycle count=03"; A$Delete; 3 s Ruhe: "cycle stopped=01"
+*   reset        A$Set 1000 Ticks, A$Reset auf 100 Ticks, Signal $29   "reset elapsed=01|02"  "reset sig=29"
+*   delete all   zwei Alarme, A$Delete mit ID 0, 3 s Ruhe   "delete all stays=01"
+*   delete bad   A$Delete mit unbekannter ID                "delete bad err=XX"
+*   atjul        F$Time + F$Julian, Ziel = jetzt + 3 s       "atjul elapsed=02|03|04"
+*   atdate       Ziel = jetzt + 3 s als Kalenderfelder       "atdate elapsed=02|03|04"
+*   Fehlerfaelle A$Set mit Intervall 0 / unbekannter Funktionscode / A$Reset mit unbekannter ID: "set zero err=" "bad func err=" "reset bad err="
+* Abschluss "alarmtest done 00".
+*******************************************************************************
+Q9Prgrm                 equ     1               * OS-9-Programmmodul
+Q9Objct                 equ     1               * Maschinencode
+Q9K_AlarmTestEdition    equ     1
+Q9K_AlarmTestStackSize  equ     $1000
+
+        psect   alarmtest,(Q9Prgrm<<8)!Q9Objct,(0<<8)!1,Q9K_AlarmTestEdition,Q9K_AlarmTestStackSize,Q9K_AlarmTestStart
+
+        vsect
+Q9K_AlarmTestData:
+        ds.l    1                               * Platzhalter -- ein Programmmodul braucht eine vsect
+        ends
+
+Q9K_AlarmTestStart:
+        lea     -32(sp),sp
+        movea.l sp,a3                           * a3 = Datenbereich (a3, d3-d7 bleiben ueber Syscalls erhalten)
+        moveq   #7,d0
+        movea.l a3,a0
+Q9K_AlarmTestClear:
+        clr.l   (a0)+
+        dbra    d0,Q9K_AlarmTestClear
+        movea.l a3,a6                           * a6 = Datenbereich fuer die Intercept-Routine
+        lea     Q9K_AlarmTestHandler(pc),a0
+        trap    #0
+        dc.w    $0009                            * F$Icpt
+
+*--- A$Set, Ticks ---------------------------------------------------------------------------------------------------
+        clr.l   (a3)
+        moveq   #1,d1                           * A$Set
+        moveq   #40,d2                          * Signal 40 = $28
+        move.l  #200,d3                         * 200 Ticks
+        bsr     Q9K_AlarmTestStartTimer
+        bcs     Q9K_AlarmTestFail
+        moveq   #1,d1
+        moveq   #8,d2
+        bsr     Q9K_AlarmTestWait               * -> d0 = verstrichene Sekunden
+        move.l  d0,d1
+        lea     Q9K_AlarmTestTxtSet(pc),a0
+        bsr     Q9K_AlarmTestReport
+        moveq   #0,d1
+        move.w  4(a3),d1
+        lea     Q9K_AlarmTestTxtSetSig(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+*--- A$Set, 256stel Sekunden (Bit 31) ------------------------------------------------------------------------------------
+        clr.l   (a3)
+        moveq   #1,d1
+        moveq   #40,d2
+        move.l  #$80000200,d3                   * 512/256 s = 2 s (als Ticks gelesen waeren es 5,12 s)
+        bsr     Q9K_AlarmTestStartTimer
+        bcs     Q9K_AlarmTestFail
+        moveq   #1,d1
+        moveq   #8,d2
+        bsr     Q9K_AlarmTestWait
+        move.l  d0,d1
+        lea     Q9K_AlarmTestTxtSet256(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+*--- A$Cycle ---------------------------------------------------------------------------------------------------------------
+        clr.l   (a3)
+        moveq   #2,d1                           * A$Cycle
+        moveq   #40,d2
+        move.l  #100,d3                         * alle 100 Ticks
+        bsr     Q9K_AlarmTestStartTimer
+        bcs     Q9K_AlarmTestFail
+        move.l  d0,d7                           * d7 = Alarm-ID
+        moveq   #3,d1
+        moveq   #8,d2
+        bsr     Q9K_AlarmTestWait
+        move.l  d0,d1
+        lea     Q9K_AlarmTestTxtCyc(pc),a0
+        bsr     Q9K_AlarmTestReport
+        move.l  d7,d0                           * A$Delete mit der ID
+        moveq   #0,d1
+        bsr     Q9K_AlarmTestAlarm
+        bcs     Q9K_AlarmTestFail
+        move.l  (a3),8(a3)                      * Zaehler nach dem Loeschen merken (nicht in d6: das gehoert der Wartefunktion)
+        move.l  8(a3),d1
+        lea     Q9K_AlarmTestTxtCycCnt(pc),a0
+        bsr     Q9K_AlarmTestReport
+        move.l  #99999,d1                       * Ruhe: Ziel unerreichbar, Limit 3 s
+        moveq   #3,d2
+        bsr     Q9K_AlarmTestWait
+        moveq   #0,d1
+        move.l  8(a3),d0
+        cmp.l   (a3),d0                         * Zaehler unveraendert?
+        bne.s   Q9K_AlarmTestCycNot
+        moveq   #1,d1
+Q9K_AlarmTestCycNot:
+        lea     Q9K_AlarmTestTxtCycStop(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+*--- A$Reset ---------------------------------------------------------------------------------------------------------------
+        clr.l   (a3)
+        moveq   #1,d1
+        moveq   #40,d2
+        move.l  #1000,d3                        * lange Wartezeit (10 s) ...
+        bsr     Q9K_AlarmTestStartTimer
+        bcs     Q9K_AlarmTestFail
+        move.l  d0,d7
+        moveq   #5,d1                           * ... per A$Reset auf 1 s und Signal 41 ($29) verkuerzen
+        move.l  d7,d0
+        moveq   #41,d2
+        move.l  #100,d3
+        bsr     Q9K_AlarmTestAlarm
+        bcs     Q9K_AlarmTestFail
+        moveq   #1,d1
+        moveq   #8,d2
+        bsr     Q9K_AlarmTestWait
+        move.l  d0,d1
+        lea     Q9K_AlarmTestTxtRst(pc),a0
+        bsr     Q9K_AlarmTestReport
+        moveq   #0,d1
+        move.w  4(a3),d1
+        lea     Q9K_AlarmTestTxtRstSig(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+*--- A$Delete (alle) -----------------------------------------------------------------------------------------------------
+        clr.l   (a3)
+        moveq   #1,d1
+        moveq   #40,d2
+        move.l  #200,d3
+        bsr     Q9K_AlarmTestStartTimer
+        bcs     Q9K_AlarmTestFail
+        moveq   #1,d1
+        moveq   #40,d2
+        move.l  #250,d3
+        bsr     Q9K_AlarmTestStartTimer
+        bcs     Q9K_AlarmTestFail
+        moveq   #0,d0                           * ID 0 = alle eigenen Alarme
+        moveq   #0,d1
+        bsr     Q9K_AlarmTestAlarm
+        bcs     Q9K_AlarmTestFail
+        move.l  #99999,d1
+        moveq   #4,d2
+        bsr     Q9K_AlarmTestWait
+        moveq   #0,d1
+        tst.l   (a3)
+        bne.s   Q9K_AlarmTestDelNot
+        moveq   #1,d1
+Q9K_AlarmTestDelNot:
+        lea     Q9K_AlarmTestTxtDelAll(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+        move.l  #$7777,d0                       * A$Delete mit unbekannter ID
+        moveq   #0,d1
+        bsr     Q9K_AlarmTestAlarm
+        bsr     Q9K_AlarmTestErr                * d1 = Fehlercode oder 0
+        lea     Q9K_AlarmTestTxtDelBad(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+*--- A$AtJul ---------------------------------------------------------------------------------------------------------------
+        clr.l   (a3)
+        trap    #0
+        dc.w    $0015                            * F$Time: d0 = 00hhmmss, d1 = yyyymmdd (Felder)
+        trap    #0
+        dc.w    $0020                            * F$Julian: d0 = Sekunden seit Mitternacht, d1 = Julianische Tageszahl
+        bcs     Q9K_AlarmTestFail
+        move.l  d1,d4                           * Tageszahl
+        addq.l  #3,d0                           * Ziel: in 3 Sekunden
+        move.l  d0,d3
+        moveq   #41,d2
+        moveq   #4,d1                           * A$AtJul
+        bsr     Q9K_AlarmTestStartTimer         * setzt d0 = 0 und merkt die Startzeit in d5
+        bcs     Q9K_AlarmTestFail
+        moveq   #1,d1
+        moveq   #8,d2
+        bsr     Q9K_AlarmTestWait
+        move.l  d0,d1
+        lea     Q9K_AlarmTestTxtAtJul(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+*--- A$AtDate --------------------------------------------------------------------------------------------------------------
+        clr.l   (a3)
+        trap    #0
+        dc.w    $0015                            * F$Time
+        move.l  d1,d4                           * Datum (Felder), unveraendert
+        move.l  d0,d3                           * Zeit 00hhmmss: 3 Sekunden dazu, mit Uebertrag
+        moveq   #3,d5
+        move.l  d3,d6
+        andi.l  #$ff,d6                         * Sekunden
+        add.l   d5,d6
+        cmpi.l  #60,d6
+        bcs.s   Q9K_AlarmTestNoCarry
+        subi.l  #60,d6                          * Ueberlauf in die Minute (ein Uebertrag in die Stunde wird nicht behandelt: kurz vor Mitternacht-Stunde unguenstig)
+        addi.l  #$100,d3
+Q9K_AlarmTestNoCarry:
+        andi.l  #$ffffff00,d3
+        or.l    d6,d3
+        move.l  d3,d3
+        moveq   #41,d2
+        moveq   #3,d1                           * A$AtDate
+        bsr     Q9K_AlarmTestStartTimer
+        bcs     Q9K_AlarmTestFail
+        moveq   #1,d1
+        moveq   #8,d2
+        bsr     Q9K_AlarmTestWait
+        move.l  d0,d1
+        lea     Q9K_AlarmTestTxtAtDate(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+*--- Fehlerfaelle ---------------------------------------------------------------------------------------------------------
+        moveq   #0,d0
+        moveq   #1,d1
+        moveq   #40,d2
+        moveq   #0,d3                           * A$Set mit Intervall 0
+        bsr     Q9K_AlarmTestAlarm
+        bsr     Q9K_AlarmTestErr
+        lea     Q9K_AlarmTestTxtZero(pc),a0
+        bsr     Q9K_AlarmTestReport
+        moveq   #0,d0
+        moveq   #9,d1                           * unbekannter Funktionscode
+        moveq   #40,d2
+        moveq   #10,d3
+        bsr     Q9K_AlarmTestAlarm
+        bsr     Q9K_AlarmTestErr
+        lea     Q9K_AlarmTestTxtFunc(pc),a0
+        bsr     Q9K_AlarmTestReport
+        move.l  #$7777,d0                       * A$Reset mit unbekannter ID
+        moveq   #5,d1
+        moveq   #40,d2
+        moveq   #10,d3
+        bsr     Q9K_AlarmTestAlarm
+        bsr     Q9K_AlarmTestErr
+        lea     Q9K_AlarmTestTxtRstBad(pc),a0
+        bsr     Q9K_AlarmTestReport
+
+        moveq   #0,d1
+        lea     Q9K_AlarmTestTxtDone(pc),a0
+        bsr     Q9K_AlarmTestReport
+Q9K_AlarmTestEnd:
+        lea     32(sp),sp
+        moveq   #0,d1
+        trap    #0
+        dc.w    6                                * F$Exit
+
+Q9K_AlarmTestFail:
+        lea     Q9K_AlarmTestTxtFail(pc),a0     * d1.w = Fehlercode
+        bsr     Q9K_AlarmTestReport
+        bra     Q9K_AlarmTestEnd
+
+* Intercept-Routine: d1.w = Signalcode, a6 = Datenbereich. Zaehlt und merkt das Signal.
+Q9K_AlarmTestHandler:
+        addq.l  #1,(a6)
+        move.w  d1,4(a6)
+        trap    #0
+        dc.w    $001e                            * F$RTE
+
+* F$Alarm: d0 = ID, d1 = Funktion, d2 = Signal, d3 = Intervall/Zeit, d4 = Datum. Aus: d0 = ID, Carry bei Fehler (d1.w = Code).
+Q9K_AlarmTestAlarm:
+        trap    #0
+        dc.w    $0056
+        rts
+
+* Startet einen Alarm (d1 = Funktion, d2 = Signal, d3 = Intervall) mit d0 = 0 und merkt die Startzeit in d5.
+Q9K_AlarmTestStartTimer:
+        moveq   #0,d0
+        bsr     Q9K_AlarmTestAlarm
+        bcs.s   Q9K_AlarmTestStartRts
+        movem.l d0,-(sp)
+        bsr     Q9K_AlarmTestNow
+        move.l  d0,d5                           * Startzeit (Sekunden)
+        movem.l (sp)+,d0
+        andi    #$fe,ccr
+Q9K_AlarmTestStartRts:
+        rts
+
+* Aus einem vorherigen F$Alarm-Aufruf: d1 = Fehlercode wenn Carry, sonst 0.
+Q9K_AlarmTestErr:
+        bcs.s   Q9K_AlarmTestErrHave
+        moveq   #0,d1
+Q9K_AlarmTestErrHave:
+        andi.l  #$ff,d1
+        rts
+
+* Aus: d0 = Sekunden seit Mitternacht (binaer).
+Q9K_AlarmTestNow:
+        movem.l d1-d2,-(sp)
+        trap    #0
+        dc.w    $0015                            * F$Time: d0 = 00hhmmss
+        move.l  d0,d2
+        lsr.l   #8,d2                           * d2 = 00hhmm
+        andi.l  #$ff,d0                         * ss
+        move.l  d2,d1
+        andi.l  #$ff,d1                         * mm
+        mulu    #60,d1
+        add.l   d1,d0
+        lsr.l   #8,d2
+        andi.l  #$ff,d2                         * hh
+        mulu    #3600,d2
+        add.l   d2,d0
+        movem.l (sp)+,d1-d2
+        rts
+
+* Wartet auf den Zaehler: d1 = Zielwert, d2 = Zeitlimit in Sekunden. Aus: d0 = verstrichene Sekunden seit dem Start (d5).
+Q9K_AlarmTestWait:
+        move.l  d5,d3                           * Startzeit
+        bsr     Q9K_AlarmTestStartIfZero
+        move.l  d3,d4
+        add.l   d2,d4                           * Frist
+        move.l  d1,d6                           * Ziel
+Q9K_AlarmTestWaitLoop:
+        cmp.l   (a3),d6
+        ble.s   Q9K_AlarmTestWaitDone           * Zaehler >= Ziel
+        bsr     Q9K_AlarmTestNow
+        cmp.l   d4,d0
+        bcc.s   Q9K_AlarmTestWaitDone           * Frist abgelaufen
+        moveq   #50,d0                          * 0,5 s schlafen (wird vom Signal vorzeitig beendet)
+        trap    #0
+        dc.w    $000a                            * F$Sleep
+        bra.s   Q9K_AlarmTestWaitLoop
+Q9K_AlarmTestWaitDone:
+        bsr     Q9K_AlarmTestNow
+        sub.l   d3,d0
+        rts
+
+* Ist die Startzeit d3 = 0 (kein Alarm gestartet), jetzt als Start nehmen.
+Q9K_AlarmTestStartIfZero:
+        tst.l   d3
+        bne.s   Q9K_AlarmTestSIZRts
+        bsr     Q9K_AlarmTestNow
+        move.l  d0,d3
+Q9K_AlarmTestSIZRts:
+        rts
+
+* a0 = Text (0-terminiert), d1 = Wert: schreibt "Text" + zwei Hexziffern + CR auf Pfad 1.
+Q9K_AlarmTestReport:
+        movem.l d0-d2/a0-a1,-(sp)
+        lea     -48(sp),sp
+        movea.l sp,a1
+Q9K_AlarmTestCopy:
+        move.b  (a0)+,d2
+        beq.s   Q9K_AlarmTestCopyEnd
+        move.b  d2,(a1)+
+        bra.s   Q9K_AlarmTestCopy
+Q9K_AlarmTestCopyEnd:
+        move.w  d1,d2
+        lsr.w   #4,d2
+        andi.w  #$f,d2
+        move.b  Q9K_AlarmTestHex(pc,d2.w),(a1)+
+        andi.w  #$f,d1
+        move.b  Q9K_AlarmTestHex(pc,d1.w),(a1)+
+        move.b  #$0d,(a1)+
+        move.l  a1,d1
+        movea.l sp,a0
+        sub.l   a0,d1                           * d1.l = Laenge
+        moveq   #1,d0
+        trap    #0
+        dc.w    $008c                            * I$WritLn
+        lea     48(sp),sp
+        movem.l (sp)+,d0-d2/a0-a1
+        rts
+
+Q9K_AlarmTestHex:
+        dc.b    "0123456789ABCDEF"
+Q9K_AlarmTestTxtSet:
+        dc.b    "set elapsed=",0
+Q9K_AlarmTestTxtSetSig:
+        dc.b    "set sig=",0
+Q9K_AlarmTestTxtSet256:
+        dc.b    "set256 elapsed=",0
+Q9K_AlarmTestTxtCyc:
+        dc.b    "cycle elapsed=",0
+Q9K_AlarmTestTxtCycCnt:
+        dc.b    "cycle count=",0
+Q9K_AlarmTestTxtCycStop:
+        dc.b    "cycle stopped=",0
+Q9K_AlarmTestTxtRst:
+        dc.b    "reset elapsed=",0
+Q9K_AlarmTestTxtRstSig:
+        dc.b    "reset sig=",0
+Q9K_AlarmTestTxtDelAll:
+        dc.b    "delete all stays=",0
+Q9K_AlarmTestTxtDelBad:
+        dc.b    "delete bad err=",0
+Q9K_AlarmTestTxtAtJul:
+        dc.b    "atjul elapsed=",0
+Q9K_AlarmTestTxtAtDate:
+        dc.b    "atdate elapsed=",0
+Q9K_AlarmTestTxtZero:
+        dc.b    "set zero err=",0
+Q9K_AlarmTestTxtFunc:
+        dc.b    "bad func err=",0
+Q9K_AlarmTestTxtRstBad:
+        dc.b    "reset bad err=",0
+Q9K_AlarmTestTxtDone:
+        dc.b    "alarmtest done ",0
+Q9K_AlarmTestTxtFail:
+        dc.b    "alarmtest failed err=",0
+
+        endsect

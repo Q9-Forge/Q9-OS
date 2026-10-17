@@ -71,8 +71,6 @@ extern Q9_u32 Q9K_ModDirLinkByName(Q9_u16 desiredTyLang, const char *name);
 extern Q9_u32 Q9K_ModDirUnlinkByHeader(Q9_u32 hdrAddr);
 extern int    Q9K_ProcSRqMem(Q9_u32 requestedSize, Q9_u32 *outAddr, Q9_u32 *outSize, Q9_u16 *outError);
 extern void   Q9K_ProcSRtMem(Q9_u32 addr, Q9_u32 size);
-extern Q9_u32 Q9K_AllocMem(Q9_u32 requestedSize);
-extern void   Q9K_FreeMem(Q9_u32 addr, Q9_u32 size);
 #if defined(Q9K_MEMTRACE_ARENA)
 extern void   Q9K_MemTraceSetModule(Q9_u32 header);
 extern void   Q9K_MemTraceClearModule(void);
@@ -152,59 +150,85 @@ static Q9_u16 Q9K_TLinkReadU16BE(Q9_u32 addr)
  * von F$TLink bereitgestelltem statischem Speicher (staticPtr, s.
  * Q9K_ProcTLink -- wird spaeter als a6 an M$Init uebergeben, exakt die
  * Rolle, die "block"/a6 bei Q9K_ProcFork spielt). */
-static void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
+/* B1 (2026-10-16): gehaertet. Vorher vertraute die Funktion allen Zahlen aus dem Modul: ein Eintrag mit grosser Anzahl oder
+ * Zieloffset schrieb hinter den Datenblock, ein Tabellenende hinter dem Modul wurde nie gefunden. Jetzt wird jeder Zugriff
+ * geprueft; bei einem Verstoss bricht die Funktion ab und liefert Q9K_ERR_BMID (E$BMID, "illegal module header") -- der Aufrufer
+ * gibt Block und Modul-Link zurueck.
+ *
+ * Unterstuetzter Umfang (festgelegt, 68k_tech.pdf Table 1-8):
+ *   - M$IData: Eintraege [Zieloffset.l, Anzahl.l, Nutzlast] bis zum Beginn von M$IRefs. Ohne M$IRefs gibt es kein Tabellenende
+ *     -- dann wird (wie bisher) nichts kopiert. Ein Rest von weniger als 8 Byte vor M$IRefs gilt als Fuellbytes.
+ *   - M$IRefs: genau zwei Tabellen (Kodezeiger: Wert += Modulanfang, Datenzeiger: Wert += Datenblock), jede eine Folge von
+ *     Laeufen [MS.w, Anzahl.w, Anzahl x LS.w], Offset = MS<<16 | LS, Ende bei MS = 0 UND Anzahl = 0. Das MS-Wort ist damit
+ *     geklaert (frueher "verworfen"): es sind die oberen 16 Bit des Offsets, relevant fuer Datenbereiche ueber 64 KByte.
+ *   - Keine weiteren Relokationsarten.
+ * Geprueft werden: M$IData/M$IRefs liegen im Modul (M$Size) und M$IData vor M$IRefs; jede Nutzlast liegt vor M$IRefs; jeder
+ * Schreibzugriff (Kopierziel, relozierte 32-Bit-Felder) liegt im Zielblock [block, block + blockSize); jede Tabelle ist
+ * innerhalb des Moduls abgeschlossen. Rueckgabe 0 = Erfolg. */
+#define Q9K_ERR_BMID 0x00CDU   /* E$BMID, Illegal module header (B1) */
+static Q9_u32 Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block, Q9_u32 blockSize)
 {
+    Q9_u32 modSize  = Q9K_TLinkReadU32BE(hdrAddr + 4UL);                      /* M$Size */
     Q9_u32 idataOff = Q9K_TLinkReadU32BE(hdrAddr + Q9K_MH_IDATA);
     Q9_u32 irefsOff = Q9K_TLinkReadU32BE(hdrAddr + Q9K_MH_IREFS);
+    Q9_u32 modEnd   = hdrAddr + modSize;
     Q9_u32 p, end;
     Q9_u32 group;
     Q9_u32 relocBase;
 
     if (idataOff == 0 && irefsOff == 0)
-        return;   /* kein initialisierter Speicher deklariert -- unveraendert */
+        return 0;   /* Normalfall fuer reinen Assembler-Code -- unveraendert */
 
-    if (idataOff != 0) {
+    if (idataOff >= modSize || irefsOff >= modSize)
+        return Q9K_ERR_BMID;   /* Tabelle ausserhalb des Moduls (auch bei M$Size = 0) */
+    if (idataOff != 0 && irefsOff != 0 && idataOff > irefsOff)
+        return Q9K_ERR_BMID;   /* M$IData muss vor M$IRefs liegen */
+
+    /* M$IData kopieren -- laeuft bis zum Beginn von M$IRefs. */
+    if (idataOff != 0 && irefsOff != 0) {
         p = hdrAddr + idataOff;
         end = hdrAddr + irefsOff;
-        while (p < end) {
+        while (end - p >= 8UL) {
             Q9_u32 dstOff = Q9K_TLinkReadU32BE(p);
-            Q9_u32 count  = Q9K_TLinkReadU32BE(p + 4);
+            Q9_u32 count  = Q9K_TLinkReadU32BE(p + 4UL);
             Q9_u32 i;
+
+            if (count > end - p - 8UL)
+                return Q9K_ERR_BMID;   /* Nutzlast ragt ueber M$IRefs hinaus */
+            if (dstOff > blockSize || count > blockSize - dstOff)
+                return Q9K_ERR_BMID;   /* Ziel ausserhalb des Datenblocks */
             for (i = 0; i < count; i++)
-                Q9K_SetU8(block + dstOff + i, Q9K_GetU8(p + 8 + i));
-            p += 8 + count;
+                Q9K_SetU8(block + dstOff + i, Q9K_GetU8(p + 8UL + i));
+            p += 8UL + count;
         }
     }
 
+    /* M$IRefs anwenden -- genau zwei Tabellen (Kodezeiger, dann Datenzeiger). */
     if (irefsOff != 0) {
         p = hdrAddr + irefsOff;
-        /* FIX (2026-10-06, Fortsetzung 112): 68k_tech.pdf, M$IRefs: jede der
-         * zwei Tabellen (Code-, dann Datenzeiger) ist eine Folge von Laeufen
-         * [MS-Wort, Anzahl, Anzahl x LS-Wort]; der Offset ist MS<<16 | LS; die
-         * Tabelle endet erst bei MS=0 UND Anzahl=0. Frueher wurde genau EIN
-         * Lauf gelesen, das MS-Wort verworfen und danach pauschal ein
-         * Abschlusspaar uebersprungen. Bei einer LEEREN Tabelle (nur 0/0,
-         * z. B. sysgo) wurde so das naechste Paar mit verschluckt; sysgos
-         * zweite Tabelle kam dadurch aus der CRC (MS=$009E, Anzahl=$9459)
-         * und relozierte zehntausendfach fremden Speicher -- gemessen als
-         * zerstoerte Arena-Freiliste und "Sysgo can't fork mshell" (E$MemFul).
-         * Gleiche Korrektur wie Q9K_ApplyInitializedData (q9kernel_firstproc.c). */
         for (group = 0; group < 2; group++) {
             relocBase = (group == 0) ? hdrAddr : block;
             for (;;) {
-                Q9_u32 ms    = Q9K_TLinkReadU16BE(p);
-                Q9_u32 count = Q9K_TLinkReadU16BE(p + 2);
-                Q9_u32 j;
+                Q9_u32 ms, count, j;
 
-                p += 4;
+                if (modEnd - p < 4UL)
+                    return Q9K_ERR_BMID;   /* Tabelle im Modul nicht abgeschlossen */
+                ms    = Q9K_TLinkReadU16BE(p);
+                count = Q9K_TLinkReadU16BE(p + 2UL);
+                p += 4UL;
                 if (ms == 0 && count == 0)
                     break;                     /* Ende dieser Tabelle */
+                if (count > (modEnd - p) / 2UL)
+                    return Q9K_ERR_BMID;   /* Lauf ragt ueber das Modul hinaus */
                 for (j = 0; j < count; j++) {
                     Q9_u32 fieldOff = (ms << 16) | (Q9_u32)Q9K_TLinkReadU16BE(p);
-                    Q9_u32 fieldAddr = block + fieldOff;
+                    Q9_u32 fieldAddr;
                     Q9_u32 newVal;
 
-                    p += 2;
+                    p += 2UL;
+                    if (fieldOff > blockSize || blockSize - fieldOff < 4UL)
+                        return Q9K_ERR_BMID;   /* Zeigerfeld ausserhalb des Datenblocks */
+                    fieldAddr = block + fieldOff;
                     /* byteweise, s. Q9K_SetFrameReg (64-Bit-Testhost) */
                     newVal = Q9K_TLinkReadU32BE(fieldAddr) + relocBase;
                     Q9K_SetU8(fieldAddr + 0, (Q9_u8)(newVal >> 24));
@@ -215,127 +239,16 @@ static void Q9K_ApplyInitializedData(Q9_u32 hdrAddr, Q9_u32 block)
             }
         }
     }
+    return 0;
 }
 
-/* NACHTRAG 2026-09-13 (Fortsetzung 58): binaerer Laufzeit-Patch fuer
- * einen ECHTEN Bug in csl.mod's eigenem, geerbten Maschinencode (nicht
- * von Q9-OS nachgebaut -- volle Herleitung per Live-Instrumentierung
- * in docs/OWN_KERNEL_STATUS.md, Fortsetzung 56/57): csl's privater
- * Freispeicher-Verwalter (eine K&R-artige zirkulaere Freiliste) prueft
- * nach dem Weiterruecken zum naechsten Knoten ("movea.l (a0),a4" bei
- * Dateiversatz $56b6) nicht erneut auf einen (durch anderswo bereits
- * korrumpierte Verkettung entstandenen) NULL-Zeiger, bevor dessen
- * Groessenfeld gelesen/beschrieben wird. Bei $56bc steht "bhi.w
- * $448da" (4 Byte) -- faengt NUR den "Block zu klein"-Fall ab. Ist a4
- * NULL, liest/schreibt der Code auf absolute Adresse $4 (Teil der nach
- * dem Boot ungenutzten Reset-Vektortabelle, von csl selbst als
- * globale "eigene a6"-Zelle zweckentfremdet) -- beobachteter Absturz
- * (Vektor 10, A6 um exakt die angeforderte Groesse verfaelscht).
- *
- * Fix: die 4 Byte bei $56bc ("bhi.w $448da") werden durch "bsr.w
- * <Stub>" ersetzt (exakt 4 Byte, passt ohne jede Verschiebung). Der
- * Stub (28 Byte, in einem frisch allozierten Block -- im Modulabbild
- * selbst ist kein Platz) tut GENAU dasselbe wie vorher, PLUS die
- * fehlende NULL-Pruefung davor:
- *   tst.l   a4
- *   beq.w   .grow          ; a4==0 -> wie "Freiliste komplett
- *                             durchlaufen", zum "mehr Speicher"-Pfad
- *   cmp.l   $4(a4),d3      ; urspruengliche Pruefung nachgeholt
- *                             (Flags durch tst.l ueberschrieben)
- *   bhi.w   .toosmall      ; Block zu klein -> wie vorher weiterschauen
- *   rts                    ; sonst: normal zurueck, faellt in den
- *                             (redundanten, harmlosen) zweiten
- *                             Vergleich bei $56c0 -- setzt die Flags
- *                             fuer die dortige Entscheidung frisch
- * .toosmall:
- *   addq.l  #4,a7          ; eigene, per bsr gepushte Ruecksprung-
- *                             adresse verwerfen (sonst Stack-Leck)
- *   bra.w   <$448da relativ zu hdr, zur Laufzeit berechnet>
- * .grow:
- *   addq.l  #4,a7
- *   bra.w   <$448e2 relativ zu hdr, zur Laufzeit berechnet>
- *
- * "tst.l a4" (Byte-Muster 4A8C) ist NICHT geraten, sondern woertlich
- * aus csl's eigenem, bereits vorhandenem Code kopiert (Dateiversatz
- * $56aa, "tst.l a4" vor dem allerersten Schleifendurchlauf) -- belegt,
- * dass diese Adressierungsart auf dieser CPU-Variante gueltig ist.
- *
- * Sicherheitsnetz: patcht NUR, wenn die 4 Byte an der Zielstelle EXAKT
- * dem bekannten Original entsprechen (62 00 fe fc) -- bei jeder
- * anderen csl-Version/-Edit-Stufe (oder wenn ueberhaupt kein csl
- * vorliegt) bleibt der Patch aus, kein blindes Ueberschreiben. Reiner
- * Laufzeit-Patch der geladenen RAM-Kopie -- die Datei csl.mod selbst
- * bleibt unveraendert. */
-#define Q9K_CSL_PATCH_OFF     0x56bcUL   /* "bhi.w $448da", 4 Byte */
-#define Q9K_CSL_TOOSMALL_OFF  0x55baUL   /* Ziel "Block zu klein" */
-#define Q9K_CSL_GROW_OFF      0x55c2UL   /* Ziel "mehr Speicher noetig" */
-#define Q9K_MH_SIZE           0x04UL     /* M$Size, s. q9kernel_moddir.c/modsearch.c */
-
-static void Q9K_PatchCslFreelistBug(Q9_u32 hdr)
-{
-    Q9_u32 patchAddr = hdr + Q9K_CSL_PATCH_OFF;
-    Q9_u32 toosmallTarget = hdr + Q9K_CSL_TOOSMALL_OFF;
-    Q9_u32 growTarget     = hdr + Q9K_CSL_GROW_OFF;
-    Q9_u32 moduleSize;
-    Q9_u32 stub;
-    Q9_u32 disp;
-
-    /* Erst die Modulgroesse (M$Size) pruefen -- der Patch-Versatz muss
-     * WIRKLICH innerhalb des geladenen Moduls liegen, sonst ist es
-     * definitiv nicht dasselbe csl.mod (oder ueberhaupt kein Modul
-     * dieser Groessenordnung) und jeder weitere Bytezugriff waere ein
-     * Griff ins Leere -- auch fuer den Host-Test wichtig (dort ist der
-     * Fake-Modulpuffer klein). */
-    moduleSize = Q9K_TLinkReadU32BE(hdr + Q9K_MH_SIZE);
-    if (moduleSize < Q9K_CSL_PATCH_OFF + 4UL)
-        return;
-
-    if (Q9K_GetU8(patchAddr + 0) != 0x62UL || Q9K_GetU8(patchAddr + 1) != 0x00UL ||
-        Q9K_GetU8(patchAddr + 2) != 0xfeUL || Q9K_GetU8(patchAddr + 3) != 0xfcUL) {
-        return;   /* nicht das erwartete Bytemuster -- unangetastet lassen */
-    }
-
-    stub = Q9K_AllocMem(28UL);
-    if (stub == 0)
-        return;   /* kein Speicher fuer den Stub -- lieber unveraendert lassen */
-    /* FIX (2026-10-05, Fortsetzung 109): bsr.w/bra.w reichen nur +-32 KByte.
-     * Der Stub liegt in einem frisch belegten Block, csl dagegen weit unten
-     * im Speicher -- gemessen: Stub bei $6cb90, csl bei $1a686, also mehrere
-     * hundert KByte auseinander. Die Distanzen wurden bisher stillschweigend
-     * auf 16 Bit abgeschnitten; der Patch sprang mitten in csl, malloc()
-     * lieferte NULL und mshell meldete "memory not available", ohne je
-     * F$SRqMem aufzurufen. Jetzt: nur patchen, wenn ALLE drei Spruenge in
-     * 16 Bit passen, sonst den Stub zurueckgeben und csl unveraendert lassen.
-     * (Q9_u32)(d + 0x8000) < 0x10000 gilt fuer -32768..32767 -- auf dem
-     * 32-Bit-Ziel wie auf dem 64-Bit-Testhost (Modulo-Arithmetik). */
-    if ((Q9_u32)(stub - (patchAddr + 2UL) + 0x8000UL) >= 0x10000UL ||
-        (Q9_u32)(toosmallTarget - (stub + 0x14UL) + 0x8000UL) >= 0x10000UL ||
-        (Q9_u32)(growTarget - (stub + 0x1AUL) + 0x8000UL) >= 0x10000UL) {
-        Q9K_FreeMem(stub, 28UL);
-        return;
-    }
-
-    Q9K_SetU8(stub + 0x00, 0x4A); Q9K_SetU8(stub + 0x01, 0x8C);  /* tst.l a4 */
-    Q9K_SetU8(stub + 0x02, 0x67); Q9K_SetU8(stub + 0x03, 0x00);  /* beq.w .grow */
-    Q9K_SetU8(stub + 0x04, 0x00); Q9K_SetU8(stub + 0x05, 0x12);  /* disp=$16-$04=$12 */
-    Q9K_SetU8(stub + 0x06, 0xB6); Q9K_SetU8(stub + 0x07, 0xAC);  /* cmp.l $4(a4),d3 */
-    Q9K_SetU8(stub + 0x08, 0x00); Q9K_SetU8(stub + 0x09, 0x04);
-    Q9K_SetU8(stub + 0x0A, 0x62); Q9K_SetU8(stub + 0x0B, 0x00);  /* bhi.w .toosmall */
-    Q9K_SetU8(stub + 0x0C, 0x00); Q9K_SetU8(stub + 0x0D, 0x04);  /* disp=$10-$0C=$04 */
-    Q9K_SetU8(stub + 0x0E, 0x4E); Q9K_SetU8(stub + 0x0F, 0x75);  /* rts */
-    Q9K_SetU8(stub + 0x10, 0x58); Q9K_SetU8(stub + 0x11, 0x8F);  /* .toosmall: addq.l #4,a7 */
-    Q9K_SetU8(stub + 0x12, 0x60); Q9K_SetU8(stub + 0x13, 0x00);  /* bra.w toosmallTarget */
-    disp = toosmallTarget - (stub + 0x14UL);
-    Q9K_SetU8(stub + 0x14, (Q9_u8)(disp >> 8)); Q9K_SetU8(stub + 0x15, (Q9_u8)disp);
-    Q9K_SetU8(stub + 0x16, 0x58); Q9K_SetU8(stub + 0x17, 0x8F);  /* .grow: addq.l #4,a7 */
-    Q9K_SetU8(stub + 0x18, 0x60); Q9K_SetU8(stub + 0x19, 0x00);  /* bra.w growTarget */
-    disp = growTarget - (stub + 0x1AUL);
-    Q9K_SetU8(stub + 0x1A, (Q9_u8)(disp >> 8)); Q9K_SetU8(stub + 0x1B, (Q9_u8)disp);
-
-    disp = stub - (patchAddr + 2UL);
-    Q9K_SetU8(patchAddr + 0, 0x61); Q9K_SetU8(patchAddr + 1, 0x00);  /* bsr.w stub */
-    Q9K_SetU8(patchAddr + 2, (Q9_u8)(disp >> 8)); Q9K_SetU8(patchAddr + 3, (Q9_u8)disp);
-}
+/* B4 (2026-10-16): der frueher hier stehende Laufzeit-Patch fuer einen Fehler in csls privater Freiliste (Q9K_PatchCslFreelistBug,
+ * Fortsetzung 58) ist entfernt. Gemessen im Login-Test (Developer-Kernel, Diagnosezeile "M C"): bei jedem F$TLink von csl
+ * (Modulgroesse $BCEE, erwartetes Bytemuster an Dateiversatz $56BC vorhanden) endete der Patch mit "Sprung ausser Reichweite" --
+ * der Stub lag im Arena-Speicher weit von csl entfernt, die Reichweitenpruefung aus Fortsetzung 109 verwarf ihn. Er war damit in
+ * der Praxis nie wirksam, und das System laeuft ohne ihn ueber tausende csl-Allokationen. Die Ursache der damals beobachteten
+ * zerstoerten Verkettung lag anderswo (fremd relozierter Speicher, Fortsetzung 112; Arena ueber festen Diagnoseadressen, A12).
+ * Stand mit dem Patch: Git-Historie vor B4, docs/OWN_KERNEL_STATUS.md Fortsetzung 56-58 und 109. */
 
 /* Real belegte Fehlercodes (internem Referenzmaterial, per E$UnkSvc/
  * E$BPAddr/E$BPNam als Anker ausgezaehlt, s. docs/OWN_KERNEL_STATUS.md). */
@@ -445,6 +358,13 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
 #if defined(Q9K_MEMTRACE_ARENA)
             Q9K_MemTraceClearModule();
 #endif
+            /* B2 (2026-10-16): der Link aus Q9K_ModDirLinkByName oben wurde hier nie zurueckgegeben -- jeder
+             * fehlgeschlagene F$TLink wegen Speichermangel liess den Link-Zaehler des Moduls um 1 steigen
+             * (Modul blieb fuer immer im Speicher). Jetzt wie beim Entfernen eines Handlers zuruecknehmen. */
+            Q9K_ModDirUnlinkByHeader(hdr);
+            *outModPtr    = 0;
+            *outExecEntry = 0;
+            *outInitEntry = 0;
             *outError = memErr;
             return 0;
         }
@@ -464,11 +384,16 @@ int Q9K_ProcTLink(Q9_u32 trapNum, Q9_u32 memOverride, Q9_u32 namePtr,
             for (n = 0; n < grantedSize; n++)
                 z[n] = 0;
         }
-        Q9K_ApplyInitializedData(hdr, staticPtr);
-        /* NACHTRAG 2026-09-13 (Fortsetzung 58): patcht bei Bedarf den in
-         * Fortsetzung 56/57 gefundenen csl-eigenen Freilisten-Bug --
-         * Selbstschutz per Bytemuster-Pruefung, s. Kopfkommentar dort. */
-        Q9K_PatchCslFreelistBug(hdr);
+        if (Q9K_ApplyInitializedData(hdr, staticPtr, grantedSize) != 0) {
+            /* B1: ungueltige M$IData/M$IRefs -- alles zurueckgeben, was fuer den Handler erworben wurde */
+            Q9K_ProcSRtMem(staticPtr, grantedSize);
+            Q9K_ModDirUnlinkByHeader(hdr);
+            *outModPtr    = 0;
+            *outExecEntry = 0;
+            *outInitEntry = 0;
+            *outError     = Q9K_ERR_BMID;
+            return 0;
+        }
     }
     *outStaticPtr = staticPtr;
 
