@@ -115,6 +115,7 @@ block 9 "tlinkerr"
 block 10 "dbgtest"
 block 11 "semtest"
 block 12 "alarmtest"
+block 13 "p2test"
 
 # 4. Debug-Dump anfordern (Ctrl-^), dann den Emulator beenden. Das Lesen
 #    mit Zeitlimit statt "sleep" laesst die Dump-Zeile noch ankommen.

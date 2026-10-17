@@ -8844,6 +8844,8 @@ Q9K_SysStartProc:
         movea.l Q9_D_Proc,a4                  * A4 = aktueller Prozessdeskriptor
         jsr     (a1)                          * IOMan-Init
         movea.l a5,a6
+        bsr     Q9K_ExtensScan                * C4: Erweiterungsmodule aus M$Extens des Init-Moduls (OS9P2 ...)
+        bcs     Q9K_SysStartFail              * "If an error is returned, the system stops" (68k_tech.pdf S. 81)
         moveq   #0,d0                         * beliebiger Typ (init: TyLang $0C00)
         lea     Q9K_SysStartInitName(pc),a0
         trap    #0
@@ -8883,6 +8885,203 @@ Q9K_SysStartFail:
         bsr     Q9K_DiagWriteHex32
 Q9K_SysStartHalt:
         bra     Q9K_SysStartHalt
+*******************************************************************************
+* Q9K_ExtensScan -- C4 (2026-10-17): Kaltstart-Scan der Erweiterungsmodule (Customization Modules, "OS9P2").
+*
+* 68k_tech.pdf S. 65 (Init-Modul, M$Extens $44) und S. 81: der Offset zeigt auf eine Liste von Modulnamen, durch Leerzeichen
+* getrennt, Standard "OS9P2"; 0 = keine. "OS-9 searches for these modules during startup ... They are executed in system state if
+* found." Wird ein Modul nicht gefunden, bleibt es unbeachtet ("if found"); meldet eines einen Fehler (Carry), bleibt das System stehen.
+* Der Aufruf kommt wie im Original nach IOMan (Reihenfolge PreIO, IOMan, Extens), damit ein Modul F$SSvc und die I/O-Aufrufe nutzen kann.
+*
+* Aufruf: wie IOMans Init -- a6 = 0 (Systemglobals), a2 = Modulkopf, a3 = statischer Speicher des Moduls (M$Mem Byte, vom Kernel
+* bereitgestellt und genullt, 0 wenn M$Mem = 0), jsr auf den Ausfuehrungseinsprung. Ein Modul darf nur d0, d1 und ccr veraendern.
+* Der Speicher stammt direkt aus der Arena (nicht aus F$SRqMem): er gehoert dem System und bleibt stehen, wenn der Startprozess per
+* F$Chain in sysgo wechselt.
+*
+* BEWUSSTE AUSNAHME: "syscache", "ssm" und "fpu" aus der Microware-Referenzbootdatei werden NICHT aufgerufen. Sie schreiben in
+* Systemglobals, die dieser Kernel nicht fuehrt ($764/$768/$76c, $7a0, $3c8, $3d8 relativ zu a6, dazu ssm fuer eine MMU, die der
+* Emulator nicht modelliert): Cache-Steuerung (F$CCtl) macht der Kernel nativ, eine MMU gibt es nicht, und die FPU stellt der
+* Emulatorkern bereit. Die Liste steht in Q9K_ExtensSkipTab; ein Eigenbau-Erweiterungsmodul unter diesen Namen wuerde ebenfalls
+* uebersprungen.
+* Aus: Carry geloescht = alle gut; Carry gesetzt, d1.w = Fehlercode des Moduls (E$MemFul wenn der Speicher fehlt).
+Q9K_ExtensScan:
+* EIGENER STACK (live gemessen): der Startprozess laeuft auf einem winzigen Stack (sein ganzer Block ist 272 Byte gross). Mit Namenspuffer,
+* Registersicherung und den Aufrufen der Module (F$SSvc, ...) lief er nach unten in den davor liegenden statischen Speicher des Moduls und
+* ueberschrieb ihn (der Dienst lieferte statt des Markers Rest-Daten). Deshalb arbeitet der Scan auf einem 2-KByte-Stack aus der Arena
+* und gibt ihn am Ende per F$SRtMem zurueck.
+        movem.l d2-d7/a2-a5,-(sp)
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        move.l  #2048,d0
+        Q9K_FARCALL     Q9K_AllocMem            * d0 = Groesse -> d0 = Adresse oder 0
+        movea.l (sp)+,a6
+        tst.l   d0
+        bne.s   Q9K_ExtensHaveStack
+        move.w  #$00cf,d1                       * E$MemFul
+        movem.l (sp)+,d2-d7/a2-a5
+        ori     #1,ccr
+        rts
+Q9K_ExtensHaveStack:
+        move.l  d0,d5                           * Stackblock (d5 bleibt ueber Syscalls und Module erhalten)
+        movea.l d0,a0
+        adda.l  #2048,a0                        * Stackende
+        move.l  sp,-(a0)                        * alten Stackzeiger ganz oben auf dem neuen Stack ablegen
+        movea.l a0,sp                           * ab hier der eigene Stack
+        lea     -64(sp),sp                      * Namenspuffer (63 Zeichen + 0)
+        moveq   #0,d0
+        lea     Q9K_SysStartInitName(pc),a0
+        trap    #0
+        dc.w    $0000                            * F$Link init -> a2 = Modulkopf
+        bcs     Q9K_ExtensNone                  * ohne Init-Modul gibt es nichts zu tun (der spaetere Link meldet den Fehler)
+        moveq   #0,d0
+        move.w  $44(a2),d0                      * M$Extens
+        beq     Q9K_ExtensNone
+        lea     0(a2,d0.l),a4                   * a4 = Listenzeiger (a4, d6, d7 bleiben ueber Syscalls erhalten)
+Q9K_ExtensNext:
+        cmpi.b  #' ',(a4)
+        bne.s   Q9K_ExtensStart
+        addq.l  #1,a4
+        bra.s   Q9K_ExtensNext
+Q9K_ExtensStart:
+        tst.b   (a4)
+        beq     Q9K_ExtensNone                  * Listenende
+        movea.l sp,a0
+        moveq   #62,d2
+Q9K_ExtensCopy:
+        move.b  (a4),d1
+        beq.s   Q9K_ExtensCopyEnd
+        cmpi.b  #' ',d1
+        beq.s   Q9K_ExtensCopyEnd
+        addq.l  #1,a4
+        subq.l  #1,d2
+        bmi.s   Q9K_ExtensCopy                  * Name laenger als der Puffer: Rest lesen, aber nicht speichern
+        move.b  d1,(a0)+
+        bra.s   Q9K_ExtensCopy
+Q9K_ExtensCopyEnd:
+        clr.b   (a0)
+        lea     Q9K_ExtensSkipTab(pc),a1        * Ausnahmeliste: Name gleich?
+Q9K_ExtensSkipLoop:
+        tst.b   (a1)
+        beq.s   Q9K_ExtensLink                  * Ende der Liste: nicht ausgenommen
+        movea.l sp,a0
+Q9K_ExtensEq:
+        move.b  (a0)+,d0
+        cmpi.b  #'A',d0
+        bcs.s   Q9K_ExtensEqCmp
+        cmpi.b  #'Z',d0
+        bhi.s   Q9K_ExtensEqCmp
+        addi.b  #$20,d0                         * Grossschreibung ignorieren
+Q9K_ExtensEqCmp:
+        move.b  (a1)+,d1
+        cmp.b   d1,d0
+        bne.s   Q9K_ExtensEqNo
+        tst.b   d1
+        bne.s   Q9K_ExtensEq
+        ifne    Q9K_DEBUG
+        moveq   #'x',d1                         * Developer-Kernel: "!x name" = ausgenommen (nicht aufgerufen)
+        bsr     Q9K_ExtensTrace
+        endc
+        bra.s   Q9K_ExtensNext                  * gleich bis zur 0: ausgenommen, naechster Name
+Q9K_ExtensEqNo:
+        tst.b   (a1)+                           * Rest dieses Eintrags der Ausnahmeliste ueberspringen
+        bne.s   Q9K_ExtensEqNo
+        bra.s   Q9K_ExtensSkipLoop
+Q9K_ExtensLink:
+        moveq   #0,d0                           * Typ/Sprache: beliebig
+        movea.l sp,a0
+        trap    #0
+        dc.w    $0000                            * F$Link name -> a1 = Einsprung, a2 = Modulkopf
+        bcs     Q9K_ExtensNext                  * nicht gefunden: uebergehen
+        move.l  a1,d6                           * Einsprung
+        move.l  a2,d7                           * Modulkopf
+        suba.l  a3,a3                           * a3 = 0: kein statischer Speicher
+        move.l  $38(a2),d0                      * M$Mem
+        beq.s   Q9K_ExtensCall
+        move.l  d0,d3                           * Groesse merken
+        move.l  a6,-(sp)
+        lea     Q9K_CRuntimeData(pc),a6
+        Q9K_FARCALL     Q9K_AllocMem            * d0 = Groesse -> d0 = Adresse oder 0
+        movea.l (sp)+,a6
+        tst.l   d0
+        beq.s   Q9K_ExtensNoMem
+        movea.l d0,a3
+        movea.l a3,a0
+        move.l  d3,d2
+Q9K_ExtensClear:
+        clr.b   (a0)+
+        subq.l  #1,d2
+        bne.s   Q9K_ExtensClear
+Q9K_ExtensCall:
+        ifne    Q9K_DEBUG
+        moveq   #'X',d1                         * Developer-Kernel: "!X name" = Erweiterung wird aufgerufen
+        bsr     Q9K_ExtensTrace
+        endc
+        movea.l d6,a1
+        movea.l d7,a2                           * a2 = Modulkopf
+        move.l  a6,-(sp)
+        movea.l #0,a6                           * Systemglobals (wie bei IOMans Init)
+        jsr     (a1)
+        movea.l (sp)+,a6                        * movea laesst das Carry der Erweiterung stehen
+        bcs.s   Q9K_ExtensFail
+        bra     Q9K_ExtensNext
+Q9K_ExtensNoMem:
+        move.w  #$00cf,d1                       * E$MemFul
+Q9K_ExtensFail:
+        move.w  d1,d4                           * Fehlercode merken (d3/d4/d5 bleiben ueber Syscalls und Module erhalten)
+        moveq   #1,d3                           * Fehlerflag
+        bra.s   Q9K_ExtensLeave
+Q9K_ExtensNone:
+        moveq   #0,d3
+* Zurueck auf den alten Stack, den Scan-Stack per F$SRtMem freigeben, Register wiederherstellen und ruecksprung in den Aufrufer
+* (Rueckkehradresse und gesicherte Register liegen auf dem alten Stack). Fehlerflag/-code gehen ueber d0/d1, die ein
+* Erweiterungsmodul laut Handbuch ohnehin veraendern darf.
+Q9K_ExtensLeave:
+        lea     64(sp),sp                       * Namenspuffer weg
+        movea.l (sp),sp                         * alter Stack (der Zeiger lag ganz oben auf dem Scan-Stack)
+        movea.l d5,a2                           * F$SRtMem: (a2) = Block, d0.l = Groesse
+        move.l  #2048,d0
+        trap    #0
+        dc.w    $0029
+        move.w  d4,d1
+        move.l  d3,d0
+        movem.l (sp)+,d2-d7/a2-a5
+        tst.l   d0
+        bne.s   Q9K_ExtensLeaveErr
+        andi    #$fe,ccr
+        rts
+Q9K_ExtensLeaveErr:
+        ori     #1,ccr
+        rts
+        ifne    Q9K_DEBUG
+* "!<d1> <Name>" + CR LF direkt auf den DUART (wie die uebrigen Diagnosezeilen, ohne Syscall). Der Name liegt im Namenspuffer ab sp+4.
+Q9K_ExtensTrace:
+        movem.l d0-d2/d7/a0,-(sp)
+        move.l  d1,d2
+        moveq   #'!',d7
+        bsr     Q9K_DiagWriteD7
+        move.l  d2,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #' ',d7
+        bsr     Q9K_DiagWriteD7
+        lea     20(sp),a0                       * Namenspuffer des Scans (5 Register x 4 Byte + Ruecksprungadresse 4 Byte = 24; Puffer beginnt dahinter)
+        lea     4(a0),a0
+Q9K_ExtensTraceLoop:
+        move.b  (a0)+,d7
+        beq.s   Q9K_ExtensTraceEnd
+        bsr     Q9K_DiagWriteD7
+        bra.s   Q9K_ExtensTraceLoop
+Q9K_ExtensTraceEnd:
+        moveq   #$0d,d7
+        bsr     Q9K_DiagWriteD7
+        moveq   #$0a,d7
+        bsr     Q9K_DiagWriteD7
+        movem.l (sp)+,d0-d2/d7/a0
+        rts
+        endc
+Q9K_ExtensSkipTab:
+        dc.b    "syscache",0,"ssm",0,"fpu",0,0
+        align
+
 Q9K_SysStartIOManName:
         dc.b    "ioman",0
 Q9K_SysStartInitName:

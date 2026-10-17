@@ -56,7 +56,8 @@ ksize=$(wc -c < "$WORK/kb/q9kernel" | tr -d ' ')
 # 2. Abbild: Bootdatei (Referenz mit unserem Kernel), dann Dateisystem.
 IMG="$WORK/img.hda"
 "$OS9" format -q -k -nQ9TEST -bs512 -l32768 -c32 "$IMG" > "$WORK/format.log" 2>&1 || die "[$VARIANT] os9 format"
-Q9K_BUILD_DIR="$WORK/kb" "$HERE/tools/mkbootfile.sh" "$REFBOOT" "$IMG" > "$WORK/mkboot.log" 2>&1 \
+# C4 (mkbootfile haengt Q9_BOOT_MODULES nur mit --disk an): os9p2 ist eine Erweiterung aus der Liste M$Extens ("OS9P2 syscache ssm fpu OS9P3") und kommt als zusaetzliches Bootmodul ins Abbild
+Q9_BOOT_MODULES="$WORK/kb/os9p2" Q9K_BUILD_DIR="$WORK/kb" "$HERE/tools/mkbootfile.sh" --disk "$REFBOOT" "$IMG" > "$WORK/mkboot.log" 2>&1 \
     || { tail -5 "$WORK/mkboot.log"; die "[$VARIANT] mkbootfile.sh"; }
 "$OS9" makdir "$IMG,CMDS" >/dev/null 2>&1 || die "[$VARIANT] makdir CMDS"
 "$OS9" makdir "$IMG,SYS" >/dev/null 2>&1 || die "[$VARIANT] makdir SYS"
@@ -72,7 +73,7 @@ done
 # A13: Skript fuer "mshell <loop" (Umleitung der Eingabe aus einer Datei)
 printf 'echo skript eins\recho skript zwei\r' > "$WORK/loop"
 "$OS9" copy "$WORK/loop" "$IMG,loop" >/dev/null 2>&1 || die "[$VARIANT] copy loop"
-for c in icptwait waitkid trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest; do
+for c in icptwait waitkid trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest p2test; do
     "$OS9" copy "$WORK/kb/$c" "$IMG,CMDS/$c" >/dev/null 2>&1 || die "[$VARIANT] copy $c"
     "$OS9" attr -q -e -pe "$IMG,CMDS/$c" >/dev/null 2>&1 || true
 done
@@ -115,7 +116,7 @@ def check(name, cond, detail=''):
     print(('ok    ' if cond else 'FAIL  ') + '[%s] %s%s' % (variant, name, (' -- ' + detail) if (detail and not cond) else ''))
     if not cond: bad.append(name)
 check('Kernelbau (%s Byte), Boot, tsmon, login' % ksize, 'logged on' in raw)
-b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12 = block(1), block(2), block(3), block(4), block(5), block(6), block(7), block(8), block(9), block(10), block(11), block(12)
+b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13 = block(1), block(2), block(3), block(4), block(5), block(6), block(7), block(8), block(9), block(10), block(11), block(12), block(13)
 def rawblock(n):
     # Ungefilterter Text zwischen den Marken. block() wirft Zeilen weg, die mit "$ " beginnen (Terminalecho); die Kindshell von
     # "mshell <loop" schreibt aber selbst "$ " vor jede Ausgabe (Eingabe aus einer Datei, kein Echo).
@@ -156,9 +157,16 @@ if not re.search(r'^alarmtest done 00$', b12 or '', re.M):
     alarm_bad.append('alarmtest done 00')
 check('alarmtest: F$Alarm-Matrix live (Set, 256stel, Cycle, Delete, Reset, AtJul, AtDate, Fehler) (C3)', b12 is not None and not alarm_bad,
       'abweichend: %s in %r' % (', '.join('%s=%s' % (n, alarm_val(n)) for n in alarm_bad), b12))
+if variant == 'development':
+    ext_ok = all(re.search(r'^!%s (?i:%s)\s*$' % (c, n), raw, re.M) for c, n in (('X', 'os9p2'), ('x', 'syscache'), ('x', 'ssm'), ('x', 'fpu')))
+    check('Erweiterungs-Scan (C4): os9p2 aufgerufen, syscache/ssm/fpu bewusst uebersprungen, OS9P3 nicht vorhanden und ohne Wirkung', ext_ok,
+          '; '.join(l for l in raw.split('\n') if l.startswith('!X') or l.startswith('!x'))[:200])
+p2_lines = [l.strip() for l in (b13 or '').split('\n')]
+check('p2test: Erweiterungsmodul os9p2 beim Boot ausgefuehrt, Dienst $70 und sein statischer Speicher (C4)',
+      b13 is not None and all(w in p2_lines for w in ('p2 svc=42', 'p2 svc again=42', 'p2 unknown err=D0', 'p2test done 00')), repr(b13))
 regchk = [l.strip() for l in raw.split('\n') if l.startswith('!R ')]
 check('keine Register-Erhaltungsmeldung (!R, Arbeitsplan A5)', not regchk, '; '.join(regchk[:3]))
-body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12) if x)
+body = '\n'.join(x for x in (b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13) if x)
 errs = [e for e in ('Error #', "can't", 'Unhandled', 'syntax error', 'E$') if e in body]
 check('keine Fehlermeldung in den Befehlsausgaben', not errs, ' '.join(errs))
 sys.exit(1 if bad else 0)

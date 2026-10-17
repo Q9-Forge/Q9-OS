@@ -1,0 +1,44 @@
+*******************************************************************************
+* os9p2.a -- Testmodul fuer Arbeitsplan C4: eine Erweiterung (Customization Module) aus der Namensliste M$Extens des Init-Moduls.
+*
+* Die Liste der Referenz-Bootdatei lautet "OS9P2 syscache ssm fpu OS9P3"; dieses Modul heisst "os9p2" und wird deshalb beim
+* Kaltstart gefunden und im Systemzustand aufgerufen (68k_tech.pdf S. 81: "The kernel calls the modules at boot time if their names
+* are specified in the extension list of the Init module and the kernel can locate them"). Es darf nur d0, d1 und ccr veraendern.
+*
+* Was es tut: schreibt einen Marker ($00000042) in seinen statischen Speicher (a3 = M$Mem Byte, vom Kernel bereitgestellt) und
+* installiert per F$SSvc den neuen Systemaufruf $70 mit diesem Speicher als Datenzeiger (a3). Der Dienst liefert den Marker in d0
+* zurueck. Wer ihn aufruft (p2test.a), sieht damit: das Modul wurde ausgefuehrt, bekam seinen Speicher und der Speicher lebt weiter,
+* nachdem der Startprozess in sysgo gewechselt hat.
+*******************************************************************************
+Q9Systm                 equ     $0c             * Modultyp Systm
+Q9Objct                 equ     1               * Maschinencode
+Q9K_P2Edition           equ     1
+
+        psect   os9p2,(Q9Systm<<8)!Q9Objct,($a0<<8)!1,Q9K_P2Edition,0,Q9K_P2Start
+
+        vsect
+Q9K_P2Data:
+        ds.l    2                               * statischer Speicher: Marker + Reserve
+        ends
+
+Q9K_P2Start:
+        move.l  a1,-(sp)
+        move.l  #$00000042,(a3)                 * Marker im statischen Speicher
+        lea     Q9K_P2Table(pc),a1
+        trap    #0
+        dc.w    $0032                            * F$SSvc: Dienst $70 mit a3 als Datenzeiger registrieren
+        movea.l (sp)+,a1                        * movea laesst das CCR (Carry von F$SSvc) unberuehrt
+        rts
+
+Q9K_P2Table:
+        dc.w    $0070
+        dc.w    Q9K_P2Service-Q9K_P2Table-4
+        dc.w    $ffff
+
+* Dienst $70: a3 = Datenzeiger (der statische Speicher), a5 = Registerabbild des Aufrufers (R$d0 bei 0(a5)).
+Q9K_P2Service:
+        move.l  (a3),(a5)                       * Aufrufer-d0 = Marker
+        andi    #$fe,ccr
+        rts
+
+        endsect

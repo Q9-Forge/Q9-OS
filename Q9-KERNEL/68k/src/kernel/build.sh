@@ -40,7 +40,7 @@ cd "$OUTDIR"
 # mit einem alten .r "erfolgreich" bauen. Jetzt wird zuerst aufgeraeumt, und
 # jede Werkzeugausgabe wird auf Fehlermeldungen durchsucht.
 rm -f ./*.r ./*.map ./*.lines makefile q9kernel forkchild trace hellosvc \
-      chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest
+      chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest os9p2 p2test
 rm -rf srcdebug
 
 # scan_log <Modus> <Beschreibung> <Logdatei>: 0 = keine Fehlermeldung gefunden.
@@ -486,6 +486,24 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/alarmtest =="
 file alarmtest || true
 
+echo "== os9p2.a bauen (Erweiterungsmodul (OS9P2), C4) =="
+cp "$SRCDIR"/os9p2.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=os9p2.r "os9p2.a" < /dev/null
+wine_tool l68 \
+    -o=os9p2 -f=orowoe os9p2.r < /dev/null
+echo "== Fertig: $OUTDIR/os9p2 =="
+file os9p2 || true
+
+echo "== p2test.a bauen (Regressionstest: Erweiterungsdienst \$70, C4) =="
+cp "$SRCDIR"/p2test.a .
+wine_tool r68 \
+    "$R68_CPU_OPT" "$R68_VARIANT_OPT" -o=p2test.r "p2test.a" < /dev/null
+wine_tool l68 \
+    -o=p2test -f=orowoe p2test.r < /dev/null
+echo "== Fertig: $OUTDIR/p2test =="
+file p2test || true
+
 echo "== icptrte.a bauen (Regressionstest: zweites Signal waehrend der Intercept-Routine, A10) =="
 cp "$SRCDIR"/icptrte.a .
 wine_tool r68 \
@@ -522,7 +540,7 @@ wine_tool l68 \
 echo "== Fertig: $OUTDIR/iattachsvc =="
 file iattachsvc || true
 
-for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest; do
+for f in q9kernel forkchild trace hellosvc chaintgt nproctgt evsigtgt iattachsvc icptsleep icptrte icptwait waitkid openleak trapfail tlinkerr dbgchild dbgtest semchild semtest alarmtest os9p2 p2test; do
     [ -s "$f" ] || { echo "FEHLER: Ergebnis $f fehlt oder ist leer" >&2; exit 1; }
 done
 echo "== BUILD OK: alle Ergebnisse frisch erzeugt, keine Werkzeugfehler =="
